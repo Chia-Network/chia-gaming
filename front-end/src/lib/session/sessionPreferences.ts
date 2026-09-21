@@ -3,7 +3,7 @@ import type {
   BlockchainType,
   ChiaNetwork,
   SessionPreferencesSave,
-  SessionSave,
+  DurableApplicationState,
 } from './saveEnvelope';
 
 export interface SessionPreferenceQueries {
@@ -31,12 +31,8 @@ export type SessionPreferenceUpdate =
   | { key: 'unreadGame' | 'walletAlert' | 'hubAlert'; value: boolean }
   | { key: 'hubUrl'; value: string | undefined };
 
-export function hasConnectionPreferences(state: SessionSave, hasWalletStorage: boolean): boolean {
-  return !!(state.preferences.blockchainType || state.preferences.hubUrl || hasWalletStorage);
-}
-
 export function selectSessionPreference<K extends keyof SessionPreferenceQueries>(
-  state: SessionSave,
+  state: DurableApplicationState,
   key: K,
 ): SessionPreferenceQueries[K] {
   const preferences = state.preferences;
@@ -58,9 +54,9 @@ export function selectSessionPreference<K extends keyof SessionPreferenceQueries
 }
 
 export function applySessionPreferenceUpdate(
-  state: SessionSave,
+  state: DurableApplicationState,
   update: SessionPreferenceUpdate,
-): SessionSave {
+): DurableApplicationState {
   return {
     ...state,
     preferences: {

@@ -1,10 +1,16 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import { type SessionStateUpdate } from './sessionStateTransitions';
+import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
+import { type DurableApplicationState, type TerminalSessionSave } from './saveEnvelope';
 import { storageRepository } from './storageRepository';
-import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
+import {
+  channelStatusModelFromPayload,
+  channelStatusPayloadFromModel,
+  normalizeSessionPresentation,
+} from './normalization';
 import { recentDiagnosticEntries } from './historyLimits';
 import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionMachineState } from './sessionMachineTypes';
+import type { SessionModel } from './types';
 
 export interface SessionPersistDependencies {
   controller: SessionController;
@@ -12,18 +18,28 @@ export interface SessionPersistDependencies {
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-  save?: typeof storageRepository.saveSession;
   clearDurabilityWarning?: boolean;
 }
 
-export interface PreparedSessionPersistence {
+export interface PreparedDurableApplicationStateCapture {
   write(): Promise<void>;
 }
 
-/** Assemble at effect execution time from WASM facts and machine authority. */
-export function assembleSessionSave(dependencies: SessionPersistDependencies): {
-  live: Extract<SessionStateUpdate, { scope: 'live' }>;
-} | null {
+export interface TerminalCapture {
+  kind: 'terminal';
+  controller: SessionController;
+  model: SessionModel;
+  identity: {
+    iStarted: boolean;
+    myAlias: string | null;
+    opponentAlias: string | null;
+  };
+  coinsOfInterest: CoinOfInterestEntry[];
+}
+
+function liveTransform(
+  dependencies: SessionPersistDependencies,
+): ((state: DurableApplicationState) => DurableApplicationState) | null {
   const wasm = dependencies.controller.getWasmFields();
   if (!wasm) return null;
   const state = dependencies.getState();
@@ -45,73 +61,104 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
     },
   });
-  const current = storageRepository.loadState();
-  const currentPairing =
-    current.phase === 'pre-handshake' || current.phase === 'live' ? current.pairing : undefined;
   if (wasm.rewardPuzzleHash === null) {
     throw new Error('Cannot persist an initialized session without a reward puzzle hash');
   }
+  const rewardPuzzleHash = wasm.rewardPuzzleHash;
   const presentation = snapshotFromSessionModel(model, {
-    channelStatus: wasm.channelStatus ?? null,
+    channelStatus: wasm.channelStatus ? channelStatusPayloadFromModel(authoritativeStatus) : null,
     waitingStateEnteredAt: wasm.waitingStateEnteredAt,
     cleanShutdownGraceStartedAt: wasm.cleanShutdownGraceStartedAt,
   });
-  return {
-    live: {
-      scope: 'live',
-      walletProviderScope: dependencies.controller.getWalletProviderScope(),
-      pairing: {
-        token: wasm.pairingToken,
-        peerId: currentPairing?.peerId,
-        gameSessionId: wasm.gameSessionId,
-        iStarted: wasm.iStarted,
-        myContribution: wasm.myContribution,
-        theirContribution: wasm.theirContribution,
-        perGameAmount: wasm.perGameAmount,
-        channelTimeout: currentPairing?.channelTimeout,
-        unrollTimeout: currentPairing?.unrollTimeout,
-        myAlias: wasm.myAlias,
-        opponentAlias: wasm.opponentAlias,
+  const walletProviderScope = dependencies.controller.getWalletProviderScope();
+  return (root) => {
+    const currentPairing =
+      root.session?.phase === 'pre-handshake' || root.session?.phase === 'live'
+        ? root.session.pairing
+        : undefined;
+    return {
+      ...root,
+      walletContext: structuredClone(walletProviderScope),
+      session: {
+        phase: 'live',
+        pairing: {
+          token: wasm.pairingToken,
+          peerId: currentPairing?.peerId,
+          gameSessionId: wasm.gameSessionId,
+          iStarted: wasm.iStarted,
+          myContribution: wasm.myContribution,
+          theirContribution: wasm.theirContribution,
+          perGameAmount: wasm.perGameAmount,
+          channelTimeout: currentPairing?.channelTimeout,
+          unrollTimeout: currentPairing?.unrollTimeout,
+          myAlias: wasm.myAlias,
+          opponentAlias: wasm.opponentAlias,
+        },
+        live: {
+          serializedGameSession: wasm.serializedGameSession,
+          gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
+          messageNumber: wasm.messageNumber,
+          remoteNumber: wasm.remoteNumber,
+          rewardPuzzleHash,
+          unackedMessages: wasm.unackedMessages,
+          terminalHandoff: wasm.terminalHandoff,
+          disposition: wasm.transportDisposition,
+          durabilityWarning: dependencies.clearDurabilityWarning
+            ? undefined
+            : wasm.durabilityWarning,
+        },
+        presentation,
       },
-      live: {
-        serializedGameSession: wasm.serializedGameSession,
-        gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
-        messageNumber: wasm.messageNumber,
-        remoteNumber: wasm.remoteNumber,
-        rewardPuzzleHash: wasm.rewardPuzzleHash,
-        unackedMessages: wasm.unackedMessages,
-        terminalHandoff: wasm.terminalHandoff,
-        disposition: wasm.transportDisposition,
-        durabilityWarning: dependencies.clearDurabilityWarning ? undefined : wasm.durabilityWarning,
-      },
-      presentation,
       history: {
+        ...root.history,
         wasmNotificationHistory: wasm.wasmNotificationHistory,
         diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
       },
+    };
+  };
+}
+
+function terminalTransform(capture: TerminalCapture) {
+  const walletProviderScope = capture.controller.getWalletProviderScope();
+  const terminal: TerminalSessionSave['terminal'] = {
+    iStarted: capture.identity.iStarted,
+    coinsOfInterest: structuredClone(capture.coinsOfInterest),
+    myAlias: capture.identity.myAlias,
+    opponentAlias: capture.identity.opponentAlias,
+  };
+  const presentation = snapshotFromSessionModel(capture.model, {
+    channelStatus: channelStatusPayloadFromModel(capture.model.channel.status),
+    waitingStateEnteredAt: null,
+    cleanShutdownGraceStartedAt: null,
+  });
+  return (root: DurableApplicationState): DurableApplicationState => ({
+    ...root,
+    walletContext: structuredClone(walletProviderScope),
+    session: {
+      phase: 'terminal',
+      terminal,
+      presentation,
     },
-  };
+  });
 }
 
-/**
- * Capture every active-session persistence input before returning. The write
- * may yield, but it never reads mutable machine, WASM, transport, or save
- * assembly state again.
- */
-export function prepareSessionPersistence(
-  dependencies: SessionPersistDependencies,
-): PreparedSessionPersistence | null {
-  const assembled = assembleSessionSave(dependencies);
-  if (!assembled) return null;
-  const live = structuredClone(assembled.live);
-  const save = dependencies.save ?? storageRepository.saveSession.bind(storageRepository);
-  return {
-    write: () => save(live),
-  };
-}
+/** Capture the complete aggregate before the returned closure performs I/O. */
+export function captureDurableApplicationState(
+  capture:
+    | ({ kind: 'live' } & SessionPersistDependencies)
+    | TerminalCapture
+    | {
+        kind: 'transform';
+        transform(state: DurableApplicationState): DurableApplicationState;
+      },
+): PreparedDurableApplicationStateCapture | null {
+  const transform =
+    capture.kind === 'live'
+      ? liveTransform(capture)
+      : capture.kind === 'terminal'
+        ? terminalTransform(capture)
+        : capture.transform;
+  if (!transform) return null;
 
-export async function persistSessionSnapshot(
-  dependencies: SessionPersistDependencies,
-): Promise<void> {
-  await prepareSessionPersistence(dependencies)?.write();
+  return storageRepository.prepareApplicationStateCapture(transform);
 }

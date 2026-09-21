@@ -9,7 +9,6 @@ import {
   selectGameSpecificView,
   selectIProposedHand,
   selectSessionPhase,
-  sessionModelFromSave,
   type HandProposal,
 } from '../lib/session/model';
 import type { GameIntent } from '@games/host';
@@ -33,7 +32,7 @@ import type { GameSessionParams, PeerConnectionResult } from '../types/ChiaGamin
 import type { BlockchainPoller } from './BlockchainPoller';
 import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
 import type { SessionController } from './SessionController';
-import { type SessionSave } from '../lib/session/saveEnvelope';
+import type { RehydratedDurableApplicationState } from '../lib/session/persistence';
 import { storageRepository } from '../lib/session/storageRepository';
 
 export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
@@ -63,7 +62,7 @@ export function useSessionControllerAfterCommit(
     keepaliveHandler: () => void,
     failureHandler: (reason: string) => void,
   ) => void,
-  sessionSave?: SessionSave,
+  sessionBootstrap?: RehydratedDurableApplicationState,
   blockchain: BlockchainPoller | null = null,
   terminalMode = false,
 ): SessionController | null {
@@ -78,7 +77,7 @@ export function useSessionControllerAfterCommit(
       params.myContribution,
       params.theirContribution,
       params.iStarted,
-      sessionSave,
+      sessionBootstrap,
       params.pairingToken,
       params.perGameAmount,
       () => storageRepository.query('defaultFee'),
@@ -101,7 +100,7 @@ export function useSessionControllerAfterCommit(
     params.unrollTimeout,
     peerConn,
     registerMessageHandler,
-    sessionSave,
+    sessionBootstrap,
     terminalMode,
   ]);
   return controller;
@@ -111,7 +110,7 @@ export function useGameSession(
   params: GameSessionParams,
   controller: SessionController,
   appendGameLog: (line: string) => void,
-  sessionSave?: SessionSave,
+  sessionBootstrap?: RehydratedDurableApplicationState,
   blockchain: BlockchainPoller | null = null,
   terminalPresentation?: TerminalSessionPresentation | null,
 ): UseGameSessionResult {
@@ -120,8 +119,8 @@ export function useGameSession(
   const terminalMode = terminalState.presentation != null;
 
   const restoredModel = useMemo(
-    () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
-    [sessionSave],
+    () => (sessionBootstrap ? structuredClone(sessionBootstrap.model) : null),
+    [sessionBootstrap],
   );
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
@@ -141,11 +140,11 @@ export function useGameSession(
         }),
       {
         firstGameAccepted:
-          sessionSave?.phase === 'live' &&
-          sessionSave.presentation.channelStatus?.state === 'Active',
+          sessionBootstrap?.state.session?.phase === 'live' &&
+          sessionBootstrap.state.session.presentation.channelStatus?.state === 'Active',
       },
     );
-  }, [controller, iStarted, perGameAmount, restoredModel, sessionSave]);
+  }, [controller, iStarted, perGameAmount, restoredModel, sessionBootstrap]);
   const runtimeRef = useRef<{
     controller: SessionController;
     runtime: SessionMachineRuntime;

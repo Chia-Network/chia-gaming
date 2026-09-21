@@ -34,21 +34,11 @@ setTestGlobal('localStorage', makeStorage());
 setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
 
-// The Cloud Wallet fee comes from the global preference. Mock it so the test
-// controls the fee without exercising the persistence/IndexedDB layer.
-let mockFee = 0n;
-jest.mock('../session/storageRepository', () => ({
-  storageRepository: {
-    getDefaultFee: () => mockFee,
-    setDefaultFee: (fee: bigint) => {
-      mockFee = fee;
-    },
-  },
-}));
-
+import 'fake-indexeddb/auto';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 import { WalletOperationRuntime } from '../session/walletOperationRuntime';
+import { storageRepository } from '../session/storageRepository';
 
 const testOperation = {
   owner: {
@@ -81,11 +71,19 @@ function mockGraphql(handler: (query: string, variables: Record<string, unknown>
 }
 
 describe('CloudBlockchainInterface fee support', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
     clearCloudWalletAuth();
-    mockFee = 0n;
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+    const empty = {
+      ...storageRepository.loadState(),
+      walletContext: null,
+      walletObligations: [],
+    };
+    storageRepository._replaceApplicationStateForTests(empty);
+    await storageRepository.checkpointApplicationState(empty);
     saveCloudWalletAuth({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
@@ -612,11 +610,12 @@ describe('CloudBlockchainInterface fee support', () => {
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
     const coordinator = new WalletOperationRuntime();
     coordinator.attachProvider(provider);
+    storageRepository.ensureWalletContext(owner.providerScope);
     coordinator.registerReserved('Offer_1', owner, purpose);
     coordinator.settleOperation(owner, purpose, 'cancel-required', 'retired');
     await coordinator.awaitOwner(owner);
 
-    expect(coordinator.snapshot()).toEqual([
+    expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({
         tradeId: 'Offer_1',
         stage: 'cancelling',
@@ -628,7 +627,7 @@ describe('CloudBlockchainInterface fee support', () => {
 
     expect(queries.filter((query) => query.includes('cancelOffer'))).toHaveLength(1);
     expect(queries.filter((query) => query.includes('signatureRequest(id: $id)'))).toHaveLength(2);
-    expect(coordinator.snapshot()).toEqual([
+    expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({
         tradeId: 'Offer_1',
         stage: 'cancelling',

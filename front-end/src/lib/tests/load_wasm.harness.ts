@@ -2,7 +2,7 @@ import { Program } from 'clvm-lib';
 import { Subscription } from 'rxjs';
 import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
+import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import { storageRepository } from '../session/storageRepository';
@@ -106,7 +106,7 @@ beforeEach(async () => {
   _resetWasmLoadForTests();
   storeInitArgs(async () => {}, WholeWasmObject);
   await deleteSessionDatabase();
-  await storageRepository.claimLease();
+  await storageRepository.claimApplicationState();
 });
 
 afterAll(async () => {
@@ -137,7 +137,7 @@ async function cleanupActiveResources() {
   testPoller?.stop();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
-  await storageRepository.flushSessionSave();
+  await storageRepository.flushAggregate();
 }
 
 afterEach(async () => {
@@ -532,6 +532,18 @@ export interface SimulatorControllerBehavior {
   registerUser(uniqueId: string, balance?: bigint): Promise<string>;
 }
 
+const aggregateWalletProviderScopes = new WeakMap<BlockchainPoller, WalletProviderScope>();
+
+function aggregateWalletProviderScope(
+  blockchain: BlockchainPoller,
+): WalletProviderScope | undefined {
+  const existing = aggregateWalletProviderScopes.get(blockchain);
+  if (existing) return existing;
+  const scope = blockchain.rpc.getWalletOfferProvider()?.scope;
+  if (scope) aggregateWalletProviderScopes.set(blockchain, scope);
+  return scope;
+}
+
 export async function initSessionController(
   blockchain: BlockchainPoller,
   uniqueId: string,
@@ -541,6 +553,7 @@ export async function initSessionController(
   myContribution = 100n,
   theirContribution = 100n,
   simulator: SimulatorControllerBehavior = fakeBlockchainInfo,
+  walletProviderScope: WalletProviderScope | undefined = aggregateWalletProviderScope(blockchain),
 ) {
   const rewardPuzzleHash = await simulator.registerUser(uniqueId);
   const gameObject = new SessionController(
@@ -549,6 +562,8 @@ export async function initSessionController(
     myContribution,
     theirContribution,
     peer_conn,
+    undefined,
+    walletProviderScope,
   );
 
   await configSessionController(

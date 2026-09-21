@@ -10,16 +10,6 @@ import type { CanonicalFundingRequest } from './fundingRequest';
 export type WalletOperationOwner = WalletOfferOperation['owner'];
 export type WalletOperationPurpose = WalletOfferOperation['purpose'];
 
-export interface WalletOperationLifecycle {
-  generation(): number;
-  isCurrent(generation: number): boolean;
-}
-
-export interface WalletOperationCheckpoint {
-  entries: WalletOperationEntry[];
-  revision: number;
-}
-
 export interface FundingMaterialSink {
   getOwner(): WalletOperationOwner | null;
   isReady(): boolean;
@@ -214,7 +204,7 @@ export type WalletOperationTransition =
 export type WalletOperationState = Iterable<WalletOperationEntry>;
 
 export type WalletOperationCommand =
-  | { kind: 'hydrate'; entries: readonly WalletOperationEntry[]; replace: boolean }
+  | { kind: 'restore-aggregate' }
   | { kind: 'install'; entry: WalletOperationEntry }
   | { kind: 'remove'; key: WalletOperationEntryKey }
   | {
@@ -315,14 +305,10 @@ export function reduceWalletOperation(
     remove(walletOperationEntryKey(entry));
     nextState.push(structuredClone(entry));
   };
-  if (command.kind === 'hydrate') {
-    nextState = command.replace ? [] : nextState.map((entry) => structuredClone(entry));
+  if (command.kind === 'restore-aggregate') {
+    nextState = nextState.map((entry) => structuredClone(entry));
     let dirty = false;
-    for (const diskEntry of command.entries) {
-      const conflict = nextState.some(
-        (entry) => walletOperationEntryKey(entry) === walletOperationEntryKey(diskEntry),
-      );
-      if (conflict) continue;
+    for (const diskEntry of [...nextState]) {
       if (diskEntry.stage === 'reserved') {
         const promoted = {
           ...diskEntry,
@@ -331,7 +317,7 @@ export function reduceWalletOperation(
         };
         install(promoted);
         dirty = true;
-      } else install(diskEntry);
+      }
     }
     return {
       nextState,

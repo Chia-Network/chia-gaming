@@ -197,12 +197,7 @@ export class BlockchainPoller {
     run: () => Promise<T> | T,
     preserveActiveCompletion = false,
   ): Promise<T> {
-    return this.enqueueRpc(
-      this.mutationLane,
-      label,
-      () => this.walletOperations.runAfterHydration(run),
-      preserveActiveCompletion,
-    );
+    return this.enqueueRpc(this.mutationLane, label, run, preserveActiveCompletion);
   }
 
   private getQueuedWalletProvider(

@@ -549,7 +549,7 @@ export interface GameSessionProps {
     failureHandler: (reason: string) => void,
   ) => void;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../lib/session/saveEnvelope').SessionSave;
+  sessionSave?: import('../lib/session/persistence').RehydratedDurableApplicationState;
   onGameActivity?: () => void;
   onSessionPhaseChange?: (
     phase: Exclude<SessionPhase, 'none'>,

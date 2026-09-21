@@ -3,11 +3,9 @@ import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { storageRepository } from '../session/storageRepository';
 import { markSavedSession } from '../../hooks/saveCoordination';
-import {
-  channelStatusModelFromPayload,
-  createSessionModel,
-  sessionModelFromSave,
-} from '../session/model';
+import { captureDurableApplicationState } from '../session/sessionMachinePersist';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { isTerminalChannelSnapshot } from '../session/selectors';
 import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { coinIdFromBytes, toUint8 } from '../../util';
@@ -32,9 +30,11 @@ import * as assert from 'assert';
 import { createHash } from 'crypto';
 
 const harnessTerminalDependencies = {
-  stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
-  flushSave: storageRepository.flushSessionSave.bind(storageRepository),
-  discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
+  captureTerminal: (capture: Parameters<typeof captureDurableApplicationState>[0]) => {
+    const prepared = captureDurableApplicationState(capture);
+    if (!prepared) throw new Error('expected terminal capture');
+    return prepared;
+  },
   updateMarker: markSavedSession,
   teardown: () => {},
 };
@@ -201,10 +201,11 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     },
     harnessTerminalDependencies,
   );
-  const terminalSave = await storageRepository.peekSession();
-  assert.equal(terminalSave?.phase, 'terminal');
+  const terminalSave = await storageRepository.readCurrentState();
+  assert.equal(terminalSave?.session?.phase, 'terminal');
   assert.equal(
-    terminalSave && sessionModelFromSave(terminalSave).game.instances[ids[0]]?.presentation,
+    terminalSave &&
+      rehydrateDurableApplicationState(terminalSave).model.game.instances[ids[0]]?.presentation,
     'ended',
     'cold terminal restore must retain the timed-out game result',
   );
@@ -269,7 +270,7 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
     },
     harnessTerminalDependencies,
   );
-  assert.equal((await storageRepository.peekSession())?.phase, 'terminal');
+  assert.equal((await storageRepository.readCurrentState())?.session?.phase, 'terminal');
 }
 
 async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
@@ -507,7 +508,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
       [],
       `vanished unroll output must not request a nonexistent puzzle and solution; output=${unrollOutput.coin_name}, requested=[${replacementPuzzleRequests.join(',')}]`,
     );
-    assert.equal((await storageRepository.peekSession())?.phase, 'live');
+    assert.equal((await storageRepository.readCurrentState())?.session?.phase, 'live');
     assert.equal(lane.controller.lastChannelStatus?.state, 'Unrolling');
     assert.notEqual(lane.controller.lastChannelStatus?.session_disposition, 'Abandoned');
     assert.equal(isTerminalChannelSnapshot(lane.controller.lastChannelStatus), false);

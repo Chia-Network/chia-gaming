@@ -434,27 +434,23 @@ The hub does not create a session. It can only advise and relay:
   with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: `StorageRepository` atomically claims and reads the
-  salt-prefixed, masked Bencodex records, owns ordered durable mutations, and
-  strictly decodes/hydrates the `SessionSave` (including raw cradle/unacked byte
-  strings), while
-  `WalletOperationRuntime` decodes/hydrates its independent record. Small
-  preferences and the resumable-session boot marker remain in localStorage.
-  The app-owned formats are session envelope v33, Rust/WASM cradle schema 21,
-  IndexedDB schema 4, and wallet-operation record v8. The app database's durable
-  owner, write, and reset epochs are checked atomically with every mutation;
-  localStorage ownership/reset state is only an early UI hint. Callers use
-  semantic repository operations rather than raw storage mutations. Ordinary
-  I/O failure leaves the owner dirty and does not gate effects; typed authority
-  loss retires it and suppresses pending effects. Diagnostic history
+- **Application persistence**: `StorageRepository` atomically claims and reads
+  one salt-prefixed, masked Bencodex `DurableApplicationState` v1, owns ordered
+  root transforms, and checkpoints the whole aggregate. IndexedDB v5 has only
+  coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
+  schema 21. Wallet obligations and rejection transports are nested in the
+  same root and have no independent record, version, hydration, or writer.
+  Preferences are aggregate-owned; localStorage ownership/reset and resume
+  markers are only UX hints. Ordinary I/O failure retains the latest in-memory
+  root and does not gate effects; typed authority loss retires it and
+  suppresses pending effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the
   2,000-entry cap secondary.
 - **Resume on reload**: `BootRecoveryBoundary` owns pending wipe, visible local
-  loading, read-only inspection, atomic claim-and-read, subsequent strict
-  hydration, takeover, malformed evidence, reset retry, and authority loss. A
-  malformed strict-v8 wallet
-  operation record is
-  preserved and displayed there. Local dashboard/game presentation does not
+  loading, read-only inspection, atomic claim-and-read, one strict aggregate
+  rehydrate, takeover, malformed evidence, reset retry, and authority loss.
+  Any malformed nested field rejects the whole root and displays Retry Hard
+  Reset; no wallet/rejection/session slice is salvaged. Local dashboard/game presentation does not
   wait for hub or wallet reconnection; only dependent controls remain gated.
   Hard reset deletes the owned manifest/prefixes, preserves foreign databases,
   and reloads only after confirmed success.
@@ -481,7 +477,7 @@ The hub does not create a session. It can only advise and relay:
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
 
-- **Wallet operation recovery**: `WalletOperationRuntime` strict-v8 entries bind installation,
+- **Wallet operation recovery**: aggregate wallet-obligation entries bind installation,
   peer-session, and provider/account scope. Pending creation embeds the
   canonical request, exact recovery ID, and active/cancel-on-create disposition;
   pending cancellation preserves its exact IDs. Retired creation is cancelled
@@ -494,7 +490,7 @@ The hub does not create a session. It can only advise and relay:
   `signatureRequest` ID is known persists `best-effort-uncertain`; after that ID
   is known, paired begin/reconcile operations recover the exact creation or
   cancellation. A replacement begin that first yields the ID transitions into
-  exact reconciliation. Wallet record v8 carries typed
+  exact reconciliation. The aggregate carries typed
   `orphanRisk: 'pre-id-response-lost'` provenance through that transition and
   any eventual created trade, preserving the unidentified-request warning.
   Deployed WalletConnect cannot reconcile a lost successful create response end

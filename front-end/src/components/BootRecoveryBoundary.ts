@@ -11,14 +11,14 @@ import {
   reloadAfterSuccessfulHardReset,
   startPendingWalletConnectWipe,
 } from '../hooks/saveHardReset';
-import type { SessionSave } from '../lib/session/saveEnvelope';
+import type { DurableApplicationState } from '../lib/session/saveEnvelope';
 
 export type BootRecoveryState =
   | { kind: 'loading' }
   | { kind: 'ready' }
   | { kind: 'autoResuming' }
   | { kind: 'resumeDialog'; loadError: string | null }
-  | { kind: 'tabConflict'; save: SessionSave | null; midSession: boolean }
+  | { kind: 'tabConflict'; save: DurableApplicationState | null; midSession: boolean }
   | { kind: 'tabDead' };
 
 export type BootRestoreSource = 'manual' | 'automatic' | 'takeover';
@@ -26,10 +26,13 @@ export type BootRestoreSource = 'manual' | 'automatic' | 'takeover';
 export interface BootRecoveryBoundaryDependencies {
   onSessionId: (sessionId: string) => void;
   onRestore: (
-    save: SessionSave,
+    save: DurableApplicationState,
     source: BootRestoreSource,
   ) => void | { deferReady: boolean } | Promise<void | { deferReady: boolean }>;
-  onFreshClaim: (save: SessionSave | null, source: 'boot' | 'takeover') => void | Promise<void>;
+  onFreshClaim: (
+    save: DurableApplicationState,
+    source: 'boot' | 'takeover',
+  ) => void | Promise<void>;
   onAuthorityLost: () => void;
   beforeHardReset: () => void | Promise<void>;
   reload?: () => void;
@@ -44,12 +47,6 @@ function unavailableSavedSession(): BootRecoveryState {
     kind: 'resumeDialog',
     loadError: 'The saved session is unsupported or could not be loaded.',
   };
-}
-
-function isDurableSession(
-  save: SessionSave | null,
-): save is Exclude<SessionSave, { phase: 'preferences' }> {
-  return save !== null && save.phase !== 'preferences';
 }
 
 export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDependencies): {
@@ -70,7 +67,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
   const [resuming, setResuming] = useState(false);
   const [startingOver, setStartingOver] = useState(false);
   const autoResumeStartedRef = useRef(false);
-  const claimedRecoveryRef = useRef<SessionSave | null>(null);
+  const claimedRecoveryRef = useRef<DurableApplicationState | null>(null);
   const recoveryGenerationRef = useRef(0);
   const nextRecoveryGeneration = useCallback(() => {
     recoveryGenerationRef.current += 1;
@@ -97,44 +94,19 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         return;
       }
 
-      const hydration = await storageRepository.hydrateSessionCacheFromDisk();
+      const inspection = await storageRepository.inspect();
       if (cancelled || !recoveryIsCurrent(generation)) return;
-      if (hydration.status === 'failed') {
+      if (inspection.applicationStateError) {
         clearAutoResumeOnce();
         markSavedSession();
-        setState({ kind: 'resumeDialog', loadError: hydration.error });
+        setState({
+          kind: 'resumeDialog',
+          loadError: errorMessage(inspection.applicationStateError),
+        });
         return;
       }
-      if (hydration.discardedSession) {
-        if (isLeaseConflict()) {
-          setState({ kind: 'tabConflict', save: null, midSession: false });
-          return;
-        }
-        try {
-          const save = await storageRepository.claimAndHydrateSession();
-          if (cancelled || !recoveryIsCurrent(generation)) return;
-          if (isDurableSession(save)) {
-            claimedRecoveryRef.current = save;
-            markSavedSession();
-            setState(
-              peekAutoResumeOnce()
-                ? { kind: 'autoResuming' }
-                : { kind: 'resumeDialog', loadError: null },
-            );
-          } else {
-            clearAutoResumeOnce();
-            markSavedSession();
-            setState(unavailableSavedSession());
-          }
-        } catch (error) {
-          if (cancelled || !recoveryIsCurrent(generation)) return;
-          clearAutoResumeOnce();
-          markSavedSession();
-          setState({ kind: 'resumeDialog', loadError: errorMessage(error) });
-        }
-        return;
-      }
-      if (hydration.durableSession || storageRepository.shouldOfferResumeOrStartOver()) {
+      const inspected = inspection.applicationState;
+      if (inspected && storageRepository.shouldOfferResumeOrStartOver(inspected)) {
         markSavedSession();
         setState(
           peekAutoResumeOnce()
@@ -144,14 +116,14 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         return;
       }
       if (isLeaseConflict()) {
-        setState({ kind: 'tabConflict', save: null, midSession: false });
+        setState({ kind: 'tabConflict', save: inspected, midSession: false });
         return;
       }
 
       try {
-        const save = await storageRepository.claimAndHydrateSession();
+        const save = await storageRepository.claimApplicationState();
         if (cancelled || !recoveryIsCurrent(generation)) return;
-        if (isDurableSession(save)) {
+        if (storageRepository.shouldOfferResumeOrStartOver(save)) {
           claimedRecoveryRef.current = save;
           markSavedSession();
           setState(
@@ -200,7 +172,11 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
   }, [nextRecoveryGeneration]);
 
   const restoreClaimed = useCallback(
-    async (save: SessionSave, source: BootRestoreSource, generation: number): Promise<void> => {
+    async (
+      save: DurableApplicationState,
+      source: BootRestoreSource,
+      generation: number,
+    ): Promise<void> => {
       const sessionId = await storageRepository.ensureHubIdentity();
       if (!recoveryIsCurrent(generation)) return;
       dependenciesRef.current.onSessionId(sessionId);
@@ -231,8 +207,10 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         if (recoveryIsCurrent(generation)) claimedRecoveryRef.current = null;
         return;
       }
-      const inspected = await storageRepository.peekSession();
+      const inspection = await storageRepository.inspect();
       if (!recoveryIsCurrent(generation)) return;
+      if (inspection.applicationStateError) throw inspection.applicationStateError;
+      const inspected = inspection.applicationState;
       if (!inspected) {
         clearAutoResumeOnce();
         markSavedSession();
@@ -244,9 +222,9 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         setState({ kind: 'tabConflict', save: inspected, midSession: false });
         return;
       }
-      const claimed = await storageRepository.claimAndHydrateSession();
+      const claimed = await storageRepository.claimApplicationState();
       if (!recoveryIsCurrent(generation)) return;
-      if (!claimed) {
+      if (!storageRepository.shouldOfferResumeOrStartOver(claimed)) {
         clearAutoResumeOnce();
         markSavedSession();
         setState(unavailableSavedSession());
@@ -275,18 +253,18 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
     const generation = nextRecoveryGeneration();
     setResuming(true);
     try {
-      const claimed = await storageRepository.claimAndHydrateSession();
+      const claimed = await storageRepository.claimApplicationState();
       if (!recoveryIsCurrent(generation)) return;
       const sessionId = await storageRepository.ensureHubIdentity();
       if (!recoveryIsCurrent(generation)) return;
       dependenciesRef.current.onSessionId(sessionId);
       if (!recoveryIsCurrent(generation)) return;
-      if (claimed) {
+      if (storageRepository.shouldOfferResumeOrStartOver(claimed)) {
         const presentation = await dependenciesRef.current.onRestore(claimed, 'takeover');
         if (!recoveryIsCurrent(generation)) return;
         if (presentation?.deferReady) return;
       } else {
-        await dependenciesRef.current.onFreshClaim(null, 'takeover');
+        await dependenciesRef.current.onFreshClaim(claimed, 'takeover');
         if (!recoveryIsCurrent(generation)) return;
       }
       setState({ kind: 'ready' });

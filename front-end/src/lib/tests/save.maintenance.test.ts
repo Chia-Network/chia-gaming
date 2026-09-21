@@ -1,4 +1,3 @@
-import { storageRepository } from '../session/storageRepository';
 import { checkLease, isLeaseConflict, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { SESSION_DB_NAME, StorageAuthorityLostError } from '../session/indexedDb';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
@@ -17,10 +16,11 @@ import {
   testIndexedDb,
 } from './save.harness';
 import { storageRepository } from '../session/storageRepository';
+import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 
 describe('tab lease', () => {
   it('detects a conflicting active-tab owner', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     expect(checkLease()).toBe(true);
     expect(isLeaseConflict()).toBe(false);
 
@@ -31,7 +31,7 @@ describe('tab lease', () => {
   });
 
   it('clears the lease on close only when this tab still owns it', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     releaseLeaseIfOwner();
     expect(localStorage.getItem('appState_activeTab')).toBeNull();
     expect(checkLease()).toBe(true);
@@ -99,7 +99,6 @@ describe('hard reset', () => {
     expect(storageRepository.lifecycleGeneration).toBe(beforeReset + 1);
     expect(lifecycle).toHaveBeenCalledWith(beforeReset + 1, 'hard-reset');
     unsubscribe();
-    expect(localStorage.getItem('appPreferences')).toBeNull();
     expect(localStorage.getItem('appState')).toBeNull();
     expect(localStorage.getItem('appState_wcChangeAddress:123')).toBeNull();
     expect(localStorage.getItem('appState_wcRemoteWalletId:123')).toBeNull();
@@ -113,10 +112,14 @@ describe('hard reset', () => {
     expect(sessionStorage.getItem('foreign-walletconnect-settings')).toBe(
       'preserve-session-walletconnect-lookalike',
     );
-    expect(storageRepository.loadState().phase).toBe('preferences');
+    expect(storageRepository.loadState().session).toBeNull();
   });
 
   it('invalidates a held checkpoint before reset and cannot recreate storage afterward', async () => {
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: { provider: 'simulator', identity: 'installation' },
+    });
     walletOperationRuntime.registerReserved(
       'pre-reset-ledger',
       {
@@ -130,8 +133,8 @@ describe('hard reset', () => {
       ...sampleSession,
       walletProviderScope: { provider: 'simulator', identity: 'installation' },
     });
-    await storageRepository.flushSessionSave();
-    await storageRepository.writeRejection({
+    await storageRepository.flushAggregate();
+    const rejection = {
       kind: 'inbound-receipt',
       peerId: 'pre-reset-peer',
       sessionId: 'ab'.repeat(16),
@@ -139,14 +142,18 @@ describe('hard reset', () => {
       remoteNumber: 1n,
       unackedMessages: [],
       createdAt: Date.now(),
-    });
+    } as const;
+    await captureDurableApplicationState({
+      kind: 'transform',
+      transform: (state) => ({ ...state, rejectionTransports: [rejection] }),
+    })?.write();
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
     storageRepository.holdNextMutationForTests(held);
-    const staleCheckpoint = storageRepository.saveSessionAndWalletOperations(
+    const staleCheckpoint = storageRepository.checkpointApplicationState(
       liveSave({
         ...sampleSession,
         walletProviderScope: { provider: 'simulator', identity: 'installation' },
@@ -175,8 +182,8 @@ describe('hard reset', () => {
       indexedDB as IDBFactory & { databases: () => Promise<Array<{ name?: string }>> }
     ).databases();
     expect(databases.map((database) => database.name)).not.toContain(SESSION_DB_NAME);
-    expect(storageRepository.loadState().phase).toBe('preferences');
-    expect(walletOperationRuntime.snapshot()).toEqual([]);
+    expect(storageRepository.loadState().session).toBeNull();
+    expect(storageRepository.walletObligations()).toEqual([]);
   });
 
   it('deletes only owned IndexedDB databases returned by the browser', async () => {

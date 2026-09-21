@@ -1,6 +1,7 @@
 import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, InternalBlockchainInterface, WasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import {
   destroySessionController,
@@ -699,6 +700,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
+      walletOperationRuntime,
     );
     setActiveBlob(blob);
     const cradle = {
@@ -744,6 +746,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
+      walletOperationRuntime,
     );
     setActiveBlob(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
@@ -777,7 +780,14 @@ describe('transaction submission', () => {
   });
 
   it('keeps a global drain invariant failure fatal without a blockchain', () => {
-    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn([], []),
+      walletOperationRuntime,
+    );
     attachTestCommitCoordinator(blob);
     const recoverableErrors: string[] = [];
     blob.getObservable().subscribe((event) => {
@@ -812,6 +822,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
+      walletOperationRuntime,
     );
     setActiveBlob(blob);
     const cradle = {
@@ -848,6 +859,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
+      walletOperationRuntime,
     );
     setActiveBlob(blob);
     const cradle = makeMockCradle();
@@ -880,7 +892,14 @@ describe('transaction submission', () => {
       } as InternalBlockchainInterface,
       60000,
     );
-    const blob = new SessionController(null, 'test', 100n, 100n, makePeerConn([], []));
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn([], []),
+      walletOperationRuntime,
+    );
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const submission = {

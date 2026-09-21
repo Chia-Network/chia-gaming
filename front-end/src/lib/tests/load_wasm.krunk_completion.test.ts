@@ -7,9 +7,9 @@ import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize'
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { persistSessionSnapshot } from '../session/sessionMachinePersist';
+import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { validateSessionSaveEnvelope } from '../session/persistence';
+import { decodeDurableApplicationState } from '../session/persistence';
 import type { GameTerminalModel, HandProposal } from '../session/types';
 import {
   addActiveSubscription,
@@ -99,17 +99,15 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         payloadMemberCount: hand?.members.length ?? 0,
         activeIds: [...machine.model.game.activeIds],
       });
-      await persistSessionSnapshot({
+      await captureDurableApplicationState({
+        kind: 'live',
         controller,
         getState: () => runtime.getState(),
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-        save: async (save) => {
-          await storageRepository.saveSession(save);
-          validateSessionSaveEnvelope((await storageRepository.peekSession())!);
-        },
-      });
+      })?.write();
+      decodeDurableApplicationState((await storageRepository.readCurrentState())!);
     };
     const runtime = new SessionMachineRuntime(
       createSessionMachineState(
@@ -160,16 +158,16 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     );
   }
 
-  const flushPersistence = async () => {
+  const flushBoundary = async () => {
     await flushWrapperDrain(cradles);
     await Promise.all(controllers.map((controller) => controller.flushPendingSave()));
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     await Promise.resolve();
     assert.deepEqual(errors, []);
   };
   const exchangeAndPersist = async () => {
     await exchangeUntilIdle(cradles);
-    await flushPersistence();
+    await flushBoundary();
     for (const [index, ids] of pendingSettlementIds.entries()) {
       for (const id of ids.splice(0)) {
         const instance = runtimes[index].getState().model.game.instances[id];

@@ -359,14 +359,8 @@ export class SessionController implements PollingGameSession {
     this.qualifyingEvents = 0;
     this.blockchain = blockchain;
     this.walletOperations = walletOperations;
-    const saved = storageRepository.loadState();
     if (walletProviderScope) {
       this.walletProviderScope = structuredClone(walletProviderScope);
-    } else if (
-      (saved.phase === 'pre-handshake' || saved.phase === 'live') &&
-      saved.pairing.gameSessionId === this.reliableState.sessionId
-    ) {
-      this.walletProviderScope = structuredClone(saved.walletProviderScope);
     } else {
       this.walletProviderScope =
         blockchain?.resolveWalletOperationOwner(this.walletProviderOwnerSelector())
@@ -942,8 +936,8 @@ export class SessionController implements PollingGameSession {
     const owner = this.currentWalletOperationOwner();
     if (
       !owner &&
-      this.walletOperations
-        ?.snapshot()
+      storageRepository
+        .walletObligations()
         .some(
           (entry) =>
             entry.owner.installationPlayerId === this.uniqueId &&
@@ -972,7 +966,7 @@ export class SessionController implements PollingGameSession {
   private scheduleCancelRequiredEntries(): void {
     const owner = this.currentWalletOperationOwnerForRead();
     if (!owner) return;
-    for (const entry of entriesForOwner(this.requireWalletOperations().snapshot(), owner)) {
+    for (const entry of entriesForOwner(storageRepository.walletObligations(), owner)) {
       if (entry.stage === 'cancel-required' || entry.stage === 'cancelling') {
         this.scheduleCancellation(entry.tradeId);
       }
@@ -1381,7 +1375,7 @@ export class SessionController implements PollingGameSession {
         !this.reliableTransport.hasPendingDurability()
       ) {
         const obligations = reservationOwner
-          ? entriesForOwner(this.requireWalletOperations().snapshot(), reservationOwner)
+          ? entriesForOwner(storageRepository.walletObligations(), reservationOwner)
           : [];
         if (obligations.length > 0) {
           throw new WalletOfferCleanupPendingError(obligations);
@@ -1397,7 +1391,7 @@ export class SessionController implements PollingGameSession {
       }
     }
     const obligations = reservationOwner
-      ? entriesForOwner(this.requireWalletOperations().snapshot(), reservationOwner)
+      ? entriesForOwner(storageRepository.walletObligations(), reservationOwner)
       : [];
     if (obligations.length > 0) {
       throw new WalletOfferCleanupPendingError(obligations);

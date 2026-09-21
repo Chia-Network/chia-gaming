@@ -1807,7 +1807,9 @@ const port = process.env.PORT || 5801;
 httpServer.keepAliveTimeout = 5_000;
 httpServer.headersTimeout = 6_000;
 httpServer.listen({ host: '::', port }, () => {
-  console.log(`Server running on port ${port}`);
+  const address = httpServer.address();
+  const listeningPort = typeof address === 'object' && address ? address.port : port;
+  console.log(`Server running on port ${listeningPort}`);
 });
 
 let shuttingDown = false;

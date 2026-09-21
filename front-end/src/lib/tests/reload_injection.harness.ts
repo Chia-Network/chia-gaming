@@ -2,13 +2,13 @@ import type { Subscription } from 'rxjs';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
-import { type LiveSessionSave } from '../session/saveEnvelope';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { type DurableApplicationState, type LiveSessionSave } from '../session/saveEnvelope';
 import { storageRepository } from '../session/storageRepository';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
-import { sessionModelFromSave } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { prepareSessionPersistence } from '../session/sessionMachinePersist';
+import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import {
@@ -22,16 +22,6 @@ export interface ReloadableSessionLane {
   controller: SessionController;
   runtime: SessionMachineRuntime;
   subscription: Subscription;
-}
-
-let reloadBarrier: Promise<void> | null = null;
-let reloadController: SessionController | null = null;
-
-function persistOutsideReload<T>(
-  controller: SessionController,
-  persist: () => Promise<T>,
-): Promise<T> {
-  return reloadBarrier && reloadController !== controller ? reloadBarrier.then(persist) : persist();
 }
 
 function bindRuntime(
@@ -53,8 +43,6 @@ function bindRuntime(
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
       onError: (error) => controller.reportRuntimeError(error),
-      save: (update) =>
-        persistOutsideReload(controller, () => storageRepository.saveSession(update)),
     },
   );
   runtime.activate();
@@ -127,44 +115,36 @@ export async function injectSessionReload(
   poller: BlockchainPoller,
   wasmStateInit = new WasmStateInit(fetchPreset),
   whileReloaded?: () => Promise<void>,
-): Promise<{ lane: ReloadableSessionLane; save: LiveSessionSave }> {
+): Promise<{
+  lane: ReloadableSessionLane;
+  save: DurableApplicationState & { session: LiveSessionSave };
+}> {
   await lane.runtime.persist();
   await lane.controller.flushPendingWork();
   await lane.runtime.persist();
-  if (reloadBarrier) await reloadBarrier;
-  let releaseReload!: () => void;
-  reloadBarrier = new Promise<void>((resolve) => {
-    releaseReload = resolve;
-  });
-  reloadController = lane.controller;
-  let save: Awaited<ReturnType<typeof storageRepository.peekSession>>;
-  try {
-    await lane.runtime.persist();
-    await prepareSessionPersistence({
-      controller: lane.controller,
-      getState: () => lane.runtime.getState(),
-      restoring: lane.controller.getRestoreStatus() !== 'idle',
-      getRestoreStatus: () => lane.controller.getRestoreStatus(),
-      getRestoreError: () => lane.controller.getRestoreError(),
-    })?.write();
-    await storageRepository.flushSessionSave();
-    lane.subscription.unsubscribe();
-    lane.runtime.setRender(() => {});
-    lane.controller.cleanup();
-    await lane.controller.flushPendingWork();
-    // This harness reloads one in-process lane while its peer remains live.
-    // Preserve the process-global wallet runtime and the peer's transient sink.
-    storageRepository._resetForTests({ preserveWalletOperationRuntime: true });
-    await storageRepository.claimLease();
-    save = await storageRepository.peekSession();
-  } finally {
-    reloadController = null;
-    reloadBarrier = null;
-    releaseReload();
+  await lane.runtime.persist();
+  await captureDurableApplicationState({
+    kind: 'live',
+    controller: lane.controller,
+    getState: () => lane.runtime.getState(),
+    restoring: lane.controller.getRestoreStatus() !== 'idle',
+    getRestoreStatus: () => lane.controller.getRestoreStatus(),
+    getRestoreError: () => lane.controller.getRestoreError(),
+  })?.write();
+  await storageRepository.flushAggregate();
+  lane.subscription.unsubscribe();
+  lane.runtime.setRender(() => {});
+  lane.controller.cleanup();
+  await lane.controller.flushPendingWork();
+  storageRepository._resetForTests();
+  await storageRepository.claimApplicationState();
+  const save = await storageRepository.readCurrentState();
+  if (save?.session?.phase !== 'live') {
+    throw new Error(
+      `reload injection expected a live session save, got ${save?.session?.phase ?? 'none'}`,
+    );
   }
-  if (save?.phase !== 'live') {
-    throw new Error(`reload injection expected a live session save, got ${save?.phase ?? 'none'}`);
-  }
+  const live = save.session;
 
   const uniqueId = lane.controller.uniqueId;
   await whileReloaded?.();
@@ -172,23 +152,26 @@ export async function injectSessionReload(
   const controller = new SessionController(
     poller,
     uniqueId,
-    BigInt(save.pairing.myContribution),
-    BigInt(save.pairing.theirContribution),
+    BigInt(live.pairing.myContribution),
+    BigInt(live.pairing.theirContribution),
     lane.adapter.peerConnection,
+    undefined,
+    save.walletContext ?? undefined,
   );
-  controller.perGameAmount = BigInt(save.pairing.perGameAmount);
+  controller.perGameAmount = BigInt(live.pairing.perGameAmount);
   controller.setPeerKeepalive(() => lane.adapter.peerConnection.sendKeepalive());
   lane.adapter.setRuntimeBlob(controller);
+  const bootstrap = rehydrateDurableApplicationState(save);
   const restoredLane = bindRuntime(
     lane.adapter,
     controller,
-    sessionModelFromSave(save),
-    save.pairing.iStarted,
+    bootstrap.model,
+    live.pairing.iStarted,
     true,
   );
   controller.attachBlockchain(poller);
   controller.kickSystem(2);
-  await controller.beginRestore(restoreSession(controller, save, wasmStateInit));
+  await controller.beginRestore(restoreSession(controller, bootstrap, wasmStateInit));
 
   return {
     lane: restoredLane,

@@ -1,13 +1,14 @@
-import type { CoinOfInterestEntry, WalletProviderScope } from '../../types/ChiaGaming';
+import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
 import type { SessionController } from '../../hooks/SessionController';
-import { type SessionPresentationSave, type TerminalSessionSave } from './saveEnvelope';
-import { storageRepository } from './storageRepository';
 import { markSavedSession } from '../../hooks/saveCoordination';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
-import { channelStatusPayloadFromModel } from './normalization';
 import { selectDashboardCoins } from './selectors';
-import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionModel } from './types';
+import {
+  captureDurableApplicationState,
+  type PreparedDurableApplicationStateCapture,
+  type TerminalCapture,
+} from './sessionMachinePersist';
 
 export interface TerminalSessionIdentity {
   myName: string;
@@ -16,21 +17,13 @@ export interface TerminalSessionIdentity {
 }
 
 export interface TerminalFinalizationDependencies {
-  stageTerminal: (fields: {
-    walletProviderScope: WalletProviderScope;
-    terminal: TerminalSessionSave['terminal'];
-    presentation: SessionPresentationSave;
-  }) => Promise<void>;
-  flushSave: () => Promise<void>;
-  discardTerminal: () => void;
+  captureTerminal: (capture: TerminalCapture) => PreparedDurableApplicationStateCapture;
   updateMarker: () => void;
   teardown: (controller: SessionController) => void;
 }
 
 const defaultDependencies: TerminalFinalizationDependencies = {
-  stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
-  flushSave: storageRepository.flushSessionSave.bind(storageRepository),
-  discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
+  captureTerminal: (capture) => captureDurableApplicationState(capture)!,
   updateMarker: markSavedSession,
   teardown: destroyFlushedTerminalSessionController,
 };
@@ -66,25 +59,20 @@ export function finalizeTerminalSession(
     const snapshot = await args.controller.quiesceForTerminalFinalization();
     const model = structuredClone(snapshot.model);
     const coins = selectDashboardCoins(model, snapshot.coinsOfInterest);
-    const terminalFields = structuredClone({
-      walletProviderScope: args.controller.getWalletProviderScope(),
-      terminal: {
+    const capture: TerminalCapture = {
+      kind: 'terminal',
+      controller: args.controller,
+      model,
+      identity: {
         iStarted: identity.iStarted,
-        coinsOfInterest: coins,
         myAlias: identity.myName,
         opponentAlias: identity.opponentName ?? null,
       },
-      presentation: snapshotFromSessionModel(model, {
-        channelStatus: channelStatusPayloadFromModel(model.channel.status),
-        waitingStateEnteredAt: null,
-        cleanShutdownGraceStartedAt: null,
-      }),
-    });
+      coinsOfInterest: coins,
+    };
     try {
-      await dependencies.stageTerminal(terminalFields);
-      await dependencies.flushSave();
+      await dependencies.captureTerminal(capture).write();
     } catch (error) {
-      dependencies.discardTerminal();
       throw new TerminalSessionStorageError(error);
     }
     dependencies.updateMarker();

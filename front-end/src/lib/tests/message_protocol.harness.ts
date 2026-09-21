@@ -13,13 +13,12 @@ import type {
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { storageRepository } from '../session/storageRepository';
+import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
-import { storageRepository } from '../session/storageRepository';
-
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
   {
@@ -44,18 +43,21 @@ export const mockRpc = new Proxy(
 
 export function saveLiveSession(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
-  return storageRepository.saveSession({
-    scope: 'live',
-    walletProviderScope: (fields.walletProviderScope as
-      | typeof save.walletProviderScope
-      | undefined) ?? {
-      provider: 'simulator',
-      identity: 'submission-handoff',
-    },
-    pairing: save.pairing,
-    live: save.live,
-    presentation: save.presentation,
+  if (save.session?.phase !== 'live') throw new Error('expected live save fixture');
+  const walletProviderScope = (fields.walletProviderScope as
+    | NonNullable<typeof save.walletContext>
+    | undefined) ?? {
+    provider: 'simulator',
+    identity: 'submission-handoff',
+  };
+  const current = storageRepository.loadState();
+  return storageRepository.checkpointApplicationState({
+    ...current,
+    identity: { ...current.identity, ...save.identity },
+    preferences: { ...current.preferences, ...save.preferences },
     history: save.history,
+    walletContext: walletProviderScope,
+    session: save.session,
   });
 }
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
@@ -421,8 +423,16 @@ beforeEach(async () => {
   setTestGlobal('indexedDB', testIndexedDb);
   mockBlockchain.detachWalletOperationProvider();
   storageRepository._resetForTests();
-  await storageRepository.claimLease();
-  await storageRepository.saveWalletOperations([]);
+  await storageRepository.claimApplicationState();
+  await storageRepository.clearSession();
+  const empty = {
+    ...storageRepository.loadState(),
+    walletContext: null,
+    walletObligations: [],
+  };
+  storageRepository._replaceApplicationStateForTests(empty);
+  await storageRepository.checkpointApplicationState(empty);
+  walletOperationRuntime.resetForTests();
 });
 
 afterEach(async () => {

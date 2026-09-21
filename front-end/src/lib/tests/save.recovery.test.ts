@@ -10,22 +10,29 @@ import {
   clearAutoResumeOnce,
 } from '../../hooks/saveCoordination';
 import {
-  readSessionRecord,
-  readWalletOperationRecord,
+  indexedDbStoragePort,
+  readApplicationState,
   SESSION_DB_NAME,
   StorageAuthorityLostError,
 } from '../session/indexedDb';
 import { baseSave } from './session_save_envelope.fixtures';
-import { WalletOperationRuntime, walletOperationRuntime } from '../session/walletOperationRuntime';
+import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { captureDurableApplicationState } from '../session/sessionMachinePersist';
+import { freshSessionState } from '../session/sessionStateTransitions';
+import type { DurableApplicationState } from '../session/saveEnvelope';
 import {
-  makeStorage,
   requireLive,
   sampleSession,
   saveHistory,
   saveLiveFields,
   savePreferences,
-  setTestGlobal,
 } from './save.harness';
+
+async function writeRootTransform(
+  transform: (state: DurableApplicationState) => DurableApplicationState,
+): Promise<void> {
+  await captureDurableApplicationState({ kind: 'transform', transform })?.write();
+}
 
 describe('session persistence: recovery', () => {
   it('advances and publishes lifecycle generation on loss and reclaim', async () => {
@@ -37,7 +44,7 @@ describe('session persistence: recovery', () => {
 
     storageRepository.loseAuthority('takeover');
     expect(storageRepository.isGenerationCurrent(initial)).toBe(false);
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
 
     expect(events).toEqual([
       [initial + 1, 'authority-lost'],
@@ -49,6 +56,10 @@ describe('session persistence: recovery', () => {
 
   it('rejects a claim fenced after commit without installing or rewriting browser state', async () => {
     const before = storageRepository.loadState();
+    storageRepository._replaceApplicationStateForTests({
+      ...before,
+      walletContext: { provider: 'simulator', identity: before.identity.playerId },
+    });
     walletOperationRuntime.registerReserved(
       'pre-authority-trade',
       {
@@ -58,8 +69,8 @@ describe('session persistence: recovery', () => {
       },
       { kind: 'funding', operationId: 'pre-authority-operation' },
     );
-    await walletOperationRuntime.flushPersistence();
-    storageRepository._resetForTests({ preserveWalletOperationRuntime: true });
+    await storageRepository.flushAggregate();
+    storageRepository._resetForTests();
     const retainedPlayerId = storageRepository.loadState().identity.playerId;
 
     let release!: () => void;
@@ -72,66 +83,79 @@ describe('session persistence: recovery', () => {
     });
     storageRepository.holdNextClaimAfterCommitForTests(barrier, committed);
 
-    const claim = storageRepository.claimAndHydrateSession();
+    const claim = storageRepository.claimApplicationState();
     await reachedCommit;
     localStorage.setItem('appState_activeTab', 'winning-tab');
-    const winningPreferences = JSON.stringify({
-      playerId: 'winning-player',
-      extra: 'must-not-be-normalized',
-    });
-    localStorage.setItem('appPreferences', winningPreferences);
     storageRepository.loseAuthority('takeover');
     release();
 
     await expect(claim).rejects.toBeInstanceOf(StorageAuthorityLostError);
     expect(localStorage.getItem('appState_activeTab')).toBe('winning-tab');
-    expect(localStorage.getItem('appPreferences')).toBe(winningPreferences);
     expect(storageRepository.loadState().identity.playerId).toBe(retainedPlayerId);
-    expect(walletOperationRuntime.snapshot()).toEqual([
-      expect.objectContaining({ tradeId: 'pre-authority-trade' }),
-    ]);
   });
 
-  it('does not hydrate a persisted bare ledger array', () => {
-    expect(() => new WalletOperationRuntime().hydrateFromDisk([])).toThrow(
-      'Garbled wallet operation record',
-    );
+  it('one authority claim installs the complete aggregate root', async () => {
+    const rejection = {
+      kind: 'inbound-receipt' as const,
+      peerId: 'peer-root',
+      sessionId: '12'.repeat(16),
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      unackedMessages: [],
+      createdAt: 1,
+    };
+    await writeRootTransform((state) => ({
+      ...state,
+      rejectionTransports: [rejection],
+    }));
+    storageRepository._resetForTests();
+
+    const claimed = await storageRepository.claimApplicationState();
+
+    expect(claimed.rejectionTransports).toEqual([rejection]);
+    expect(storageRepository.loadState().rejectionTransports).toEqual([rejection]);
+    expect(claimed.walletObligations).toEqual(storageRepository.walletObligations());
   });
 
-  it('reports malformed ledger boot hydration and leaves the record on disk', async () => {
+  it('reports malformed aggregate boot inspection and leaves the record on disk', async () => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction('wallet-reservations', 'readwrite');
-      transaction.objectStore('wallet-reservations').put({ malformed: true }, 'current');
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error);
-    });
-    db.close();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction('application-state', 'readwrite');
+        transaction.objectStore('application-state').put({ malformed: true }, 'current');
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+    } finally {
+      db.close();
+    }
 
     storageRepository._resetForTests();
-    const hydration = await storageRepository.hydrateSessionCacheFromDisk();
-    expect(hydration).toEqual({
-      status: 'failed',
-      error: 'Stored wallet operation record is malformed',
-    });
+    const inspection = await storageRepository.inspect();
+    expect(inspection.applicationState).toBeNull();
+    expect(inspection.applicationStateError).toBeInstanceOf(Error);
 
     const verifyDb = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
-    const stored = await new Promise<unknown>((resolve, reject) => {
-      const transaction = verifyDb.transaction('wallet-reservations', 'readonly');
-      const request = transaction.objectStore('wallet-reservations').get('current');
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    verifyDb.close();
+    let stored: unknown;
+    try {
+      stored = await new Promise<unknown>((resolve, reject) => {
+        const transaction = verifyDb.transaction('application-state', 'readonly');
+        const request = transaction.objectStore('application-state').get('current');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+    } finally {
+      verifyDb.close();
+    }
     expect(stored).toEqual({ malformed: true });
   });
 
@@ -139,7 +163,7 @@ describe('session persistence: recovery', () => {
     expect(hasSavedSessionMarker()).toBe(false);
 
     saveLiveFields();
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     expect(hasSavedSessionMarker()).toBe(true);
 
     await storageRepository.clearSession();
@@ -149,21 +173,21 @@ describe('session persistence: recovery', () => {
   it('keeps an explicit pre-game marker across blockchainType preference writes', async () => {
     markSavedSession();
     savePreferences({ blockchainType: 'simulator' });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
 
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(await storageRepository.peekSession()).toMatchObject({
+    expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { blockchainType: 'simulator' },
     });
   });
 
   it('treats leftover blockchainType without a marker as resume-worthy', async () => {
     savePreferences({ blockchainType: 'walletconnect' });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     clearSavedSessionMarker();
 
     expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
-    expect(await storageRepository.peekSession()).toMatchObject({
+    expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { blockchainType: 'walletconnect' },
     });
     expect(hasSavedSessionMarker()).toBe(true);
@@ -171,11 +195,11 @@ describe('session persistence: recovery', () => {
 
   it('treats leftover hubUrl without a marker as resume-worthy', async () => {
     savePreferences({ hubUrl: 'http://localhost:3003' });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     clearSavedSessionMarker();
 
     expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
-    expect(await storageRepository.peekSession()).toMatchObject({
+    expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { hubUrl: 'http://localhost:3003' },
     });
     expect(hasSavedSessionMarker()).toBe(true);
@@ -206,23 +230,24 @@ describe('session persistence: recovery', () => {
 
   it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
     saveLiveFields();
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     expect(hasSavedSessionMarker()).toBe(true);
 
     // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
     storageRepository._resetForTests();
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     expect(hasSavedSessionMarker()).toBe(true);
     expect(storageRepository.loadState()).not.toHaveProperty('live');
 
     saveHistory({ diagnosticLog: ['boot log'] });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
 
     storageRepository._resetForTests();
-    const loaded = requireLive(await storageRepository.peekSession());
+    const restored = await storageRepository.readCurrentState();
+    const loaded = requireLive(restored);
     expect(loaded.live.serializedGameSession).toEqual(sampleSession.serializedGameSession);
     expect(loaded.pairing.token).toBe(sampleSession.pairingToken);
-    expect(loaded.history.diagnosticLog).toEqual(['boot log']);
+    expect(restored?.history.diagnosticLog).toEqual(['boot log']);
   });
 
   it('flush persists a newer in-memory cradle even when sessionId is unset', async () => {
@@ -235,28 +260,28 @@ describe('session persistence: recovery', () => {
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
 
     saveLiveFields({
       ...sampleSession,
       serializedGameSession: second,
       pairingToken: 'tok-v2',
     });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
 
     storageRepository._resetForTests();
-    const loaded = requireLive(await storageRepository.peekSession());
+    const loaded = requireLive(await storageRepository.readCurrentState());
     expect(loaded.live.serializedGameSession).toEqual(second);
     expect(loaded.pairing.token).toBe('tok-v2');
   });
 
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await storageRepository.saveSessionAndWalletOperations(
+    await storageRepository.checkpointApplicationState(
       baseSave({ playerId: 'player', blockchainType: 'simulator' }),
       [],
     );
-    expect(await storageRepository.peekSession()).toMatchObject({
+    expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { blockchainType: 'simulator' },
     });
     expect(hasSavedSessionMarker()).toBe(true);
@@ -264,21 +289,21 @@ describe('session persistence: recovery', () => {
 
   it('clears the marker for a present but empty IndexedDB record', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await storageRepository.saveSessionAndWalletOperations(baseSave({ playerId: 'player' }), []);
-    expect(await storageRepository.peekSession()).toBeNull();
+    await storageRepository.checkpointApplicationState(baseSave({ playerId: 'player' }));
+    expect(await storageRepository.readCurrentState()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(false);
   });
 
   it('returns null when nothing is saved', async () => {
-    expect(await storageRepository.peekSession()).toBeNull();
+    expect(await storageRepository.readCurrentState()).toBeNull();
   });
 
   it('clearSession asynchronously deletes resumable state', async () => {
     saveLiveFields();
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     await storageRepository.clearSession();
     storageRepository._resetForTests();
-    expect(await storageRepository.peekSession()).toBeNull();
+    expect(await storageRepository.readCurrentState()).toBeNull();
   });
 
   it('orders clearSession before an immediate unawaited replacement save', async () => {
@@ -286,7 +311,7 @@ describe('session persistence: recovery', () => {
       ...sampleSession,
       serializedGameSession: new Uint8Array([1]),
     });
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
 
     const cleared = storageRepository.clearSession();
     const saved = saveLiveFields({
@@ -294,10 +319,10 @@ describe('session persistence: recovery', () => {
       serializedGameSession: new Uint8Array([2]),
       pairingToken: 'replacement-after-clear',
     });
-    const flushed = storageRepository.flushSessionSave();
+    const flushed = storageRepository.flushAggregate();
     await Promise.all([cleared, saved, flushed]);
 
-    const persisted = requireLive(await readSessionRecord());
+    const persisted = requireLive(await readApplicationState());
     expect(persisted.live.serializedGameSession).toEqual(new Uint8Array([2]));
     expect(persisted.pairing.token).toBe('replacement-after-clear');
   });
@@ -319,9 +344,9 @@ describe('session persistence: recovery', () => {
       ...sampleSession,
       serializedGameSession: new Uint8Array([7]),
     });
-    const checkpoint = storageRepository.flushSessionSave();
+    const checkpoint = storageRepository.flushAggregate();
     await reachedCommit;
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     expectConsoleError('Durable storage authority was lost');
     release();
 
@@ -330,7 +355,11 @@ describe('session persistence: recovery', () => {
     unsubscribe();
   });
 
-  it('clearSession deletes the session while preserving the independent ledger', async () => {
+  it('clearSession removes the session while preserving wallet obligations in the root', async () => {
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: { provider: 'simulator', identity: 'installation' },
+    });
     walletOperationRuntime.registerReserved(
       'trade-clear',
       {
@@ -340,12 +369,12 @@ describe('session persistence: recovery', () => {
       },
       { kind: 'funding', operationId: 'funding-operation' },
     );
-    await walletOperationRuntime.flushPersistence();
+    await storageRepository.flushAggregate();
     await storageRepository.clearSession();
     storageRepository._resetForTests();
 
-    await storageRepository.claimAndHydrateSession();
-    expect(walletOperationRuntime.snapshot()).toEqual([
+    await storageRepository.claimApplicationState();
+    expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-clear',
         stage: 'cancel-required',
@@ -354,28 +383,32 @@ describe('session persistence: recovery', () => {
     ]);
   });
 
-  it('hydrates the independent ledger without a session record or marker', async () => {
+  it('installs wallet obligations from a root without a session', async () => {
     storageRepository._resetForTests();
-    await storageRepository.claimLease();
-    await storageRepository.saveWalletOperations([
-      {
-        tradeId: 'trade-independent',
-        owner: {
-          installationPlayerId: 'installation',
-          peerSessionId: 'peer-session',
-          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    await storageRepository.claimApplicationState();
+    const state = {
+      ...storageRepository.loadState(),
+      walletContext: { provider: 'simulator' as const, identity: 'installation' },
+      walletObligations: [
+        {
+          tradeId: 'trade-independent',
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'peer-session',
+            providerScope: { provider: 'simulator' as const, identity: 'installation' },
+          },
+          purpose: { kind: 'fee', operationId: 'submission' },
+          stage: 'reserved',
+          reason: 'created-before-reload',
         },
-        purpose: { kind: 'fee', operationId: 'submission' },
-        stage: 'reserved',
-        reason: 'created-before-reload',
-      },
-    ]);
+      ],
+    };
+    storageRepository._replaceApplicationStateForTests(state);
+    await storageRepository.checkpointApplicationState(state);
     clearSavedSessionMarker();
 
-    expect(await storageRepository.claimAndHydrateSession()).toMatchObject({
-      phase: 'preferences',
-    });
-    expect(walletOperationRuntime.snapshot()).toEqual([
+    expect(await storageRepository.claimApplicationState()).toMatchObject({ session: null });
+    expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-independent',
         stage: 'cancel-required',
@@ -386,24 +419,30 @@ describe('session persistence: recovery', () => {
 
   it('restores retained fee sources without promoting them to cancellation', async () => {
     storageRepository._resetForTests();
-    await storageRepository.claimLease();
-    await storageRepository.saveWalletOperations([
-      {
-        tradeId: 'trade-retained',
-        owner: {
-          installationPlayerId: 'installation',
-          peerSessionId: 'peer-session',
-          providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    await storageRepository.claimApplicationState();
+    const state = {
+      ...storageRepository.loadState(),
+      walletContext: { provider: 'simulator' as const, identity: 'installation' },
+      walletObligations: [
+        {
+          tradeId: 'trade-retained',
+          owner: {
+            installationPlayerId: 'installation',
+            peerSessionId: 'peer-session',
+            providerScope: { provider: 'simulator' as const, identity: 'installation' },
+          },
+          purpose: { kind: 'fee', operationId: 'submission-7' },
+          stage: 'retained-for-replay',
+          reason: 'fee-source-attached',
         },
-        purpose: { kind: 'fee', operationId: 'submission-7' },
-        stage: 'retained-for-replay',
-        reason: 'fee-source-attached',
-      },
-    ]);
+      ],
+    };
+    storageRepository._replaceApplicationStateForTests(state);
+    await storageRepository.checkpointApplicationState(state);
 
-    await storageRepository.claimAndHydrateSession();
+    await storageRepository.claimApplicationState();
 
-    expect(walletOperationRuntime.snapshot()).toEqual([
+    expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({
         tradeId: 'trade-retained',
         stage: 'retained-for-replay',
@@ -413,7 +452,7 @@ describe('session persistence: recovery', () => {
   });
 
   it.each(['session deletion', 'rejection tombstone'])(
-    '%s preserves the ledger store',
+    '%s preserves wallet-obligation siblings',
     async (kind) => {
       const entry = {
         tradeId: `trade-${kind}`,
@@ -426,13 +465,19 @@ describe('session persistence: recovery', () => {
         stage: 'cancel-required' as const,
         reason: 'cleanup',
       };
-      await storageRepository.saveWalletOperations([entry]);
+      const state = {
+        ...storageRepository.loadState(),
+        walletContext: entry.owner.providerScope,
+        walletObligations: [entry],
+      };
+      storageRepository._replaceApplicationStateForTests(state);
+      await storageRepository.checkpointApplicationState(state);
       saveLiveFields({ ...sampleSession, walletProviderScope: entry.owner.providerScope });
-      await storageRepository.flushSessionSave();
+      await storageRepository.flushAggregate();
       if (kind === 'session deletion') {
         await storageRepository.clearSession();
       } else {
-        await storageRepository.replaceSessionWithRejection({
+        const rejection = {
           kind: 'outbound-reject',
           peerId: 'peer',
           sessionId: '0'.repeat(32),
@@ -440,33 +485,40 @@ describe('session persistence: recovery', () => {
           remoteNumber: 1n,
           unackedMessages: [],
           createdAt: Date.now(),
-        });
+        } as const;
+        await writeRootTransform((state) => ({
+          ...freshSessionState(state),
+          rejectionTransports: [rejection],
+        }));
       }
-      expect((await readWalletOperationRecord())?.entries).toEqual([entry]);
+      expect((await readApplicationState())?.walletObligations).toEqual([entry]);
     },
   );
 
-  it('saveSession preserves blockchainType', async () => {
+  it('aggregate capture preserves blockchainType', async () => {
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });
-    await storageRepository.flushSessionSave();
-    expect((await storageRepository.peekSession())?.preferences.blockchainType).toBe(
+    await storageRepository.flushAggregate();
+    expect((await storageRepository.readCurrentState())?.preferences.blockchainType).toBe(
       'walletconnect',
     );
   });
 
-  it('saveSession swallows quota-exceeded errors', () => {
-    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const storage = makeStorage();
-    const origSetItem = storage.setItem.bind(storage);
-    let firstCall = true;
-    storage.setItem = (key: string, value: string) => {
-      if (!firstCall) throw new DOMException('quota exceeded');
-      firstCall = false;
-      origSetItem(key, value);
-    };
-    setTestGlobal('localStorage', storage);
-    storageRepository.getPlayerId();
-    expect(() => saveLiveFields()).not.toThrow();
-    spy.mockRestore();
+  it('keeps the latest root dirty after an ordinary write failure', async () => {
+    const write = jest
+      .spyOn(indexedDbStoragePort, 'writeApplicationState')
+      .mockRejectedValueOnce(new Error('quota unavailable'));
+    const scheduled = storageRepository.updatePreference({
+      key: 'alias',
+      value: 'Dirty Alice',
+    });
+    expectConsoleError('failed to persist session state');
+    await expect(Promise.all([scheduled, storageRepository.flushAggregate()])).rejects.toThrow(
+      'quota unavailable',
+    );
+    expect(storageRepository.loadState().preferences.alias).toBe('Dirty Alice');
+
+    write.mockRestore();
+    await storageRepository.flushAggregate();
+    expect((await readApplicationState())?.preferences.alias).toBe('Dirty Alice');
   });
 });

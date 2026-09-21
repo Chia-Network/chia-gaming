@@ -1,7 +1,7 @@
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
 import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
-import { WalletOperationRuntime, walletOperationRuntime } from '../session/walletOperationRuntime';
+import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import {
   makeMockCradle,
@@ -12,6 +12,8 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { commitRuntime, ControlledRuntime, setup } from './runtime_capability.harness';
+import { storageRepository } from '../session/storageRepository';
+import type { WalletOperationEntry } from '../session/walletOperationStore';
 
 describe('durable wallet operation record', () => {
   const owner = {
@@ -21,6 +23,16 @@ describe('durable wallet operation record', () => {
   };
 
   beforeEach(() => walletOperationRuntime.resetForTests());
+
+  function installAggregateWallet(entries: WalletOperationEntry[]): void {
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: owner.providerScope,
+      walletObligations: entries,
+    });
+    storageRepository.reduceWallet({ kind: 'restore-aggregate' });
+    walletOperationRuntime.retryCancelRequired();
+  }
 
   it('keeps a Rust funding request idle until an adapter establishes scope', async () => {
     const controller = new SessionController(
@@ -155,28 +167,6 @@ describe('durable wallet operation record', () => {
     }
   });
 
-  it('keeps a failed independent write dirty and recovers on a later checkpoint', async () => {
-    const ledger = new WalletOperationRuntime();
-    let fail = true;
-    const writes: string[][] = [];
-    ledger.configurePersistence(async (entries) => {
-      if (fail) throw new Error('disk full');
-      writes.push(entries.map((entry) => entry.tradeId));
-    });
-
-    ledger.registerReserved('trade-dirty', owner, {
-      kind: 'funding',
-      operationId: 'funding-operation',
-    });
-    await ledger.flushPersistence();
-    expect(ledger.isDirty()).toBe(true);
-
-    fail = false;
-    await ledger.persistIfDirty();
-    expect(writes).toEqual([['trade-dirty']]);
-    expect(ledger.isDirty()).toBe(false);
-  });
-
   it('reconciles a scoped creating operation when Rust re-emits funding intent', async () => {
     const beginWalletOffer = jest.fn();
     const reconcileWalletOffer = jest.fn().mockResolvedValue({
@@ -193,7 +183,7 @@ describe('durable wallet operation record', () => {
       fee: '0',
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
-    walletOperationRuntime.restore([
+    installAggregateWallet([
       {
         owner,
         purpose: {
@@ -229,10 +219,6 @@ describe('durable wallet operation record', () => {
   });
 
   it('reconciles one persisted Cloud creation after restore without a new NeedCoinSpend', async () => {
-    const persistedLedgers: unknown[][] = [];
-    walletOperationRuntime.configurePersistence(async (entries) => {
-      persistedLedgers.push(structuredClone(entries));
-    });
     const beginWalletOffer = jest
       .fn()
       .mockResolvedValue({ kind: 'pending', recoveryId: 'SR_full_reload' });
@@ -260,7 +246,6 @@ describe('durable wallet operation record', () => {
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
     const first = setup(jest.fn(), rpcOverrides);
-    let persistedLedger!: ReturnType<typeof walletOperationRuntime.snapshot>;
     try {
       first.controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
       first.controller.flushDeferredWork();
@@ -270,19 +255,19 @@ describe('durable wallet operation record', () => {
       expect(beginWalletOffer).toHaveBeenCalledTimes(1);
       expect(reconcileWalletOffer).toHaveBeenCalledTimes(1);
       expect(first.cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
-      expect(persistedLedgers).toContainEqual([
+      expect(storageRepository.walletObligations()).toEqual([
         expect.objectContaining({
           stage: 'creating',
           recoveryId: 'SR_full_reload',
         }),
       ]);
-      persistedLedger = walletOperationRuntime.snapshot();
     } finally {
       first.controller.cleanup();
     }
 
+    storageRepository._resetForTests();
     walletOperationRuntime.resetForTests();
-    walletOperationRuntime.restore(persistedLedger);
+    await storageRepository.claimApplicationState();
     const restored = setup(jest.fn(), rpcOverrides);
     try {
       commitRuntime(restored.controller, new ControlledRuntime());
@@ -329,7 +314,7 @@ describe('durable wallet operation record', () => {
     try {
       controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
       controller.flushDeferredWork();
-      walletOperationRuntime.restore([
+      installAggregateWallet([
         {
           tradeId: 'trade-restored',
           owner,
@@ -362,7 +347,7 @@ describe('durable wallet operation record', () => {
     const { blockchain, controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
     try {
-      walletOperationRuntime.restore([
+      installAggregateWallet([
         {
           tradeId: 'trade-reconnect',
           owner,
@@ -393,7 +378,7 @@ describe('durable wallet operation record', () => {
       .mockResolvedValue({ status: 'already-terminal', detail: 'offer already spent' });
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     try {
-      walletOperationRuntime.restore([
+      installAggregateWallet([
         {
           tradeId: 'trade-spent',
           owner,
@@ -416,7 +401,7 @@ describe('durable wallet operation record', () => {
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     const lease = new ControlledRuntime();
     try {
-      walletOperationRuntime.restore([
+      installAggregateWallet([
         {
           tradeId: 'trade-rejected',
           owner,
@@ -443,7 +428,7 @@ describe('durable wallet operation record', () => {
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: undefined });
     const lease = new ControlledRuntime();
     try {
-      walletOperationRuntime.restore([
+      installAggregateWallet([
         {
           tradeId: 'trade-no-api',
           owner,
@@ -482,7 +467,7 @@ describe('durable wallet operation record', () => {
     );
     const lease = new ControlledRuntime();
     try {
-      walletOperationRuntime.restore([
+      installAggregateWallet([
         {
           tradeId: 'trade-original-wallet',
           owner,
@@ -511,6 +496,10 @@ describe('durable wallet operation record', () => {
   });
 
   it('allows stale cleanup and a newer active trade for one stable operation', () => {
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: owner.providerScope,
+    });
     const purpose = { kind: 'funding' as const, operationId: 'conflicted-operation' };
     walletOperationRuntime.registerReserved('trade-retry', owner, purpose);
     walletOperationRuntime.registerReserved('trade-stale', owner, purpose);
@@ -529,6 +518,10 @@ describe('durable wallet operation record', () => {
   });
 
   it('scopes terminal obligations by the complete owner tuple', () => {
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: owner.providerScope,
+    });
     const otherPeer = { ...owner, peerSessionId: '11'.repeat(16) };
     walletOperationRuntime.registerReserved('trade-first-session', owner, {
       kind: 'funding',

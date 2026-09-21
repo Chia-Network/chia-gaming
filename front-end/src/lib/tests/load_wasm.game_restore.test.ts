@@ -1,6 +1,7 @@
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
+import { rehydrateDurableApplicationState } from '../session/persistence';
 import { storageRepository } from '../session/storageRepository';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog } from '../gameIdentities';
@@ -9,7 +10,6 @@ import {
   channelStatusModelFromPayload,
   createSessionModel,
   INITIAL_GAME_TERMINAL_MODEL,
-  sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
 import { krunkStateCodec } from '@games/krunk/ui/serialize';
@@ -124,30 +124,22 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       pairingToken: `real-restore-${testCase.handProposal.gameType}`,
       ...snapshotFromSessionModel(model),
     });
-    assert.equal(save.phase, 'live');
-    if (save.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.saveSession({
-      scope: 'live',
-      walletProviderScope: save.walletProviderScope,
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
-    await storageRepository.flushSessionSave();
+    assert.equal(save.session?.phase, 'live');
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.checkpointApplicationState(save);
 
     await flushWrapperDrain(cradles);
     storageRepository._resetForTests();
-    await storageRepository.claimLease();
-    const reloaded = await storageRepository.peekSession();
+    await storageRepository.claimApplicationState();
+    const reloaded = await storageRepository.readCurrentState();
     assert.ok(
       reloaded,
       `${testCase.handProposal.gameType}: IndexedDB peek must return saved session`,
     );
-    assert.equal(reloaded.phase, 'live');
-    if (reloaded.phase !== 'live') throw new Error('expected live reload');
-    assert.deepEqual(reloaded.presentation.currentHandGameIds, ids);
-    assert.deepEqual(reloaded.presentation.activeGameIds, ids);
+    assert.equal(reloaded.session?.phase, 'live');
+    if (reloaded.session?.phase !== 'live') throw new Error('expected live reload');
+    assert.deepEqual(reloaded.session.presentation.currentHandGameIds, ids);
+    assert.deepEqual(reloaded.session.presentation.activeGameIds, ids);
 
     const restored = new SessionController(poller, `feed000${index}`, 100n, 100n, {
       reliableState: makeTestReliableState(),
@@ -158,17 +150,18 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       close: () => {},
     });
     try {
+      const bootstrap = rehydrateDurableApplicationState(reloaded);
       await restored.beginRestore(
-        restoreSession(restored, reloaded, new WasmStateInit(fetchPreset)),
+        restoreSession(restored, bootstrap, new WasmStateInit(fetchPreset)),
       );
       assert.equal(restored.getRestoreStatus(), 'restored');
       assert.deepEqual(restored.activeGameIds, ids);
       assert.deepEqual(
         restored.getWasmFields()!.serializedGameSession,
-        reloaded.live.serializedGameSession,
+        reloaded.session.live.serializedGameSession,
       );
 
-      const restoredModel = sessionModelFromSave(reloaded);
+      const restoredModel = bootstrap.model;
       assert.deepEqual(restoredModel.game.currentHandIds, ids);
       assert.deepEqual(restoredModel.game.handState, postMove.handState);
       assert.ok(decodePersistedGameState(restoredModel.game.handState));
@@ -184,7 +177,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     }
 
     await Promise.all(cradles.map((cradle) => cradle.shutdown()));
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     storageRepository._resetForTests();
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
@@ -193,7 +186,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         reject(request.error ?? new Error('Failed to delete session database'));
       request.onblocked = () => reject(new Error('Session database deletion was blocked'));
     });
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
   }
 }
 

@@ -1,8 +1,8 @@
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { storageRepository } from '../session/storageRepository';
-import { readSessionRecord, readWalletOperationRecord } from '../session/indexedDb';
+import { readApplicationState } from '../session/indexedDb';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { storageRepository } from '../session/storageRepository';
 import {
   createActivePair,
   flushWrapperDrain,
@@ -90,7 +90,7 @@ it(
       assert.equal(submittedBlobs.length, 1, 'fee unavailability must broadcast base immediately');
       assert.equal(submittedFees[0], undefined);
       assert.equal(feeOfferCreations, 1);
-      assert.deepEqual(walletOperationRuntime.snapshot(), []);
+      assert.deepEqual(storageRepository.walletObligations(), []);
 
       lane.controller.attachBlockchain(poller);
       await flushWrapperDrain(adapters);
@@ -105,7 +105,7 @@ it(
       );
 
       const finalizedBlob = submittedBlobs[1]!;
-      const retained = walletOperationRuntime.snapshot();
+      const retained = storageRepository.walletObligations();
       assert.equal(
         retained.length,
         1,
@@ -121,27 +121,25 @@ it(
       await lane.runtime.persist();
       await lane.controller.flushPendingWork();
       await lane.runtime.persist();
-      const [diskSession, diskLedger] = await Promise.all([
-        readSessionRecord(),
-        readWalletOperationRecord(),
-      ]);
-      assert.equal(diskSession?.phase, 'live');
+      const diskState = await readApplicationState();
+      assert.equal(diskState?.session?.phase, 'live');
       assert.deepEqual(
-        diskLedger?.entries,
+        diskState?.walletObligations,
         retained,
         'the live session and retained fee reservation must share one durable checkpoint',
       );
 
       const restored = await injectSessionReload(lane, poller, undefined, async () => {
-        await storageRepository.hydrateOwnedStorage();
         const provider = fakeBlockchainInfo.getWalletOfferProvider();
         if (provider) walletOperationRuntime.attachProvider(provider);
       });
       lane = restored.lane;
       assert.equal(lane.controller.getRestoreStatus(), 'restored');
       assert.deepEqual(
-        restored.save.live.serializedGameSession,
-        diskSession?.phase === 'live' ? diskSession.live.serializedGameSession : undefined,
+        restored.save.session.live.serializedGameSession,
+        diskState?.session?.phase === 'live'
+          ? diskState.session.live.serializedGameSession
+          : undefined,
         'reload must consume the cradle bytes checkpointed with the fee ledger',
       );
 
@@ -156,7 +154,7 @@ it(
       assert.equal(feeOfferCreations, 2, 'replay must not request a third fee offer');
       assert.deepEqual(submissionOutcomes[2], { status: 'acknowledged' });
       assert.equal(
-        walletOperationRuntime.snapshot()[0]?.stage,
+        storageRepository.walletObligations()[0]?.stage,
         'retained-for-replay',
         'wallet acknowledgement must not retire fee material before chain terminality',
       );
@@ -177,7 +175,7 @@ it(
       );
       for (
         let attempt = 0;
-        attempt < 20 && walletOperationRuntime.snapshot().length > 0;
+        attempt < 20 && storageRepository.walletObligations().length > 0;
         attempt += 1
       ) {
         await pollOnce(poller);
@@ -188,10 +186,10 @@ it(
       assert.deepEqual(
         cancellationOutcomes,
         [{ status: 'already-terminal', detail: 'simulator fee offer was spent' }],
-        `landed fee cleanup stalled: ledger=${JSON.stringify(walletOperationRuntime.snapshot())} diagnostics=${lane.controller.diagnosticLog.join('|')}`,
+        `landed fee cleanup stalled: ledger=${JSON.stringify(storageRepository.walletObligations())} diagnostics=${lane.controller.diagnosticLog.join('|')}`,
       );
-      assert.deepEqual(walletOperationRuntime.snapshot(), []);
-      assert.deepEqual((await readWalletOperationRecord())?.entries, []);
+      assert.deepEqual(storageRepository.walletObligations(), []);
+      assert.deepEqual((await readApplicationState())?.walletObligations, []);
     } finally {
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);

@@ -19,22 +19,39 @@ import { storageRepository } from '../session/storageRepository';
 import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
 import { createSessionModel } from '../session/model';
 import type { SessionModel } from '../session/types';
-import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
-import { decodeSessionSaveEnvelope } from '../session/persistence';
+import { readApplicationState, SESSION_DB_NAME } from '../session/indexedDb';
+import { decodeDurableApplicationState } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { assembleSessionSave, persistSessionSnapshot } from '../session/sessionMachinePersist';
+import {
+  captureDurableApplicationState,
+  type SessionPersistDependencies,
+} from '../session/sessionMachinePersist';
 import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../gameMountRegistry';
-import { transitionToFreshSession } from '../restoreLifecycle';
 import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
 } from '../session/terminalFinalization';
-import { baseSave, liveSave } from './session_save_envelope.fixtures';
+import { liveSave } from './session_save_envelope.fixtures';
 
 const testIndexedDb = indexedDB;
 const walletProviderScope = { provider: 'simulator' as const, identity: 'player' };
 const liveCradle = new Uint8Array([1, 2, 3]);
+
+async function persistCapturedState(dependencies: SessionPersistDependencies) {
+  const capture = captureDurableApplicationState({ kind: 'live', ...dependencies });
+  if (!capture) throw new Error('expected live capture');
+  const state = structuredClone(storageRepository.loadState());
+  await capture.write();
+  return state;
+}
+
+function prepareTerminalCapture(capture: Parameters<typeof captureDurableApplicationState>[0]) {
+  const prepared = captureDurableApplicationState(capture);
+  if (!prepared) throw new Error('expected terminal capture');
+  return prepared;
+}
+
 const handState = {
   gameType: 'calpoker',
   state: {
@@ -162,34 +179,9 @@ async function seedLiveSession(): Promise<void> {
     unackedMessages: [],
     activeGameIds: [],
   });
-  if (live.phase !== 'live') throw new Error('expected live fixture');
-  storageRepository.saveSession({
-    scope: 'live',
-    walletProviderScope: live.walletProviderScope,
-    pairing: live.pairing,
-    live: live.live,
-    presentation: live.presentation,
-    history: live.history,
-  });
-  await storageRepository.flushSessionSave();
+  if (live.session?.phase !== 'live') throw new Error('expected live fixture');
+  await storageRepository.checkpointApplicationState(live);
   markSavedSession();
-}
-
-function terminalUpdate(fields: {
-  channelStatus: { state: string };
-  coinsOfInterest: Array<{ label: string; id: string }>;
-}) {
-  const complete = baseSave({
-    channelStatus: fields.channelStatus,
-    coinsOfInterest: fields.coinsOfInterest,
-    terminalIStarted: false,
-  });
-  if (complete.phase !== 'terminal') throw new Error('expected terminal fixture');
-  return {
-    walletProviderScope: complete.walletProviderScope,
-    terminal: complete.terminal,
-    presentation: complete.presentation,
-  };
 }
 
 beforeEach(async () => {
@@ -203,7 +195,7 @@ beforeEach(async () => {
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
   });
-  await storageRepository.claimLease();
+  await storageRepository.claimApplicationState();
   await seedLiveSession();
 });
 
@@ -231,17 +223,17 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   });
   const teardown = jest.fn(() => events.push('teardown'));
   const dependencies: TerminalFinalizationDependencies = {
-    stageTerminal: async (fields) => {
-      events.push('stage-terminal');
-      await storageRepository.stageTerminalSession(fields);
+    captureTerminal: (capture) => {
+      const prepared = prepareTerminalCapture(capture);
+      return {
+        write: async () => {
+          events.push('stage-terminal', 'write-start');
+          await writeGate;
+          await prepared.write();
+          events.push('write-complete');
+        },
+      };
     },
-    flushSave: async () => {
-      events.push('write-start');
-      await writeGate;
-      await storageRepository.flushSessionSave();
-      events.push('write-complete');
-    },
-    discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
     updateMarker: () => events.push('marker'),
     teardown,
   };
@@ -253,10 +245,11 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   await Promise.resolve();
 
   expect(teardown).not.toHaveBeenCalled();
-  const liveRecord = await readSessionRecord();
-  const decodedLiveRecord = liveRecord ? decodeSessionSaveEnvelope(liveRecord).save : null;
+  const liveRecord = await readApplicationState();
+  const decodedLiveRecord = liveRecord ? decodeDurableApplicationState(liveRecord).save : null;
   expect(
-    decodedLiveRecord?.phase === 'live' && decodedLiveRecord.live.serializedGameSession,
+    decodedLiveRecord?.session?.phase === 'live' &&
+      decodedLiveRecord.session.live.serializedGameSession,
   ).toEqual(liveCradle);
 
   releaseWrite();
@@ -273,26 +266,30 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   expect(teardown).toHaveBeenCalledTimes(1);
 
   storageRepository._resetForTests();
-  const restored = await storageRepository.peekSession();
+  const restored = await storageRepository.readCurrentState();
   expect(restored).toMatchObject({
-    phase: 'terminal',
-    terminal: {
-      iStarted: true,
-      myAlias: 'Alice',
-      opponentAlias: 'Bob',
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    },
-    presentation: {
-      currentHandOrigin: 'local',
-      activeGameIds: [],
-      currentHandGameIds: ['game-1'],
-      lastDisplayedGameId: 'game-1',
+    session: {
+      phase: 'terminal',
+      terminal: {
+        iStarted: true,
+        myAlias: 'Alice',
+        opponentAlias: 'Bob',
+        coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
+      },
+      presentation: {
+        currentHandOrigin: 'local',
+        activeGameIds: [],
+        currentHandGameIds: ['game-1'],
+        lastDisplayedGameId: 'game-1',
+      },
     },
   });
-  expect(restored?.phase === 'terminal' && restored.presentation.handState).toEqual(handState);
   expect(
-    restored?.phase === 'terminal' &&
-      restored.presentation.gameInstances?.['game-1']?.terminal.label,
+    restored?.session?.phase === 'terminal' && restored.session.presentation.handState,
+  ).toEqual(handState);
+  expect(
+    restored?.session?.phase === 'terminal' &&
+      restored.session.presentation.gameInstances?.['game-1']?.terminal.label,
   ).toBe('Finished');
   expect(restored).not.toHaveProperty('live');
   expect(restored).not.toHaveProperty('pairing');
@@ -313,20 +310,18 @@ it('does not stage or tear down before controller terminal quiescence', async ()
     getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: jest.fn(() => quiescenceGate),
   } as unknown as SessionController;
-  const stageTerminal = jest.fn(async () => {});
+  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
   const teardown = jest.fn();
 
   const finalization = finalizeTerminalSession(finalizationArgs(controller), {
-    stageTerminal,
-    flushSave: async () => {},
-    discardTerminal: () => {},
+    captureTerminal,
     updateMarker: () => {},
     teardown,
   });
   await Promise.resolve();
 
   expect(controller.quiesceForTerminalFinalization).toHaveBeenCalledTimes(1);
-  expect(stageTerminal).not.toHaveBeenCalled();
+  expect(captureTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 
   releaseQuiescence({
@@ -335,7 +330,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   });
   await finalization;
 
-  expect(stageTerminal).toHaveBeenCalledTimes(1);
+  expect(captureTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
 });
 
@@ -348,20 +343,18 @@ it('does not stage or tear down while wallet offer cleanup remains unresolved', 
       ]);
     }),
   } as unknown as SessionController;
-  const stageTerminal = jest.fn(async () => {});
+  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
   const teardown = jest.fn();
 
   await expect(
     finalizeTerminalSession(finalizationArgs(controller), {
-      stageTerminal,
-      flushSave: async () => {},
-      discardTerminal: () => {},
+      captureTerminal,
       updateMarker: () => {},
       teardown,
     }),
   ).rejects.toMatchObject({ code: 'WALLET_OFFER_CLEANUP_PENDING' });
 
-  expect(stageTerminal).not.toHaveBeenCalled();
+  expect(captureTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 });
 
@@ -378,18 +371,6 @@ it('stages and returns the model produced after terminal quiescence', async () =
     },
     game: {
       ...model.game,
-      handState: {
-        ...handState,
-        state: {
-          ...handState.state,
-          moveNumber: 42n,
-          displaySnapshot: {
-            ...handState.state.displaySnapshot,
-            gameState: 'finished',
-            winner: 'player',
-          },
-        },
-      },
       instances: {
         ...model.game.instances,
         'game-1': {
@@ -417,43 +398,43 @@ it('stages and returns the model produced after terminal quiescence', async () =
       ],
     })),
   } as unknown as SessionController;
-  const stageTerminal = jest.fn(async () => {});
+  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
 
   const terminal = await finalizeTerminalSession(finalizationArgs(controller), {
-    stageTerminal,
-    flushSave: async () => {},
-    discardTerminal: () => {},
+    captureTerminal,
     updateMarker: () => {},
     teardown: () => {},
   });
 
   expect(terminal.model).toEqual(authoritativeModel);
   expect(terminal.model).not.toBe(authoritativeModel);
-  expect(stageTerminal).toHaveBeenCalledWith(
+  expect(captureTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
-      presentation: expect.objectContaining({
-        channelStatus: expect.objectContaining({
-          state: 'ResolvedUnrolled',
-          our_balance: '75',
-          their_balance: '25',
+      model: expect.objectContaining({
+        channel: expect.objectContaining({
+          status: expect.objectContaining({
+            state: 'ResolvedUnrolled',
+            ourBalance: '75',
+            theirBalance: '25',
+          }),
         }),
-        handState: authoritativeModel.game.handState,
-        gameInstances: expect.objectContaining({
-          'game-1': expect.objectContaining({
-            terminal: expect.objectContaining({ label: 'Runtime finished' }),
+        game: expect.objectContaining({
+          handState: authoritativeModel.game.handState,
+          instances: expect.objectContaining({
+            'game-1': expect.objectContaining({
+              terminal: expect.objectContaining({ label: 'Runtime finished' }),
+            }),
           }),
         }),
       }),
-      terminal: expect.objectContaining({
-        coinsOfInterest: [
-          {
-            label: 'Hand 1 reward coin',
-            id: 'coin-after-drain',
-            game_id: 'game-1',
-            game_coin_kind: 'reward',
-          },
-        ],
-      }),
+      coinsOfInterest: [
+        {
+          label: 'Hand 1 reward coin',
+          id: 'coin-after-drain',
+          game_id: 'game-1',
+          game_coin_kind: 'reward',
+        },
+      ],
     }),
   );
 });
@@ -465,260 +446,32 @@ it('round-trips an explicitly empty local alias without converting it to null', 
   args.identity.myName = '';
 
   await finalizeTerminalSession(args, {
-    stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
-    flushSave: storageRepository.flushSessionSave.bind(storageRepository),
-    discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
+    captureTerminal: prepareTerminalCapture,
     updateMarker: markSavedSession,
     teardown: jest.fn(),
   });
 
   storageRepository._resetForTests();
-  const restored = await storageRepository.peekSession();
-  expect(restored?.phase === 'terminal' && restored.terminal.myAlias).toBe('');
-});
-
-it('atomically removes live restart fields through the real mutation queue', async () => {
-  const terminalWrite = storageRepository.saveTerminalSession(
-    terminalUpdate({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    }),
-  );
-
-  for (const field of [
-    'serializedGameSession',
-    'gameSessionSchemaVersion',
-    'pairingToken',
-    'sessionPeerId',
-    'gameSessionId',
-    'messageNumber',
-    'remoteNumber',
-    'iStarted',
-    'myContribution',
-    'theirContribution',
-    'perGameAmount',
-    'channelTimeout',
-    'unrollTimeout',
-    'unackedMessages',
-  ]) {
-    expect(storageRepository.loadState()).not.toHaveProperty(field);
-  }
-
-  await storageRepository.flushSessionSave();
-  await terminalWrite;
-  const stored = await readSessionRecord();
-  expect(stored).not.toBeNull();
-  expect(decodeSessionSaveEnvelope(stored!).phase).toBe('terminal');
-  expect(stored).not.toHaveProperty('serializedGameSession');
-  expect(stored).not.toHaveProperty('messageNumber');
-  expect(stored).not.toHaveProperty('unackedMessages');
-});
-
-it('retires a resolved display before accepting a fresh live session', async () => {
-  await storageRepository.saveTerminalSession(
-    terminalUpdate({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    }),
-  );
-  await storageRepository.flushSessionSave();
-
-  let displayedSession = 'resolved';
-  let mountedPairingToken: string | null = null;
-  let hubBusy = false;
-  const pairingToken = 'fresh-live-token';
-
-  const outcome = await transitionToFreshSession({
-    retireTerminalDisplay: () => {
-      displayedSession = 'none';
-    },
-    persistLiveCheckpoint: async () => {
-      await storageRepository.replaceSession(
-        baseSave({
-          pairingToken,
-          sessionPeerId: 'new-peer',
-          gameSessionId: '20'.repeat(16),
-          iStarted: false,
-          myContribution: '60',
-          theirContribution: '40',
-          perGameAmount: '4',
-        }),
-      );
-    },
-    mountLiveSession: () => {
-      mountedPairingToken = pairingToken;
-      displayedSession = 'live';
-    },
-    reportBusy: () => {
-      hubBusy = true;
-    },
-  });
-
-  expect(outcome).toBe('completed');
-  expect(displayedSession).toBe('live');
-  expect(mountedPairingToken).toBe(pairingToken);
-  expect(hubBusy).toBe(true);
-  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('pre-handshake');
-});
-
-it('aborts after persist when the start epoch advances during replaceSession', async () => {
-  await storageRepository.saveTerminalSession(
-    terminalUpdate({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    }),
-  );
-  await storageRepository.flushSessionSave();
-
-  let displayedSession = 'resolved';
-  let mounted = false;
-  let startEpoch = 1;
-  const capturedEpoch = startEpoch;
-
-  const outcome = await transitionToFreshSession({
-    reportBusy: () => {},
-    shouldAbort: () => capturedEpoch !== startEpoch,
-    persistLiveCheckpoint: async () => {
-      const prior = storageRepository.loadState();
-      const terminalBackup =
-        prior.phase === 'terminal'
-          ? {
-              walletProviderScope: structuredClone(prior.walletProviderScope),
-              terminal: structuredClone(prior.terminal),
-              presentation: structuredClone(prior.presentation),
-            }
-          : null;
-      await storageRepository.replaceSession(
-        baseSave({
-          pairingToken: 'cancelled-token',
-          sessionPeerId: 'peer',
-          gameSessionId: '30'.repeat(16),
-          iStarted: true,
-          myContribution: '10',
-          theirContribution: '10',
-          perGameAmount: '1',
-        }),
-      );
-      // Simulate dashboard Cancel bumping the epoch during storageRepository.replaceSession.bind(storageRepository)'s
-      // awaits — restore the finished freeze rather than wiping IndexedDB.
-      startEpoch += 1;
-      if (capturedEpoch !== startEpoch) {
-        if (terminalBackup) {
-          await storageRepository.saveTerminalSession(terminalBackup);
-        }
-        return;
-      }
-    },
-    retireTerminalDisplay: () => {
-      displayedSession = 'none';
-    },
-    mountLiveSession: () => {
-      mounted = true;
-      displayedSession = 'live';
-    },
-  });
-
-  expect(outcome).toBe('aborted');
-  expect(displayedSession).toBe('resolved');
-  expect(mounted).toBe(false);
-  await storageRepository.flushSessionSave();
-  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
-});
-
-it('keeps the terminal checkpoint when Cancel aborts before replaceSession', async () => {
-  await storageRepository.saveTerminalSession(
-    terminalUpdate({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    }),
-  );
-  await storageRepository.flushSessionSave();
-
-  let displayedSession = 'resolved';
-  let mounted = false;
-  let startEpoch = 1;
-  const capturedEpoch = startEpoch;
-  let replaceCalled = false;
-
-  // Simulate dashboard Cancel before persist begins.
-  startEpoch += 1;
-
-  const outcome = await transitionToFreshSession({
-    reportBusy: () => {},
-    shouldAbort: () => capturedEpoch !== startEpoch,
-    persistLiveCheckpoint: async () => {
-      if (capturedEpoch !== startEpoch) return;
-      replaceCalled = true;
-      await storageRepository.replaceSession(
-        baseSave({
-          pairingToken: 'should-not-write',
-          sessionPeerId: 'peer',
-          gameSessionId: '40'.repeat(16),
-          iStarted: true,
-          myContribution: '10',
-          theirContribution: '10',
-          perGameAmount: '1',
-        }),
-      );
-    },
-    retireTerminalDisplay: () => {
-      displayedSession = 'none';
-    },
-    mountLiveSession: () => {
-      mounted = true;
-      displayedSession = 'live';
-    },
-  });
-
-  expect(outcome).toBe('aborted');
-  expect(replaceCalled).toBe(false);
-  expect(displayedSession).toBe('resolved');
-  expect(mounted).toBe(false);
-  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
-});
-
-it('keeps the resolved display and terminal checkpoint when fresh persistence fails', async () => {
-  await storageRepository.saveTerminalSession(
-    terminalUpdate({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
-    }),
-  );
-  await storageRepository.flushSessionSave();
-
-  let displayedSession = 'resolved';
-  let mounted = false;
-
-  await expect(
-    transitionToFreshSession({
-      reportBusy: () => {},
-      persistLiveCheckpoint: async () => {
-        throw new Error('checkpoint failed');
-      },
-      retireTerminalDisplay: () => {
-        displayedSession = 'none';
-      },
-      mountLiveSession: () => {
-        mounted = true;
-      },
-    }),
-  ).rejects.toThrow('checkpoint failed');
-
-  expect(displayedSession).toBe('resolved');
-  expect(mounted).toBe(false);
-  expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
+  const restored = await storageRepository.readCurrentState();
+  expect(restored?.session?.phase === 'terminal' && restored.session.terminal.myAlias).toBe('');
 });
 
 it('keeps a fully resolved live checkpoint until terminal finalization succeeds', async () => {
-  const save = jest.fn(async () => {});
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
     getWasmFields: () => ({
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
       pairingToken: 'live-token',
+      gameSessionId: '10'.repeat(16),
+      myContribution: '60',
+      theirContribution: '40',
+      perGameAmount: '10',
       messageNumber: 2n,
       remoteNumber: 1n,
+      unackedMessages: [],
+      terminalHandoff: null,
+      transportDisposition: 'active',
       iStarted: true,
       rewardPuzzleHash: '11'.repeat(32),
       handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
@@ -731,32 +484,31 @@ it('keeps a fully resolved live checkpoint until terminal finalization succeeds'
     getCoinsOfInterest: () => [{ label: 'Reward coin', id: 'coin-1' }],
   } as unknown as SessionController;
 
-  await persistSessionSnapshot({
+  const saved = await persistCapturedState({
     controller,
     getState: () => createSessionMachineState(model),
     restoring: false,
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
-    save,
   });
 
-  expect(save).toHaveBeenCalledTimes(1);
-  expect(save).toHaveBeenCalledWith(
+  expect(saved).toEqual(
     expect.objectContaining({
-      scope: 'live',
-      live: expect.objectContaining({
-        serializedGameSession: liveCradle,
-      }),
-      presentation: expect.objectContaining({
-        activeGameIds: [],
-        channelStatus: { state: 'ResolvedClean' },
+      session: expect.objectContaining({
+        phase: 'live',
+        live: expect.objectContaining({
+          serializedGameSession: liveCradle,
+        }),
+        presentation: expect.objectContaining({
+          activeGameIds: [],
+          channelStatus: expect.objectContaining({ state: 'ResolvedClean' }),
+        }),
       }),
     }),
   );
 });
 
 it('keeps a resolved unroll live while an on-chain game is still unresolved', async () => {
-  const save = jest.fn(async () => {});
   const activeModel = createSessionModel({
     ...model,
     channel: { ...model.channel, status: { ...model.channel.status, state: 'ResolvedUnrolled' } },
@@ -769,7 +521,13 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
           amount: '10',
           coinHex: 'aa',
           presentation: 'on-chain-their-turn',
-          terminal: { type: 'none' },
+          terminal: {
+            type: 'none',
+            label: null,
+            outcome: null,
+            myReward: null,
+            rewardCoinHex: null,
+          },
         },
       },
     },
@@ -780,8 +538,15 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
       pairingToken: 'live-token',
+      gameSessionId: '10'.repeat(16),
+      myContribution: '60',
+      theirContribution: '40',
+      perGameAmount: '10',
       messageNumber: 2n,
       remoteNumber: 1n,
+      unackedMessages: [],
+      terminalHandoff: null,
+      transportDisposition: 'active',
       iStarted: true,
       rewardPuzzleHash: '11'.repeat(32),
       handState,
@@ -793,29 +558,29 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
     }),
   } as unknown as SessionController;
 
-  await persistSessionSnapshot({
+  const saved = await persistCapturedState({
     controller,
     getState: () => createSessionMachineState(activeModel),
     restoring: false,
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
-    save,
   });
 
-  expect(save).toHaveBeenCalledWith(
+  expect(saved).toEqual(
     expect.objectContaining({
-      scope: 'live',
-      live: expect.objectContaining({ serializedGameSession: liveCradle }),
-      presentation: expect.objectContaining({
-        channelStatus: { state: 'ResolvedUnrolled' },
-        activeGameIds: ['game-1'],
+      session: expect.objectContaining({
+        phase: 'live',
+        live: expect.objectContaining({ serializedGameSession: liveCradle }),
+        presentation: expect.objectContaining({
+          channelStatus: expect.objectContaining({ state: 'ResolvedUnrolled' }),
+          activeGameIds: ['game-1'],
+        }),
       }),
     }),
   );
 });
 
 it('persists live machine hand state instead of a former controller bundle value', async () => {
-  const save = jest.fn(async () => {});
   const liveModel = createSessionModel({
     ...model,
     channel: { ...model.channel, status: { ...model.channel.status, state: 'Active' } },
@@ -830,8 +595,15 @@ it('persists live machine hand state instead of a former controller bundle value
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
       pairingToken: 'live-token',
+      gameSessionId: '10'.repeat(16),
+      myContribution: '60',
+      theirContribution: '40',
+      perGameAmount: '10',
       messageNumber: 2n,
       remoteNumber: 1n,
+      unackedMessages: [],
+      terminalHandoff: null,
+      transportDisposition: 'active',
       iStarted: true,
       rewardPuzzleHash: '11'.repeat(32),
       handState: formerControllerHandState,
@@ -843,23 +615,27 @@ it('persists live machine hand state instead of a former controller bundle value
     }),
   } as unknown as SessionController;
 
-  await persistSessionSnapshot({
+  const saved = await persistCapturedState({
     controller,
     getState: () => createSessionMachineState(liveModel),
     restoring: false,
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
-    save,
   });
 
-  expect(save).toHaveBeenCalledWith(
+  expect(saved).toEqual(
     expect.objectContaining({
-      scope: 'live',
-      live: expect.objectContaining({ serializedGameSession: liveCradle }),
-      presentation: expect.objectContaining({ handState }),
+      session: expect.objectContaining({
+        phase: 'live',
+        live: expect.objectContaining({ serializedGameSession: liveCradle }),
+        presentation: expect.objectContaining({ handState }),
+      }),
     }),
   );
-  expect(save.mock.calls[0][0].presentation.handState).not.toEqual(formerControllerHandState);
+  expect(saved.session?.phase).toBe('live');
+  expect(saved.session?.phase === 'live' ? saved.session.presentation.handState : null).not.toEqual(
+    formerControllerHandState,
+  );
 });
 
 it('assembles current timer ownership instead of stale checkpoint timing', () => {
@@ -871,8 +647,15 @@ it('assembles current timer ownership instead of stale checkpoint timing', () =>
       serializedGameSession: liveCradle,
       gameSessionSchemaVersion: 3n,
       pairingToken: 'live-token',
+      gameSessionId: '10'.repeat(16),
+      myContribution: '60',
+      theirContribution: '40',
+      perGameAmount: '10',
       messageNumber: 2n,
       remoteNumber: 1n,
+      unackedMessages: [],
+      terminalHandoff: null,
+      transportDisposition: 'active',
       iStarted: true,
       rewardPuzzleHash: '11'.repeat(32),
       channelStatus: { state: 'Active' },
@@ -891,9 +674,14 @@ it('assembles current timer ownership instead of stale checkpoint timing', () =>
   };
 
   waitingStateEnteredAt = 300n;
-  const assembledFromStaleMachine = assembleSessionSave(dependencies);
+  const capture = captureDurableApplicationState({ kind: 'live', ...dependencies });
+  const captured = storageRepository.loadState();
 
-  expect(assembledFromStaleMachine?.live.presentation.waitingStateEnteredAt).toBe(300n);
+  expect(capture).not.toBeNull();
+  expect(captured.session?.phase).toBe('live');
+  expect(
+    captured.session?.phase === 'live' ? captured.session.presentation.waitingStateEnteredAt : null,
+  ).toBe(300n);
 });
 
 it('freezes both role-aware Krunk timeout boards after queued terminal reductions', async () => {
@@ -979,7 +767,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       coinsOfInterest: [],
     }),
   } as unknown as SessionController;
-  const stageTerminal = jest.fn(async () => {});
+  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
 
   const terminal = await finalizeTerminalSession(
     {
@@ -991,9 +779,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       },
     },
     {
-      stageTerminal,
-      flushSave: async () => {},
-      discardTerminal: () => {},
+      captureTerminal,
       updateMarker: () => {},
       teardown: () => {},
     },
@@ -1033,22 +819,24 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   );
   expect(markup).toContain('data-testid="finished-session-game-view"');
   expect(markup).not.toContain('Game details unavailable');
-  expect(stageTerminal).toHaveBeenCalledWith(
+  expect(captureTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
-      presentation: expect.objectContaining({
-        currentHandGameIds: ids,
-        activeGameIds: [],
-        handState: terminalHandState,
-        gameInstances: {
-          picker: timeoutModel.game.instances.picker,
-          guesser: timeoutModel.game.instances.guesser,
-        },
+      model: expect.objectContaining({
+        game: expect.objectContaining({
+          currentHandIds: ids,
+          activeIds: [],
+          handState: terminalHandState,
+          instances: {
+            picker: timeoutModel.game.instances.picker,
+            guesser: timeoutModel.game.instances.guesser,
+          },
+        }),
       }),
     }),
   );
 });
 
-it('keeps live state and ownership after failure, then retries without teardown durability', async () => {
+it('keeps the latest terminal root dirty after failure, then retries without teardown', async () => {
   const events: string[] = [];
   let latestModel = structuredClone(model);
   let latestCoins = [{ label: 'Reward coin', id: 'coin-1' }];
@@ -1065,12 +853,15 @@ it('keeps live state and ownership after failure, then retries without teardown 
   const teardown = jest.fn();
   let failWrite = true;
   const dependencies: TerminalFinalizationDependencies = {
-    stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
-    flushSave: async () => {
-      if (failWrite) throw new Error('deferred IndexedDB write failed');
-      await storageRepository.flushSessionSave();
+    captureTerminal: (capture) => {
+      const prepared = prepareTerminalCapture(capture);
+      return {
+        write: async () => {
+          if (failWrite) throw new Error('deferred IndexedDB write failed');
+          await prepared.write();
+        },
+      };
     },
-    discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
     updateMarker: markSavedSession,
     teardown,
   };
@@ -1082,12 +873,12 @@ it('keeps live state and ownership after failure, then retries without teardown 
   expect(teardown).not.toHaveBeenCalled();
   expect(hasSavedSessionMarker()).toBe(true);
   const cached = storageRepository.loadState();
-  expect(cached.phase === 'live' && cached.live.serializedGameSession).toEqual(liveCradle);
-  const durable = await readSessionRecord();
-  const decodedDurable = durable ? decodeSessionSaveEnvelope(durable).save : null;
-  expect(decodedDurable?.phase === 'live' && decodedDurable.live.serializedGameSession).toEqual(
-    liveCradle,
-  );
+  expect(cached.session?.phase).toBe('terminal');
+  const durable = await readApplicationState();
+  const decodedDurable = durable ? decodeDurableApplicationState(durable).save : null;
+  expect(
+    decodedDurable?.session?.phase === 'live' && decodedDurable.session.live.serializedGameSession,
+  ).toEqual(liveCradle);
 
   failWrite = false;
   latestModel = createSessionModel({
@@ -1115,18 +906,20 @@ it('keeps live state and ownership after failure, then retries without teardown 
   expect(events).toEqual(['controller-quiesce', 'controller-quiesce']);
   expect(teardown).toHaveBeenCalledTimes(1);
   storageRepository._resetForTests();
-  const restored = await storageRepository.peekSession();
-  expect(restored).not.toHaveProperty('live');
-  expect(restored?.phase === 'terminal' && restored.presentation.channelStatus?.state).toBe(
-    'ResolvedUnrolled',
-  );
+  const restored = await storageRepository.readCurrentState();
+  expect(restored?.session).not.toHaveProperty('live');
   expect(
-    restored?.phase === 'terminal' &&
+    restored?.session?.phase === 'terminal' && restored.session.presentation.channelStatus?.state,
+  ).toBe('ResolvedUnrolled');
+  expect(
+    restored?.session?.phase === 'terminal' &&
       (
-        restored.presentation.handState as {
+        restored.session.presentation.handState as {
           state: { moveNumber: bigint };
         }
       ).state.moveNumber,
   ).toBe(2n);
-  expect(restored?.phase === 'terminal' && restored.terminal.coinsOfInterest).toEqual(latestCoins);
+  expect(
+    restored?.session?.phase === 'terminal' && restored.session.terminal.coinsOfInterest,
+  ).toEqual(latestCoins);
 });

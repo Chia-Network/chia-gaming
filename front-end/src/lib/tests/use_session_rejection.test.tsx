@@ -5,7 +5,7 @@ import { useSessionRejection } from '../../hooks/useSessionRejection';
 import type { HubConnection } from '../../services/HubConnection';
 import { PeerSession } from '../../services/PeerSession';
 import { storageRepository } from '../session/storageRepository';
-import type { DurableRejectionTombstone } from '../session/indexedDb';
+import type { DurableRejectionTransport } from '../session/saveEnvelope';
 
 function mockHub(): HubConnection & { sendToPeer: jest.Mock } {
   return {
@@ -21,6 +21,7 @@ describe('useSessionRejection authority owner', () => {
   function Harness() {
     api = useSessionRejection({
       getPrimaryPeer: () => primary,
+      getDurableSession: () => null,
       releasePrimaryPeer: (peer) => {
         if (primary === peer) primary = null;
       },
@@ -35,7 +36,7 @@ describe('useSessionRejection authority owner', () => {
 
   it('restores and replays a durable outbound rejection at boot', async () => {
     const hub = mockHub();
-    const tombstone: DurableRejectionTombstone = {
+    const tombstone: DurableRejectionTransport = {
       kind: 'outbound-reject',
       peerId: 'peer-1',
       sessionId: '00'.repeat(16),
@@ -44,15 +45,11 @@ describe('useSessionRejection authority owner', () => {
       remoteNumber: 1n,
       unackedMessages: [{ msgno: 1n, msg: new Uint8Array([0x64, 0x65]) }],
     };
-    jest.spyOn(storageRepository, 'readRejections').mockResolvedValue([tombstone]);
-    jest.spyOn(storageRepository, 'writeRejection').mockResolvedValue();
-    jest.spyOn(storageRepository, 'deleteRejection').mockResolvedValue();
-
     act(() => {
       renderer = create(createElement(Harness));
     });
     await act(async () => {
-      await api.restore(hub);
+      await api.restore(hub, [tombstone]);
     });
 
     expect(hub.sendToPeer).toHaveBeenCalledTimes(1);
@@ -66,13 +63,15 @@ describe('useSessionRejection authority owner', () => {
     const saved = storageRepository.loadState();
     jest.spyOn(storageRepository, 'loadState').mockReturnValue(saved);
     let finishWrite!: () => void;
-    jest.spyOn(storageRepository, 'writeRejection').mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          finishWrite = resolve;
-        }),
-    );
-    jest.spyOn(storageRepository, 'deleteRejection').mockResolvedValue();
+    jest
+      .spyOn(storageRepository, 'prepareApplicationStateCapture')
+      .mockImplementation((transform) => ({
+        state: transform(storageRepository.loadState()),
+        write: () =>
+          new Promise<void>((resolve) => {
+            finishWrite = resolve;
+          }),
+      }));
 
     act(() => {
       renderer = create(createElement(Harness));

@@ -1,17 +1,17 @@
-import { type SessionSave } from '../session/saveEnvelope';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   INITIAL_GAME_TERMINAL_MODEL,
   selectDisplayedGameInstance,
   selectGameSessionView,
-  sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
 import { liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave(fields as unknown as Record<string, unknown>);
 }
 
@@ -37,9 +37,9 @@ describe('session model round trips', () => {
       activeGameIds: [],
       channelNotifQueue: [{ id: 7n, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
       gameNotifQueue: [{ id: 8n, kind: 'proposal-rejected', title: 'Game', message: 'Done' }],
-    } as unknown as Partial<SessionSave>);
+    } as unknown as Partial<DurableApplicationState>);
 
-    const restored = sessionModelFromSave(save);
+    const restored = decodeDurableApplicationState(save).model;
 
     expect(restored.channel.queue[0].id).toBe(7n);
     expect(restored.game.queue[0].id).toBe(8n);
@@ -49,9 +49,11 @@ describe('session model round trips', () => {
     const save = liveEnvelope({
       activeGameIds: [],
       channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-    } as unknown as Partial<SessionSave>);
+    } as unknown as Partial<DurableApplicationState>);
 
-    expect(() => sessionModelFromSave(save)).toThrow('Garbled save: missing notification id');
+    expect(() => decodeDurableApplicationState(save)).toThrow(
+      'Garbled save: missing notification id',
+    );
   });
 
   it('round-trips keyed hand status without aggregate snapshot fields', () => {
@@ -81,7 +83,7 @@ describe('session model round trips', () => {
     expect(snapshot).not.toHaveProperty('gameOnChain');
     expect(snapshot).not.toHaveProperty('gameTerminalType');
 
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds ?? [],
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -92,7 +94,7 @@ describe('session model round trips', () => {
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: CAL_HAND_STATE,
       }),
-    );
+    ).model;
     expect(restored.game.instances['7'].presentation).toBe('playing-move');
     expect(restored.game.currentHandOrigin).toBe('peer');
     expect(snapshot).not.toHaveProperty('iProposedHand');
@@ -119,7 +121,7 @@ describe('session model round trips', () => {
     });
 
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds ?? [],
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -130,7 +132,7 @@ describe('session model round trips', () => {
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: CAL_HAND_STATE,
       }),
-    );
+    ).model;
 
     expect(restored.game.instances['7'].presentation).toBe('on-chain-their-turn');
   });
@@ -175,7 +177,7 @@ describe('session model round trips', () => {
     });
 
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds ?? [],
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -188,7 +190,7 @@ describe('session model round trips', () => {
           members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
-    );
+    ).model;
 
     expect(restored.game.currentHandIds).toEqual(['7', '9']);
     expect(restored.game.currentHandOrigin).toBe('peer');
@@ -197,7 +199,7 @@ describe('session model round trips', () => {
 
   it('rejects an incomplete keyed save', () => {
     expect(() =>
-      sessionModelFromSave(
+      decodeDurableApplicationState(
         liveEnvelope({
           activeGameIds: ['7'],
           currentHandGameIds: ['7'],
@@ -209,7 +211,7 @@ describe('session model round trips', () => {
 
   it('rejects malformed persisted game discriminants instead of casting them', () => {
     expect(() =>
-      sessionModelFromSave(
+      decodeDurableApplicationState(
         liveEnvelope({
           activeGameIds: ['7'],
           currentHandGameIds: ['7'],
@@ -271,7 +273,7 @@ describe('session model round trips', () => {
     expect(snapshot).not.toHaveProperty('gameCoinHex');
     expect(snapshot).not.toHaveProperty('gameTerminalType');
 
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds,
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -282,7 +284,7 @@ describe('session model round trips', () => {
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
         handState: CAL_HAND_STATE,
       }),
-    );
+    ).model;
     expect(restored.game.lastDisplayedId).toBe('terminal');
     expect(restored.game.instances).toEqual(model.game.instances);
     expect(selectGameSessionView(restored).displayGameId).toBe('active');
@@ -325,7 +327,7 @@ describe('session model round trips', () => {
       }),
     );
     expect(() =>
-      sessionModelFromSave(
+      decodeDurableApplicationState(
         liveEnvelope({
           activeGameIds: snapshot.activeGameIds,
           currentHandGameIds: snapshot.currentHandGameIds,

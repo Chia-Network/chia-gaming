@@ -1,10 +1,10 @@
-import type { ChannelStatus } from '../../types/ChiaGaming';
+import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
 import { CHANNEL_SEMANTIC_PHASES } from '../../types/ChiaGaming';
 import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
 import type {
   LiveSessionSave,
   SessionPairingSave,
-  SessionSave,
+  DurableApplicationState,
   SessionTransportSave,
 } from './saveEnvelope';
 import type {
@@ -231,7 +231,7 @@ export function validateTerminalFields(terminal: GameTerminalModel, label: strin
   }
 }
 
-export function validateCommonFields(save: SessionSave): void {
+export function validateCommonFields(save: DurableApplicationState): void {
   requireString(save.identity.playerId, 'identity.playerId');
   optionalString(save.identity.sessionId, 'identity.sessionId');
   optionalString(save.identity.myHubPlayerId, 'identity.myHubPlayerId');
@@ -397,10 +397,15 @@ export function validateLive(live: LiveSessionSave['live']): void {
   optionalString(live.durabilityWarning, 'live.durabilityWarning', true);
 }
 
-export function validateChannelStatus(value: unknown): void {
-  if (value == null) return;
+export function validateChannelStatus(value: unknown): ChannelStatusPayload | null {
+  if (value === null) return null;
   const status = requireRecord(value, 'channelStatus');
   requireExactKeys(status, CHANNEL_STATUS_KEYS, 'channelStatus');
+  for (const required of ['advisory', 'coin', 'our_balance', 'their_balance', 'game_allocated']) {
+    if (!Object.hasOwn(status, required)) {
+      throw new Error(`Garbled save: channelStatus is missing ${required}`);
+    }
+  }
   parseDiscriminant<ChannelStatus>(status.state, CHANNEL_STATUSES, 'channelStatus.state');
   if (
     status.session_disposition !== undefined &&
@@ -459,6 +464,7 @@ export function validateChannelStatus(value: unknown): void {
     if (value === undefined || value === null) continue;
     requireBigint(value, `channelStatus.${field}`);
   }
+  return status as unknown as ChannelStatusPayload;
 }
 
 export function validateTerminalCoins(value: unknown): void {

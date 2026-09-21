@@ -11,7 +11,12 @@ import {
 import { storageRepository } from '../session/storageRepository';
 import { releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
-import { indexedDbStoragePort, readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
+import {
+  _encodeRawApplicationStateForTests,
+  indexedDbStoragePort,
+  readApplicationState,
+  SESSION_DB_NAME,
+} from '../session/indexedDb';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
 function storage(): Storage {
@@ -179,6 +184,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     const claim = jest.spyOn(storageRepository, 'claimAndRead');
     const onSessionId = jest.fn();
     const onRestore = jest.fn();
+    const onFreshClaim = jest.fn();
 
     act(() => {
       renderer = create(
@@ -188,6 +194,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
           reload: jest.fn(),
           onSessionId,
           onRestore,
+          onFreshClaim,
         }),
       );
     });
@@ -206,7 +213,14 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     for (const request of deletes) request.onsuccess?.();
     await waitForRender(renderer!, 'Fresh dashboard');
 
-    expect(inspect).toHaveBeenCalled();
+    expect(inspect).toHaveBeenCalledTimes(1);
+    expect(claim).toHaveBeenCalledTimes(1);
+    expect(onSessionId).toHaveBeenCalledTimes(1);
+    expect(onFreshClaim).toHaveBeenCalledWith(
+      expect.objectContaining({ session: null, walletObligations: [], rejectionTransports: [] }),
+      'boot',
+    );
+    expect(onRestore).not.toHaveBeenCalled();
     expect(localStorage.getItem('appState_savedSession')).toBeNull();
     inspect.mockRestore();
     claim.mockRestore();
@@ -254,26 +268,14 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('shows local loading then restores while hub and wallet remain unresolved', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     const save = liveSave({
       blockchainType: 'walletconnect',
       pairingToken: 'restore-pair',
       serializedGameSession: new Uint8Array([1, 2, 3]),
     });
-    if (save.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.saveSession({
-      scope: 'common',
-      preferences: save.preferences,
-    });
-    await storageRepository.saveSession({
-      scope: 'live',
-      walletProviderScope: save.walletProviderScope,
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
-    await storageRepository.flushSessionSave();
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.checkpointApplicationState(save);
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
 
@@ -307,21 +309,13 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('offers and restores a durable live session without localStorage hints', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     const save = liveSave({
       pairingToken: 'markerless-restore-pair',
       serializedGameSession: new Uint8Array([9, 8, 7]),
     });
-    if (save.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.saveSession({
-      scope: 'live',
-      walletProviderScope: save.walletProviderScope,
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
-    await storageRepository.flushSessionSave();
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.checkpointApplicationState(save);
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     localStorage.clear();
@@ -348,59 +342,78 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(claim).toHaveBeenCalledTimes(1);
     expect(onRestore).toHaveBeenCalledWith(
       expect.objectContaining({
-        phase: 'live',
-        pairing: expect.objectContaining({ token: 'markerless-restore-pair' }),
+        session: expect.objectContaining({
+          phase: 'live',
+          pairing: expect.objectContaining({ token: 'markerless-restore-pair' }),
+        }),
       }),
       'manual',
     );
     claim.mockRestore();
   });
 
+  it('preserves malformed aggregate evidence and offers hard reset recovery', async () => {
+    await storageRepository.claimApplicationState();
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(SESSION_DB_NAME);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('application-state', 'readwrite');
+      transaction.objectStore('application-state').put({ malformed: true }, 'current');
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+    localStorage.setItem('appState_savedSession', '1');
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const claim = jest.spyOn(storageRepository, 'claimAndRead');
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+        }),
+      );
+    });
+
+    await waitForRender(renderer!, 'Stored application state is malformed');
+    expect(claim).not.toHaveBeenCalled();
+    await expect(readApplicationState()).rejects.toThrow('Stored application state is malformed');
+    expect(localStorage.getItem('appState_savedSession')).toBe('1');
+    claim.mockRestore();
+  });
+
   it.each([
-    [
-      'unreadable',
-      async () => {
-        const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const request = indexedDB.open(SESSION_DB_NAME);
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-        await new Promise<void>((resolve, reject) => {
-          const transaction = db.transaction('session', 'readwrite');
-          transaction.objectStore('session').put({ malformed: true }, 'current');
-          transaction.oncomplete = () => resolve();
-          transaction.onerror = () => reject(transaction.error);
-        });
-        db.close();
-      },
-    ],
-    [
-      'incompatible',
-      async () => {
-        await storageRepository.saveSessionAndWalletOperations(
-          {
-            schema: 'unsupported-session',
-            version: 999n,
-            phase: 'preferences',
-            identity: {},
-            preferences: {},
-            history: {},
-          } as never,
-          [],
-        );
-      },
-    ],
+    ['session', (state: any) => (state.session = { phase: 'live' })],
+    ['wallet', (state: any) => (state.walletObligations = [{}])],
+    ['rejection', (state: any) => (state.rejectionTransports = [{}])],
   ])(
-    'claims and authoritatively deletes a disposable %s session while preserving recovery UX',
-    async (_label, writeDisposableSession) => {
-      await storageRepository.claimLease();
-      await writeDisposableSession();
-      localStorage.setItem('appState_savedSession', '1');
+    'uses the same hard-reset UI for malformed %s state without changing disk',
+    async (_part, corrupt) => {
+      await storageRepository.claimApplicationState();
+      const malformed: any = structuredClone(baseSave({ playerId: 'corrupt-root' }));
+      corrupt(malformed);
+      const raw = _encodeRawApplicationStateForTests(malformed);
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(SESSION_DB_NAME);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction('application-state', 'readwrite');
+        transaction.objectStore('application-state').put(raw, 'current');
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+      });
+      db.close();
       releaseLeaseIfOwner();
       storageRepository._resetForTests();
 
-      const claim = jest.spyOn(storageRepository, 'claimAndRead');
-      const error = jest.spyOn(console, 'error').mockImplementation(() => {});
       act(() => {
         renderer = create(
           createElement(ShellBootHarness, {
@@ -410,13 +423,21 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
           }),
         );
       });
+      await waitForRender(renderer!, 'Stored application state is malformed');
 
-      await waitForRender(renderer!, 'saved session is unsupported');
-      expect(claim).toHaveBeenCalledTimes(1);
-      expect(await readSessionRecord()).toBeNull();
-      expect(localStorage.getItem('appState_savedSession')).toBe('1');
-      error.mockRestore();
-      claim.mockRestore();
+      const verify = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(SESSION_DB_NAME);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const stored = await new Promise<Uint8Array>((resolve, reject) => {
+        const transaction = verify.transaction('application-state', 'readonly');
+        const request = transaction.objectStore('application-state').get('current');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      verify.close();
+      expect(stored).toEqual(raw);
     },
   );
 
@@ -447,7 +468,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       const inspect = jest.spyOn(storageRepository, 'inspect').mockImplementationOnce(async () => {
         const inspected = await originalInspect();
         const racingClaim = await indexedDbStoragePort.claimAndRead('racing-tab');
-        await indexedDbStoragePort.writeSession(racingSave, racingClaim.authority);
+        await indexedDbStoragePort.writeApplicationState(racingSave, racingClaim.authority);
         return inspected;
       });
       const claim = jest.spyOn(storageRepository, 'claimAndRead');
@@ -478,7 +499,9 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       expect(claim).toHaveBeenCalledTimes(1);
       expect(onFreshClaim).not.toHaveBeenCalled();
       expect(onRestore).toHaveBeenCalledWith(
-        expect.objectContaining({ phase: racingSave.phase }),
+        expect.objectContaining({
+          session: expect.objectContaining({ phase: racingSave.session?.phase }),
+        }),
         'manual',
       );
       inspect.mockRestore();
@@ -486,16 +509,16 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     },
   );
 
-  it('preserves malformed wallet evidence and offers a successful hard reset retry', async () => {
-    await storageRepository.claimLease();
+  it('hard-resets preserved malformed aggregate evidence on explicit retry', async () => {
+    await storageRepository.claimApplicationState();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
     await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction('wallet-reservations', 'readwrite');
-      transaction.objectStore('wallet-reservations').put({ malformed: true }, 'current');
+      const transaction = db.transaction('application-state', 'readwrite');
+      transaction.objectStore('application-state').put({ malformed: true }, 'current');
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });
@@ -514,7 +537,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         }),
       );
     });
-    await waitForRender(renderer!, 'Stored wallet operation record is malformed');
+    await waitForRender(renderer!, 'Stored application state is malformed');
     expect(claim).not.toHaveBeenCalled();
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
@@ -537,7 +560,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     });
     await waitForRender(renderer!, 'Fresh dashboard');
     expect(renderer!.root.findByProps({ children: 'Fresh dashboard' })).toBeDefined();
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
   });
 
   it('suppresses fresh-claim callbacks when authority is lost before snapshot delivery', async () => {
@@ -610,21 +633,13 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('suppresses identity and restore callbacks when a resume claim becomes stale', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     const save = liveSave({
       pairingToken: 'stale-resume-pair',
       serializedGameSession: new Uint8Array([7, 8, 9]),
     });
-    if (save.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.saveSession({
-      scope: 'live',
-      walletProviderScope: save.walletProviderScope,
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
-    await storageRepository.flushSessionSave();
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.checkpointApplicationState(save);
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
 
@@ -664,21 +679,13 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('does not finish an in-flight restore after storage authority is lost', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     const save = liveSave({
       pairingToken: 'authority-loss-pair',
       serializedGameSession: new Uint8Array([4, 5, 6]),
     });
-    if (save.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.saveSession({
-      scope: 'live',
-      walletProviderScope: save.walletProviderScope,
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
-    await storageRepository.flushSessionSave();
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.checkpointApplicationState(save);
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
 

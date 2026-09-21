@@ -12,17 +12,17 @@ import {
   selectGameTabConnected,
   isCleanShutdownInProgress,
   sessionAmountsFromSave,
-  sessionModelFromSave,
+  decodeDurableApplicationState,
   snapshotFromSessionModel,
   isFinishingGameStatus,
   nextGameTurnAfterLocalTurn,
   isActivelyPlayingOnChain,
   projectGameStatus,
 } from '../session/model';
-import { type SessionSave } from '../session/saveEnvelope';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave({
     myContribution: '100',
     theirContribution: '100',
@@ -120,7 +120,7 @@ describe('session model restore, schema, and event contracts', () => {
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {
-    const save: SessionSave = liveEnvelope({
+    const save: DurableApplicationState = liveEnvelope({
       version: 22n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
@@ -167,7 +167,7 @@ describe('session model restore, schema, and event contracts', () => {
       ],
     });
 
-    const restored = sessionModelFromSave(save);
+    const restored = decodeDurableApplicationState(save).model;
     const live = createSessionModel({
       channel: {
         status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true },

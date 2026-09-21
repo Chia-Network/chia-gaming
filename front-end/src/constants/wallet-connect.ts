@@ -9,7 +9,6 @@ import {
   TESTNET_GENESIS_CHALLENGE,
 } from './env';
 import { isTestnet } from './currency';
-import { PREFERENCES_KEY } from '../hooks/savePreferences';
 import { storageRepository } from '../lib/session/storageRepository';
 
 export enum ChiaMethod {
@@ -38,19 +37,10 @@ export function getChainId(): string {
 }
 
 /**
- * True when the persisted connection preference is the local simulator.
- * Direct localStorage read: `getBlockchainType()` would seed the session-save
- * cache the same way `storageRepository.query('network')` would.
+ * True when the repository-owned connection preference is the local simulator.
  */
 function readBlockchainIsSimulator(): boolean {
-  try {
-    const raw = localStorage.getItem(PREFERENCES_KEY);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { blockchainType?: unknown };
-    return parsed.blockchainType === 'simulator';
-  } catch {
-    return false;
-  }
+  return storageRepository.query('blockchainType') === 'simulator';
 }
 
 /**
@@ -62,11 +52,7 @@ function readBlockchainIsSimulator(): boolean {
  * challenge even if the UI network toggle is Testnet. That toggle still drives
  * WalletConnect chain id and currency labels; it is not a simulated network.
  *
- * Reads preferences via direct localStorage lookups (`isTestnet()`,
- * `readBlockchainIsSimulator()`) rather than `storageRepository.query('network')` /
- * `getBlockchainType()`, which would seed the session-save cache with a
- * non-durable `preferences` record as a side effect — that seeding trips the
- * durability guard when this runs inside session creation.
+ * Both preferences come from the repository-owned aggregate.
  */
 export function getGenesisChallenge(): string {
   if (GENESIS_CHALLENGE_OVERRIDE) return GENESIS_CHALLENGE_OVERRIDE;

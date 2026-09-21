@@ -1,20 +1,24 @@
 import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
-import { CHANNEL_SEMANTIC_PHASES } from '../../types/ChiaGaming';
 import type {
   LiveSessionSave,
   PreHandshakeSessionSave,
-  PreferencesSessionSave,
+  DurableRejectionTransport,
+  DurableSessionPhase,
+  DurableApplicationState,
   SavedHandProposal,
   SessionHistorySave,
   SessionIdentitySave,
   SessionPairingSave,
   SessionPreferencesSave,
   SessionPresentationSave,
-  SessionSave,
   SessionTransportSave,
   TerminalSessionSave,
 } from './saveEnvelope';
-import { SESSION_SAVE_SCHEMA, SESSION_SAVE_VERSION } from './saveEnvelope';
+import {
+  DURABLE_APPLICATION_STATE_SCHEMA,
+  DURABLE_APPLICATION_STATE_VERSION,
+  MAX_DURABLE_REJECTION_TRANSPORTS,
+} from './saveEnvelope';
 import {
   decodePersistedGameState,
   isCatalogGameType,
@@ -67,29 +71,29 @@ import {
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
-import { decodeWalletProviderScope } from './walletOperationCodec';
+import {
+  decodeWalletOperationEntries,
+  decodeWalletProviderScope,
+} from './walletOperationValidation';
+import { walletProviderScopeKey } from './walletOperationStore';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
-export const SESSION_SAVE_ENVELOPE_VERSION = SESSION_SAVE_VERSION;
-
-const COMMON_ENVELOPE_FIELDS = ['schema', 'version', 'phase', 'identity', 'preferences', 'history'];
-const ENVELOPE_FIELDS = {
-  preferences: new Set(COMMON_ENVELOPE_FIELDS),
-  'pre-handshake': new Set([
-    ...COMMON_ENVELOPE_FIELDS,
-    'walletProviderScope',
-    'pairing',
-    'transport',
-  ]),
-  live: new Set([
-    ...COMMON_ENVELOPE_FIELDS,
-    'walletProviderScope',
-    'pairing',
-    'live',
-    'presentation',
-  ]),
-  terminal: new Set([...COMMON_ENVELOPE_FIELDS, 'walletProviderScope', 'terminal', 'presentation']),
+const AGGREGATE_FIELDS = new Set([
+  'schema',
+  'version',
+  'identity',
+  'preferences',
+  'history',
+  'session',
+  'walletContext',
+  'walletObligations',
+  'rejectionTransports',
+]);
+const SESSION_FIELDS = {
+  'pre-handshake': new Set(['phase', 'pairing', 'transport']),
+  live: new Set(['phase', 'pairing', 'live', 'presentation']),
+  terminal: new Set(['phase', 'terminal', 'presentation']),
 } as const;
 const IDENTITY_FIELDS = new Set(['playerId', 'sessionId', 'myHubPlayerId']);
 const PREFERENCE_FIELDS = new Set([
@@ -136,6 +140,15 @@ const LIVE_FIELDS = new Set([
 const TERMINAL_HANDOFF_FIELDS = new Set(['id', 'message', 'msgno', 'sent', 'acknowledged']);
 const UNACKED_MESSAGE_FIELDS = new Set(['msgno', 'msg']);
 const TERMINAL_FIELDS = new Set(['iStarted', 'coinsOfInterest', 'myAlias', 'opponentAlias']);
+const REJECTION_FIELDS = new Set([
+  'kind',
+  'peerId',
+  'sessionId',
+  'messageNumber',
+  'remoteNumber',
+  'unackedMessages',
+  'createdAt',
+]);
 
 const PRESENTATION_FIELDS = new Set([
   'handKey',
@@ -357,74 +370,61 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
   return live;
 }
 
-export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload | null {
-  if (value === null) return null;
-  validateChannelStatus(value);
-  const fields = requireRecord(value, 'channelStatus');
-  for (const required of ['advisory', 'coin', 'our_balance', 'their_balance', 'game_allocated']) {
-    if (!Object.hasOwn(fields, required)) {
-      throw new Error(`Garbled save: channelStatus is missing ${required}`);
-    }
+function parseRejectionTransports(value: unknown): DurableRejectionTransport[] {
+  if (!Array.isArray(value) || value.length > MAX_DURABLE_REJECTION_TRANSPORTS) {
+    throw new Error('Garbled application state: invalid rejectionTransports');
   }
-  const sessionDisposition =
-    fields.session_disposition === undefined || fields.session_disposition === null
-      ? fields.session_disposition
-      : parseDiscriminant<'AwaitOutboundTerminal' | 'Abandoned'>(
-          fields.session_disposition,
-          new Set(['AwaitOutboundTerminal', 'Abandoned']),
-          'channelStatus.session_disposition',
-        );
-  const advisory =
-    fields.advisory === null
-      ? null
-      : requireString(fields.advisory, 'channelStatus.advisory', true);
-  const havePotato =
-    fields.have_potato === undefined || fields.have_potato === null
-      ? fields.have_potato
-      : requireBoolean(fields.have_potato, 'channelStatus.have_potato');
-  const zeroPayout =
-    fields.zero_payout === undefined || fields.zero_payout === null
-      ? fields.zero_payout
-      : requireBoolean(fields.zero_payout, 'channelStatus.zero_payout');
-  const unrollInitiator =
-    fields.unroll_initiator === undefined || fields.unroll_initiator === null
-      ? fields.unroll_initiator
-      : parseDiscriminant<'us' | 'opponent'>(
-          fields.unroll_initiator,
-          new Set(['us', 'opponent']),
-          'channelStatus.unroll_initiator',
-        );
-  const semanticPhase =
-    fields.semantic_phase === undefined || fields.semantic_phase === null
-      ? fields.semantic_phase
-      : parseDiscriminant<NonNullable<ChannelStatusPayload['semantic_phase']>>(
-          fields.semantic_phase,
-          new Set<string>(CHANNEL_SEMANTIC_PHASES),
-          'channelStatus.semantic_phase',
-        );
-  const optionalStateNumber = (
-    field: 'state_number' | 'unrolling_state_number' | 'preempting_state_number',
-  ): bigint | null | undefined => {
-    const value = fields[field];
-    if (value === undefined || value === null) return value;
-    return requireBigint(value, `channelStatus.${field}`);
-  };
-  return {
-    state: parseDiscriminant<ChannelStatus>(fields.state, CHANNEL_STATUSES, 'channelStatus.state'),
-    session_disposition: sessionDisposition,
-    advisory,
-    coin: fields.coin,
-    our_balance: fields.our_balance,
-    their_balance: fields.their_balance,
-    game_allocated: fields.game_allocated,
-    have_potato: havePotato,
-    zero_payout: zeroPayout,
-    unroll_initiator: unrollInitiator,
-    semantic_phase: semanticPhase,
-    state_number: optionalStateNumber('state_number'),
-    unrolling_state_number: optionalStateNumber('unrolling_state_number'),
-    preempting_state_number: optionalStateNumber('preempting_state_number'),
-  };
+  const identities = new Set<string>();
+  return value.map((entry, index) => {
+    const label = `rejectionTransports[${index}]`;
+    const fields = requireRecord(entry, label);
+    requireExactKeys(fields, REJECTION_FIELDS, label);
+    const peerId = requireString(fields.peerId, `${label}.peerId`);
+    const sessionId = requireString(fields.sessionId, `${label}.sessionId`);
+    if (!/^[0-9a-f]{32}$/.test(sessionId)) {
+      throw new Error(`Garbled application state: invalid ${label}.sessionId`);
+    }
+    const identity = JSON.stringify([peerId, sessionId]);
+    if (identities.has(identity)) {
+      throw new Error(`Garbled application state: duplicate ${label}`);
+    }
+    identities.add(identity);
+    if (!Array.isArray(fields.unackedMessages)) {
+      throw new Error(`Garbled application state: invalid ${label}.unackedMessages`);
+    }
+    const createdAt = fields.createdAt;
+    if (typeof createdAt !== 'number' || !Number.isSafeInteger(createdAt) || createdAt < 0) {
+      throw new Error(`Garbled application state: invalid ${label}.createdAt`);
+    }
+    return {
+      kind: parseDiscriminant<DurableRejectionTransport['kind']>(
+        fields.kind,
+        new Set(['outbound-reject', 'inbound-receipt']),
+        `${label}.kind`,
+      ),
+      peerId,
+      sessionId,
+      messageNumber: requireBigint(fields.messageNumber, `${label}.messageNumber`),
+      remoteNumber: requireBigint(fields.remoteNumber, `${label}.remoteNumber`),
+      unackedMessages: fields.unackedMessages.map((message, messageIndex) => {
+        const messageLabel = `${label}.unackedMessages[${messageIndex}]`;
+        const messageFields = requireRecord(message, messageLabel);
+        requireExactKeys(messageFields, UNACKED_MESSAGE_FIELDS, messageLabel);
+        if (!(messageFields.msg instanceof Uint8Array)) {
+          throw new Error(`Garbled application state: invalid ${messageLabel}.msg`);
+        }
+        return {
+          msgno: requireBigint(messageFields.msgno, `${messageLabel}.msgno`),
+          msg: messageFields.msg,
+        };
+      }),
+      createdAt,
+    };
+  });
+}
+
+export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload | null {
+  return validateChannelStatus(value);
 }
 
 function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
@@ -568,20 +568,20 @@ function parsePresentation(value: unknown): SessionPresentationSave {
   };
 }
 
-export function sessionAmountsFromSave(save: SessionSave): {
+export function sessionAmountsFromSave(save: DurableApplicationState): {
   myContribution: bigint;
   theirContribution: bigint;
   perGameAmount: bigint;
 } {
-  if (save.phase === 'preferences' || save.phase === 'terminal') {
-    throw new Error(`Garbled save: ${save.phase} has no session amounts`);
+  if (save.session === null || save.session.phase === 'terminal') {
+    throw new Error(`Garbled save: ${save.session?.phase ?? 'no-session'} has no session amounts`);
   }
-  const myContribution = requireBigintString(save.pairing.myContribution, 'myContribution');
+  const myContribution = requireBigintString(save.session.pairing.myContribution, 'myContribution');
   const theirContribution = requireBigintString(
-    save.pairing.theirContribution,
+    save.session.pairing.theirContribution,
     'theirContribution',
   );
-  const perGameAmount = requireBigintString(save.pairing.perGameAmount, 'perGameAmount');
+  const perGameAmount = requireBigintString(save.session.pairing.perGameAmount, 'perGameAmount');
   return {
     myContribution,
     theirContribution,
@@ -591,111 +591,89 @@ export function sessionAmountsFromSave(save: SessionSave): {
 
 export interface ParsedSessionSave {
   model: SessionModel;
-  phase: SessionSave['phase'];
-  save: SessionSave;
+  save: DurableApplicationState;
 }
 
-export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
-  const envelope = requireRecord(value, 'session envelope');
-  if (envelope.schema !== SESSION_SAVE_SCHEMA) {
-    throw new Error(`Garbled save: unsupported schema ${String(envelope.schema)}`);
+export function decodeDurableApplicationState(value: unknown): ParsedSessionSave {
+  const envelope = requireRecord(value, 'application state');
+  requireExactKeys(envelope, AGGREGATE_FIELDS, 'application state');
+  if (envelope.schema !== DURABLE_APPLICATION_STATE_SCHEMA) {
+    throw new Error(`Garbled application state: unsupported schema ${String(envelope.schema)}`);
   }
-  if (envelope.version !== SESSION_SAVE_ENVELOPE_VERSION) {
-    throw new Error(`Garbled save: unsupported version ${String(envelope.version)}`);
-  }
-  if (envelope.walletOperationRuntime !== undefined) {
-    throw new Error('Garbled save: walletOperationRuntime is not session-owned');
+  if (envelope.version !== DURABLE_APPLICATION_STATE_VERSION) {
+    throw new Error(`Garbled application state: unsupported version ${String(envelope.version)}`);
   }
   const identity = parseIdentity(envelope.identity);
   const preferences = parsePreferences(envelope.preferences);
   const history = parseHistory(envelope.history);
+  const walletContext =
+    envelope.walletContext === null
+      ? null
+      : decodeWalletProviderScope(envelope.walletContext, 'walletContext');
+  const walletObligations = decodeWalletOperationEntries(
+    envelope.walletObligations,
+    'walletObligations',
+  );
+  if (walletObligations.length > 0 && walletContext === null) {
+    throw new Error('Garbled application state: wallet obligations require walletContext');
+  }
+  if (
+    walletContext &&
+    walletObligations.some(
+      (entry) =>
+        walletProviderScopeKey(entry.owner.providerScope) !== walletProviderScopeKey(walletContext),
+    )
+  ) {
+    throw new Error('Garbled application state: wallet obligation owner/context mismatch');
+  }
+  const rejectionTransports = parseRejectionTransports(envelope.rejectionTransports);
   const common = {
-    schema: SESSION_SAVE_SCHEMA,
-    version: SESSION_SAVE_VERSION,
+    schema: DURABLE_APPLICATION_STATE_SCHEMA,
+    version: DURABLE_APPLICATION_STATE_VERSION,
     identity,
     preferences,
     history,
+    walletContext,
+    walletObligations,
+    rejectionTransports,
   } as const;
-  let typedEnvelope: SessionSave;
+  let session: DurableSessionPhase | null;
+  const sessionEnvelope =
+    envelope.session === null ? null : requireRecord(envelope.session, 'session');
   let presentation: SessionPresentationSave | null = null;
   let restoring = false;
-  switch (envelope.phase) {
-    case 'preferences':
-      requireExactKeys(envelope, ENVELOPE_FIELDS.preferences, 'session envelope');
-      if (
-        envelope.pairing !== undefined ||
-        envelope.transport !== undefined ||
-        envelope.live !== undefined ||
-        envelope.presentation !== undefined ||
-        envelope.terminal !== undefined
-      ) {
-        throw new Error('Garbled save: unexpected preferences phase payload');
-      }
-      typedEnvelope = { ...common, phase: 'preferences' } satisfies PreferencesSessionSave;
+  switch (sessionEnvelope?.phase) {
+    case undefined:
+      session = null;
       break;
     case 'pre-handshake':
-      requireExactKeys(envelope, ENVELOPE_FIELDS['pre-handshake'], 'session envelope');
-      if (
-        envelope.live !== undefined ||
-        envelope.presentation !== undefined ||
-        envelope.terminal !== undefined
-      ) {
-        throw new Error('Garbled save: unexpected pre-handshake phase payload');
-      }
-      typedEnvelope = {
-        ...common,
+      requireExactKeys(sessionEnvelope, SESSION_FIELDS['pre-handshake'], 'session');
+      session = {
         phase: 'pre-handshake',
-        walletProviderScope: decodeWalletProviderScope(
-          envelope.walletProviderScope,
-          'walletProviderScope',
-        ),
-        pairing: parsePairing(envelope.pairing),
-        transport: parseTransport(envelope.transport),
+        pairing: parsePairing(sessionEnvelope.pairing),
+        transport: parseTransport(sessionEnvelope.transport),
       } satisfies PreHandshakeSessionSave;
       break;
     case 'live':
-      requireExactKeys(envelope, ENVELOPE_FIELDS.live, 'session envelope');
-      if (envelope.terminal !== undefined) {
-        throw new Error('Garbled save: unexpected live phase payload');
-      }
-      if (envelope.transport !== undefined) {
-        throw new Error('Garbled save: unexpected live transport payload');
-      }
-      presentation = parsePresentation(envelope.presentation);
-      typedEnvelope = {
-        ...common,
+      requireExactKeys(sessionEnvelope, SESSION_FIELDS.live, 'session');
+      presentation = parsePresentation(sessionEnvelope.presentation);
+      session = {
         phase: 'live',
-        walletProviderScope: decodeWalletProviderScope(
-          envelope.walletProviderScope,
-          'walletProviderScope',
-        ),
-        pairing: parsePairing(envelope.pairing),
-        live: parseLive(envelope.live),
+        pairing: parsePairing(sessionEnvelope.pairing),
+        live: parseLive(sessionEnvelope.live),
         presentation,
       } satisfies LiveSessionSave;
       restoring = true;
       break;
     case 'terminal': {
-      requireExactKeys(envelope, ENVELOPE_FIELDS.terminal, 'session envelope');
-      if (
-        envelope.pairing !== undefined ||
-        envelope.transport !== undefined ||
-        envelope.live !== undefined
-      ) {
-        throw new Error('Garbled save: unexpected terminal phase payload');
-      }
-      const terminal = requireRecord(envelope.terminal, 'terminal');
+      requireExactKeys(sessionEnvelope, SESSION_FIELDS.terminal, 'session');
+      const terminal = requireRecord(sessionEnvelope.terminal, 'terminal');
       requireExactKeys(terminal, TERMINAL_FIELDS, 'terminal');
       validateTerminalCoins(terminal.coinsOfInterest);
       const coins = terminal.coinsOfInterest as unknown[];
-      presentation = parsePresentation(envelope.presentation);
-      typedEnvelope = {
-        ...common,
+      presentation = parsePresentation(sessionEnvelope.presentation);
+      session = {
         phase: 'terminal',
-        walletProviderScope: decodeWalletProviderScope(
-          envelope.walletProviderScope,
-          'walletProviderScope',
-        ),
         terminal: {
           iStarted: requireBoolean(terminal.iStarted, 'terminal.iStarted'),
           coinsOfInterest: coins.map((coin, index) => {
@@ -739,11 +717,16 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       break;
     }
     default:
-      throw new Error(`Garbled save: invalid phase ${String(envelope.phase)}`);
+      throw new Error(
+        `Garbled application state: invalid session phase ${String(sessionEnvelope?.phase)}`,
+      );
   }
+  if (session !== null && walletContext === null) {
+    throw new Error('Garbled application state: durable session requires walletContext');
+  }
+  const typedEnvelope: DurableApplicationState = { ...common, session };
   if (presentation === null) {
     return {
-      phase: typedEnvelope.phase,
       save: typedEnvelope,
       model: createSessionModel({
         history: {
@@ -758,7 +741,10 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
     };
   }
   const save = presentation;
-  if (typedEnvelope.phase === 'terminal' && !isTerminalChannelSnapshot(save.channelStatus)) {
+  if (
+    typedEnvelope.session?.phase === 'terminal' &&
+    !isTerminalChannelSnapshot(save.channelStatus)
+  ) {
     throw new Error('Garbled save: terminal phase requires a terminal channelStatus');
   }
   const activeIds = save.activeGameIds;
@@ -803,19 +789,7 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
     }
   }
 
-  let handState = null;
-  let decodedHandState: ReturnType<typeof decodePersistedGameState> = null;
-  if (save.handState != null) {
-    decodedHandState = decodePersistedGameState(save.handState);
-    if (!decodedHandState) throw new Error('Garbled save: invalid handState');
-    handState = decodedHandState.persisted;
-    if (
-      typeof save.activeGameType !== 'string' ||
-      save.activeGameType !== decodedHandState.persisted.gameType
-    ) {
-      throw new Error('Garbled save: activeGameType does not match handState.gameType');
-    }
-  }
+  const handState = save.handState;
 
   const hasCurrentHand = activeIds.length > 0 || currentHandIds.length > 0;
   if (hasCurrentHand && save.currentHandOrigin === null) {
@@ -824,10 +798,10 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (!hasCurrentHand && save.currentHandOrigin !== null) {
     throw new Error('Garbled save: currentHandOrigin requires a current hand');
   }
-  if (typedEnvelope.phase === 'live' && hasCurrentHand && decodedHandState === null) {
+  if (typedEnvelope.session?.phase === 'live' && hasCurrentHand && handState === null) {
     throw new Error('Garbled save: live current hand is missing handState');
   }
-  if (decodedHandState !== null && currentHandIds.length === 0) {
+  if (handState !== null && currentHandIds.length === 0) {
     throw new Error('Garbled save: handState requires currentHandGameIds');
   }
   const compose = parseComposeDraftState(save.betweenHandCompose);
@@ -908,13 +882,19 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
       myRunningBalance: parseDecimalString(save.myRunningBalance, 'myRunningBalance'),
     }),
   );
-  return { model, phase: typedEnvelope.phase, save: typedEnvelope };
+  return {
+    model,
+    save: typedEnvelope,
+  };
 }
 
-export function validateSessionSaveEnvelope(save: unknown): void {
-  decodeSessionSaveEnvelope(save);
+/** Decode once at boot and distribute independent plain-data projections. */
+export function rehydrateDurableApplicationState(value: unknown) {
+  const decoded = decodeDurableApplicationState(value);
+  return {
+    state: structuredClone(decoded.save),
+    model: structuredClone(decoded.model),
+  };
 }
 
-export function sessionModelFromSave(save: SessionSave): SessionModel {
-  return decodeSessionSaveEnvelope(save).model;
-}
+export type RehydratedDurableApplicationState = ReturnType<typeof rehydrateDurableApplicationState>;

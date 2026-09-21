@@ -358,50 +358,32 @@ guarantees fresh entropy after every save/restore cycle. The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).
 
-#### What is saved (`SessionSave`)
+#### What is saved (`DurableApplicationState`)
 
-IndexedDB holds one complete `SessionSave` record as one salt-prefixed,
-obfuscated binary value. The record is encoded with bencodex, then XOR-masked
-with a stream derived from the fresh salt and a key compiled into the client.
-This deters casual inspection but is not a security boundary: the client has
-everything needed to reverse it. The serialized WASM cradle and unacknowledged
-protocol messages remain raw `Uint8Array` values within that binary encoding;
-they are not base64-expanded. localStorage holds only small preferences,
-resumable-session markers, and tab/reset hints inside the same-origin trust
-model described above; it is not storage authority.
+IndexedDB v5 holds one `application-state/current` record and one coordination
+store. The application record is a salt-prefixed, obfuscated Bencodex binary
+value; obfuscation deters casual inspection but is not a security boundary.
+The strict `chia-gaming-application-state` v1 root contains common
+identity/preferences/history, an optional `pre-handshake`, `live`, or
+`terminal` session, one canonical wallet context with wallet obligations, and
+bounded rejection transports. The serialized WASM cradle and unacknowledged
+frames remain raw `Uint8Array` values. localStorage contains only coordination
+and resume/reset hints; it is not preference or application-state authority.
 
-The current and only legal browser envelope is `chia-gaming-session` version
-`33`; the serialized Rust/WASM cradle inside a live envelope is schema `21`.
-The wallet operation record is not an envelope field: it is an independent
-`chia-gaming-wallet-operations` version-`8` record in its own IndexedDB store,
-and the app database itself is IndexedDB schema `4`. These explicit version
-fields remain centralized migration hooks. No player
-app or hub persistence format has shipped, so non-current app-owned versions
-are deleted without fallback decoding, aliases, or migrations. A decoded v33
-record must also satisfy the complete phase-owned envelope contract (keyed game
-membership, generic game-state envelope agreement, terminal data, and frozen
-terminal coin list); malformed records are deleted rather than partially
-restored. The boot marker is retained after an incompatible or malformed
-resumable record is discarded so the failure remains visible at the Resume /
-Start Over boundary.
-`decodeSessionSaveEnvelope` is the one envelope decoder used by both the
-pre-write check and the IndexedDB read check. Acceptance always constructs the
-normalized `SessionModel`; validation is not maintained as a second,
-shape-only parser. Game-owned `handState` first decodes as the exact generic
-`{ gameType, state }` envelope and must then restore through the owning
-registered package. Envelope acceptance therefore guarantees that the same
-package restore boundary used by live and frozen mounts accepts the payload.
-The envelope is a discriminated union. Every variant has `schema`, `version`,
-`phase`, `identity`, `preferences`, and `history`; `pre-handshake` adds pairing
-and peer-transport state; `live` adds complete pairing, the same transport
-state, serialized game state, and presentation; and `terminal` adds terminal
-facts plus frozen presentation. A preferences record cannot carry resumable
-state, a pre-handshake record cannot carry game state, and an ordinary terminal
-record cannot carry a cradle. Rejection reliability records are kept in a
-separate IndexedDB store so rejecting an unrelated proposal cannot replace a
-live or frozen session envelope. The store holds outbound rejection replay
-records and inbound duplicate-ack receipts, capped at eight records in total
-and expired after seven days.
+The nested Rust/WASM cradle is opaque schema 21. No app-owned persistence format
+has shipped, so only aggregate v1 decodes: there are no migrations, fallback
+decoders, aliases, or predecessor reads. Unknown or missing fields, a malformed
+session, wallet obligation, rejection transport, hand state, or incompatible
+version reject the whole root and present Retry Hard Reset. Nothing is deleted,
+pruned, or preferentially salvaged during corruption handling.
+
+The one decoder is used for pre-write and IndexedDB reads and always constructs
+the normalized `SessionModel`. Game-owned `handState` must restore through its
+registered package. The optional session discriminant owns its exact payload:
+pre-handshake owns pairing and transport, live adds the opaque cradle and
+presentation, and terminal owns frozen facts and presentation. Rejection
+transports and wallet obligations are nested sibling slices of the same root,
+so one capture and one write cannot observe mixed generations.
 The live and terminal `presentation` payload is wire-complete: empty collections,
 nullable identities, false flags, zero balances, and timer absence are encoded
 explicitly rather than reconstructed by decoder defaults. The following fields
@@ -409,8 +391,8 @@ are grouped under those phase-owned payloads:
 
 | Field                                 | Type                                                 | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                             | `bigint`                                             | Save envelope version; currently `33`.                                                                                                                                                                                                                                                                          |
-| `walletProviderScope`                 | `WalletProviderScope`                                | Canonical provider/account scope required by every durable session and matching wallet-operation entry.                                                                                                                                                                                                         |
+| `version`                             | `bigint`                                             | Aggregate version; currently `1`.                                                                                                                                                                                                                                                                                |
+| `walletContext`                       | `WalletProviderScope \| null`                        | Single canonical provider/account scope for the session and nested wallet obligations.                                                                                                                                                                                                                          |
 | `playerId`                            | `string`                                             | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                           | `string?`                                            | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
 | `alias`                               | `string?`                                            | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -478,26 +460,17 @@ session-coordination intent, not in-progress game-specific controls.
 
 #### Save architecture
 
-Three composed owners define the browser boundary. `StorageRepository`
-atomically claims authority and reads the raw session and wallet-operation
-records; it also exclusively owns durable authority, mutation ordering, and
-reset epochs, and strictly decodes and hydrates the session record.
-`WalletOperationRuntime` strictly decodes and hydrates its independent record.
-Claims, authority loss, and hard reset each publish a new monotonic repository
-lifecycle generation so external runtimes can fence stale completions without
-owning storage.
-Callers use repository-owned semantic operations for session, wallet,
-rejection, clear, and reset changes; no raw storage-command or public mutation
-mode surface exists. Ordinary failure leaves the in-memory boundary dirty and
-still releases effects, while authority loss retires the obsolete runtime and
-releases nothing. `WalletOperationRuntime`, backed by one
-`WalletProviderRegistry`, owns provider-scoped offer creation, recovery,
-cancellation, reconnect epochs, and operation persistence. `SubmissionPump`
-owns the one browser map and ordered promise tail that execute Rust-issued
-opaque submission attempts.
+`StorageRepository` is the sole aggregate owner. It atomically claims
+coordination authority and reads the root, serializes semantic transforms, and
+writes complete captures. Claims, authority loss, and hard reset publish a new
+monotonic lifecycle generation so transient runtimes can fence stale
+completions. Ordinary I/O failure leaves the latest in-memory aggregate pending
+and still releases permitted effects; authority loss retires the obsolete
+runtime and releases nothing. `WalletOperationRuntime` owns transient provider
+orchestration over the root's wallet-obligation slice.
 
 Session persistence is executed by `SessionMachineRuntime`, the sole active
-durability coordinator. A save combines two authoritative sources:
+commit coordinator. A capture combines two authoritative sources:
 
 1. **WASM-native state** — `SessionController.getWasmFields()` returns the
    cradle serialization, message counters, protocol state, history, aliases,
@@ -509,7 +482,7 @@ durability coordinator. A save combines two authoritative sources:
 
 The two timer timestamps have one dedicated durable owner in
 `SessionController`. Shell schedules the browser timers, but changes enter the
-runtime coordinator and `assembleSessionSave` reads the controller-owned facts
+runtime coordinator and aggregate capture reads the controller-owned facts
 synchronously with the cradle boundary; no cache patch may compete with a
 machine checkpoint.
 
@@ -547,7 +520,7 @@ checkpoint and no `pendingCandidates` state. `LocalActionApplied` is a host-only
 protocol-presentation fact; it can update the keyed turn presentation, but it
 does not promote game-owned state and does not grant game permission. Rejection
 is not delivered to the game.
-Before starting the asynchronous write, `assembleSessionSave` synchronously
+Before starting the asynchronous write, aggregate capture synchronously
 captures game-owned canonical `handState`, the serialized WASM cradle, and the
 reliable boundary into one immutable save input. Every package
 has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
@@ -611,15 +584,15 @@ serializes one-shot wallet delivery and reports the typed outcome back to Rust.
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
 not create controller-owned successor or predecessor requests. Persisted
-funding and fee offers enter the independent strict-v8 wallet operation
-ledger. Every trade owns its exact provider trade ID and exact
+funding and fee offers enter the aggregate's strict wallet-obligation slice.
+Every trade owns its exact provider trade ID and exact
 `(installationPlayerId, peerSessionId, provider/account scope, purpose kind,
 operationId)` identity;
 one operation may retain multiple historical trades without conflating owners
 or cleanup. Pending creation uses `creating` with its embedded canonical request
 and exact recovery ID; pending cancellation uses `cancelling` with its exact
 trade and recovery ID. A pre-ID response loss uses
-`best-effort-uncertain`; v8 records its typed
+`best-effort-uncertain`; the aggregate records its typed
 `orphanRisk: 'pre-id-response-lost'` provenance and carries that marker through
 a later `creating` recovery or created trade. Recovery reconciles exact
 post-ID requests instead of starting replacements. Funding unavailability
@@ -637,21 +610,17 @@ each later readiness epoch and the orphan warning remains. Broadcasting the
 same finalized spend through WalletConnect `pushTransactions` is instead
 idempotent exact-byte replay; it creates no wallet-operation entry and carries
 no orphan-risk provenance.
-Wallet mutation is held until wallet-operation hydration succeeds and fails closed if the
-record is malformed. The malformed record is preserved and its error remains
-on Resume / Start Over. A connected provider/account scope that differs from
-the durable owner is shown as a recovery mismatch rather than touching the
-wrong wallet.
+Wallet mutation starts only after the aggregate claim is installed. Malformation
+of any nested field rejects the whole root and remains visible on Resume /
+Start Over. A connected provider/account scope that differs from the durable
+owner is shown as a recovery mismatch rather than touching the wrong wallet.
 
-The active session envelope and complete ledger snapshot are written in one
-IndexedDB transaction. Strict codecs reject unknown/missing fields, duplicate
-trade IDs, invalid discriminants, and non-current versions. Persistence failure
-does not gate offer use, transaction release, or cancellation; the in-memory
-session and wallet-operation remain dirty for a later full atomic checkpoint. Disk
-hydration initializes an empty ledger or installs the exact claimed current-v8
-snapshot; it never replaces dirty reservations, and identity conflicts fail
-restoration. Only the active-blockchain lifecycle attaches the ledger's
-cancellation RPC. A failed cancellation stays durable and retries only on
+The complete aggregate is written in one IndexedDB transaction. Strict
+validation rejects unknown or missing fields, duplicate trade IDs, invalid
+discriminants, and non-current versions. Persistence failure does not gate
+offer use, transaction release, or cancellation; the latest in-memory root is
+captured again on later activity. Only the active-blockchain lifecycle attaches
+the cancellation RPC. A failed cancellation stays durable and retries only on
 restore, wallet reconnect/attachment, or an explicit terminal-finalization
 attempt.
 There is no timer or immediate retry loop, and terminal quiescence fails while
@@ -659,9 +628,9 @@ that session has any unresolved ledger entry. Going offline detaches the
 provider RPC without discarding cleanup; retirement records the required
 transitions, and the next matching lifecycle attachment drains them.
 
-The app-owned persistence versions are session envelope v33, serialized
-Rust/WASM cradle schema 21, IndexedDB schema 4, and wallet-operation record v8.
-None has shipped, so only those current versions decode.
+The app-owned persistence versions are aggregate v1, opaque Rust/WASM cradle
+schema 21, and IndexedDB v5. None has shipped, so only the current aggregate
+decodes.
 
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
@@ -777,7 +746,7 @@ Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The current v33 envelope makes
+independently by `GameID`. The aggregate v1 presentation makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -983,22 +952,14 @@ immediately even if asynchronous enrichment has not yet derived the game
 coin’s hex ID. A stale resolution preserves its reported channel change
 balances and continues to show any remaining classified hands.
 
-**Pre-game saves and the boot marker:** A durable game session is anything with
-`serializedGameSession` or `pairingToken` (`isResumable`). Those writes set the
-`localStorage` boot marker (`appState_savedSession`) automatically.
-
-Pre-game wallet connection is different: `Shell` calls `markSavedSession()` when
-the wallet finishes connecting, then `saveSession({ blockchainType })`. The
-marker is what forces Resume / Start Over on reload even before a game session exists.
-Preference-only / non-resumable IndexedDB writes must **not** clear that marker —
-otherwise a wallet reconnect would restore `blockchainType` with no dialog.
-`peekSession()` treats marker + `blockchainType` (or leftover WalletConnect
-storage) as resumable pre-game state. `blockchainType` alone, without a marker,
-is not enough (it is preserved across normal `clearSession()`).
-
-Unsupported IndexedDB schema versions are deleted, but the marker is kept so the
-next boot still shows Resume / Start Over instead of silently booting into
-leftover preferences.
+**Pre-game saves and the boot marker:** The aggregate is resumable when it has
+connection preferences, a session phase, wallet obligations, or rejection
+transports. `localStorage`'s `appState_savedSession` is only a boot hint; the
+strict aggregate remains authoritative. Wallet connection writes
+`preferences.blockchainType` through `StorageRepository` and marks the app
+resumable even before a game exists. Normal `clearSession()` preserves valid
+common state and unresolved obligations; hard reset is the destructive path.
+No unsupported app format is decoded or deleted automatically.
 
 #### Boot state machine
 
@@ -1010,10 +971,9 @@ module for BLS identity only.
 On page load, Shell delegates storage/recovery ownership to
 `BootRecoveryBoundary`. It completes a pending owned-storage wipe and visible
 read-only IndexedDB inspection before choosing recovery UI. Hub and wallet
-promises are not part of this local boundary. Resume/takeover then use one
-atomic claim-and-read transaction over coordination, session, wallet-operation,
-and rejection stores, followed by strict session and wallet-operation
-hydration:
+promises are not part of this local boundary. Resume/takeover use one atomic
+claim-and-read transaction over coordination plus `application-state/current`,
+followed by one strict aggregate rehydrate:
 
 ```
 hasSavedSessionMarker()?
@@ -1024,7 +984,7 @@ hasSavedSessionMarker()?
                  │       │                (separate "Starting over…" UI state;
                  │       │                 does not share the Resume spinner)
                  │       │
-                 │       └─ Resume → peekSession() / load IndexedDB
+                 │       └─ Resume → claim and read aggregate
                  │           │
                  │           ├─ load failure / unsupported → keep dialog open
                  │           │   with loadError; re-arm the marker
@@ -1032,16 +992,16 @@ hasSavedSessionMarker()?
                  │           └─ save loaded → is there a lease conflict?
                  │               │
                  │               ├─ Yes → show Take Over dialog
-                 │               │   ├─ Take Over → claimAndHydrateSession(), restore
+                 │               │   ├─ Take Over → claim + rehydrate, restore
                  │               │   └─ Close Tab → dead
                  │               │
-                 │               └─ No → claimAndHydrateSession(), restore
+                 │               └─ No → claim + rehydrate, restore
                  │
                  ├─ no marker, ownership conflict (another tab is active)
                  │   → show Take Over dialog (save: null)
                  │
                  └─ no marker, no conflict
-                     → claimAndHydrateSession(), ready (fresh start)
+                     → claim + rehydrate, ready (fresh start)
 ```
 
 **Start over hard reset:** Start over is deliberately not graceful cleanup. It
@@ -1052,11 +1012,11 @@ deletes are not blocked), awaits `hardReset()`, and reloads only after every
 targeted deletion confirms success. A blocked or failed deletion leaves the
 shell on recovery UI with Retry Hard Reset guidance.
 
-All session, ledger, rejection, clear, and reset mutations share one serialized
-same-tab coordinator. IndexedDB schema 4 also contains a strict durable authority
-record with owner tab, monotonic write epoch, and reset epoch/status. Every
-mutation validates its captured authority in the same IndexedDB transaction as
-its data change; localStorage is only an early UX conflict/reset hint. This
+All aggregate and reset mutations share one serialized same-tab coordinator.
+IndexedDB v5 keeps strict authority metadata in its coordination store: owner
+tab, monotonic write epoch, and reset epoch/status. Every mutation validates its
+captured authority in the same transaction as the aggregate write; localStorage
+is only an early UX conflict/reset hint. This
 orders `clearSession()` followed by an immediate unawaited save and prevents an
 old tab or retired runtime from committing after takeover. `hardReset()` durably
 advances the reset epoch before invalidating memory and deleting storage;
@@ -1593,14 +1553,13 @@ exception: `beginConnect` returns `skipQr` plus `fields`, so silent reconnect
 and `performResume` keep `ConnectionSetupModal` (with a wallet alert) rather
 than calling `finalize()` with no values.
 
-**Session persistence:** `blockchainType` is written via
-`saveSession({ blockchainType })` as soon as the wallet connection completes,
-together with an explicit `markSavedSession()` so reload shows Resume / Start
-Over even before a WASM game session exists. Preference-only writes must not clear
-that marker. Once the full game session is running, `useGameSession` takes over
-persistence and includes `blockchainType` in every subsequent save alongside the
-WASM and JS state. `clearSession()` preserves `blockchainType` as part of normal
-session lifecycle cleanup; `hardReset()` is the destructive path that wipes it.
+**Session persistence:** Wallet connection updates
+`DurableApplicationState.preferences.blockchainType` through
+`StorageRepository` and marks the app resumable before a WASM session exists.
+Once play begins, the same aggregate checkpoint includes that preference,
+session presentation, reliable transport, opaque WASM cradle, wallet
+obligations, and rejection transports. `clearSession()` preserves common state
+and valid unresolved obligations; `hardReset()` wipes the whole aggregate.
 
 **Intentional deviation:** The simulator returns `ConnectionSetup.fields`
 because there is no external wallet to scan the QR code. This triggers the
@@ -1635,8 +1594,8 @@ host-side coordinator for chain observations. It separates three concerns:
    publish a late old-generation result. Read polling fans session delivery out
    with `allSettled`: one session's callback failure does not block healthy
    sessions and does not trigger global adapter backoff. Wallet mutations start
-   only after successful wallet-wallet-operation hydration; malformed hydration rejects
-   them before the provider is called.
+   only after the claimed aggregate is installed; malformed aggregate state
+   rejects them before the provider is called.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -2119,8 +2078,8 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/components/GameSession.tsx`            | Game session UI: header, coin status, game area, overlays                                                                                                       |
 | `front-end/src/hooks/useGameSession.ts`               | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                                           |
 | `front-end/src/lib/session/sessionMachine*.ts`        | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules                    |
-| `front-end/src/lib/session/persistence*.ts`           | Canonical strict-v33 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`        | Canonical `SessionModel` → v33 presentation snapshot encoder                                                                                                    |
+| `front-end/src/lib/session/persistence*.ts`           | Canonical strict aggregate-v1 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`                          |
+| `front-end/src/lib/session/sessionSnapshot.ts`        | Canonical `SessionModel` → aggregate presentation snapshot encoder                                                                                              |
 | `front-end/src/lib/gameRegistry.ts`                   | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                                                  |
 | `front-end/src/lib/session/incomingProposal.ts`       | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                                            |
 | `front-end/src/lib/gameMountRegistry.tsx`             | One frozen/live discriminated mount dispatched through the selected package                                                                                     |
@@ -2130,12 +2089,11 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/lib/gameIdentities.ts`                 | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                                                             |
 | `front-end/src/hooks/blobSingleton.ts`                | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                                         |
 | `front-end/src/services/PeerSession.ts`               | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                                                  |
-| `front-end/src/lib/session/storageRepository.ts`      | Atomic claim/read, generation-fenced mutation ordering, strict session hydration, and live/terminal persistence lifecycle                                       |
-| `front-end/src/lib/session/walletOperationRuntime.ts` | Generation-fenced provider operation reduction, effects, hydration, material delivery, and cleanup                                                              |
+| `front-end/src/lib/session/storageRepository.ts`      | Sole aggregate owner: atomic claim/read, generation-fenced transforms, capture, checkpoint, and reset                                                           |
+| `front-end/src/lib/session/walletOperationRuntime.ts` | Transient generation-fenced provider orchestration, material delivery, recovery, and cleanup over nested obligations                                            |
 | `front-end/src/hooks/saveCoordination.ts`             | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                                             |
 | `front-end/src/hooks/saveHardReset.ts`                | Hard-reset and WalletConnect browser-storage cleanup                                                                                                            |
-| `front-end/src/hooks/savePreferences.ts`              | Local preference encoding and decoding                                                                                                                          |
-| `front-end/src/lib/session/indexedDb.ts`              | IndexedDB session record read/write/delete                                                                                                                      |
+| `front-end/src/lib/session/indexedDb.ts`              | IndexedDB v5 coordination and strict aggregate record transactions                                                                                              |
 | `front-end/src/lib/session/model.ts`                  | Session model + `selectGameDashboardView` / `selectStatusBarBalances`                                                                                           |
 | `front-end/src/lib/reactPropSafe.ts`                  | Prop-safe cloning that preserves typed arrays / dense byte objects                                                                                              |
 | `front-end/src/hooks/BlockchainPoller.ts`             | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots                                                                    |

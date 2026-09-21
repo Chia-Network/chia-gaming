@@ -1,969 +1,115 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { type SessionPresentationSave, type SessionSave } from '../session/saveEnvelope';
-import {
-  decodeSessionSaveEnvelope,
-  sessionModelFromSave,
-  validateSessionSaveEnvelope,
-} from '../session/model';
-import {
-  ACTIVE_INSTANCE,
-  TERMINAL_INSTANCE,
-  activeSave,
-  baseSave,
-  installSessionEnvelopeTestSetup,
-  liveSave,
-} from './session_save_envelope.fixtures';
+import { decodeDurableApplicationState } from '../session/persistence';
+import type { DurableApplicationState } from '../session/saveEnvelope';
+import type { WalletOperationEntry } from '../session/walletOperationStore';
+import { activeSave, baseSave } from './session_save_envelope.fixtures';
 
-installSessionEnvelopeTestSetup();
+const scope = {
+  provider: 'walletconnect' as const,
+  fingerprint: '123',
+  chainId: 'chia:testnet11',
+};
 
-describe('validateSessionSaveEnvelope', () => {
-  it('rejects number channel state fields in the current save version', () => {
-    const save = liveSave({
-      channelStatus: {
-        state: 'Active',
-        state_number: 1,
-        unrolling_state_number: 2n,
-        preempting_state_number: 3n,
-      },
-    });
+const obligation: WalletOperationEntry = {
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'peer-session',
+    providerScope: scope,
+  },
+  purpose: { kind: 'funding', operationId: 'funding-1' },
+  stage: 'reserved',
+  tradeId: 'trade-1',
+  reason: '',
+};
 
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow('channelStatus.state_number');
-  });
+const creatingObligation: WalletOperationEntry = {
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'peer-session',
+    providerScope: scope,
+  },
+  purpose: { kind: 'fee', operationId: 'fee-creating' },
+  stage: 'creating',
+  disposition: 'active',
+  recoveryId: 'recovery-1',
+  request: {
+    kind: 'fee',
+    uniqueId: 'submission-1',
+    fee: 10n,
+    concurrentSpendCoinId: '01'.repeat(32),
+  },
+  reason: '',
+};
 
-  it('accepts empty preferences and a complete pre-handshake checkpoint', () => {
-    expect(() => validateSessionSaveEnvelope(baseSave())).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(
-        baseSave({
-          blockchainType: 'simulator',
-          pairingToken: 'pair',
-          iStarted: true,
-          myContribution: '20',
-          theirContribution: '20',
-          perGameAmount: '2',
-        }),
-      ),
-    ).not.toThrow();
-  });
+const uncertainCancellation: WalletOperationEntry = {
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'peer-session',
+    providerScope: scope,
+  },
+  purpose: { kind: 'fee', operationId: 'fee-cancelling' },
+  stage: 'best-effort-cancellation-uncertain',
+  tradeId: 'trade-cancelling',
+  generation: 2n,
+  lastAttemptEpoch: 3n,
+  reason: 'response-lost',
+};
 
-  it('accepts a live resolved-unroll checkpoint while a game coin remains active', () => {
-    const save = activeSave({ channelStatus: { state: 'ResolvedUnrolled' } });
-
-    expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
-    expect(sessionModelFromSave(save).game.activeIds).toEqual(['game-1']);
-  });
-
-  it('preserves game coin metadata needed for hand labels through terminal reload', () => {
-    const save = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [
-        {
-          label: 'Game 7 reward coin',
-          id: 'coin-7',
-          game_id: '7',
-          game_coin_kind: 'reward',
-        },
-      ],
-    });
-
-    const decoded = decodeSessionSaveEnvelope(save).save;
-    expect(decoded.phase === 'terminal' && decoded.terminal.coinsOfInterest).toEqual([
+function completeAggregate(): DurableApplicationState {
+  return activeSave({
+    walletProviderScope: scope,
+    walletObligations: [obligation, creatingObligation, uncertainCancellation],
+    rejectionTransports: [
       {
-        label: 'Game 7 reward coin',
-        id: 'coin-7',
-        game_id: '7',
-        game_coin_kind: 'reward',
+        kind: 'outbound-reject',
+        peerId: 'peer',
+        sessionId: 'ab'.repeat(16),
+        messageNumber: 2n,
+        remoteNumber: 1n,
+        unackedMessages: [{ msgno: 2n, msg: new Uint8Array([1, 2]) }],
+        createdAt: 1,
       },
-    ]);
+    ],
+  });
+}
+
+describe('DurableApplicationState strict validation', () => {
+  it('round-trips no-session state as the same aggregate root', () => {
+    const state = baseSave();
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
+  });
+
+  it('round-trips session, wallet obligations, and rejection transports exactly', () => {
+    const state = completeAggregate();
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
 
   it.each([
-    [
-      'preferences',
-      baseSave({
-        activeGameIds: ['game-1'],
-        currentHandGameIds: ['game-1'],
-        lastDisplayedGameId: 'game-1',
-        activeGameType: 'calpoker',
-        gameInstances: { 'game-1': ACTIVE_INSTANCE },
-        handState: calpokerStateCodec.encode({
-          playerHand: [1n, 2n],
-          opponentHand: [3n, 4n],
-          moveNumber: 1n,
-          isPlayerTurn: true,
-          iStarted: true,
-          error: null,
-        }),
-        betweenHandLastHandProposal: {
-          sender_is_player_a: false,
-          game_timeout: '15',
-          game_type: 'calpoker',
-          parameters: null,
-        },
-      }),
-    ],
-    [
-      'pre-handshake',
-      baseSave({
-        pairingToken: 'pair',
-        iStarted: true,
-        myContribution: '20',
-        theirContribution: '20',
-        perGameAmount: '20',
-        activeGameIds: ['game-1'],
-        currentHandGameIds: ['game-1'],
-        lastDisplayedGameId: 'game-1',
-        activeGameType: 'calpoker',
-        gameInstances: { 'game-1': ACTIVE_INSTANCE },
-        handState: calpokerStateCodec.encode({
-          playerHand: [1n, 2n],
-          opponentHand: [3n, 4n],
-          moveNumber: 1n,
-          isPlayerTurn: true,
-          iStarted: true,
-          error: null,
-        }),
-        betweenHandLastHandProposal: {
-          sender_is_player_a: false,
-          game_timeout: '15',
-          game_type: 'calpoker',
-          parameters: null,
-        },
-      }),
-    ],
-  ])('rejects a %s record carrying a complete active-game payload', (_kind, save) => {
-    expect(() => validateSessionSaveEnvelope(save)).toThrow('unexpected');
+    ['root version', (state: any) => (state.version = 0n)],
+    ['common identity', (state: any) => (state.identity.playerId = 7)],
+    ['session payload', (state: any) => (state.session.live.messageNumber = -1n)],
+    ['wallet obligation', (state: any) => (state.walletObligations[0].stage = 'unknown')],
+    ['rejection transport', (state: any) => (state.rejectionTransports[0].sessionId = 'bad')],
+  ])('rejects corruption in %s as whole-root corruption', (_label, corrupt) => {
+    const state: any = structuredClone(completeAggregate());
+    corrupt(state);
+    expect(() => decodeDurableApplicationState(state)).toThrow();
   });
 
-  it('rejects terminal records with live protocol fields and live records with terminal fields', () => {
-    const live = liveSave();
-    const terminal = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [],
-      terminalIStarted: true,
-    });
-    expect(() =>
-      validateSessionSaveEnvelope({
-        ...terminal,
-        pairing: live.phase === 'live' ? live.pairing : undefined,
-        live: live.phase === 'live' ? live.live : undefined,
-      } as SessionSave),
-    ).toThrow('unexpected');
-    expect(() =>
-      validateSessionSaveEnvelope({
-        ...live,
-        terminal: { iStarted: true, coinsOfInterest: [] },
-      } as SessionSave),
-    ).toThrow('unexpected');
-  });
+  it('rejects duplicate wallet and rejection identities', () => {
+    const duplicateWallet = completeAggregate();
+    duplicateWallet.walletObligations.push(structuredClone(obligation));
+    expect(() => decodeDurableApplicationState(duplicateWallet)).toThrow(/duplicate/);
 
-  it('decodes one legitimate snapshot for every current phase', () => {
-    const preferences = baseSave({ blockchainType: 'simulator' });
-    const preHandshake = baseSave({
-      pairingToken: 'pair',
-      iStarted: false,
-      myContribution: '20',
-      theirContribution: '20',
-      perGameAmount: '2',
-    });
-    const live = liveSave();
-    const terminal = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [],
-      terminalIStarted: true,
-      activeGameIds: [],
-      currentHandGameIds: ['game-1'],
-      currentHandOrigin: 'local',
-      lastDisplayedGameId: 'game-1',
-      activeGameType: 'calpoker',
-      gameInstances: { 'game-1': TERMINAL_INSTANCE },
-      betweenHandLastHandProposal: {
-        sender_is_player_a: false,
-        game_timeout: '15',
-        game_type: 'calpoker',
-        parameters: null,
-      },
-    });
-    expect(decodeSessionSaveEnvelope(preferences).phase).toBe('preferences');
-    expect(decodeSessionSaveEnvelope(preHandshake).phase).toBe('pre-handshake');
-    expect(decodeSessionSaveEnvelope(live).phase).toBe('live');
-    expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
-  });
-
-  it('rejects unknown live fields', () => {
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    (save.live as unknown as Record<string, unknown>).unknownLiveField = [];
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow('unexpected live field unknownLiveField');
-  });
-
-  it('accepts cloud as preferences.blockchainType', () => {
-    const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
-    expect(decoded.phase).toBe('preferences');
-    expect(decoded.save.preferences.blockchainType).toBe('cloud');
-  });
-
-  it('rejects an unknown preferences.blockchainType', () => {
-    expect(() => decodeSessionSaveEnvelope(baseSave({ blockchainType: 'not-a-wallet' }))).toThrow(
-      'Garbled save: invalid preferences.blockchainType: not-a-wallet',
+    const duplicateRejection = completeAggregate();
+    duplicateRejection.rejectionTransports.push(
+      structuredClone(duplicateRejection.rejectionTransports[0]),
     );
+    expect(() => decodeDurableApplicationState(duplicateRejection)).toThrow(/duplicate/);
   });
 
-  it('rejects the wallet ledger inside a session envelope', () => {
-    expect(() =>
-      decodeSessionSaveEnvelope({
-        ...liveSave(),
-        walletOperationRuntime: [],
-      }),
-    ).toThrow('walletOperationRuntime is not session-owned');
-  });
-
-  it.each([
-    ['schema', { gameSessionSchemaVersion: undefined }],
-    ['message counter', { messageNumber: undefined }],
-    ['remote counter', { remoteNumber: undefined }],
-    ['role', { iStarted: undefined }],
-    ['pairing token', { pairingToken: undefined }],
-    ['unacked messages', { unackedMessages: undefined }],
-    ['my contribution', { myContribution: undefined }],
-    ['their contribution', { theirContribution: undefined }],
-    ['per-game amount', { perGameAmount: undefined }],
-    ['reward puzzle hash', { rewardPuzzleHash: null }],
-  ])('rejects a live resumable record missing its %s', (_label, fields) => {
-    expect(() => validateSessionSaveEnvelope(liveSave(fields))).toThrow();
-  });
-
-  it('requires the nullable terminal handoff field in every current transport save', () => {
-    const live = liveSave();
-    if (live.phase !== 'live') throw new Error('expected live fixture');
-    Reflect.deleteProperty(live.live, 'terminalHandoff');
-    expect(() => validateSessionSaveEnvelope(live)).toThrow('terminalHandoff is required');
-
-    const preHandshake = baseSave({
-      pairingToken: 'pair',
-      iStarted: true,
-      myContribution: '20',
-      theirContribution: '20',
-      perGameAmount: '2',
-    });
-    if (preHandshake.phase !== 'pre-handshake') throw new Error('expected pre-handshake fixture');
-    Reflect.deleteProperty(preHandshake.transport, 'terminalHandoff');
-    expect(() => validateSessionSaveEnvelope(preHandshake)).toThrow('terminalHandoff is required');
-  });
-
-  it('rejects terminal handoff bindings inconsistent with reliable transport', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        liveSave({
-          messageNumber: 2n,
-          terminalHandoff: {
-            id: 'close',
-            message: new Uint8Array([1]),
-            msgno: 1n,
-            sent: true,
-            acknowledged: false,
-          },
-          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([2]) }],
-        }),
-      ),
-    ).toThrow('does not match its unacked reliable frame');
-
-    expect(() =>
-      validateSessionSaveEnvelope(
-        liveSave({
-          messageNumber: 2n,
-          terminalHandoff: {
-            id: 'close',
-            message: new Uint8Array([1]),
-            msgno: 1n,
-            sent: false,
-            acknowledged: true,
-          },
-        }),
-      ),
-    ).toThrow('was never sent');
-  });
-
-  it('rejects a live/current hand without its game-owned payload', () => {
-    const save = activeSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    Reflect.deleteProperty(save.presentation, 'handState');
-    expect(() => validateSessionSaveEnvelope(save)).toThrow('invalid handState');
-  });
-
-  it.each([
-    'handKey',
-    'activeGameIds',
-    'currentHandGameIds',
-    'currentHandOrigin',
-    'lastDisplayedGameId',
-    'gameInstances',
-    'activeGameType',
-    'handState',
-    'channelStatus',
-    'myRunningBalance',
-    'channelNotifQueue',
-    'gameNotifQueue',
-    'dismissedChannelStatus',
-    'cleanShutdownStarted',
-    'betweenHandMode',
-    'betweenHandCompose',
-    'betweenHandLastHandProposal',
-    'betweenHandRejectedOnceHandProposal',
-    'betweenHandPendingRetryHandProposal',
-    'newHandRequested',
-    'pendingProposals',
-    'waitingStateEnteredAt',
-    'cleanShutdownGraceStartedAt',
-  ] satisfies Array<keyof SessionPresentationSave>)(
-    'rejects a current presentation missing required %s',
-    (field) => {
-      const save = liveSave();
-      if (save.phase !== 'live') throw new Error('expected live fixture');
-      Reflect.deleteProperty(save.presentation, field);
-      expect(() => validateSessionSaveEnvelope(save)).toThrow();
-    },
-  );
-
-  it('rejects unknown presentation fields', () => {
-    const save = liveSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    Object.assign(save.presentation, { unknownPresentationFact: true });
-    expect(() => validateSessionSaveEnvelope(save)).toThrow(
-      'unexpected presentation field unknownPresentationFact',
-    );
-  });
-
-  it.each([
-    ['preferences envelope', () => ({ ...baseSave(), unknown: true })],
-    [
-      'pre-handshake envelope',
-      () => ({
-        ...baseSave({
-          pairingToken: 'pair',
-          iStarted: true,
-          myContribution: '20',
-          theirContribution: '20',
-          perGameAmount: '2',
-        }),
-        unknown: true,
-      }),
-    ],
-    ['live envelope', () => ({ ...liveSave(), unknown: true })],
-    [
-      'terminal envelope',
-      () => ({
-        ...baseSave({
-          channelStatus: { state: 'ResolvedClean' },
-          coinsOfInterest: [],
-        }),
-        unknown: true,
-      }),
-    ],
-    [
-      'identity',
-      () => {
-        const save = liveSave() as any;
-        save.identity.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'preferences',
-      () => {
-        const save = liveSave() as any;
-        save.preferences.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'history',
-      () => {
-        const save = liveSave() as any;
-        save.history.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'pairing',
-      () => {
-        const save = liveSave() as any;
-        save.pairing.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'transport',
-      () => {
-        const save = baseSave({
-          pairingToken: 'pair',
-          iStarted: true,
-          myContribution: '20',
-          theirContribution: '20',
-          perGameAmount: '2',
-        }) as any;
-        save.transport.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'unacked message',
-      () => {
-        const save = liveSave({
-          messageNumber: 2n,
-          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([1]), unknown: true }],
-        });
-        return save;
-      },
-    ],
-    [
-      'terminal handoff',
-      () => {
-        const save = liveSave({
-          messageNumber: 2n,
-          unackedMessages: [{ msgno: 1n, msg: new Uint8Array([1]) }],
-          terminalHandoff: {
-            id: 'close',
-            message: new Uint8Array([1]),
-            msgno: 1n,
-            sent: true,
-            acknowledged: false,
-            unknown: true,
-          },
-        });
-        return save;
-      },
-    ],
-    [
-      'live',
-      () => {
-        const save = liveSave() as any;
-        save.live.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'notification',
-      () =>
-        liveSave({
-          channelNotifQueue: [
-            { id: 1n, kind: 'channel-state', title: 'Title', message: 'Message', unknown: true },
-          ],
-        }),
-    ],
-    ['channel status', () => liveSave({ channelStatus: { state: 'Active', unknown: true } })],
-    [
-      'channel status amount',
-      () =>
-        liveSave({
-          channelStatus: {
-            state: 'Active',
-            our_balance: { Amount: 20n, unknown: true },
-          },
-        }),
-    ],
-    [
-      'game instance',
-      () =>
-        activeSave({
-          gameInstances: { 'game-1': { ...ACTIVE_INSTANCE, unknown: true } },
-        }),
-    ],
-    [
-      'game terminal',
-      () =>
-        activeSave({
-          gameInstances: {
-            'game-1': {
-              ...ACTIVE_INSTANCE,
-              terminal: { ...ACTIVE_INSTANCE.terminal, unknown: true },
-            },
-          },
-        }),
-    ],
-    [
-      'hand state envelope',
-      () => {
-        const save = activeSave() as any;
-        save.presentation.handState.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'compose record',
-      () => {
-        const save = liveSave() as any;
-        save.presentation.betweenHandCompose.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'proposal record',
-      () => {
-        const save = liveSave() as any;
-        save.presentation.betweenHandLastHandProposal.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'pending proposal',
-      () =>
-        liveSave({
-          pendingProposals: [
-            {
-              id: 'proposal-1',
-              lifecycle: 'local-outgoing',
-              hand_proposal: {
-                sender_is_player_a: false,
-                game_timeout: '15',
-                game_type: 'calpoker',
-                parameters: 20n,
-              },
-              unknown: true,
-            },
-          ],
-        }),
-    ],
-    [
-      'terminal session',
-      () => {
-        const save = baseSave({
-          channelStatus: { state: 'ResolvedClean' },
-          coinsOfInterest: [],
-        }) as any;
-        save.terminal.unknown = true;
-        return save;
-      },
-    ],
-    [
-      'terminal coin',
-      () =>
-        baseSave({
-          channelStatus: { state: 'ResolvedClean' },
-          coinsOfInterest: [{ label: 'Coin', id: 'coin', unknown: true }],
-        }),
-    ],
-  ])('rejects an unknown host-owned field at the %s boundary', (_label, makeSave) => {
-    expect(() => decodeSessionSaveEnvelope(makeSave())).toThrow(/unexpected|invalid/i);
-  });
-
-  it.each([
-    ['activeGameIds', { activeGameIds: ['game-1', 'game-1'] }],
-    ['currentHandGameIds', { currentHandGameIds: ['game-1', 'game-1'] }],
-  ])('rejects duplicate %s', (_label, fields) => {
-    expect(() => validateSessionSaveEnvelope(activeSave(fields))).toThrow('duplicate');
-  });
-
-  it.each([
-    ['active', { gameInstances: {} }],
-    ['current', { activeGameIds: [], gameInstances: {} }],
-    ['last display', { activeGameIds: [], currentHandGameIds: [], gameInstances: {} }],
-  ])('rejects a missing %s instance', (_label, fields) => {
-    expect(() => validateSessionSaveEnvelope(activeSave(fields))).toThrow('missing its keyed');
-  });
-
-  it('retains completed current-hand members but rejects active terminal members', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: { 'game-1': TERMINAL_INSTANCE },
-        }),
-      ),
-    ).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(activeSave({ gameInstances: { 'game-1': TERMINAL_INSTANCE } })),
-    ).toThrow('active game game-1 is terminal');
-  });
-
-  it('requires presentation and terminal state to end together', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: {
-            'game-1': { ...TERMINAL_INSTANCE, presentation: 'finishing' },
-          },
-        }),
-      ),
-    ).toThrow('presentation and terminal state disagree');
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: {
-            'game-1': { ...ACTIVE_INSTANCE, presentation: 'ended' },
-          },
-        }),
-      ),
-    ).toThrow('presentation and terminal state disagree');
-  });
-
-  it('rejects a hand-envelope game type mismatch', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          handState: calpokerStateCodec.encode({
-            playerHand: [1n, 2n],
-            opponentHand: [3n, 4n],
-            moveNumber: 1n,
-            isPlayerTurn: true,
-            iStarted: true,
-            error: null,
-          }),
-          activeGameType: 'spacepoker',
-        }),
-      ),
-    ).toThrow('activeGameType does not match');
-  });
-
-  it.each(['calpoker', 'spacepoker', 'krunk'] as const)(
-    'rejects malformed $gameType state through its registered restore codec',
-    (gameType) => {
-      expect(() =>
-        validateSessionSaveEnvelope(
-          activeSave({
-            activeGameType: gameType,
-            handState: { gameType, state: {} },
-            betweenHandLastHandProposal: {
-              sender_is_player_a: gameType === 'krunk',
-              game_timeout: '15',
-              game_type: gameType,
-              parameters: gameType === 'spacepoker' ? [2n, 10n] : 20n,
-            },
-          }),
-        ),
-      ).toThrow(`${gameType} handState cannot be restored`);
-    },
-  );
-
-  it('rejects unrelated keyed instances but retains a terminal display member', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          gameInstances: {
-            'game-1': ACTIVE_INSTANCE,
-            unrelated: { ...TERMINAL_INSTANCE, id: 'unrelated' },
-          },
-        }),
-      ),
-    ).toThrow('unrelated keyed instance');
-
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: ['game-1'],
-          currentHandGameIds: ['game-1'],
-          lastDisplayedGameId: 'terminal',
-          gameInstances: {
-            'game-1': ACTIVE_INSTANCE,
-            terminal: { ...TERMINAL_INSTANCE, id: 'terminal' },
-          },
-        }),
-      ),
-    ).not.toThrow();
-  });
-
-  it('accepts terminal frozen snapshots with or without remount state', () => {
-    const terminal = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [],
-      activeGameIds: [],
-      currentHandGameIds: ['game-1'],
-      currentHandOrigin: 'peer',
-      lastDisplayedGameId: 'game-1',
-      activeGameType: 'calpoker',
-      gameInstances: { 'game-1': TERMINAL_INSTANCE },
-      betweenHandLastHandProposal: {
-        sender_is_player_a: false,
-        game_timeout: '15',
-        game_type: 'calpoker',
-        parameters: null,
-      },
-    });
-    expect(() => validateSessionSaveEnvelope(terminal)).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(
-        terminal.phase === 'terminal'
-          ? {
-              ...terminal,
-              presentation: {
-                ...terminal.presentation,
-                handState: calpokerStateCodec.encode({
-                  perPlayerStake: 20n,
-                  playerHand: [1n, 2n],
-                  opponentHand: [3n, 4n],
-                  moveNumber: 1n,
-                  isPlayerTurn: false,
-                  iStarted: false,
-                  settlementOutcome: null,
-                }),
-              },
-            }
-          : terminal,
-      ),
-    ).not.toThrow();
-  });
-
-  it('rejects persisted hands without matching game terms', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(activeSave({ betweenHandLastHandProposal: null })),
-    ).toThrow('betweenHandLastHandProposal');
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameType: 'spacepoker',
-          handState: spacepokerStateCodec.encode({
-            perPlayerStake: 20n,
-            gameState: { handler: 2n, myTurn: true, N: 4n },
-            playerHoleCards: [1n, 2n],
-            playerBoost: false,
-            opponentHoleCards: null,
-            opponentBoost: null,
-            communityCards: [null, null, null, null, null],
-            halfPot: 1n,
-            lastRaise: 0n,
-            iRaisedLast: false,
-            handHistory: [],
-            outcome: null,
-            terminalState: 'none',
-            coinTossIOpen: true,
-            unitSizeMojos: 10n,
-            displayMode: 'mojos',
-            settlementOutcome: null,
-          }),
-          betweenHandLastHandProposal: {
-            sender_is_player_a: false,
-            game_timeout: '15',
-            game_type: 'calpoker',
-            parameters: null,
-          },
-        }),
-      ),
-    ).toThrow('activeGameType does not match betweenHandLastHandProposal.game_type');
-  });
-
-  it.each([
-    undefined,
-    [{ label: '', id: 'coin' }],
-    [{ label: 'Coin', id: '' }],
-    [{ label: 'Coin', id: 'coin', parentId: '' }],
-    [{ label: 'Coin', id: 'coin', parentId: 'parent' }],
-    [{ label: 'Coin', id: 'coin', parentId: 7 }],
-    [
-      { label: 'Coin A', id: 'same' },
-      { label: 'Coin B', id: 'same' },
-    ],
-  ])('rejects invalid terminal coin lists', (coinsOfInterest) => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        baseSave({
-          channelStatus: { state: 'ResolvedClean' },
-          coinsOfInterest,
-        }),
-      ),
-    ).toThrow();
-  });
-
-  it.each([
-    { ...TERMINAL_INSTANCE.terminal, outcome: null },
-    {
-      type: 'none',
-      outcome: null,
-      label: 'unexpected',
-      myReward: null,
-      rewardCoinHex: null,
-    },
-    {
-      type: 'ended-cancelled',
-      outcome: 'settled_cleanly',
-      label: 'Cancelled',
-      myReward: null,
-      rewardCoinHex: null,
-    },
-    { ...TERMINAL_INSTANCE.terminal, myReward: 'not-an-amount' },
-    {
-      type: 'ended-cancelled',
-      outcome: null,
-      label: 'Cancelled',
-      myReward: '1',
-      rewardCoinHex: null,
-    },
-  ])('rejects malformed cross-field terminal outcomes', (terminal) => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: {
-            'game-1': { ...TERMINAL_INSTANCE, terminal },
-          },
-        }),
-      ),
-    ).toThrow();
-  });
-
-  it.each(['outcome', 'label', 'myReward', 'rewardCoinHex'] as const)(
-    'rejects an omitted game terminal %s while accepting explicit null',
-    (field) => {
-      const omitted = structuredClone(activeSave());
-      if (omitted.phase !== 'live') throw new Error('expected live fixture');
-      Reflect.deleteProperty(omitted.presentation.gameInstances['game-1'].terminal, field);
-      expect(() => validateSessionSaveEnvelope(omitted)).toThrow(`terminal.${field}`);
-
-      expect(() => validateSessionSaveEnvelope(activeSave())).not.toThrow();
-    },
-  );
-
-  it.each(['myAlias', 'opponentAlias'] as const)(
-    'rejects an omitted terminal session %s while accepting explicit null',
-    (field) => {
-      const omitted = baseSave({
-        channelStatus: { state: 'ResolvedClean' },
-        coinsOfInterest: [],
-      });
-      if (omitted.phase !== 'terminal') throw new Error('expected terminal fixture');
-      Reflect.deleteProperty(omitted.terminal, field);
-      expect(() => validateSessionSaveEnvelope(omitted)).toThrow(`terminal.${field}`);
-
-      expect(() =>
-        validateSessionSaveEnvelope(
-          baseSave({
-            channelStatus: { state: 'ResolvedClean' },
-            coinsOfInterest: [],
-          }),
-        ),
-      ).not.toThrow();
-    },
-  );
-
-  it.each([
-    ['between-hand mode', { betweenHandMode: 'unknown-mode' }, 'betweenHandMode'],
-    [
-      'between-hand terms',
-      {
-        betweenHandLastHandProposal: {
-          sender_is_player_a: false,
-          game_timeout: '15',
-          game_type: 'calpoker',
-          parameters: 10,
-        },
-      },
-      'betweenHandLastHandProposal.parameters',
-    ],
-    [
-      'proposal lifecycle',
-      {
-        pendingProposals: [
-          {
-            id: 'proposal-1',
-            lifecycle: 'local-cached',
-            hand_proposal: {
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
-              parameters: 10n,
-            },
-          },
-        ],
-      },
-      'lifecycle',
-    ],
-    [
-      'pending proposals',
-      {
-        pendingProposals: [
-          {
-            id: 'proposal-1',
-            lifecycle: 'local-outgoing',
-            hand_proposal: {
-              sender_is_player_a: true,
-              game_timeout: '15',
-              game_type: 'krunk',
-              parameters: 100n,
-            },
-          },
-          {
-            id: 'proposal-1',
-            lifecycle: 'peer-cached',
-            hand_proposal: {
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
-              parameters: 10n,
-            },
-          },
-        ],
-      },
-      'duplicate',
-    ],
-  ])('rejects malformed %s state', (_label, fields, message) => {
-    expect(() => validateSessionSaveEnvelope(liveSave(fields as Partial<SessionSave>))).toThrow(
-      message,
-    );
-  });
-
-  it.each([
-    ['channel discriminant', { channelStatus: { state: 'Bogus' } }, 'channelStatus.state'],
-    [
-      'channel balance',
-      { channelStatus: { state: 'Active', our_balance: { Amount: 'nope' } } },
-      'channelStatus.our_balance',
-    ],
-    [
-      'notification kind',
-      {
-        channelNotifQueue: [{ id: 1n, kind: 'unknown', title: 'Title', message: 'Message' }],
-      },
-      'notification[0].kind',
-    ],
-    [
-      'notification id',
-      {
-        gameNotifQueue: [
-          { id: 'not-an-id', kind: 'proposal-rejected', title: 'Title', message: 'Message' },
-        ],
-      },
-      'notification id',
-    ],
-    ['transport counter', { messageNumber: '1' }, 'messageNumber'],
-    [
-      'transport message payload',
-      { unackedMessages: [{ msgno: 1n, msg: [1, 2, 3] }] },
-      'unackedMessages[0].msg',
-    ],
-    ['cradle bytes', { serializedGameSession: [1, 2, 3] }, 'serializedGameSession'],
-    ['timeout numeric string', { channelTimeout: '0' }, 'channelTimeout'],
-  ])('rejects malformed %s metadata', (_label, fields, message) => {
-    expect(() =>
-      validateSessionSaveEnvelope(liveSave(fields as unknown as Partial<SessionSave>)),
-    ).toThrow(message);
-  });
-
-  it('restores only host-owned compose state', () => {
-    const save = liveSave({
-      betweenHandMode: 'decision',
-      betweenHandCompose: {
-        selected_game: 'calpoker',
-        game_timeout: '20',
-        proposal_sent: false,
-      },
-      betweenHandLastHandProposal: {
-        sender_is_player_a: false,
-        game_timeout: '20',
-        game_type: 'calpoker',
-        parameters: null,
-      },
-      channelNotifQueue: [{ id: 1n, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-      myRunningBalance: '-3',
-    });
-
-    expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
-    expect(() => sessionModelFromSave(save)).not.toThrow();
-    expect(sessionModelFromSave(save).betweenHand.compose).toEqual({
-      selectedGame: 'calpoker',
-      gameTimeout: 20n,
-      proposalSent: false,
-    });
+  it('permits no session with unresolved wallet obligations', () => {
+    const state = completeAggregate();
+    state.session = null;
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
 });

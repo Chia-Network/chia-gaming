@@ -5,9 +5,8 @@ import type { WasmEvent } from '../../types/ChiaGaming';
 import { dispatchWasmNotification } from './gameSessionEvents';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
 import {
-  prepareSessionPersistence,
-  type PreparedSessionPersistence,
-  type SessionPersistDependencies,
+  captureDurableApplicationState,
+  type PreparedDurableApplicationStateCapture,
 } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
 import type { ActiveGameHandContext } from './sessionMachineGame';
@@ -35,7 +34,6 @@ export interface SessionMachineRuntimeDependencies {
   onError(error: unknown): void;
   bindControllerEvents?: boolean;
   persist?(state: SessionMachineState): Promise<void>;
-  save?: SessionPersistDependencies['save'];
   enrichCoin?: typeof coinIdHex;
 }
 
@@ -156,7 +154,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private readonly preparePersistence: (
     state: SessionMachineState,
     clearDurabilityWarning: boolean,
-  ) => PreparedSessionPersistence | null;
+  ) => PreparedDurableApplicationStateCapture | null;
   private readonly onError: (error: unknown) => void;
   private activated = false;
   private retired = false;
@@ -172,13 +170,13 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.preparePersistence = dependencies.persist
       ? (state) => ({ write: () => dependencies.persist!(state) })
       : (state, clearDurabilityWarning) =>
-          prepareSessionPersistence({
+          captureDurableApplicationState({
+            kind: 'live',
             controller: dependencies.controller,
             getState: () => state,
             restoring: dependencies.restoring,
             getRestoreStatus: dependencies.getRestoreStatus,
             getRestoreError: dependencies.getRestoreError,
-            save: dependencies.save,
             clearDurabilityWarning,
           });
     this.interpreter = new SessionMachineInterpreter({

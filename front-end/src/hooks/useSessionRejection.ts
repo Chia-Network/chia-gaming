@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../lib/session/receivePolicy';
 import {
-  MAX_DURABLE_REJECTION_TOMBSTONES,
-  rejectionTombstoneKey,
-  type DurableRejectionTombstone,
-} from '../lib/session/indexedDb';
+  MAX_DURABLE_REJECTION_TRANSPORTS,
+  rejectionTransportKey,
+  type DurableApplicationState,
+  type DurableSessionPhase,
+  type DurableRejectionTransport,
+} from '../lib/session/saveEnvelope';
 import { storageRepository } from '../lib/session/storageRepository';
+import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
+import { freshSessionState } from '../lib/session/sessionStateTransitions';
 import type { HubConnection } from '../services/HubConnection';
 import {
   decodePeerAppMessage,
@@ -17,18 +21,57 @@ import {
 
 interface UseSessionRejectionOptions {
   getPrimaryPeer(): PeerSession | null;
+  getDurableSession(): DurableSessionPhase | null;
   releasePrimaryPeer(peer: PeerSession): void;
 }
 
 type RejectionStore = {
-  write(tombstone: DurableRejectionTombstone): Promise<void>;
+  write(tombstone: DurableRejectionTransport): Promise<void>;
   delete(peerId: string, sessionId: string): Promise<void>;
 };
 
 const repositoryStore: RejectionStore = {
-  write: (tombstone) => storageRepository.writeRejection(tombstone),
-  delete: (peerId, sessionId) => storageRepository.deleteRejection(peerId, sessionId),
+  write: (tombstone) => writeRejectionTransform((state) => addRejectionTransport(state, tombstone)),
+  delete: (peerId, sessionId) =>
+    writeRejectionTransform((state) => ({
+      ...state,
+      rejectionTransports: state.rejectionTransports.filter(
+        (record) => record.peerId !== peerId || record.sessionId !== sessionId,
+      ),
+    })),
 };
+
+function writeRejectionTransform(
+  transform: (state: DurableApplicationState) => DurableApplicationState,
+): Promise<void> {
+  return captureDurableApplicationState({
+    kind: 'transform',
+    transform,
+  })!.write();
+}
+
+function addRejectionTransport(
+  state: DurableApplicationState,
+  tombstone: DurableRejectionTransport,
+): DurableApplicationState {
+  return {
+    ...state,
+    rejectionTransports: [
+      ...state.rejectionTransports.filter(
+        (record) => record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
+      ),
+      structuredClone(tombstone),
+    ]
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .slice(-MAX_DURABLE_REJECTION_TRANSPORTS),
+  };
+}
+
+function captureSessionRejection(tombstone: DurableRejectionTransport): Promise<void> {
+  return writeRejectionTransform((state) =>
+    addRejectionTransport(freshSessionState(state), tombstone),
+  );
+}
 
 export function useSessionRejection(options: UseSessionRejectionOptions) {
   const peersRef = useRef(new Map<string, PeerSession>());
@@ -37,13 +80,13 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const retain = useCallback((peer: PeerSession, store: RejectionStore = repositoryStore) => {
     const peers = peersRef.current;
-    const key = rejectionTombstoneKey(peer.peerId, peer.sessionId);
+    const key = rejectionTransportKey(peer.peerId, peer.sessionId);
     const replaced = peers.get(key);
     if (replaced && replaced !== peer) {
       replaced.destroy();
       peers.delete(key);
     }
-    if (!peers.has(key) && peers.size >= MAX_DURABLE_REJECTION_TOMBSTONES) {
+    if (!peers.has(key) && peers.size >= MAX_DURABLE_REJECTION_TRANSPORTS) {
       const oldestKey = peers.keys().next().value as string;
       const oldest = peers.get(oldestKey)!;
       oldest.destroy();
@@ -55,7 +98,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const bindOutbound = useCallback(
     (peer: PeerSession, createdAt: number, store: RejectionStore = repositoryStore) => {
-      const key = rejectionTombstoneKey(peer.peerId, peer.sessionId);
+      const key = rejectionTransportKey(peer.peerId, peer.sessionId);
       peer.reliableTransport.attachConsumer({
         isReady: () => true,
         canDeliver: () => true,
@@ -112,7 +155,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
   const routeFrame = useCallback((fromId: string, payload: Uint8Array): boolean => {
     const frame = decodeReliableFrame(payload);
     if (!frame) return false;
-    const peer = peersRef.current.get(rejectionTombstoneKey(fromId, frame.sessionId));
+    const peer = peersRef.current.get(rejectionTransportKey(fromId, frame.sessionId));
     if (!peer) return false;
     peer.deliverRawPeerMessage(fromId, payload);
     return true;
@@ -120,7 +163,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const rejectUnknownProposal = useCallback(
     (conn: HubConnection, fromId: string, sessionId: string, payload: Uint8Array): void => {
-      const key = rejectionTombstoneKey(fromId, sessionId);
+      const key = rejectionTransportKey(fromId, sessionId);
       const existing = peersRef.current.get(key);
       if (existing) {
         existing.deliverRawPeerMessage(fromId, payload);
@@ -164,7 +207,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const persistInboundReceipt = useCallback(
     (peer: PeerSession, remoteNumber: bigint) =>
-      storageRepository.replaceSessionWithRejection({
+      captureSessionRejection({
         kind: 'inbound-receipt',
         peerId: peer.peerId,
         sessionId: peer.sessionId,
@@ -239,23 +282,23 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
     (peerId: string): Promise<void> => {
       const peer = optionsRef.current.getPrimaryPeer();
       if (!peer || peer.peerId !== peerId || peer.isDestroyed()) return Promise.resolve();
-      const saved = storageRepository.loadState();
+      const session = optionsRef.current.getDurableSession();
       const ownsResumableSave =
-        (saved.phase === 'live' || saved.phase === 'pre-handshake') &&
-        saved.pairing.peerId === peer.peerId &&
-        saved.pairing.gameSessionId === peer.sessionId;
+        (session?.phase === 'live' || session?.phase === 'pre-handshake') &&
+        session.pairing.peerId === peer.peerId &&
+        session.pairing.gameSessionId === peer.sessionId;
       let replacedResumableSave = false;
       const store: RejectionStore = ownsResumableSave
         ? {
             write: async (tombstone) => {
               if (!replacedResumableSave) {
-                await storageRepository.replaceSessionWithRejection(tombstone);
+                await captureSessionRejection(tombstone);
                 replacedResumableSave = true;
               } else {
-                await storageRepository.writeRejection(tombstone);
+                await repositoryStore.write(tombstone);
               }
             },
-            delete: (id, sessionId) => storageRepository.deleteRejection(id, sessionId),
+            delete: repositoryStore.delete,
           }
         : repositoryStore;
       bindOutbound(peer, Date.now(), store);
@@ -281,7 +324,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
           ...peer.reliableState,
           terminalHandoff: null,
         });
-        await storageRepository.flushSessionSave();
+        await storageRepository.flushAggregate();
       },
       acknowledged: () => {
         if (peer.reliableState.unackedMessages.length > 0) return;
@@ -318,11 +361,11 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
   }, []);
 
   const restore = useCallback(
-    async (conn: HubConnection) => {
-      const tombstones = await storageRepository.readRejections();
+    async (conn: HubConnection, descriptors: readonly DurableRejectionTransport[]) => {
+      const tombstones = structuredClone(descriptors);
       for (const tombstone of tombstones) {
         if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
-          await storageRepository.deleteRejection(tombstone.peerId, tombstone.sessionId);
+          await repositoryStore.delete(tombstone.peerId, tombstone.sessionId);
           continue;
         }
         const peer = new PeerSession(

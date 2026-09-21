@@ -129,7 +129,7 @@ class SpacepokerReloadDriver {
     assert.equal(this.lanes[index].controller.getRestoreStatus(), 'restored', `${label}: restore`);
     assert.deepEqual(this.state(index), before, `${label}: host hand state must round-trip`);
     assert.deepEqual(
-      restored.save.live.serializedGameSession,
+      restored.save.session.live.serializedGameSession,
       beforeWasm,
       `${label}: persisted WASM checkpoint must match pre-reload state`,
     );

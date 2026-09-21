@@ -175,7 +175,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
     const proposalReload = await injectSessionReload(lanes[0], poller);
     lanes[0] = proposalReload.lane;
     assert.ok(
-      proposalReload.save.live.unackedMessages.length > 0,
+      proposalReload.save.session.live.unackedMessages.length > 0,
       'proposal checkpoint must durably retain unacknowledged transport bytes',
     );
     assert.equal(

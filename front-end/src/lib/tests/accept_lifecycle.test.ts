@@ -1,15 +1,17 @@
 import {
   ACCEPT_SETUP_CANCEL_CHANNEL_STATES,
+  captureFreshStart,
   channelSetupCoverCopy,
-  persistFreshStartCheckpoint,
   shouldCompleteAcceptTransition,
   shouldSynthesizeSetupPending,
   startFailureDisposition,
   type FreshStartCheckpoint,
-  type TerminalSessionBackup,
 } from '../session/acceptLifecycle';
 import type { SessionModel } from '../session/types';
 import type { ChannelStatus } from '../../types/ChiaGaming';
+import { storageRepository } from '../session/storageRepository';
+import { baseSave } from './session_save_envelope.fixtures';
+import './save.harness';
 
 function modelWithChannelState(state: ChannelStatus): SessionModel {
   return {
@@ -77,8 +79,9 @@ describe('acceptLifecycle', () => {
     });
   });
 
-  describe('persistFreshStartCheckpoint', () => {
+  describe('captureFreshStart', () => {
     const checkpoint: FreshStartCheckpoint = {
+      walletProviderScope: { provider: 'simulator', identity: 'accept-lifecycle' },
       pairing: {
         token: 't1',
         peerId: 'peer',
@@ -93,106 +96,58 @@ describe('acceptLifecycle', () => {
         remoteNumber: 0n,
         unackedMessages: [],
         disposition: 'active',
+        terminalHandoff: null,
       },
     };
 
     it('skips the write when the start epoch already advanced', async () => {
-      const replaceSession = jest.fn();
-      await persistFreshStartCheckpoint({
+      const before = structuredClone(storageRepository.loadState());
+      await captureFreshStart({
         epoch: 1,
         getCurrentEpoch: () => 2,
-        loadState: () =>
-          ({ phase: 'none' }) as ReturnType<
-            Parameters<typeof persistFreshStartCheckpoint>[0]['loadState']
-          >,
-        replaceSession,
-        saveTerminalSession: jest.fn(),
-        clearSessionPreservingHistory: jest.fn(),
         checkpoint,
         onCommitted: jest.fn(),
       });
-      expect(replaceSession).not.toHaveBeenCalled();
+      expect(storageRepository.loadState()).toEqual(before);
     });
 
-    it('marks committed after a successful write that is still current', async () => {
+    it('captures one complete pre-handshake root and marks it committed', async () => {
       const onCommitted = jest.fn();
-      const replaceSession = jest.fn().mockResolvedValue(undefined);
-      await persistFreshStartCheckpoint({
+      await captureFreshStart({
         epoch: 3,
         getCurrentEpoch: () => 3,
-        loadState: () =>
-          ({ phase: 'none' }) as ReturnType<
-            Parameters<typeof persistFreshStartCheckpoint>[0]['loadState']
-          >,
-        replaceSession,
-        saveTerminalSession: jest.fn(),
-        clearSessionPreservingHistory: jest.fn(),
         checkpoint,
         onCommitted,
       });
-      expect(replaceSession).toHaveBeenCalledWith(checkpoint);
+      expect(storageRepository.loadState().session).toMatchObject({
+        phase: 'pre-handshake',
+        pairing: checkpoint.pairing,
+        transport: checkpoint.transport,
+      });
       expect(onCommitted).toHaveBeenCalled();
     });
 
-    it('marks committed once replaceSession lands, including Cancel-race restore', async () => {
+    it('restores the prior terminal phase when Cancel races the write', async () => {
       let epoch = 5;
-      const terminalBackup: NonNullable<TerminalSessionBackup> = {
-        terminal: { coinsOfInterest: [] } as NonNullable<TerminalSessionBackup>['terminal'],
-        presentation: {} as NonNullable<TerminalSessionBackup>['presentation'],
-      };
-      const saveTerminalSession = jest.fn().mockResolvedValue(undefined);
+      const terminal = baseSave({
+        channelStatus: { state: 'ResolvedClean' },
+        coinsOfInterest: [],
+        terminalIStarted: true,
+      });
+      await storageRepository.checkpointApplicationState(terminal);
       const onCommitted = jest.fn();
-      const clearSessionPreservingHistory = jest.fn();
-
-      await persistFreshStartCheckpoint({
+      onCommitted.mockImplementation(() => {
+        epoch += 1;
+      });
+      await captureFreshStart({
         epoch,
         getCurrentEpoch: () => epoch,
-        loadState: () =>
-          ({
-            phase: 'terminal',
-            terminal: terminalBackup.terminal,
-            presentation: terminalBackup.presentation,
-          }) as ReturnType<Parameters<typeof persistFreshStartCheckpoint>[0]['loadState']>,
-        replaceSession: async () => {
-          epoch += 1;
-        },
-        saveTerminalSession,
-        clearSessionPreservingHistory,
         checkpoint,
         onCommitted,
       });
 
       expect(onCommitted).toHaveBeenCalled();
-      expect(saveTerminalSession).toHaveBeenCalled();
-      expect(clearSessionPreservingHistory).not.toHaveBeenCalled();
-    });
-
-    it('leaves persist committed when terminal restore fails after Cancel raced the write', async () => {
-      let epoch = 7;
-      const onCommitted = jest.fn();
-      await expect(
-        persistFreshStartCheckpoint({
-          epoch,
-          getCurrentEpoch: () => epoch,
-          loadState: () =>
-            ({
-              phase: 'terminal',
-              terminal: { coinsOfInterest: [] },
-              presentation: {},
-            }) as ReturnType<Parameters<typeof persistFreshStartCheckpoint>[0]['loadState']>,
-          replaceSession: async () => {
-            epoch += 1;
-          },
-          saveTerminalSession: async () => {
-            throw new Error('restore failed');
-          },
-          clearSessionPreservingHistory: jest.fn(),
-          checkpoint,
-          onCommitted,
-        }),
-      ).rejects.toThrow(/restore failed/);
-      expect(onCommitted).toHaveBeenCalled();
-      expect(startFailureDisposition(true)).toBe('cancel-attempt');
+      expect(storageRepository.loadState().session).toEqual(terminal.session);
     });
   });
 });

@@ -97,7 +97,7 @@ export interface GameInstanceModel {
   terminal: GameTerminalModel;
 }
 
-/** Derived compatibility view; never stored in SessionModel or SessionSave. */
+/** Derived compatibility view; never stored in the model or durable aggregate. */
 export interface GameInstanceViewModel {
   id: string;
   amount: string;

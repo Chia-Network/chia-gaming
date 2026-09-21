@@ -14,7 +14,6 @@ export const OWNED_INDEXED_DB_PREFIXES = [
   'walletconnect-',
 ] as const;
 export const OWNED_LOCAL_STORAGE_EXACT_KEYS = [
-  'appPreferences',
   'appState',
   'appState_savedSession',
   'appState_hardReset',

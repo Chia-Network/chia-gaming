@@ -1,5 +1,6 @@
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   channelStatusModelFromPayload,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -9,14 +10,13 @@ import {
   selectGameSessionView,
   selectGameSpecificView,
   selectSessionPhase,
-  sessionModelFromSave,
   nextGameInstanceAfterLocalTurn,
 } from '../session/model';
 import { decodeChannelStatusPayload } from '../session/persistence';
-import { type SessionSave } from '../session/saveEnvelope';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave({
     myContribution: '100',
     theirContribution: '100',
@@ -576,7 +576,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       unroll_initiator: 'us' as const,
       semantic_phase: 'finishing_spending' as const,
     };
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       baseSave({
         version: 22n,
         playerId: 'p1',
@@ -584,7 +584,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         channelStatus,
         coinsOfInterest: [],
       }),
-    );
+    ).model;
 
     expect(restored.channel.status).toEqual(channelStatusModelFromPayload(channelStatus));
     expect(restored.channel.status.ourBalance).toBe('42');
@@ -595,7 +595,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
   });
 
   it('restores pre-progress saves with unknown progress fields', () => {
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: [],
         channelStatus: {
@@ -607,7 +607,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
           game_allocated: null,
         },
       }),
-    );
+    ).model;
 
     expect(restored.channel.status).toMatchObject({
       unrollInitiator: null,

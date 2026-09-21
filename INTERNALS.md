@@ -507,11 +507,10 @@ Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned persistence contracts are browser session envelope v33,
-Rust/WASM cradle schema 21, app IndexedDB schema 4, and independent wallet
-operation record v8.
-Their explicit versions are future migration hooks. None has shipped, so strict
-codecs accept only the current shape and version; they do not migrate, alias, or
+The current app-owned persistence contracts are `DurableApplicationState` v1,
+opaque Rust/WASM cradle schema 21, and app IndexedDB v5. Their explicit
+versions are future migration hooks. None has shipped, so strict decoding
+accepts only the current aggregate; it does not migrate, alias, salvage, or
 fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
 compression and Coinset JSON, peer/on-chain protocols, and signed-unroll
 recognition remain compatibility-sensitive external contracts.
@@ -520,15 +519,15 @@ all internal/persisted JavaScript channel state-number fields are `bigint`.
 Conversion to `number` is restricted to external APIs that require it, and
 number-valued persistence or event decodes are rejected.
 
-Persisted funding and fee offers enter the provider-owned
-`WalletOperationRuntime` and strict wallet-level durable operation record
-shared across controller lifetimes. Entries preserve the exact provider trade
+Persisted funding and fee offers enter the aggregate's strict
+wallet-obligation slice and are orchestrated by `WalletOperationRuntime`.
+Entries preserve the exact provider trade
 ID and exact `(installationPlayerId, peerSessionId, provider/account scope,
 purpose kind, operationId)` owner, so multiple trades for one operation remain independent.
 Provider adapters own external offer lifecycle; the controller and Rust own
-protocol intent. Wallet mutations wait for successful wallet-operation hydration and fail
-closed on malformed hydration. A malformed wallet operation record remains on disk and is shown
-at Resume / Start Over; a connected wallet under a different scope reports a
+protocol intent. Wallet mutations wait for the claimed aggregate to be
+installed. Any malformed nested field rejects the whole root and is shown at
+Resume / Start Over; a connected wallet under a different scope reports a
 visible recovery mismatch. The durable post-creation stages are `reserved`,
 `retained-for-replay`, and `cancel-required`; `creating` embeds the canonical
 request plus exact recovery ID and active/cancel-on-create disposition, while
@@ -544,7 +543,7 @@ success. Cloud is recoverable only after begin returns a
 `best-effort-uncertain`, while post-ID `creating` and `cancelling` entries
 reconcile the exact request without another begin call. If a replacement begin
 after pre-ID uncertainty supplies an ID, the entry transitions to `creating`
-and exact reconciliation takes over. Wallet record v8 preserves the typed
+and exact reconciliation takes over. The aggregate preserves the typed
 `orphanRisk: 'pre-id-response-lost'` provenance through that transition and any
 eventual created trade, so the unidentified first request remains visibly
 risky after success. Popup source/origin/request correlation and exact
@@ -556,20 +555,16 @@ reload and automatically get exactly one new attempt on each later
 `WalletProviderRegistry` readiness epoch, with no timer or immediate loop.
 
 `BootRecoveryBoundary` owns pending wipe, read-only inspection, atomic
-claim-and-read, subsequent strict hydration, takeover, malformed evidence,
-reset retry, and authority loss. The winning claim returns the exact session
-and wallet-operation snapshot; `StorageRepository` and `WalletOperationRuntime`
-decode/hydrate those records before pending common identity, preference, and
-history changes flush. Other mutations reject until authority is claimed.
-Preserving reset replaces the session atomically, and rejection tombstones are
-decoded and pruned independently inside the claim transaction. One
-IndexedDB transaction checkpoints the complete session envelope and
-independent ledger snapshot atomically. Strict codecs reject unknown/missing
-fields, duplicate trade IDs, invalid discriminants, and non-current versions.
-IndexedDB schema 4 durably stores owner, write, and reset epochs. One
-generation-fenced storage mutation coordinator serializes session, ledger,
-clear, and reset writes, validating that authority atomically with each
-mutation; localStorage is only a UX hint. Old tabs and retired runtimes cannot
+claim-and-read, one strict rehydrate, takeover, malformed evidence, reset
+retry, and authority loss. The winning claim returns the exact aggregate;
+pending common identity, preference, and history changes are folded into that
+root before one whole-root checkpoint. Other mutations reject until authority
+is claimed. Corruption never invokes semantic clear or pruning. IndexedDB v5
+contains coordination and aggregate stores; strict validation rejects unknown
+or missing fields, duplicate trade IDs, invalid discriminants, and non-current
+versions. One generation-fenced mutation coordinator validates authority
+atomically with each aggregate write; localStorage is only a UX hint. Old tabs
+and retired runtimes cannot
 overwrite a winning generation, and a clear immediately followed by an
 unawaited save leaves the save. Hard reset advances the durable reset epoch
 before deletion and intentionally erases every reservation, including replay
@@ -577,13 +572,12 @@ retention; pre-reset writes cannot recreate the database or cached state after
 the wipe. Reload occurs only after confirmed deletion success. Blocked or
 failed deletion stays on recovery UI with Retry and records a minimal
 pending-wipe fallback for the next boot.
-Ordinary IndexedDB I/O degradation keeps the in-memory owner dirty and
+Ordinary IndexedDB I/O degradation keeps the in-memory aggregate pending and
 available; `StorageAuthorityLostError` retires the owner and suppresses pending
 writes/effects. The reset manifest deletes exact owned names and enumerated
 owned prefixes while preserving foreign same-origin databases.
-Ledger persistence does not gate wallet use, transaction release, or
-`cancelOffer`; a failed write leaves both in-memory authorities dirty for a
-later full checkpoint. A failed cancellation stays in the ledger and is
+Aggregate persistence does not gate wallet use, transaction release, or
+`cancelOffer`; a failed write is retried by a later full checkpoint. A failed cancellation stays durable and is
 retried only on restore, wallet reconnect/attachment, or an explicit
 terminal-finalization attempt—never by a timer or immediate retry loop.
 Unresolved cleanup blocks terminal quiescence. Going offline detaches the

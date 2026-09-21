@@ -23,15 +23,8 @@ import { liveSave } from './session_save_envelope.fixtures';
 
 function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
-  if (save.phase !== 'live') throw new Error('expected live save');
-  return storageRepository.saveSession({
-    scope: 'live',
-    walletProviderScope: save.walletProviderScope,
-    pairing: save.pairing,
-    live: save.live,
-    presentation: save.presentation,
-    history: save.history,
-  });
+  if (save.session?.phase !== 'live') throw new Error('expected live save');
+  return storageRepository.checkpointApplicationState(save);
 }
 
 it(
@@ -160,36 +153,35 @@ it(
         gameSessionSchemaVersion: BigInt(WholeWasmObject.game_session_serialization_schema()),
         pairingToken: 'reload-regression',
       });
-      await storageRepository.flushSessionSave();
+      await storageRepository.flushAggregate();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
       await flushWrapperDrain([cradle1, cradle2]);
       storageRepository._resetForTests();
-      await storageRepository.claimLease();
+      await storageRepository.claimApplicationState();
       assert.ok(hasSavedSessionMarker());
-      void storageRepository.saveSession({
-        scope: 'common',
+      void storageRepository.updateCommon({
         history: { diagnosticLog: ['boot-before-resume'] },
       });
-      await storageRepository.flushSessionSave();
+      await storageRepository.flushAggregate();
 
       storageRepository._resetForTests();
-      await storageRepository.claimLease();
-      const reloaded = await storageRepository.peekSession();
-      assert.equal(reloaded?.phase, 'live');
-      if (reloaded?.phase !== 'live') throw new Error('expected live reload');
-      assert.ok(reloaded.live.serializedGameSession instanceof Uint8Array);
+      await storageRepository.claimApplicationState();
+      const reloaded = await storageRepository.readCurrentState();
+      assert.equal(reloaded?.session?.phase, 'live');
+      if (reloaded?.session?.phase !== 'live') throw new Error('expected live reload');
+      assert.ok(reloaded.session.live.serializedGameSession instanceof Uint8Array);
       assert.equal(
-        reloaded.live.serializedGameSession.byteLength,
+        reloaded.session.live.serializedGameSession.byteLength,
         makingOfferAcceptanceBytes.byteLength,
       );
-      assert.deepEqual(reloaded.live.serializedGameSession, makingOfferAcceptanceBytes);
+      assert.deepEqual(reloaded.session.live.serializedGameSession, makingOfferAcceptanceBytes);
       assert.ok(
         reloaded.history.diagnosticLog?.includes('boot-before-resume'),
         'preference patch during marker-only boot must be retained',
       );
       const restoredId = WholeWasmObject.restore_session(
-        reloaded.live.serializedGameSession,
+        reloaded.session.live.serializedGameSession,
         'reload-regression-seed',
       );
       assert.equal(typeof restoredId, 'number');

@@ -71,19 +71,19 @@ export function channelStatusModelFromPayload(status: ChannelStatusPayload): Cha
 export function channelStatusPayloadFromModel(status: ChannelStatusModel): ChannelStatusPayload {
   return {
     state: status.state,
-    session_disposition: status.sessionDisposition,
-    advisory: status.advisory,
-    coin: status.coin,
-    our_balance: status.ourBalance,
-    their_balance: status.theirBalance,
-    game_allocated: status.gameAllocated,
-    have_potato: status.havePotato,
-    zero_payout: status.zeroPayout,
-    unroll_initiator: status.unrollInitiator,
-    semantic_phase: status.semanticPhase,
-    state_number: status.stateNumber,
-    unrolling_state_number: status.unrollingStateNumber,
-    preempting_state_number: status.preemptingStateNumber,
+    session_disposition: status.sessionDisposition ?? null,
+    advisory: status.advisory ?? null,
+    coin: status.coin ?? null,
+    our_balance: status.ourBalance ?? null,
+    their_balance: status.theirBalance ?? null,
+    game_allocated: status.gameAllocated ?? null,
+    have_potato: status.havePotato ?? null,
+    zero_payout: status.zeroPayout ?? null,
+    unroll_initiator: status.unrollInitiator ?? null,
+    semantic_phase: status.semanticPhase ?? null,
+    state_number: status.stateNumber ?? null,
+    unrolling_state_number: status.unrollingStateNumber ?? null,
+    preempting_state_number: status.preemptingStateNumber ?? null,
   };
 }
 

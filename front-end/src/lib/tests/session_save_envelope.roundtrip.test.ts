@@ -5,11 +5,11 @@ import { storageRepository } from '../session/storageRepository';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog, resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
-import { readSessionRecord } from '../session/indexedDb';
+import { readApplicationState } from '../session/indexedDb';
+import { rehydrateDurableApplicationState } from '../session/persistence';
 import {
   createSessionModel,
-  decodeSessionSaveEnvelope,
-  sessionModelFromSave,
+  decodeDurableApplicationState,
   snapshotFromSessionModel,
 } from '../session/model';
 import {
@@ -19,21 +19,13 @@ import {
   installSessionEnvelopeTestSetup,
   liveSave,
 } from './session_save_envelope.fixtures';
-import { storageRepository } from '../session/storageRepository';
 
 installSessionEnvelopeTestSetup();
 
 describe('durable game envelope round trips', () => {
   const saveLiveEnvelope = async (save: ReturnType<typeof liveSave>) => {
-    if (save.phase !== 'live') throw new Error('test fixture did not produce a live save');
-    await storageRepository.saveSession({
-      scope: 'live',
-      walletProviderScope: save.walletProviderScope,
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
+    if (save.session?.phase !== 'live') throw new Error('test fixture did not produce a live save');
+    await storageRepository.checkpointApplicationState(save);
   };
 
   it('canonical decode preserves a complete snapshot exactly', () => {
@@ -57,8 +49,33 @@ describe('durable game envelope round trips', () => {
       waitingStateEnteredAt: null,
       cleanShutdownGraceStartedAt: null,
     });
-    const decoded = decodeSessionSaveEnvelope(original);
+    const decoded = decodeDurableApplicationState(original);
     expect(decoded.save).toEqual(original);
+  });
+
+  it('rehydrates model, controller, wallet, and rejection projections once', () => {
+    const rejection = {
+      kind: 'outbound-reject' as const,
+      peerId: 'peer',
+      sessionId: 'ab'.repeat(16),
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      unackedMessages: [{ msgno: 1n, msg: new Uint8Array([1, 2]) }],
+      createdAt: 1,
+    };
+    const original = liveSave({ rejectionTransports: [rejection] });
+    const restored = rehydrateDurableApplicationState(original);
+
+    expect(restored.state.session?.phase).toBe('live');
+    expect(restored.state.session).toEqual(original.session);
+    expect(restored.model.game.activeIds).toEqual(
+      original.session?.phase === 'live' ? original.session.presentation.activeGameIds : [],
+    );
+    expect(restored.state.walletContext).toEqual(original.walletContext);
+    expect(restored.state.walletObligations).toEqual(original.walletObligations);
+    expect(restored.state.rejectionTransports).toEqual([rejection]);
+    restored.state.rejectionTransports[0]!.unackedMessages[0]!.msg[0] = 9;
+    expect(original.rejectionTransports[0]!.unackedMessages[0]!.msg[0]).toBe(1);
   });
   it.each([
     ['preferences', baseSave({ blockchainType: 'simulator' }), 'preferences'],
@@ -86,11 +103,11 @@ describe('durable game envelope round trips', () => {
   ] as const)(
     'round-trips a legitimate %s phase through IndexedDB and canonical decode',
     async (_label, save, kind) => {
-      await storageRepository.saveSessionAndWalletOperations(save, []);
-      const restored = await readSessionRecord();
+      await storageRepository.checkpointApplicationState(save);
+      const restored = await readApplicationState();
       expect(restored).not.toBeNull();
-      const decoded = decodeSessionSaveEnvelope(restored!);
-      expect(decoded.phase).toBe(kind);
+      const decoded = decodeDurableApplicationState(restored!);
+      expect(decoded.save.session?.phase ?? 'preferences').toBe(kind);
       expect(decoded.save).toEqual(save);
       await storageRepository.clearSession();
     },
@@ -175,12 +192,12 @@ describe('durable game envelope round trips', () => {
         },
       });
       await saveLiveEnvelope(save);
-      await storageRepository.flushSessionSave();
+      await storageRepository.flushAggregate();
 
       storageRepository._resetForTests();
-      const loaded = await storageRepository.peekSession();
+      const loaded = await storageRepository.readCurrentState();
       expect(loaded).not.toBeNull();
-      const model = sessionModelFromSave(loaded!);
+      const model = decodeDurableApplicationState(loaded!).model;
       expect(model.game.activeIds).toEqual(ids);
       expect(decodePersistedGameState(model.game.handState)?.persisted).toEqual(handState);
     },
@@ -200,19 +217,19 @@ describe('durable game envelope round trips', () => {
     });
 
     await saveLiveEnvelope(liveSave(snapshot));
-    await storageRepository.flushSessionSave();
+    await storageRepository.flushAggregate();
     storageRepository._resetForTests();
 
-    const loaded = await storageRepository.peekSession();
+    const loaded = await storageRepository.readCurrentState();
     expect(loaded).not.toBeNull();
-    expect(sessionModelFromSave(loaded!).betweenHand.compose).toEqual(compose);
+    expect(decodeDurableApplicationState(loaded!).model.betweenHand.compose).toEqual(compose);
   });
 
   it('round-trips canonical hand state without candidate state', () => {
     const save = activeSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    const canonical = save.presentation.handState;
-    const restored = sessionModelFromSave(save);
+    if (save.session?.phase !== 'live') throw new Error('expected live fixture');
+    const canonical = save.session.presentation.handState;
+    const restored = decodeDurableApplicationState(save).model;
 
     expect(restored.game.handState).toEqual(canonical);
     expect(snapshotFromSessionModel(restored).handState).toEqual(canonical);
@@ -222,7 +239,7 @@ describe('durable game envelope round trips', () => {
     const model = createSessionModel();
     const snapshot = snapshotFromSessionModel(model);
     expect(snapshot.betweenHandLastHandProposal).toBeNull();
-    const restored = sessionModelFromSave(liveSave(snapshot));
+    const restored = decodeDurableApplicationState(liveSave(snapshot)).model;
     expect(restored.betweenHand.lastHandProposal).toBeNull();
     expect(restored.betweenHand.compose).toEqual(model.betweenHand.compose);
   });
@@ -246,7 +263,7 @@ describe('durable game envelope round trips', () => {
         },
       },
     });
-    const restored = sessionModelFromSave(liveSave(snapshotFromSessionModel(model)));
+    const restored = decodeDurableApplicationState(liveSave(snapshotFromSessionModel(model))).model;
     expect(restored.betweenHand.lastHandProposal?.parameters).toEqual(parameters);
     expect(
       (restored.betweenHand.lastHandProposal?.parameters as readonly unknown[])[4],
@@ -267,7 +284,7 @@ describe('durable game envelope round trips', () => {
     });
     const snapshot = snapshotFromSessionModel(model);
     expect(snapshot.betweenHandLastHandProposal?.game_type).toBe('calpoker');
-    const restored = sessionModelFromSave(liveSave(snapshot));
+    const restored = decodeDurableApplicationState(liveSave(snapshot)).model;
     expect(restored.betweenHand.lastHandProposal).toEqual(lastHandProposal);
     expect(Object.hasOwn(restored.betweenHand.compose, 'drafts')).toBe(false);
   });
@@ -289,16 +306,16 @@ describe('durable game envelope round trips', () => {
         },
       ],
     });
-    const decoded = decodeSessionSaveEnvelope(save);
+    const decoded = decodeDurableApplicationState(save);
     expect(decoded.model.game.handKey).toBe(4);
     expect(decoded.model.betweenHand.newHandRequested).toBe(true);
     expect(
       snapshotFromSessionModel(decoded.model, {
-        channelStatus: save.presentation.channelStatus,
-        waitingStateEnteredAt: save.presentation.waitingStateEnteredAt,
-        cleanShutdownGraceStartedAt: save.presentation.cleanShutdownGraceStartedAt,
+        channelStatus: save.session.presentation.channelStatus,
+        waitingStateEnteredAt: save.session.presentation.waitingStateEnteredAt,
+        cleanShutdownGraceStartedAt: save.session.presentation.cleanShutdownGraceStartedAt,
       }),
-    ).toEqual(save.presentation);
+    ).toEqual(save.session.presentation);
   });
 
   it('cold-decodes a live save written while protocol identities were bound', () => {
@@ -324,13 +341,13 @@ describe('durable game envelope round trips', () => {
         gameInstances: { 'game-1': { ...ACTIVE_INSTANCE } },
         handState,
       });
-      const snapshot = snapshotFromSessionModel(sessionModelFromSave(save));
+      const snapshot = snapshotFromSessionModel(decodeDurableApplicationState(save).model);
       expect(snapshot.activeGameType).toBe('calpoker');
       expect(snapshot.betweenHandLastHandProposal?.game_type).toBe('calpoker');
       expect(snapshot.handState?.gameType).toBe('calpoker');
       expect(protocolIdForCatalog('calpoker')).toBe(hashes[0].id);
       resetProtocolIds();
-      expect(decodeSessionSaveEnvelope(liveSave(snapshot)).phase).toBe('live');
+      expect(decodeDurableApplicationState(liveSave(snapshot)).save.session?.phase).toBe('live');
     } finally {
       resetProtocolIds();
     }
@@ -340,7 +357,7 @@ describe('durable game envelope round trips', () => {
     setProtocolIds(TEST_PROTOCOL_IDS);
     try {
       expect(() =>
-        decodeSessionSaveEnvelope(
+        decodeDurableApplicationState(
           liveSave({
             activeGameType: TEST_PROTOCOL_IDS[0].id,
           }),

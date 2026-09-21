@@ -10,15 +10,6 @@ import {
   type WalletOperationRecoveryRequest,
 } from './walletOperationStore';
 
-export const WALLET_OPERATION_RECORD_SCHEMA = 'chia-gaming-wallet-operations' as const;
-export const WALLET_OPERATION_RECORD_VERSION = 8n;
-
-export interface WalletOperationRecord {
-  schema: typeof WALLET_OPERATION_RECORD_SCHEMA;
-  version: typeof WALLET_OPERATION_RECORD_VERSION;
-  entries: WalletOperationEntry[];
-}
-
 const MAX_TRADE_ID_LENGTH = 256;
 const MAX_IDENTITY_LENGTH = 256;
 const MAX_OPERATION_ID_LENGTH = 1024;
@@ -341,41 +332,4 @@ export function decodeWalletOperationEntries(
     operationStages.set(operation, stages);
     return decoded;
   });
-}
-
-export function encodeWalletOperationRecord(
-  entries: WalletOperationEntry[],
-): WalletOperationRecord {
-  return {
-    schema: WALLET_OPERATION_RECORD_SCHEMA,
-    version: WALLET_OPERATION_RECORD_VERSION,
-    entries: decodeWalletOperationEntries(entries),
-  };
-}
-
-export function decodeWalletOperationRecord(value: unknown): WalletOperationRecord {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('Garbled wallet operation record');
-  }
-  const fields = value as Record<string, unknown>;
-  const keys = Object.keys(fields);
-  if (
-    keys.length !== 3 ||
-    !Object.hasOwn(fields, 'schema') ||
-    !Object.hasOwn(fields, 'version') ||
-    !Object.hasOwn(fields, 'entries')
-  ) {
-    throw new Error('Garbled wallet operation record fields');
-  }
-  if (fields.schema !== WALLET_OPERATION_RECORD_SCHEMA) {
-    throw new Error(`Garbled wallet operation record schema: ${String(fields.schema)}`);
-  }
-  if (fields.version !== WALLET_OPERATION_RECORD_VERSION) {
-    throw new Error(`Garbled wallet operation record version: ${String(fields.version)}`);
-  }
-  return {
-    schema: WALLET_OPERATION_RECORD_SCHEMA,
-    version: WALLET_OPERATION_RECORD_VERSION,
-    entries: decodeWalletOperationEntries(fields.entries),
-  };
 }

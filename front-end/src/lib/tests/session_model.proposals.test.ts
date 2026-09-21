@@ -1,5 +1,6 @@
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   clearDerivedGamePresentation,
   normalizeSessionPresentation,
   channelStatusPayloadFromModel,
@@ -10,20 +11,19 @@ import {
   selectGameSessionView,
   selectGameSpecificView,
   selectPendingProposal,
-  sessionModelFromSave,
   snapshotFromSessionModel,
   gameCoinIdentityForGameStatus,
   nextGameInstanceAfterLocalTurn,
   nextGamePresentationAfterLocalTurn,
   projectGameStatus,
 } from '../session/model';
-import { type SessionSave } from '../session/saveEnvelope';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave({
     myContribution: '100',
     theirContribution: '100',
@@ -77,9 +77,9 @@ describe('session model proposal and normalization contracts', () => {
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({ activeGameIds: [], pendingProposals: snapshot.pendingProposals }),
-    );
+    ).model;
 
     expect(restored.betweenHand.pendingProposals).toEqual(model.betweenHand.pendingProposals);
     expect(selectPendingProposal(restored, id)).toBe(restored.betweenHand.pendingProposals[0]);
@@ -171,7 +171,7 @@ describe('session model proposal and normalization contracts', () => {
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: snapshot.activeGameIds,
         currentHandGameIds: snapshot.currentHandGameIds,
@@ -185,7 +185,7 @@ describe('session model proposal and normalization contracts', () => {
           members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
-    );
+    ).model;
     expect(selectPendingProposal(restored, '13')).toBeNull();
     expect(restored.game.currentHandIds).toEqual(['11', '13']);
   });
@@ -220,12 +220,12 @@ describe('session model proposal and normalization contracts', () => {
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: [],
         pendingProposals: snapshot.pendingProposals,
       }),
-    );
+    ).model;
     expect(restored.betweenHand.pendingProposals).toEqual(model.betweenHand.pendingProposals);
     expect(snapshotFromSessionModel(restored).pendingProposals).toEqual(snapshot.pendingProposals);
   });
@@ -283,7 +283,7 @@ describe('session model proposal and normalization contracts', () => {
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       baseSave({
         version: 22n,
         playerId: 'p1',
@@ -296,7 +296,7 @@ describe('session model proposal and normalization contracts', () => {
         coinsOfInterest: [],
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
       }),
-    );
+    ).model;
 
     expect(restored.game.currentHandIds).toEqual(['11', '13']);
     expect(selectGameDashboardView(restored).lifecycleRows).toEqual([
@@ -447,7 +447,7 @@ describe('session model proposal and normalization contracts', () => {
         },
       }),
     );
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       baseSave({
         version: 22n,
         playerId: 'p1',
@@ -461,7 +461,7 @@ describe('session model proposal and normalization contracts', () => {
         coinsOfInterest: [],
         betweenHandLastHandProposal: staleSnapshot.betweenHandLastHandProposal,
       }),
-    );
+    ).model;
 
     expect(restored.game).toEqual(live.game);
     expect(selectGameSessionView(restored)).toEqual(selectGameSessionView(live));
@@ -478,7 +478,7 @@ describe('session model proposal and normalization contracts', () => {
   });
 
   it('restores a finished session without legacy active game ids', () => {
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       baseSave({
         version: 22n,
         playerId: 'p1',
@@ -493,7 +493,7 @@ describe('session model proposal and normalization contracts', () => {
         },
         coinsOfInterest: [],
       }),
-    );
+    ).model;
 
     expect(restored.game.activeIds).toEqual([]);
     expect(restored.game.instances).toEqual({});

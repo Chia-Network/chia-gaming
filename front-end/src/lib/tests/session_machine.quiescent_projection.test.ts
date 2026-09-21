@@ -3,6 +3,8 @@ import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { storageRepository } from '../session/storageRepository';
+import { baseSave } from './session_save_envelope.fixtures';
 
 const proposal = {
   id: '7',
@@ -45,7 +47,10 @@ function initialState() {
 
 describe('SessionMachineRuntime quiescent projection', () => {
   beforeEach(() => jest.useFakeTimers());
-  afterEach(() => jest.useRealTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
 
   it('coalesces reentrant local-potato acceptance into one accepted render', async () => {
     const persist = jest.fn(async () => {});
@@ -280,6 +285,23 @@ describe('SessionMachineRuntime quiescent projection', () => {
       myAlias: undefined,
       opponentAlias: undefined,
     }));
+    jest
+      .spyOn(storageRepository, 'prepareApplicationStateCapture')
+      .mockImplementation((transform) => {
+        const update = transform(baseSave());
+        if (update.session?.phase !== 'live') throw new Error('expected live aggregate capture');
+        captured.push({
+          bytes: update.session.live.serializedGameSession,
+          timeout: update.session.presentation.betweenHandCompose.game_timeout,
+        });
+        const ordinal = captured.length;
+        return {
+          state: update,
+          write: async () => {
+            if (ordinal === 1) await firstWrite;
+          },
+        };
+      });
     const runtime = new SessionMachineRuntime(initialState(), {
       controller: mockController,
       iStarted: false,
@@ -287,13 +309,6 @@ describe('SessionMachineRuntime quiescent projection', () => {
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
       onError: jest.fn(),
-      save: async (update) => {
-        captured.push({
-          bytes: update.live.serializedGameSession,
-          timeout: update.presentation.betweenHandCompose.game_timeout,
-        });
-        if (captured.length === 1) await firstWrite;
-      },
     });
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });

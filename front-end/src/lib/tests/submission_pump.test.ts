@@ -1,6 +1,6 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { SessionController } from '../../hooks/SessionController';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { storageRepository } from '../session/storageRepository';
 import type { TransactionSubmission } from '../../types/ChiaGaming';
 import { submissionDrain, wasmResult } from './message_protocol.harness';
 import {
@@ -10,6 +10,12 @@ import {
   setup,
   submission,
 } from './runtime_capability.harness';
+
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50 && !check(); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
 
 describe('submission pump delivery and runtime replacement', () => {
   it('retires a delivery before persistence-gated launch', async () => {
@@ -325,9 +331,7 @@ describe('submission pump delivery and runtime replacement', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       const launch = first.launch('submission:fee-release-handoff');
-      for (let i = 0; i < 50 && beginWalletOfferCancellation.mock.calls.length === 0; i += 1) {
-        await Promise.resolve();
-      }
+      await waitFor(() => spend.mock.calls.length === 1);
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
@@ -913,7 +917,7 @@ describe('submission pump delivery and runtime replacement', () => {
       );
       expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(walletOperationRuntime.snapshot()).toEqual([
+      expect(storageRepository.walletObligations()).toEqual([
         expect.objectContaining({
           tradeId: 'trade-cleanup-fails',
           stage: 'cancel-required',
@@ -949,13 +953,7 @@ describe('submission pump delivery and runtime replacement', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:finalize-rejected');
-      for (
-        let pass = 0;
-        pass < 20 && !lease.has('wallet-offer-cancellation:trade-finalize-rejected');
-        pass += 1
-      ) {
-        await Promise.resolve();
-      }
+      await waitFor(() => lease.has('wallet-offer-cancellation:trade-finalize-rejected'));
 
       expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
       await lease.launch('wallet-offer-cancellation:trade-finalize-rejected');
@@ -963,7 +961,7 @@ describe('submission pump delivery and runtime replacement', () => {
 
       expect(spend).not.toHaveBeenCalled();
       expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-finalize-rejected');
-      expect(walletOperationRuntime.snapshot()).toEqual([]);
+      expect(storageRepository.walletObligations()).toEqual([]);
     } finally {
       controller.cleanup();
     }

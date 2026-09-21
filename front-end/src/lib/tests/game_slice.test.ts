@@ -1,6 +1,6 @@
 import {
   createSessionModel,
-  sessionModelFromSave,
+  decodeDurableApplicationState,
   snapshotFromSessionModel,
 } from '../session/model';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
@@ -52,7 +52,7 @@ describe('game slice reducer', () => {
         },
       }),
     );
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveSave({
         version: 22n,
         playerId: 'player',
@@ -73,7 +73,7 @@ describe('game slice reducer', () => {
           members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
-    );
+    ).model;
     expect(restored.game.activeIds).toEqual(['11', '12']);
     expect(Object.keys(restored.game.instances)).toEqual(['11', '12']);
   });

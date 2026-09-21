@@ -1,4 +1,6 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
+import 'fake-indexeddb/auto';
+import { storageRepository } from '../session/storageRepository';
 
 jest.mock('../../hooks/WalletConnectRpc', () => ({
   WalletConnectTransportError: class WalletConnectTransportError extends Error {},
@@ -129,7 +131,7 @@ function setTestGlobal(key: string, value: unknown) {
 }
 
 describe('RealBlockchainInterface', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     setTestGlobal('localStorage', makeStorage());
     mockCreateOfferForIds.mockReset();
     mockCancelOffer.mockReset();
@@ -152,6 +154,15 @@ describe('RealBlockchainInterface', () => {
     mockWalletConnectState.supportsMethod.mockClear();
     mockWalletConnectState.startConnect.mockClear();
     mockWalletConnectState.connect.mockClear();
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+    const empty = {
+      ...storageRepository.loadState(),
+      walletContext: null,
+      walletObligations: [],
+    };
+    storageRepository._replaceApplicationStateForTests(empty);
+    await storageRepository.checkpointApplicationState(empty);
     mockWalletConnectState.forgetSessions.mockClear();
     mockWalletConnectState.disconnect.mockClear();
   });
@@ -647,13 +658,12 @@ describe('RealBlockchainInterface', () => {
         amount: peerAmount,
       },
     ]);
-    const walletOperations = new WalletOperationRuntime();
     await expect(
       blockchain.spend('80', submittedBundle, puzzleHash, 'submitTransaction', 10n),
     ).resolves.toMatchObject({ status: 'acknowledged' });
     expect(mockPushTransactions).toHaveBeenCalledTimes(2);
     expect(mockPushTransactions.mock.calls[1][0]).toEqual(call);
-    expect(walletOperations.snapshot()).toEqual([]);
+    expect(storageRepository.walletObligations()).toEqual([]);
   });
 
   it('persists initiator funding offers without unsupported coin-selection fields', async () => {
@@ -757,11 +767,12 @@ describe('RealBlockchainInterface', () => {
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
+    storageRepository.ensureWalletContext(owner.providerScope);
     ledger.registerReserved('trade-already-spent', owner, purpose);
     ledger.settleOperation(owner, purpose, 'cancel-required', 'wallet-outcome-finalized');
     await ledger.awaitOwner(owner);
 
-    expect(ledger.snapshot()).toEqual([]);
+    expect(storageRepository.walletObligations()).toEqual([]);
     expect(mockCancelOffer).toHaveBeenCalledWith({
       tradeId: 'trade-already-spent',
       secure: false,

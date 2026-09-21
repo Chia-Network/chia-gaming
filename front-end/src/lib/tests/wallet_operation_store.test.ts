@@ -1,8 +1,4 @@
-import {
-  WALLET_OPERATION_RECORD_VERSION,
-  decodeWalletOperationRecord,
-  encodeWalletOperationRecord,
-} from '../session/walletOperationCodec';
+import { decodeWalletOperationEntries } from '../session/walletOperationValidation';
 import {
   reduceWalletOperation,
   walletOperationEntryKey,
@@ -119,7 +115,7 @@ describe('WalletOperationStore reducer', () => {
     ).toBeNull();
   });
 
-  it('accepts only strict current v8 records', () => {
+  it('strictly validates nested aggregate wallet entries', () => {
     const entry = transition(null, {
       kind: 'creation-uncertain',
       request,
@@ -128,16 +124,11 @@ describe('WalletOperationStore reducer', () => {
       reason: 'response-lost',
       retired: false,
     });
-    const encoded = encodeWalletOperationRecord(entry ? [entry] : []);
-    expect(encoded.version).toBe(WALLET_OPERATION_RECORD_VERSION);
-    expect(decodeWalletOperationRecord(encoded)).toEqual(encoded);
-    expect(() => decodeWalletOperationRecord({ ...encoded, version: 7n })).toThrow(/version/);
-    expect(() =>
-      decodeWalletOperationRecord({
-        ...encoded,
-        entries: [{ ...encoded.entries[0], unknown: true }],
-      }),
-    ).toThrow(/fields/);
+    const encoded = entry ? [entry] : [];
+    expect(decodeWalletOperationEntries(encoded)).toEqual(encoded);
+    expect(() => decodeWalletOperationEntries([{ ...encoded[0], unknown: true }])).toThrow(
+      /fields/,
+    );
   });
 
   it('allows only cancellation cleanup beside a creating recovery', () => {
@@ -157,11 +148,9 @@ describe('WalletOperationStore reducer', () => {
       tradeId: 'stale-trade',
       reason: 'stale-create-result',
     };
-    expect(
-      decodeWalletOperationRecord(encodeWalletOperationRecord([creating, cleanup])).entries,
-    ).toEqual([creating, cleanup]);
+    expect(decodeWalletOperationEntries([creating, cleanup])).toEqual([creating, cleanup]);
     expect(() =>
-      encodeWalletOperationRecord([{ ...cleanup, stage: 'reserved' as const }, creating]),
+      decodeWalletOperationEntries([{ ...cleanup, stage: 'reserved' as const }, creating]),
     ).toThrow(/contradictory/);
   });
 
@@ -184,7 +173,7 @@ describe('WalletOperationStore reducer', () => {
       },
     };
     expect(() =>
-      encodeWalletOperationRecord([
+      decodeWalletOperationEntries([
         creating,
         {
           owner: otherScope,

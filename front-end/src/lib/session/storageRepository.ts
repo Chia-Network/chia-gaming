@@ -1,27 +1,26 @@
 import {
   type ClaimedStorageSnapshot,
   type DurableStorageAuthority,
-  inspectSessionRecord,
-  readRejectionTombstones,
-  readSessionRecord,
-  readWalletOperationRecord,
+  inspectApplicationState,
   indexedDbStoragePort,
-  type DurableRejectionTombstone,
-  InvalidSessionRecordError,
+  InvalidApplicationStateError,
   StorageAuthorityLostError,
   StorageAuthorityRequiredError,
 } from './indexedDb';
-import type { SessionSave } from './saveEnvelope';
-import { decodeSessionSaveEnvelope } from './persistence';
+import {
+  DURABLE_APPLICATION_STATE_SCHEMA,
+  DURABLE_APPLICATION_STATE_VERSION,
+  type DurableApplicationState,
+  type SessionTransportSave,
+} from './saveEnvelope';
+import { decodeDurableApplicationState } from './persistence';
 import * as sessionPreferences from './sessionPreferences';
 import * as sessionState from './sessionStateTransitions';
-import { hardResetStorage, type HardResetResult } from '../../hooks/saveHardReset';
-import { loadPreferences, savePreferences } from '../../hooks/savePreferences';
+import type { HardResetResult } from '../../hooks/saveHardReset';
 import {
   markLeaseClaimed,
   clearSavedSessionMarker,
   getStorageTabId,
-  hasSavedSessionMarker,
   hasWalletConnectStorage,
   installStorageCoordination,
   type StorageAuthorityLossReason,
@@ -29,32 +28,34 @@ import {
   randomHex,
   resetStorageCoordinationForTests,
 } from '../../hooks/saveCoordination';
-import { walletOperationRuntime } from './walletOperationRuntime';
-import { decodeWalletOperationRecord } from './walletOperationCodec';
-import { walletProviderScopeKey, type WalletOperationEntry } from './walletOperationStore';
+import {
+  reduceWalletOperation,
+  walletProviderScopeKey,
+  type WalletOperationCommand,
+  type WalletOperationEffect,
+  type WalletOperationEntry,
+} from './walletOperationStore';
 
 type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
-type BootStorageHydrationResult =
-  | { status: 'ready'; discardedSession: boolean; durableSession: SessionSave | null }
-  | { status: 'failed'; error: string };
+interface ScheduledPersist {
+  promise: Promise<void>;
+  resolve(): void;
+  reject(reason: unknown): void;
+  unsubscribe(): void;
+}
 
-function assertSessionWalletScope(
-  session: SessionSave,
-  entries: readonly WalletOperationEntry[],
-): void {
-  if (
-    !sessionState.isDurableSession(session) ||
-    !('walletProviderScope' in session) ||
-    !session.walletProviderScope
-  ) {
-    return;
-  }
-  const expected = walletProviderScopeKey(session.walletProviderScope);
-  if (entries.some((entry) => walletProviderScopeKey(entry.owner.providerScope) !== expected)) {
-    throw new Error(
-      'Internal wallet consistency error: durable session and wallet ledger scopes differ',
-    );
-  }
+function newApplicationState(): DurableApplicationState {
+  return {
+    schema: DURABLE_APPLICATION_STATE_SCHEMA,
+    version: DURABLE_APPLICATION_STATE_VERSION,
+    identity: { playerId: randomHex() },
+    preferences: {},
+    history: {},
+    session: null,
+    walletContext: null,
+    walletObligations: [],
+    rejectionTransports: [],
+  };
 }
 
 class StorageRepository {
@@ -139,7 +140,6 @@ class StorageRepository {
     this.authority = snapshot.authority;
     this.generation += 1;
     this.fenced = false;
-    this.notifyLifecycle('claim');
     const claimedGeneration = this.generation;
     const hold = this.pendingClaimHoldForTests;
     this.pendingClaimHoldForTests = null;
@@ -163,25 +163,11 @@ class StorageRepository {
   }
 
   async inspect(): Promise<{
-    sessionRecord: unknown | null;
-    sessionError?: InvalidSessionRecordError;
-    walletOperationRecord: Awaited<ReturnType<typeof readWalletOperationRecord>>;
+    applicationState: DurableApplicationState | null;
+    applicationStateError?: InvalidApplicationStateError;
   }> {
     await this.mutationTail;
-    const [session, walletOperationRecord] = await Promise.all([
-      inspectSessionRecord(),
-      readWalletOperationRecord(),
-    ]);
-    return { ...session, walletOperationRecord };
-  }
-
-  async readRejections(): Promise<DurableRejectionTombstone[]> {
-    return this.readAfterMutations(readRejectionTombstones);
-  }
-
-  private async readAfterMutations<T>(read: () => Promise<T>): Promise<T> {
-    await this.mutationTail;
-    return read();
+    return inspectApplicationState();
   }
 
   async beginHardReset(ownerTabId: string): Promise<DurableStorageAuthority> {
@@ -205,15 +191,13 @@ class StorageRepository {
     );
   }
 
-  saveSessionAndWalletOperations(
-    session: SessionSave,
-    entries: WalletOperationEntry[],
-  ): Promise<void> {
-    const sessionSnapshot = structuredClone(session);
-    const entriesSnapshot = structuredClone(entries);
-    assertSessionWalletScope(sessionSnapshot, entriesSnapshot);
+  async checkpointApplicationState(session: DurableApplicationState): Promise<void> {
+    await this.prepareApplicationStateCapture(() => session).write();
+  }
+
+  private writeRoot(next: DurableApplicationState): Promise<void> {
     return this.runAuthorizedMutation(async (authority) => {
-      await indexedDbStoragePort.writeCheckpoint(sessionSnapshot, entriesSnapshot, authority);
+      await indexedDbStoragePort.writeApplicationState(next, authority);
       const hold = this.pendingCheckpointHoldForTests;
       this.pendingCheckpointHoldForTests = null;
       if (hold) {
@@ -223,28 +207,41 @@ class StorageRepository {
     });
   }
 
-  saveWalletOperations(entries: WalletOperationEntry[]): Promise<void> {
-    const snapshot = structuredClone(entries);
-    return this.runAuthorizedMutation((authority) =>
-      indexedDbStoragePort.writeWalletOperations(snapshot, authority),
-    );
-  }
+  /**
+   * Apply one synchronous root transform and freeze its complete write input.
+   * Mutations after this call update `root` independently and are checkpointed
+   * later, so invoking the returned closure cannot overwrite them in memory.
+   */
+  prepareApplicationStateCapture(
+    transform: (current: DurableApplicationState) => DurableApplicationState,
+  ) {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    const next = sessionState.capSessionHistories(transform(structuredClone(this.root)));
+    decodeDurableApplicationState(next);
+    this.root = next;
+    const snapshot = structuredClone(next);
 
-  private deleteSessionRecord(): Promise<void> {
-    return this.runAuthorizedMutation((authority) => indexedDbStoragePort.deleteSession(authority));
-  }
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    const pending = this.takeScheduledPersist();
 
-  writeRejection(tombstone: DurableRejectionTombstone): Promise<void> {
-    const snapshot = structuredClone(tombstone);
-    return this.runAuthorizedMutation((authority) =>
-      indexedDbStoragePort.writeRejection(snapshot, authority),
-    );
-  }
-
-  deleteRejection(peerId: string, sessionId: string): Promise<void> {
-    return this.runAuthorizedMutation((authority) =>
-      indexedDbStoragePort.deleteRejection(peerId, sessionId, authority),
-    );
+    let written = false;
+    return {
+      write: async () => {
+        if (written) throw new Error('Durable application capture may only be written once');
+        written = true;
+        try {
+          await this.writeRoot(snapshot);
+          if (snapshot.session !== null) markSavedSession();
+          pending?.resolve();
+        } catch (error) {
+          pending?.reject(error);
+          throw error;
+        }
+      },
+    };
   }
 
   holdNextMutationForTests(barrier: Promise<void>): void {
@@ -323,186 +320,102 @@ class StorageRepository {
   }
 
   private stopPersistenceForHardReset(): void {
-    this.cached = null;
-    this.stagedTerminal = null;
+    this.root = newApplicationState();
     if (!this.fenced) this.loseAuthority('durable-authority-lost');
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
     this.settleScheduledPersist();
-    this.identityDiskChecked = true;
-    this.storageRepositoryHydratedFromDisk = true;
-    this.walletOperationRuntimeHydration = null;
   }
 
-  private cached: SessionSave | null = null;
-  private stagedTerminal: SessionSave | null = null;
+  private root = newApplicationState();
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  private persistPromise: Promise<void> | null = null;
-  private resolvePersist: (() => void) | null = null;
-  private rejectPersist: ((reason: unknown) => void) | null = null;
-  private persistAuthorityLostUnsubscribe: (() => void) | null = null;
+  private scheduledPersist: ScheduledPersist | null = null;
   private readonly PERSIST_DEBOUNCE_MS = 300;
 
-  shouldOfferResumeOrStartOver(state: SessionSave = loadPreferences()): boolean {
+  shouldOfferResumeOrStartOver(state: DurableApplicationState = this.root): boolean {
     return (
-      sessionPreferences.hasConnectionPreferences(state, hasWalletConnectStorage()) ||
-      hasSavedSessionMarker()
+      !!(state.preferences.blockchainType || state.preferences.hubUrl) ||
+      hasWalletConnectStorage() ||
+      state.session !== null ||
+      state.walletObligations.length > 0 ||
+      state.rejectionTransports.length > 0
     );
   }
 
-  private async readCompatibleSessionRecord(): Promise<{
-    record: SessionSave | null;
-    discarded: boolean;
-  }> {
-    let record: unknown | null;
-    try {
-      record = await this.readAfterMutations(readSessionRecord);
-    } catch (error) {
-      if (!(error instanceof InvalidSessionRecordError)) throw error;
-      console.error('[save] rejecting unreadable session record:', error);
-      await this.deleteSessionRecord();
-      markSavedSession();
-      return { record: null, discarded: true };
-    }
-    if (!record) return { record: null, discarded: false };
-    const decoded = sessionState.decodeCurrentSession(record);
-    if (!decoded) {
-      console.error('[save] rejecting incompatible session record');
-      await this.deleteSessionRecord();
-      markSavedSession();
-      return { record: null, discarded: true };
-    }
-    return { record: decoded, discarded: false };
-  }
-
-  private queueWrite(state: SessionSave): Promise<void> {
+  private queueWrite(state: DurableApplicationState): Promise<void> {
     const snapshot = sessionState.capSessionHistories(state);
-    const ledgerCheckpoint = walletOperationRuntime.checkpoint();
-    sessionState.assertPersistableSession(snapshot);
-    decodeSessionSaveEnvelope(snapshot);
-    assertSessionWalletScope(snapshot, ledgerCheckpoint.entries);
-    const write = this.saveSessionAndWalletOperations(snapshot, ledgerCheckpoint.entries).then(
-      () => {
-        walletOperationRuntime.combinedCheckpointPersisted(ledgerCheckpoint);
-        if (sessionState.isDurableSession(snapshot)) {
-          markSavedSession();
-        }
-      },
-    );
+    const write = this.checkpointApplicationState(snapshot).then(() => {
+      if (snapshot.session !== null) {
+        markSavedSession();
+      }
+    });
     return write;
   }
 
-  private settleScheduledPersist(error?: unknown): void {
-    if (this.persistAuthorityLostUnsubscribe) {
-      this.persistAuthorityLostUnsubscribe();
-      this.persistAuthorityLostUnsubscribe = null;
-    }
-    const resolve = this.resolvePersist;
-    const reject = this.rejectPersist;
-    this.persistPromise = null;
-    this.resolvePersist = null;
-    this.rejectPersist = null;
-    if (error === undefined) resolve?.();
-    else reject?.(error);
+  private takeScheduledPersist(): ScheduledPersist | null {
+    const pending = this.scheduledPersist;
+    this.scheduledPersist = null;
+    pending?.unsubscribe();
+    return pending;
   }
 
-  flushSessionSave(): Promise<void> {
+  private settleScheduledPersist(error?: unknown): void {
+    const pending = this.takeScheduledPersist();
+    if (error === undefined) pending?.resolve();
+    else pending?.reject(error);
+  }
+
+  flushAggregate(): Promise<void> {
     if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
-    return this.hydrateSessionCacheFromDiskStrict().then(async () => {
-      if (!this.cached || this.fenced) {
-        await walletOperationRuntime.persistIfDirty();
-        return;
-      }
+    return (async () => {
       if (this.persistTimer) {
         clearTimeout(this.persistTimer);
         this.persistTimer = null;
       }
-      const pending = this.persistPromise;
-      const resolve = this.resolvePersist;
-      const reject = this.rejectPersist;
-      if (this.persistAuthorityLostUnsubscribe) {
-        this.persistAuthorityLostUnsubscribe();
-        this.persistAuthorityLostUnsubscribe = null;
-      }
-      this.persistPromise = null;
-      this.resolvePersist = null;
-      this.rejectPersist = null;
-      if (this.stagedTerminal) {
-        const terminal = this.stagedTerminal;
-        let write: Promise<void>;
-        try {
-          write = this.queueWrite(terminal).then(() => {
-            if (this.stagedTerminal !== terminal) return;
-            this.cached = terminal;
-            this.stagedTerminal = null;
-            savePreferences(terminal);
-          });
-        } catch (error) {
-          reject?.(error);
-          return Promise.reject(error);
-        }
-        void write.then(
-          () => resolve?.(),
-          (error) => {
-            console.error('[save] failed to persist terminal session state:', error);
-            reject?.(error);
-          },
-        );
-        return pending ? Promise.all([pending, write]).then(() => {}) : write;
-      }
-      if (
-        !sessionState.isDurableSession(this.cached) &&
-        hasSavedSessionMarker() &&
-        !sessionPreferences.hasConnectionPreferences(this.cached, hasWalletConnectStorage()) &&
-        walletOperationRuntime.snapshot().length === 0
-      ) {
-        const error = new Error(
-          'Refusing to persist non-resumable in-memory state over a marked saved session',
-        );
-        console.error('[save]', error.message);
-        reject?.(error);
-        return Promise.reject(error);
-      }
+      const pending = this.takeScheduledPersist();
       let write: Promise<void>;
       try {
-        write = this.queueWrite(this.cached);
+        write = this.queueWrite(this.root);
       } catch (error) {
-        reject?.(error);
+        pending?.reject(error);
         return Promise.reject(error);
       }
       void write.then(
-        () => resolve?.(),
+        () => pending?.resolve(),
         (error) => {
           console.error('[save] failed to persist session state:', error);
-          reject?.(error);
+          pending?.reject(error);
         },
       );
-      return pending ?? write;
-    });
+      return pending?.promise ?? write;
+    })();
   }
 
   private schedulePersist(): Promise<void> {
     if (!this.hasAuthority() || this.fenced) return Promise.resolve();
-    if (this.persistPromise) return this.persistPromise;
-    this.persistPromise = new Promise<void>((resolve, reject) => {
-      this.resolvePersist = resolve;
-      this.rejectPersist = reject;
+    if (this.scheduledPersist) return this.scheduledPersist.promise;
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<void>((accept, fail) => {
+      resolve = accept;
+      reject = fail;
     });
-    void this.persistPromise.catch(() => {});
-    this.persistAuthorityLostUnsubscribe = this.onAuthorityLost(() => {
+    void promise.catch(() => {});
+    const unsubscribe = this.onAuthorityLost(() => {
       this.settleScheduledPersist(new StorageAuthorityLostError());
     });
+    this.scheduledPersist = { promise, resolve, reject, unsubscribe };
     const timer = setTimeout(() => {
       this.persistTimer = null;
-      void this.flushSessionSave().catch((error) => {
+      void this.flushAggregate().catch((error) => {
         this.settleScheduledPersist(error);
       });
     }, this.PERSIST_DEBOUNCE_MS);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.persistTimer = timer;
-    return this.persistPromise;
+    return promise;
   }
 
   constructor() {
@@ -510,21 +423,11 @@ class StorageRepository {
       (reason) => this.loseAuthority(reason),
       () => this.stopPersistenceForHardReset(),
     );
-    walletOperationRuntime.configureLifecycle({
-      generation: () => this.lifecycleGeneration,
-      isCurrent: (generation) => this.isGenerationCurrent(generation),
-    });
-    walletOperationRuntime.configurePersistence(async (entries) => {
-      await this.saveWalletOperations(entries);
-    });
   }
 
-  private identityDiskChecked = false;
-  private storageRepositoryHydratedFromDisk = false;
-  private walletOperationRuntimeHydration: Promise<void> | null = null;
-  private pendingCommonPatch: sessionState.CommonSessionPatch = {};
+  private preAuthorityCommonPatch: sessionState.CommonSessionPatch = {};
 
-  _resetForTests(options: { preserveWalletOperationRuntime?: boolean } = {}): void {
+  _resetForTests(): void {
     this.lifecycle += 1;
     this.authority = null;
     this.generation += 1;
@@ -541,222 +444,125 @@ class StorageRepository {
       this.persistTimer = null;
     }
     this.settleScheduledPersist();
-    this.cached = null;
-    this.stagedTerminal = null;
-    this.identityDiskChecked = false;
-    this.storageRepositoryHydratedFromDisk = false;
-    this.walletOperationRuntimeHydration = null;
-    this.pendingCommonPatch = {};
+    this.root = newApplicationState();
+    this.preAuthorityCommonPatch = {};
     resetStorageCoordinationForTests();
-    if (!options.preserveWalletOperationRuntime) walletOperationRuntime.resetForTests();
   }
 
-  loadState(): SessionSave {
-    return (this.cached ??= loadPreferences());
+  loadState(): DurableApplicationState {
+    return this.root;
   }
 
-  hydrateOwnedStorage(): Promise<void> {
-    return this.hydrateSessionCacheFromDiskStrict().then(() => {});
+  walletObligations(): WalletOperationEntry[] {
+    return structuredClone(this.root.walletObligations);
   }
 
-  private hydrateWalletSnapshot(): Promise<void> {
-    if (!this.hasAuthority()) return Promise.resolve();
-    if (this.walletOperationRuntimeHydration) return this.walletOperationRuntimeHydration;
-    walletOperationRuntime.beginHydration();
-    this.walletOperationRuntimeHydration = (async () => {
-      const record = await this.readAfterMutations(readWalletOperationRecord);
-      walletOperationRuntime.hydrateFromDisk(record);
-    })().catch((error) => {
-      walletOperationRuntime.failHydration(error);
-      throw error;
-    });
-    return this.walletOperationRuntimeHydration;
+  walletContext(): DurableApplicationState['walletContext'] {
+    return this.root.walletContext ? structuredClone(this.root.walletContext) : null;
   }
 
-  private async hydrateSessionCacheFromDiskStrict(): Promise<boolean> {
-    if (this.fenced) {
-      this.identityDiskChecked = true;
-      this.storageRepositoryHydratedFromDisk = true;
-      return false;
+  ensureWalletContext(context: NonNullable<DurableApplicationState['walletContext']>): void {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    if (this.root.walletContext) {
+      if (walletProviderScopeKey(this.root.walletContext) !== walletProviderScopeKey(context)) {
+        throw new Error('Internal wallet consistency error: walletContext cannot change');
+      }
+      return;
     }
-    await this.hydrateWalletSnapshot();
-    if (this.cached && sessionState.isDurableSession(this.cached)) {
-      assertSessionWalletScope(this.cached, walletOperationRuntime.snapshot());
-      this.identityDiskChecked = true;
-      this.storageRepositoryHydratedFromDisk = true;
-      return false;
-    }
-    if (!hasSavedSessionMarker()) {
-      this.identityDiskChecked = true;
-      this.storageRepositoryHydratedFromDisk = true;
-      return false;
-    }
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    if (this.persistPromise && this.cached && !sessionState.isDurableSession(this.cached)) {
-      this.settleScheduledPersist();
-    }
-
-    const { record, discarded } = await this.readCompatibleSessionRecord();
-    this.identityDiskChecked = true;
-    this.storageRepositoryHydratedFromDisk = true;
-    if (!record) {
-      if (!discarded) return false;
-      this.cached = loadPreferences();
-      return true;
-    }
-    assertSessionWalletScope(record, walletOperationRuntime.snapshot());
-    this.cached = sessionState.mergeDurableSession(record, this.cached ?? loadPreferences());
-    savePreferences(this.cached);
-    return false;
+    this.root = { ...this.root, walletContext: structuredClone(context) };
+    void this.schedulePersist();
   }
 
-  private async installClaimedStorageSnapshot(
+  _replaceApplicationStateForTests(state: DurableApplicationState): void {
+    decodeDurableApplicationState(state);
+    this.root = structuredClone(state);
+  }
+
+  reduceWallet(command: WalletOperationCommand): WalletOperationEffect[] {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    const reduction = reduceWalletOperation(this.root.walletObligations, command);
+    if (reduction.effects.some((effect) => effect.kind === 'persist')) {
+      const walletContext = this.root.walletContext;
+      if (!walletContext && reduction.nextState.length > 0) {
+        throw new Error('Internal wallet consistency error: obligations require walletContext');
+      }
+      const next = {
+        ...this.root,
+        walletContext,
+        walletObligations: reduction.nextState,
+      };
+      this.root = next;
+      void this.schedulePersist();
+    }
+    return reduction.effects;
+  }
+
+  private async installClaimedApplicationState(
     snapshot: ClaimedStorageSnapshot,
-  ): Promise<SessionSave | null> {
-    if (snapshot.walletOperationError) {
-      walletOperationRuntime.beginHydration();
-      walletOperationRuntime.failHydration(snapshot.walletOperationError);
-      throw snapshot.walletOperationError;
-    }
-    let record: SessionSave | null = null;
-    let discarded = false;
-    if (snapshot.sessionError) {
-      console.error('[save] rejecting unreadable session record:', snapshot.sessionError);
-      await this.deleteSessionRecord();
-      markSavedSession();
-      discarded = true;
-    } else if (snapshot.sessionRecord) {
-      record = sessionState.decodeCurrentSession(snapshot.sessionRecord);
-      if (!record) {
-        console.error('[save] rejecting incompatible session record');
-        await this.deleteSessionRecord();
-        markSavedSession();
-        discarded = true;
+  ): Promise<DurableApplicationState> {
+    if (snapshot.applicationStateError) throw snapshot.applicationStateError;
+    const record = snapshot.applicationState;
+    const patch = this.preAuthorityCommonPatch;
+    this.preAuthorityCommonPatch = {};
+    this.root = sessionState.mergeClaimedSession(record, this.root, patch);
+    const restoredWallet = reduceWalletOperation(this.root.walletObligations, {
+      kind: 'restore-aggregate',
+    });
+    this.root = { ...this.root, walletObligations: restoredWallet.nextState };
+
+    const hasPatch =
+      Object.keys(patch).length > 0 ||
+      restoredWallet.effects.some((effect) => effect.kind === 'persist');
+    if (hasPatch) {
+      try {
+        await this.queueWrite(this.root);
+      } catch (error) {
+        if (error instanceof StorageAuthorityLostError) throw error;
       }
     }
-    const walletEntries =
-      snapshot.walletOperationRecord === null
-        ? []
-        : decodeWalletOperationRecord(snapshot.walletOperationRecord).entries;
-    if (record) assertSessionWalletScope(record, walletEntries);
-    walletOperationRuntime.hydrateClaimedSnapshot(
-      snapshot.walletOperationRecord,
-      record && sessionState.isDurableSession(record) ? record.walletProviderScope : null,
-    );
-    this.walletOperationRuntimeHydration = Promise.resolve();
-
-    const patch = this.pendingCommonPatch;
-    this.pendingCommonPatch = {};
-    this.cached = sessionState.mergeClaimedSession(record, loadPreferences(), patch);
-    this.identityDiskChecked = true;
-    this.storageRepositoryHydratedFromDisk = true;
-    savePreferences(this.cached);
-
-    const hasPatch = Object.keys(patch).length > 0;
-    if (hasPatch) await this.queueWrite(this.cached);
-    if (discarded) return null;
-    if (record && sessionState.isDurableSession(record)) {
-      markSavedSession();
-      return this.cached;
-    }
-    if (
-      sessionPreferences.hasConnectionPreferences(this.cached, hasWalletConnectStorage()) ||
-      walletOperationRuntime.snapshot().length > 0 ||
-      hasSavedSessionMarker()
-    ) {
-      return this.cached;
-    }
-    return null;
+    if (this.shouldOfferResumeOrStartOver(this.root)) markSavedSession();
+    else clearSavedSessionMarker();
+    this.notifyLifecycle('claim');
+    return structuredClone(this.root);
   }
 
-  async claimLease(): Promise<ClaimedStorageSnapshot> {
+  async claimApplicationState(): Promise<DurableApplicationState> {
     const snapshot = await this.claimAndRead(getStorageTabId());
     markLeaseClaimed();
-    return snapshot;
+    return this.installClaimedApplicationState(snapshot);
   }
 
-  async claimAndHydrateSession(): Promise<SessionSave | null> {
-    const snapshot = await this.claimLease();
-    return this.installClaimedStorageSnapshot(snapshot);
-  }
-
-  async hydrateSessionCacheFromDisk(): Promise<BootStorageHydrationResult> {
-    try {
-      if (!this.hasAuthority()) {
-        const {
-          sessionRecord: session,
-          sessionError,
-          walletOperationRecord: ledger,
-        } = await this.inspect();
-        const decoded =
-          session && !sessionError ? sessionState.decodeCurrentSession(session) : null;
-        if (ledger) decodeWalletOperationRecord(ledger);
-        const discardedSession = sessionError !== undefined || (session !== null && !decoded);
-        return {
-          status: 'ready',
-          discardedSession,
-          durableSession: decoded && sessionState.isDurableSession(decoded) ? decoded : null,
-        };
-      }
-      const discardedSession = await this.hydrateSessionCacheFromDiskStrict();
-      const state = this.loadState();
-      return {
-        status: 'ready',
-        discardedSession,
-        durableSession: sessionState.isDurableSession(state) ? structuredClone(state) : null,
-      };
-    } catch (error) {
-      return {
-        status: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  }
-
-  private mutateCommon(fn: (state: SessionSave) => SessionSave): Promise<void> {
+  private mutateCommon(
+    fn: (state: DurableApplicationState) => DurableApplicationState,
+  ): Promise<void> {
     if (!this.hasAuthority()) {
       const state = this.loadState();
       const before = structuredClone(state);
-      this.cached = fn(state);
-      const patch = sessionState.commonPatch(before, this.cached);
-      this.pendingCommonPatch = {
-        identity: { ...this.pendingCommonPatch.identity, ...patch.identity },
-        preferences: { ...this.pendingCommonPatch.preferences, ...patch.preferences },
-        history: { ...this.pendingCommonPatch.history, ...patch.history },
+      this.root = fn(state);
+      const patch = sessionState.commonPatch(before, this.root);
+      this.preAuthorityCommonPatch = {
+        identity: { ...this.preAuthorityCommonPatch.identity, ...patch.identity },
+        preferences: { ...this.preAuthorityCommonPatch.preferences, ...patch.preferences },
+        history: { ...this.preAuthorityCommonPatch.history, ...patch.history },
       };
-      savePreferences(this.cached);
       return Promise.resolve();
     }
     return this.mutateSession(fn);
   }
 
-  private mutateSession(fn: (state: SessionSave) => SessionSave): Promise<void> {
+  private mutateSession(
+    fn: (state: DurableApplicationState) => DurableApplicationState,
+  ): Promise<void> {
     if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
-    const apply = () => {
-      this.cached = fn(this.loadState());
-      savePreferences(this.cached);
-      return this.schedulePersist();
-    };
-    if (
-      (this.cached && sessionState.isDurableSession(this.cached)) ||
-      !hasSavedSessionMarker() ||
-      this.storageRepositoryHydratedFromDisk
-    ) {
-      return apply();
-    }
-    return this.hydrateSessionCacheFromDiskStrict().then(apply);
+    this.root = fn(this.root);
+    return this.schedulePersist();
   }
 
   getPlayerId(): string {
     const state = this.loadState();
-    if (this.hasAuthority()) {
-      savePreferences(state);
-    } else {
-      this.pendingCommonPatch.identity = {
-        ...this.pendingCommonPatch.identity,
+    if (!this.hasAuthority()) {
+      this.preAuthorityCommonPatch.identity = {
+        ...this.preAuthorityCommonPatch.identity,
         playerId: state.identity.playerId,
       };
     }
@@ -765,14 +571,8 @@ class StorageRepository {
 
   async ensureHubIdentity(): Promise<string> {
     if (!this.hasAuthority()) {
-      await this.peekSession();
-      if (this.loadState().identity.sessionId) return this.loadState().identity.sessionId!;
       throw new Error('Hub identity cannot be minted before durable storage authority is claimed');
     }
-    if (hasSavedSessionMarker() && !this.identityDiskChecked) {
-      await this.hydrateSessionCacheFromDiskStrict();
-    }
-    this.identityDiskChecked = true;
     return this.getSessionId();
   }
 
@@ -798,51 +598,46 @@ class StorageRepository {
         'getSessionId called before ensureHubIdentity and durable storage authority was claimed',
       );
     }
-    if (hasSavedSessionMarker() && !this.identityDiskChecked) {
-      throw new Error(
-        'getSessionId called before ensureHubIdentity/hydrate with a saved session marker',
-      );
-    }
-    state.identity.sessionId = randomHex();
-    savePreferences(state);
+    const sessionId = randomHex();
+    this.root = {
+      ...state,
+      identity: { ...state.identity, sessionId },
+    };
     void this.schedulePersist();
-    return state.identity.sessionId;
+    return sessionId;
   }
 
   regenerateSessionId(): string {
-    this.identityDiskChecked = true;
     const state = this.loadState();
-    state.identity.sessionId = randomHex();
-    state.identity.myHubPlayerId = undefined;
+    const sessionId = randomHex();
+    this.root = {
+      ...state,
+      identity: { ...state.identity, sessionId, myHubPlayerId: undefined },
+    };
     if (this.hasAuthority()) {
-      savePreferences(state);
       void this.schedulePersist();
     } else {
-      this.pendingCommonPatch.identity = {
-        ...this.pendingCommonPatch.identity,
-        sessionId: state.identity.sessionId,
+      this.preAuthorityCommonPatch.identity = {
+        ...this.preAuthorityCommonPatch.identity,
+        sessionId,
         myHubPlayerId: undefined,
       };
     }
-    return state.identity.sessionId;
+    return sessionId;
   }
 
   clearHubIdentity(): void {
-    this.identityDiskChecked = true;
     void this.mutateCommon((state) => ({
       ...state,
       identity: { ...state.identity, sessionId: undefined, myHubPlayerId: undefined },
     }));
   }
 
-  saveSession(update: sessionState.SessionStateUpdate): Promise<void> {
-    const apply = (state: SessionSave) => sessionState.applySessionUpdate(state, update);
-    return update.scope === 'common' ? this.mutateCommon(apply) : this.mutateSession(apply);
+  updateCommon(patch: sessionState.CommonSessionPatch): Promise<void> {
+    return this.mutateCommon((state) => sessionState.applyCommonPatch(state, patch));
   }
 
-  patchPreHandshakeTransport(
-    transport: sessionState.SessionReplacement['transport'],
-  ): Promise<void> {
+  patchPreHandshakeTransport(transport: SessionTransportSave): Promise<void> {
     return this.mutateSession((state) => sessionState.patchSessionTransport(state, transport));
   }
 
@@ -850,86 +645,22 @@ class StorageRepository {
     return this.mutateSession(sessionState.clearSessionPeer);
   }
 
-  async replaceSession(checkpoint: sessionState.SessionReplacement): Promise<void> {
-    if (!this.hasAuthority()) throw this.authorityMutationError();
-    await this.hydrateSessionCacheFromDiskStrict();
-    if (this.persistPromise) await this.flushSessionSave();
-    const replacement = sessionState.createPreHandshakeSession(this.loadState(), checkpoint);
-    await this.queueWrite(replacement);
-    this.cached = replacement;
-    this.stagedTerminal = null;
-    savePreferences(replacement);
-  }
-
-  saveTerminalSession(fields: sessionState.TerminalFields): Promise<void> {
-    return this.mutateSession((state) => sessionState.createTerminalSession(state, fields));
-  }
-
-  async stageTerminalSession(fields: sessionState.TerminalFields): Promise<void> {
-    if (!this.hasAuthority()) throw this.authorityMutationError();
-    await this.hydrateSessionCacheFromDiskStrict();
-    this.stagedTerminal = sessionState.createTerminalSession(this.loadState(), fields);
-  }
-
-  discardStagedTerminalSession(): void {
-    this.stagedTerminal = null;
-  }
-
-  async peekSession(): Promise<SessionSave | null> {
+  async readCurrentState(): Promise<DurableApplicationState | null> {
     if (!this.hasAuthority()) {
-      const { sessionRecord: rawSession, walletOperationRecord: rawLedger } = await this.inspect();
-      if (rawLedger) decodeWalletOperationRecord(rawLedger);
-      const inspected = rawSession ? sessionState.decodeCurrentSession(rawSession) : null;
-      if (rawSession && !inspected) console.error('[save] rejecting incompatible session record');
-      if (inspected) {
-        const local = loadPreferences();
-        this.cached = sessionState.mergeInspectedSession(inspected, local, this.pendingCommonPatch);
-        this.identityDiskChecked = true;
-        this.storageRepositoryHydratedFromDisk = true;
-        if (
-          sessionState.isDurableSession(inspected) ||
-          sessionPreferences.hasConnectionPreferences(inspected, hasWalletConnectStorage())
-        )
-          return this.cached;
-      }
-      const preferences = loadPreferences();
-      return sessionPreferences.hasConnectionPreferences(preferences, hasWalletConnectStorage()) ||
-        rawLedger?.entries.length
-        ? preferences
-        : null;
-    }
-    const wipedIncompatible = await this.hydrateSessionCacheFromDiskStrict();
-    if (this.persistPromise) await this.flushSessionSave();
-    const { record, discarded } = await this.readCompatibleSessionRecord();
-    if (discarded) {
-      this.cached = loadPreferences();
-      return null;
-    }
-    if (record) {
-      this.cached = sessionState.mergeInspectedSession(record, loadPreferences(), {});
-      savePreferences(this.cached);
-      if (sessionState.isDurableSession(this.cached)) {
+      const { applicationState, applicationStateError } = await this.inspect();
+      if (applicationStateError) throw applicationStateError;
+      if (applicationState && this.shouldOfferResumeOrStartOver(applicationState)) {
         markSavedSession();
-        return this.cached;
-      }
-      if (
-        sessionPreferences.hasConnectionPreferences(this.cached, hasWalletConnectStorage()) ||
-        walletOperationRuntime.snapshot().length > 0
-      ) {
-        markSavedSession();
-        return this.cached;
+        return structuredClone(applicationState);
       }
       clearSavedSessionMarker();
       return null;
     }
-    this.cached = loadPreferences();
-    if (sessionPreferences.hasConnectionPreferences(this.cached, hasWalletConnectStorage())) {
+    if (this.shouldOfferResumeOrStartOver(this.root)) {
       markSavedSession();
-      return this.cached;
+      return structuredClone(this.root);
     }
-    if (!wipedIncompatible) {
-      clearSavedSessionMarker();
-    }
+    clearSavedSessionMarker();
     return null;
   }
 
@@ -940,13 +671,12 @@ class StorageRepository {
       this.persistTimer = null;
     }
     this.settleScheduledPersist();
-    this.cached = sessionState.freshSessionState(this.loadState());
-    savePreferences(this.cached);
-    const deletePromise = this.deleteSessionRecord().then(() => {
+    this.root = sessionState.freshSessionState(this.root);
+    const deletePromise = this.queueWrite(this.root).then(() => {
       if (
-        this.cached?.preferences.blockchainType ||
-        this.cached?.preferences.hubUrl ||
-        walletOperationRuntime.snapshot().length > 0
+        this.root.preferences.blockchainType ||
+        this.root.preferences.hubUrl ||
+        this.root.walletObligations.length > 0
       ) {
         markSavedSession();
       } else {
@@ -956,65 +686,10 @@ class StorageRepository {
     return deletePromise;
   }
 
-  replaceSessionWithRejection(tombstone: DurableRejectionTombstone): Promise<void> {
-    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    this.settleScheduledPersist();
-    this.cached = sessionState.freshSessionState(this.loadState());
-    savePreferences(this.cached);
-    const snapshot = structuredClone(tombstone);
-    const replacePromise = this.runAuthorizedMutation((authority) =>
-      indexedDbStoragePort.replaceSessionWithRejection(snapshot, authority),
-    ).then(() => {
-      if (
-        this.cached?.preferences.blockchainType ||
-        this.cached?.preferences.hubUrl ||
-        walletOperationRuntime.snapshot().length > 0
-      ) {
-        markSavedSession();
-      } else {
-        clearSavedSessionMarker();
-      }
-    });
-    return replacePromise;
-  }
-
-  async clearGameSessionPreservingHistory(
-    history?: Partial<SessionSave['history']>,
-  ): Promise<void> {
-    if (!this.hasAuthority()) throw this.authorityMutationError();
-    await this.hydrateSessionCacheFromDiskStrict();
-    if (this.persistPromise) await this.flushSessionSave();
-    const current = sessionState.applySessionUpdate(this.loadState(), {
-      scope: 'common',
-      history,
-    });
-    const checkpoint = sessionState.preservationCheckpoint(current);
-    const replacement = checkpoint
-      ? sessionState.createPreHandshakeSession(current, checkpoint)
-      : sessionState.freshSessionState(current);
-    await this.queueWrite(replacement);
-    this.cached = replacement;
-    this.stagedTerminal = null;
-    savePreferences(replacement);
-    if (
-      sessionPreferences.hasConnectionPreferences(replacement, hasWalletConnectStorage()) ||
-      walletOperationRuntime.snapshot().length > 0 ||
-      sessionState.isDurableSession(replacement)
-    ) {
-      markSavedSession();
-    } else {
-      clearSavedSessionMarker();
-    }
-  }
-
   async hardReset(): Promise<HardResetResult> {
     const authority = await this.beginHardReset(getStorageTabId());
+    const { hardResetStorage } = await import('../../hooks/saveHardReset');
     this.stopPersistenceForHardReset();
-    walletOperationRuntime.clearForHardReset();
     return hardResetStorage(authority, (owned, reset) => this.hardResetMutation(owned, reset));
   }
 
@@ -1026,12 +701,12 @@ class StorageRepository {
     if (this.hasAuthority()) {
       void this.updatePreference({ key: 'alias', value: generated });
     } else {
-      this.cached = sessionPreferences.applySessionPreferenceUpdate(state, {
+      this.root = sessionPreferences.applySessionPreferenceUpdate(state, {
         key: 'alias',
         value: generated,
       });
-      this.pendingCommonPatch.preferences = {
-        ...this.pendingCommonPatch.preferences,
+      this.preAuthorityCommonPatch.preferences = {
+        ...this.preAuthorityCommonPatch.preferences,
         alias: generated,
       };
     }

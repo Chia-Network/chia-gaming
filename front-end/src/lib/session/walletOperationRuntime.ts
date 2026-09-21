@@ -5,7 +5,6 @@ import type {
   WalletOfferCompletion,
   WalletOfferProvider,
   WalletOfferRequest,
-  WalletProviderScope,
 } from '../../types/ChiaGaming';
 import { diagStack, log } from '../../services/log';
 import {
@@ -14,9 +13,7 @@ import {
   type CanonicalFundingRequest,
 } from './fundingRequest';
 import { jsonStringify } from '../../util/jsonSafe';
-import { decodeWalletOperationEntries, decodeWalletOperationRecord } from './walletOperationCodec';
 import {
-  reduceWalletOperation,
   walletOperationEntryKey,
   walletOperationKey,
   walletOperationOwnerKey,
@@ -27,11 +24,8 @@ import {
   type WalletBestEffortUncertainEntry,
   type WalletOperationCommand,
   type WalletOperationEntry,
-  type WalletOperationEntryKey,
   type FundingMaterialSink,
-  type WalletOperationCheckpoint,
   type WalletOperationFlight,
-  type WalletOperationLifecycle,
   type WalletOperationOwner,
   type WalletOperationPurpose,
   type WalletOperationRecoveryEntry,
@@ -39,6 +33,7 @@ import {
   type WalletOperationTradeState,
   type WalletOperationTransition,
 } from './walletOperationStore';
+import { storageRepository } from './storageRepository';
 import {
   entriesForOwner,
   entryForOperation,
@@ -56,8 +51,6 @@ import {
 } from './walletProviderRegistry';
 import { StorageAuthorityLostError } from './indexedDb';
 
-type PersistOperations = (entries: WalletOperationEntry[]) => Promise<void>;
-
 interface AttachedFundingSession {
   sink: FundingMaterialSink;
   owner: WalletOperationOwner | null;
@@ -65,109 +58,27 @@ interface AttachedFundingSession {
   request: CanonicalFundingRequest | null;
 }
 
-// prettier-ignore
-const standaloneLifecycle: WalletOperationLifecycle = { generation: () => 0, isCurrent: () => true };
-
 export class WalletOperationRuntime {
-  private entries = new Map<WalletOperationEntryKey, WalletOperationEntry>();
   private readonly inFlight = new Map<string, WalletOperationFlight>();
+  private readonly pendingAuthorityTransfers = new Map<string, () => void>();
   private readonly attachedFundingSessions = new Map<string, AttachedFundingSession>();
   private readonly listeners = new Set<() => void>();
-  private persist: PersistOperations | null = null;
-  private lifecycle: WalletOperationLifecycle = standaloneLifecycle;
-  private initialized = false;
-  private dirty = false;
-  private revision = 0;
-  private coordinatedRevision: number | null = null;
-  private lastPersistence: Promise<void> = Promise.resolve();
-  private authorityLost: StorageAuthorityLostError | null = null;
-  private hydratedGeneration: number | null = null;
-  private sessionScope: WalletProviderScope | null = null;
-  private hydrationState: 'pending' | 'ready' | 'failed' = 'ready';
-  private hydrationPromise = Promise.resolve();
-  private hydrationResolve: () => void = () => {};
-  private hydrationReject: (error: unknown) => void = () => {};
-
-  // prettier-ignore
-  constructor(private readonly providerRegistry: WalletProviderRegistry = new WalletProviderRegistry()) {
-    this.resetHydration(true); this.providerRegistry.subscribe((event) => this.providerEvent(event));
+  private lifecycleUnsubscribe: (() => void) | null = null;
+  constructor(
+    private readonly providerRegistry: WalletProviderRegistry = new WalletProviderRegistry(),
+  ) {
+    this.providerRegistry.subscribe((event) => this.providerEvent(event));
+    this.subscribeLifecycle();
   }
 
-  // prettier-ignore
-  configureLifecycle = (lifecycle: WalletOperationLifecycle): void => { this.lifecycle = lifecycle; };
-  // prettier-ignore
-  configurePersistence(persist: PersistOperations): void { this.persist = persist; this.authorityLost = null; }
-
-  awaitHydrated = (): Promise<void> => this.hydrationPromise;
-  // prettier-ignore
-  beginHydration(): void { if (this.hydrationState === 'ready' && !this.initialized) this.resetHydration(false); }
-  // prettier-ignore
-  runAfterHydration<T>(run: () => Promise<T> | T): Promise<T> | T { return this.hydrationState === 'ready' ? run() : this.hydrationPromise.then(run); }
-
-  // prettier-ignore
-  failHydration(error: unknown): void { if (this.hydrationState !== 'pending') return; this.hydrationState = 'failed'; this.hydrationReject(error); }
-
-  // prettier-ignore
-  hydrateFromDisk(record: unknown | null, replace = false): void {
-    try {
-      const entries = record === null ? [] : decodeWalletOperationRecord(record).entries;
-      this.installHydrated(entries, replace);
-      const pending = this.hydrationState === 'pending'; if (pending) this.hydrationState = 'ready';
-      if (pending) this.hydrationResolve();
-      void Promise.resolve().then(() => this.resumeAll());
-    } catch (error) {
-      this.failHydration(error); throw error;
-    }
-  }
-
-  // prettier-ignore
-  hydrateClaimedSnapshot(record: unknown | null, sessionScope: WalletProviderScope | null): void {
-    for (const attached of this.attachedFundingSessions.values()) {
-      attached.owner = null; attached.purpose = null; attached.request = null;
-    }
-    this.initialized = false; this.dirty = false; this.coordinatedRevision = null;
-    this.lastPersistence = Promise.resolve(); this.authorityLost = null; this.sessionScope = sessionScope ? structuredClone(sessionScope) : null;
-    if (this.hydrationState !== 'pending') this.resetHydration(false);
-    this.hydrateFromDisk(record, true);
-  }
-
-  // prettier-ignore
-  restore = (entries: unknown): void => { this.installHydrated(decodeWalletOperationEntries(entries, 'walletOperationRuntime')); this.resumeAll(); };
-
-  private installHydrated(diskEntries: WalletOperationEntry[], replace = false): void {
-    this.dispatch({ kind: 'hydrate', entries: diskEntries, replace });
-    for (const entry of this.entries.values()) {
-      if (
-        entry.stage === 'best-effort-uncertain' ||
-        entry.stage === 'best-effort-cancellation-uncertain'
-      ) {
-        this.inFlight.set(`restored:${walletOperationEntryKey(entry)}`, {
-          promise: Promise.resolve(),
-        });
-      }
-    }
-    this.initialized = true;
-    this.hydratedGeneration = this.lifecycle.generation();
-  }
-
-  // prettier-ignore
-  snapshot = (): WalletOperationEntry[] => [...this.entries.values()].map((entry) => structuredClone(entry));
-
-  // prettier-ignore
-  checkpoint = (): WalletOperationCheckpoint => ({ entries: this.snapshot(), revision: this.revision });
-
-  isDirty = (): boolean => this.dirty;
-
-  // prettier-ignore
-  persistIfDirty(): Promise<void> { if (this.dirty && this.coordinatedRevision === null) this.persistSnapshot(); return this.lastPersistence; }
-
-  // prettier-ignore
-  flushPersistence = (): Promise<void> => this.authorityLost ? Promise.reject(this.authorityLost) : this.lastPersistence;
-
-  // prettier-ignore
-  combinedCheckpointPersisted(checkpoint: WalletOperationCheckpoint): void {
-    if (this.coordinatedRevision !== null && this.coordinatedRevision <= checkpoint.revision) this.coordinatedRevision = null;
-    if (this.revision === checkpoint.revision) this.dirty = false; else this.persistIfDirty();
+  private subscribeLifecycle(): void {
+    this.lifecycleUnsubscribe?.();
+    this.lifecycleUnsubscribe = storageRepository.onLifecycle((_generation, event) => {
+      if (event === 'claim') {
+        this.drainAuthorityTransfers();
+        this.resumeAll();
+      } else this.retireTransientWork();
+    });
   }
 
   // prettier-ignore
@@ -185,7 +96,9 @@ export class WalletOperationRuntime {
   providerScopeKeys = (): ReadonlySet<string> => this.providerRegistry.scopeKeys();
 
   // prettier-ignore
-  entriesFor = (owner: WalletOperationOwner): WalletOperationEntry[] => entriesForOwner(this.snapshot(), owner);
+  entriesFor = (owner: WalletOperationOwner): WalletOperationEntry[] => entriesForOwner(this.entries(), owner);
+
+  private entries = (): WalletOperationEntry[] => storageRepository.walletObligations();
 
   // prettier-ignore
   registerReserved(tradeId: string, owner: WalletOperationOwner, purpose: WalletOperationPurpose, reason = 'wallet-offer-created'): WalletOperationEntry {
@@ -220,8 +133,8 @@ export class WalletOperationRuntime {
         })(),
     isRetired: () => boolean = () => false,
   ): Promise<WalletOfferCompletion> {
-    const generation = this.lifecycle.generation();
-    await this.awaitHydrated();
+    const generation = storageRepository.lifecycleGeneration;
+    storageRepository.ensureWalletContext(owner.providerScope);
     const provider = this.providerRegistry.provider(owner.providerScope);
     if (!provider)
       return {
@@ -235,7 +148,22 @@ export class WalletOperationRuntime {
       this.inFlight.delete(completedKey);
       return completed;
     }
-    const current = entryForOperation(this.entries.values(), owner, purpose);
+    const current = entryForOperation(this.entries(), owner, purpose);
+    if (current?.stage === 'best-effort-uncertain') {
+      const replacement = this.inFlight.get(`replace:${key}`);
+      if (replacement) {
+        await replacement.promise;
+        const replaced = this.inFlight.get(completedKey)?.completion;
+        if (replaced) {
+          this.inFlight.delete(completedKey);
+          return replaced;
+        }
+        return {
+          kind: 'unavailable',
+          reason: 'Wallet replacement attempt completed without material for this caller',
+        };
+      }
+    }
     if (current && current.stage !== 'creating' && current.stage !== 'best-effort-uncertain') {
       throw new Error('Wallet operation cleanup is pending for this operation');
     }
@@ -266,7 +194,7 @@ export class WalletOperationRuntime {
       provider.capability === 'best-effort'
         ? 'walletconnect-response-unavailable'
         : 'cloud-response-unavailable';
-    const recovery = entryForOperation(this.entries.values(), owner, purpose);
+    const recovery = entryForOperation(this.entries(), owner, purpose);
     if (!replacement && recovery?.stage === 'best-effort-uncertain') {
       return {
         kind: 'unavailable',
@@ -326,9 +254,9 @@ export class WalletOperationRuntime {
       if (!isRecoverableProvider(provider)) {
         throw new Error('Non-recoverable provider returned a recovery id');
       }
-      if (!this.lifecycle.isCurrent(generation)) {
+      if (!storageRepository.isGenerationCurrent(generation)) {
         this.transferToCurrent(owner, () => {
-          const current = entryForOperation(this.entries.values(), owner, purpose);
+          const current = entryForOperation(this.entries(), owner, purpose);
           if (current?.stage === 'creating') return;
           const retired = isRetired();
           if (current?.stage === 'best-effort-uncertain') {
@@ -376,8 +304,8 @@ export class WalletOperationRuntime {
               retired: isRetired(),
             },
       );
-      await this.flushPersistence();
-      if (!this.lifecycle.isCurrent(generation)) {
+      await this.checkpointBeforeProviderMutation(generation);
+      if (!storageRepository.isGenerationCurrent(generation)) {
         return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
       }
       try {
@@ -394,7 +322,7 @@ export class WalletOperationRuntime {
         throw error;
       }
     }
-    if (!this.lifecycle.isCurrent(generation)) {
+    if (!storageRepository.isGenerationCurrent(generation)) {
       if (completion.kind === 'created-reserved') {
         const reservedCompletion = completion;
         this.transferToCurrent(owner, () => {
@@ -434,9 +362,9 @@ export class WalletOperationRuntime {
 
   // prettier-ignore
   private recordUncertainty(owner: WalletOperationOwner, purpose: WalletOperationPurpose, request: WalletOperationRecoveryRequest, retired: boolean, reason: string, generation: number): void {
-    if (!this.lifecycle.isCurrent(generation)) {
+    if (!storageRepository.isGenerationCurrent(generation)) {
       this.transferToCurrent(owner, () => {
-        if (entryForOperation(this.entries.values(), owner, purpose)) return;
+        if (entryForOperation(this.entries(), owner, purpose)) return;
         this.dispatch({
           kind: 'creation-uncertain',
           key: walletOperationRecoveryKey(owner, purpose),
@@ -452,7 +380,7 @@ export class WalletOperationRuntime {
       });
       return;
     }
-    if (entryForOperation(this.entries.values(), owner, purpose)) return;
+    if (entryForOperation(this.entries(), owner, purpose)) return;
     // prettier-ignore
     this.dispatch({ kind: 'creation-uncertain', key: walletOperationRecoveryKey(owner, purpose), owner, purpose, request, generation: 0n, readinessEpoch: BigInt(this.providerRegistry.readinessEpoch(owner.providerScope)), retired, reason, orphanRisk: 'pre-id-response-lost' });
     log(`[wallet-operation-runtime] create response lost; external reservation risk operation=${walletOperationKey(owner, purpose)}`);
@@ -508,8 +436,8 @@ export class WalletOperationRuntime {
 
   private restoreAttachedFunding(sinkKey: string): void {
     const attached = this.attachedFundingSessions.get(sinkKey);
-    if (!attached || !attached.sink.isReady() || this.hydrationState !== 'ready') return;
-    const entry = restoredFundingForSink(this.snapshot(), sinkKey);
+    if (!attached || !attached.sink.isReady()) return;
+    const entry = restoredFundingForSink(this.entries(), sinkKey);
     if (!entry) return;
     attached.owner = entry.owner;
     attached.purpose = entry.purpose;
@@ -532,13 +460,13 @@ export class WalletOperationRuntime {
     const owner = attached.owner;
     const purpose = attached.purpose;
     const request = attached.request;
-    const operation = entryForOperation(this.entries.values(), owner, purpose);
+    const operation = entryForOperation(this.entries(), owner, purpose);
     if (operation && operation.stage !== 'creating') return;
-    const generation = this.lifecycle.generation();
+    const generation = storageRepository.lifecycleGeneration;
     const effect = attached.sink.releaseAfterPersistence(
       `funding:${purpose.operationId}`,
       async () => {
-        if (!this.lifecycle.isCurrent(generation)) return;
+        if (!storageRepository.isGenerationCurrent(generation)) return;
         const recoveryRequest = { kind: 'funding' as const, canonical: request };
         const outcome = await this.createOffer(
           owner,
@@ -575,7 +503,7 @@ export class WalletOperationRuntime {
       });
       return;
     }
-    if (!this.lifecycle.isCurrent(generation) || sink.isRetired()) {
+    if (!storageRepository.isGenerationCurrent(generation) || sink.isRetired()) {
       this.settleOperation(owner, purpose, 'cancel-required', 'funding-material-stale');
       sink.scheduleCleanup();
       sink.requestCheckpoint();
@@ -624,7 +552,7 @@ export class WalletOperationRuntime {
     )
       return Promise.resolve();
     if (!this.providerRegistry.provider(entry.owner.providerScope)) return Promise.resolve();
-    const generation = this.lifecycle.generation();
+    const generation = storageRepository.lifecycleGeneration;
     return this.coalesce(`cancel:${tradeId}`, () => this.performCancellation(entry, generation));
   }
 
@@ -653,7 +581,7 @@ export class WalletOperationRuntime {
           if (error instanceof StorageAuthorityLostError) return;
           begun = { status: 'unavailable' as const, detail: String(error) };
         }
-        if (!this.lifecycle.isCurrent(generation)) {
+        if (!storageRepository.isGenerationCurrent(generation)) {
           if (begun.status === 'pending') {
             this.transferToCurrent(entry.owner, () => {
               const current = this.trade(entry.tradeId);
@@ -698,7 +626,7 @@ export class WalletOperationRuntime {
                 : 'cancellation-pending',
             recoveryId: begun.recoveryId,
           });
-          await this.flushPersistence();
+          await this.checkpointBeforeProviderMutation(generation);
           const identified = this.trade(entry.tradeId);
           if (identified?.stage !== 'cancelling') return;
           current = identified;
@@ -707,7 +635,13 @@ export class WalletOperationRuntime {
           );
         } else outcome = begun;
       }
-      if (!this.lifecycle.isCurrent(generation) || this.trade(entry.tradeId) !== current) return;
+      const latest = this.trade(entry.tradeId);
+      if (
+        !storageRepository.isGenerationCurrent(generation) ||
+        !latest ||
+        latest.stage !== current.stage
+      )
+        return;
       if (outcome.status === 'cancelled' || outcome.status === 'already-terminal') {
         this.transition(current, { kind: 'cancellation-completed' });
       } else if (
@@ -722,7 +656,20 @@ export class WalletOperationRuntime {
   }
 
   // prettier-ignore
-  private resumeAll(): void { if (this.hydrationState === 'failed') return; this.dispatch({ kind: 'resume' }); for (const key of this.attachedFundingSessions.keys()) this.restoreAttachedFunding(key); }
+  private resumeAll(): void {
+    for (const entry of this.entries()) {
+      if (
+        entry.stage === 'best-effort-uncertain' ||
+        entry.stage === 'best-effort-cancellation-uncertain'
+      ) {
+        this.inFlight.set(`restored:${walletOperationEntryKey(entry)}`, {
+          promise: Promise.resolve(),
+        });
+      }
+    }
+    this.dispatch({ kind: 'resume' });
+    for (const key of this.attachedFundingSessions.keys()) this.restoreAttachedFunding(key);
+  }
 
   private providerEvent(event: WalletProviderRegistryEvent): void {
     if (event.kind === 'detached') {
@@ -744,7 +691,7 @@ export class WalletOperationRuntime {
     if (!provider || !isRecoverableProvider(provider)) return;
     const key = walletOperationKey(entry.owner, entry.purpose);
     void this.coalesce(`recover:${key}`, async () => {
-      const generation = this.lifecycle.generation();
+      const generation = storageRepository.lifecycleGeneration;
       const completion = await this.performCreation(
         provider,
         entry.owner,
@@ -775,7 +722,7 @@ export class WalletOperationRuntime {
       void this.coalesce(
         flightKey,
         async () => {
-          const generation = this.lifecycle.generation();
+          const generation = storageRepository.lifecycleGeneration;
           const current = this.trade(entry.tradeId);
           if (current?.stage !== 'best-effort-cancellation-uncertain') return;
           this.transition(current, {
@@ -785,7 +732,7 @@ export class WalletOperationRuntime {
             newRegistryGeneration: restored,
           });
           this.inFlight.delete(restoredKey);
-          await this.flushPersistence();
+          await this.checkpointBeforeProviderMutation(generation);
           await this.performCancellation(this.trade(entry.tradeId)!, generation);
         },
         () => {
@@ -801,7 +748,7 @@ export class WalletOperationRuntime {
       flightKey,
       () => this.launchUncertainCreation(entry, epoch, restored, restoredKey),
       () => {
-        const current = entryForOperation(this.entries.values(), entry.owner, entry.purpose);
+        const current = entryForOperation(this.entries(), entry.owner, entry.purpose);
         if (current?.stage === 'best-effort-uncertain') this.scheduleUncertain(current);
       },
       epoch,
@@ -814,7 +761,7 @@ export class WalletOperationRuntime {
     restored: boolean,
     restoredKey: string,
   ): Promise<void> {
-    const recovery = entryForOperation(this.entries.values(), entry.owner, entry.purpose);
+    const recovery = entryForOperation(this.entries(), entry.owner, entry.purpose);
     if (recovery?.stage !== 'best-effort-uncertain') return;
     this.transition(recovery, {
       kind: 'uncertain-attempt-launched',
@@ -823,10 +770,10 @@ export class WalletOperationRuntime {
       newRegistryGeneration: restored,
     });
     this.inFlight.delete(restoredKey);
-    await this.flushPersistence();
+    await this.checkpointBeforeProviderMutation(storageRepository.lifecycleGeneration);
     const provider = this.providerRegistry.provider(entry.owner.providerScope);
     if (!provider || !canLosePreIdResponse(provider)) return;
-    const generation = this.lifecycle.generation();
+    const generation = storageRepository.lifecycleGeneration;
     const request = providerRequestFromRecovery(entry.owner, entry.request);
     const completed = await this.performCreation(
       provider,
@@ -838,7 +785,8 @@ export class WalletOperationRuntime {
       generation,
       true,
     );
-    if (completed.kind !== 'created-reserved' || !this.lifecycle.isCurrent(generation)) return;
+    if (completed.kind !== 'created-reserved' || !storageRepository.isGenerationCurrent(generation))
+      return;
     await this.routeCompletion(entry, completed, generation);
   }
 
@@ -862,7 +810,7 @@ export class WalletOperationRuntime {
   async awaitOwner(owner: WalletOperationOwner): Promise<void> {
     await Promise.resolve();
     for (;;) {
-      const entries = this.snapshot();
+      const entries = this.entries();
       const pending = [...this.inFlight.entries()]
         .filter(([key]) => flightBelongsToOwner(key, entries, owner))
         .map(([, flight]) => flight.promise);
@@ -871,18 +819,19 @@ export class WalletOperationRuntime {
     }
   }
 
-  private dispatch(command: WalletOperationCommand, coordinated = false): void {
-    const reduction = reduceWalletOperation(this.entries.values(), command);
-    this.entries = new Map(
-      reduction.nextState.map((entry) => [walletOperationEntryKey(entry), entry]),
-    );
-    if (reduction.effects.some((effect) => effect.kind === 'persist')) {
-      this.markDirty(coordinated);
+  private dispatch(command: WalletOperationCommand, _coordinated = false): void {
+    if (!storageRepository.hasAuthority()) {
+      if (
+        command.kind === 'resume' ||
+        (command.kind === 'obligate-cleanup' && storageRepository.walletObligations().length === 0)
+      ) {
+        return;
+      }
     }
-    for (const effect of reduction.effects) {
-      if (effect.kind === 'persist') {
-        if (this.coordinatedRevision === null) this.persistSnapshot();
-      } else if (effect.kind === 'notify') this.notify();
+    const effects = storageRepository.reduceWallet(command);
+    for (const effect of effects) {
+      if (effect.kind === 'persist') continue;
+      if (effect.kind === 'notify') this.notify();
       else if (effect.kind === 'cancel') {
         if (effect.coordinated) {
           this.inFlight.set(`coordinated:${effect.tradeId}`, { promise: Promise.resolve() });
@@ -894,7 +843,9 @@ export class WalletOperationRuntime {
         this.restoreAttachedFunding(key);
         this.scheduleFunding(key);
       } else {
-        const entry = this.entries.get(effect.key);
+        const entry =
+          this.entries().find((candidate) => walletOperationEntryKey(candidate) === effect.key) ??
+          null;
         if (effect.kind === 'recover' && entry?.stage === 'creating') {
           this.scheduleExactRecovery(entry);
         } else if (
@@ -915,35 +866,24 @@ export class WalletOperationRuntime {
 
   // prettier-ignore
   private trade(tradeId: string): WalletOperationTradeState | null {
-    const entry = this.entries.get(walletOperationTradeKey(tradeId)); return entry && entry.stage !== 'creating' && entry.stage !== 'best-effort-uncertain' ? entry : null;
+    const entry = this.entries().find((candidate) => walletOperationEntryKey(candidate) === walletOperationTradeKey(tradeId)); return entry && entry.stage !== 'creating' && entry.stage !== 'best-effort-uncertain' ? entry : null;
   }
 
-  // prettier-ignore
-  private markDirty(coordinated = false): void { this.dirty = true; this.revision += 1; if (coordinated) this.coordinatedRevision = this.revision; }
-
-  private persistSnapshot(): void {
-    if (!this.persist) return;
-    const snapshot = this.snapshot();
-    const revision = this.revision;
-    const generation = this.lifecycle.generation();
-    this.lastPersistence = this.persist(snapshot).then(
-      () => {
-        if (this.lifecycle.isCurrent(generation) && this.revision === revision) this.dirty = false;
-      },
-      (error) => {
-        this.dirty = true;
-        if (error instanceof StorageAuthorityLostError) {
-          this.authorityLost = error;
-          throw error;
-        }
-        log(`[wallet-operation-runtime] persistence failed: ${String(error)}`);
-      },
-    );
+  private async checkpointBeforeProviderMutation(generation: number): Promise<void> {
+    try {
+      await storageRepository.flushAggregate();
+    } catch (error) {
+      if (error instanceof StorageAuthorityLostError) throw error;
+      log(`[wallet-operation-runtime] aggregate persistence failed: ${String(error)}`);
+    }
+    if (!storageRepository.isGenerationCurrent(generation)) {
+      throw new StorageAuthorityLostError();
+    }
   }
 
-  // prettier-ignore
   private async providerMutation<T>(generation: number, effect: () => Promise<T>): Promise<T> {
-    await this.flushPersistence(); if (!this.lifecycle.isCurrent(generation)) throw new StorageAuthorityLostError(); return effect();
+    await this.checkpointBeforeProviderMutation(generation);
+    return effect();
   }
 
   private coalesce<T>(
@@ -974,43 +914,44 @@ export class WalletOperationRuntime {
   }
 
   private transferToCurrent(owner: WalletOperationOwner, apply: () => void): void {
-    const generation = this.lifecycle.generation();
-    if (this.hydratedGeneration !== generation && this.hydrationState === 'ready') {
-      this.resetHydration(false);
+    const key = `transfer:${walletOperationOwnerKey(owner)}`;
+    if (!storageRepository.hasAuthority()) {
+      this.pendingAuthorityTransfers.set(key, () => this.transferToCurrent(owner, apply));
+      return;
     }
-    void this.awaitHydrated()
-      .then(() => {
-        const key = `transfer:${walletOperationOwnerKey(owner)}`;
-        const existing = this.inFlight.get(key);
-        if (existing) return existing.promise;
-        const promise = (async () => {
-          if (!this.lifecycle.isCurrent(generation)) return;
-          if (
-            !this.sessionScope ||
-            walletProviderScopeKey(this.sessionScope) !==
-              walletProviderScopeKey(owner.providerScope)
-          ) {
-            throw new Error(
-              'Internal wallet consistency error: stale wallet response scope does not match the saved session',
-            );
-          }
-          apply();
-          await this.flushPersistence();
-          if (this.lifecycle.isCurrent(generation)) this.resumeAll();
-        })();
-        const flight: WalletOperationFlight = { promise };
-        this.inFlight.set(key, flight);
-        const cleanup = () => {
-          if (this.inFlight.get(key) === flight) this.inFlight.delete(key);
-        };
-        void promise.then(cleanup, cleanup);
-        return promise;
-      })
-      .catch((error) => {
-        if (!(error instanceof StorageAuthorityLostError)) {
-          log(`[wallet-operation-runtime] stale response transfer failed: ${String(error)}`);
-        }
-      });
+    const generation = storageRepository.lifecycleGeneration;
+    const existing = this.inFlight.get(key);
+    if (existing) return;
+    const promise = (async () => {
+      if (!storageRepository.isGenerationCurrent(generation)) return;
+      const context = storageRepository.walletContext();
+      if (
+        !context ||
+        walletProviderScopeKey(context) !== walletProviderScopeKey(owner.providerScope)
+      ) {
+        throw new Error(
+          'Internal wallet consistency error: stale wallet response scope does not match the saved aggregate',
+        );
+      }
+      apply();
+      await this.checkpointBeforeProviderMutation(generation);
+      if (storageRepository.isGenerationCurrent(generation)) this.resumeAll();
+    })().catch((error) => {
+      if (!(error instanceof StorageAuthorityLostError)) {
+        log(`[wallet-operation-runtime] stale response transfer failed: ${String(error)}`);
+      }
+    });
+    const flight: WalletOperationFlight = { promise };
+    this.inFlight.set(key, flight);
+    void promise.finally(() => {
+      if (this.inFlight.get(key) === flight) this.inFlight.delete(key);
+    });
+  }
+
+  private drainAuthorityTransfers(): void {
+    const transfers = [...this.pendingAuthorityTransfers.values()];
+    this.pendingAuthorityTransfers.clear();
+    for (const transfer of transfers) transfer();
   }
 
   // prettier-ignore
@@ -1026,32 +967,13 @@ export class WalletOperationRuntime {
     }
   }
 
-  private reset(hard: boolean, hydrated: boolean): void {
+  resetForTests(): void {
+    this.subscribeLifecycle();
     this.providerRegistry.clear();
-    this.entries.clear();
     this.retireTransientWork();
+    this.pendingAuthorityTransfers.clear();
     this.attachedFundingSessions.clear();
-    this.sessionScope = null;
-    this.hydratedGeneration = hydrated ? this.lifecycle.generation() : null;
-    if (!hard) this.listeners.clear();
-    this.initialized = hard;
-    this.dirty = false;
-    this.coordinatedRevision = null;
-    this.revision = hard ? this.revision + 1 : 0;
-    this.lastPersistence = Promise.resolve();
-    this.authorityLost = null;
-    this.resetHydration(hydrated);
-    if (hard) this.notify();
-  }
-  // prettier-ignore
-  clearForHardReset(): void { this.reset(true, true); }
-  // prettier-ignore
-  resetForTests(hydrated = true): void { this.reset(false, hydrated); }
-
-  // prettier-ignore
-  private resetHydration(ready: boolean): void {
-    this.hydrationState = ready ? 'ready' : 'pending'; this.hydrationPromise = new Promise<void>((resolve, reject) => { this.hydrationResolve = resolve; this.hydrationReject = reject; });
-    void this.hydrationPromise.catch(() => {}); if (ready) this.hydrationResolve();
+    this.listeners.clear();
   }
 }
 

@@ -1,8 +1,15 @@
 import { createSessionModel } from '../session/model';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { storageRepository } from '../session/storageRepository';
 import { canonicalizeFundingRequest } from '../session/fundingRequest';
 import { wasmResult } from './message_protocol.harness';
 import { commitRuntime, ControlledRuntime, setup, submission } from './runtime_capability.harness';
+
+async function waitForCall(mock: jest.Mock, count = 1): Promise<void> {
+  for (let pass = 0; pass < 30 && mock.mock.calls.length < count; pass += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
 
 describe('submission controller handoff and quiescence', () => {
   it('keeps terminal quiescence blocked on the delivery entry and queue job', async () => {
@@ -188,9 +195,7 @@ describe('submission controller handoff and quiescence', () => {
     controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     controller.flushDeferredWork();
     commitRuntime(controller, runtime);
-    for (let pass = 0; pass < 20 && beginWalletOffer.mock.calls.length === 0; pass += 1) {
-      await Promise.resolve();
-    }
+    await waitForCall(beginWalletOffer);
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
 
     controller.cleanup();
@@ -199,13 +204,7 @@ describe('submission controller handoff and quiescence', () => {
       material: { kind: 'offer', offer: 'offer1late' },
       tradeId: 'trade-late-funding',
     });
-    for (
-      let pass = 0;
-      pass < 50 && beginWalletOfferCancellation.mock.calls.length === 0;
-      pass += 1
-    ) {
-      await Promise.resolve();
-    }
+    await waitForCall(beginWalletOfferCancellation);
     const owner = {
       installationPlayerId: 'submission-handoff',
       peerSessionId: '00'.repeat(16),
@@ -248,19 +247,15 @@ describe('submission controller handoff and quiescence', () => {
       fee_request: { target: '22'.repeat(32), amount: '10' },
     });
     await runtime.launch('submission:late-fee-recovery');
-    for (let pass = 0; pass < 20 && beginWalletOffer.mock.calls.length === 0; pass += 1) {
-      await Promise.resolve();
-    }
+    await waitForCall(beginWalletOffer);
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
 
     controller.cleanup();
     finishBegin({ kind: 'pending', recoveryId: 'SR_late_fee' });
-    for (let pass = 0; pass < 30 && reconcileWalletOffer.mock.calls.length === 0; pass += 1) {
-      await Promise.resolve();
-    }
-    const owner = walletOperationRuntime.snapshot()[0]!.owner;
+    await waitForCall(reconcileWalletOffer);
+    const owner = storageRepository.walletObligations()[0]!.owner;
     await walletOperationRuntime.awaitOwner(owner);
-    expect(walletOperationRuntime.snapshot()).toEqual([
+    expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({
         stage: 'creating',
         disposition: 'cancel-on-create',

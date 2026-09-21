@@ -135,7 +135,7 @@ describe('Shell production restore composition', () => {
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     const save = baseSave({
       blockchainType: 'walletconnect',
       hubUrl: 'https://hub.example.test',
@@ -150,7 +150,7 @@ describe('Shell production restore composition', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
     });
-    await storageRepository.saveSessionAndWalletOperations(save, []);
+    await storageRepository.checkpointApplicationState(save);
     markSavedSession();
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
@@ -181,16 +181,16 @@ describe('Shell production restore composition', () => {
     expect(unhandledRejections).toEqual([]);
   });
 
-  it('surfaces malformed wallet evidence and completes Shell hard reset', async () => {
-    await storageRepository.claimLease();
+  it('surfaces malformed aggregate evidence and completes Shell hard reset', async () => {
+    await storageRepository.claimApplicationState();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
     });
     await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction('wallet-reservations', 'readwrite');
-      transaction.objectStore('wallet-reservations').put({ malformed: true }, 'current');
+      const transaction = db.transaction('application-state', 'readwrite');
+      transaction.objectStore('application-state').put({ malformed: true }, 'current');
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error);
     });
@@ -201,7 +201,7 @@ describe('Shell production restore composition', () => {
     act(() => {
       renderer = create(React.createElement(Shell));
     });
-    await waitForText(renderer!, 'Stored wallet operation record is malformed');
+    await waitForText(renderer!, 'Stored application state is malformed');
 
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();

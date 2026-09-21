@@ -1,6 +1,6 @@
 import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
-import type { SessionSave } from './session/saveEnvelope';
+import type { DurableSessionPhase } from './session/saveEnvelope';
 import {
   createSessionModel,
   isPreActiveChannelStatus,
@@ -91,7 +91,7 @@ export function shouldWarnOnSessionUnload(sessionPhase: SessionPhase): boolean {
  */
 export function sessionLocksNetwork(
   sessionPhase: SessionPhase,
-  savePhase?: SessionSave['phase'],
+  savePhase?: DurableSessionPhase['phase'],
   pairingToken?: string,
 ): boolean {
   if (sessionPhase === 'off-chain' || sessionPhase === 'on-chain') return true;
@@ -209,7 +209,7 @@ export type HubPlayerIdRemapAction = 'none' | 'cancel-attempt' | 'go-on-chain' |
 export function hubPlayerIdRemapAction(
   previousPlayerId: string | undefined,
   registeredPlayerId: string,
-  savedPhase: SessionSave['phase'] | undefined,
+  savedPhase: DurableSessionPhase['phase'] | undefined,
   sessionPhase: SessionPhase,
   channelState: string | null | undefined,
   hasPairingToken = false,

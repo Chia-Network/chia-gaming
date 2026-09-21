@@ -1,6 +1,5 @@
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
-import { storageRepository } from '../session/storageRepository';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
@@ -112,12 +111,11 @@ it(
 
       const upgradedBlob = submittedBlobs[1];
       const restored = await injectSessionReload(lane, poller, undefined, async () => {
-        await storageRepository.hydrateOwnedStorage();
         const restoredProvider = fakeBlockchainInfo.getWalletOfferProvider();
         if (restoredProvider) walletOperationRuntime.attachProvider(restoredProvider);
       });
       lane = restored.lane;
-      assert.equal(restored.save.live.gameSessionSchemaVersion, 21n);
+      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 21n);
       captureRustSubmissions(lane.controller, rustSubmissions, acknowledged, relinquished);
 
       for (let attempt = 0; attempt < 20 && rustSubmissions.length < 3; attempt += 1) {

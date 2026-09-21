@@ -12,9 +12,11 @@ import type {
   ProposalOrigin,
   RegisteredGameType,
 } from './types';
+import type { WalletOperationEntry } from './walletOperationStore';
 
-export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 33n;
+export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' as const;
+export const DURABLE_APPLICATION_STATE_VERSION = 1n;
+export const MAX_DURABLE_REJECTION_TRANSPORTS = 8;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -148,36 +150,20 @@ export interface SessionPresentationSave {
   cleanShutdownGraceStartedAt: bigint | null;
 }
 
-interface SessionSaveBase {
-  schema: typeof SESSION_SAVE_SCHEMA;
-  version: typeof SESSION_SAVE_VERSION;
-  identity: SessionIdentitySave;
-  preferences: SessionPreferencesSave;
-  history: SessionHistorySave;
-}
-
-export interface PreferencesSessionSave extends SessionSaveBase {
-  phase: 'preferences';
-}
-
-interface DurableSessionSaveBase extends SessionSaveBase {
-  walletProviderScope: WalletProviderScope;
-}
-
-export interface PreHandshakeSessionSave extends DurableSessionSaveBase {
+export interface PreHandshakeSessionSave {
   phase: 'pre-handshake';
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
 }
 
-export interface LiveSessionSave extends DurableSessionSaveBase {
+export interface LiveSessionSave {
   phase: 'live';
   pairing: SessionPairingSave;
   live: SessionLiveSave;
   presentation: SessionPresentationSave;
 }
 
-export interface TerminalSessionSave extends DurableSessionSaveBase {
+export interface TerminalSessionSave {
   phase: 'terminal';
   terminal: {
     iStarted: boolean;
@@ -188,11 +174,33 @@ export interface TerminalSessionSave extends DurableSessionSaveBase {
   presentation: SessionPresentationSave;
 }
 
-export type SessionSave =
-  | PreferencesSessionSave
-  | PreHandshakeSessionSave
-  | LiveSessionSave
-  | TerminalSessionSave;
+export type DurableSessionPhase = PreHandshakeSessionSave | LiveSessionSave | TerminalSessionSave;
+
+export interface DurableRejectionTransport {
+  kind: 'outbound-reject' | 'inbound-receipt';
+  peerId: string;
+  sessionId: string;
+  messageNumber: bigint;
+  remoteNumber: bigint;
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+  createdAt: number;
+}
+
+export function rejectionTransportKey(peerId: string, sessionId: string): string {
+  return JSON.stringify([peerId, sessionId]);
+}
+
+export interface DurableApplicationState {
+  schema: typeof DURABLE_APPLICATION_STATE_SCHEMA;
+  version: typeof DURABLE_APPLICATION_STATE_VERSION;
+  identity: SessionIdentitySave;
+  preferences: SessionPreferencesSave;
+  history: SessionHistorySave;
+  session: DurableSessionPhase | null;
+  walletContext: WalletProviderScope | null;
+  walletObligations: WalletOperationEntry[];
+  rejectionTransports: DurableRejectionTransport[];
+}
 
 export function assertNever(value: never): never {
   throw new Error(`Unexpected session phase: ${String(value)}`);

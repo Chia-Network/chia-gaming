@@ -2,8 +2,8 @@ import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { applyHandProposalToComposeDraft } from '../session/composeDraft';
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   INITIAL_GAME_TERMINAL_MODEL,
-  sessionModelFromSave,
 } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { CALPOKER_TERMS, send } from './session_machine.harness';
@@ -40,7 +40,7 @@ describe('session machine behavior sequences', () => {
   });
 
   it('uses the restored model directly as the machine projection', () => {
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveSave({
         version: 22n,
 
@@ -126,7 +126,7 @@ describe('session machine behavior sequences', () => {
           },
         ],
       }),
-    );
+    ).model;
 
     const state = createSessionMachineState(restored);
 

@@ -1,14 +1,17 @@
 import 'fake-indexeddb/auto';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { SESSION_SAVE_ENVELOPE_VERSION as CURRENT_VERSION } from '../session/persistence';
 import { storageRepository } from '../session/storageRepository';
 import {
-  SESSION_SAVE_SCHEMA,
+  DURABLE_APPLICATION_STATE_SCHEMA,
+  DURABLE_APPLICATION_STATE_VERSION as CURRENT_VERSION,
+  type PreHandshakeSessionSave,
+  type SessionIdentitySave,
+  type SessionHistorySave,
   type SessionPresentationSave,
-  type SessionSave,
+  type DurableApplicationState,
 } from '../session/saveEnvelope';
 
-import { storageRepository } from '../session/storageRepository';
+import type { WalletProviderScope } from '../../types/ChiaGaming';
 
 export const ACTIVE_INSTANCE = {
   id: 'game-1',
@@ -95,7 +98,7 @@ const PRESENTATION_KEYS = new Set([
 
 function common(fields: LegacyFields) {
   return {
-    schema: SESSION_SAVE_SCHEMA,
+    schema: DURABLE_APPLICATION_STATE_SCHEMA,
     version: CURRENT_VERSION,
     identity: {
       playerId: fields.playerId ?? 'player',
@@ -120,6 +123,10 @@ function common(fields: LegacyFields) {
       wasmNotificationHistory: fields.wasmNotificationHistory,
       diagnosticLog: fields.diagnosticLog,
     },
+    session: null,
+    walletContext: null,
+    walletObligations: fields.walletObligations ?? [],
+    rejectionTransports: fields.rejectionTransports ?? [],
   };
 }
 
@@ -196,7 +203,7 @@ function pairing(fields: LegacyFields) {
   };
 }
 
-export function baseSave(fields: LegacyFields = {}): SessionSave {
+export function baseSave(fields: LegacyFields = {}): DurableApplicationState {
   const shared = common(fields);
   if (
     fields.channelStatus?.state?.startsWith('Resolved') ||
@@ -205,15 +212,17 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
   ) {
     return {
       ...shared,
-      phase: 'terminal',
-      walletProviderScope: walletProviderScope(fields),
-      terminal: {
-        iStarted: fields.terminalIStarted ?? false,
-        coinsOfInterest: fields.coinsOfInterest,
-        myAlias: fields.myAlias ?? null,
-        opponentAlias: fields.opponentAlias ?? null,
+      walletContext: walletProviderScope(fields),
+      session: {
+        phase: 'terminal',
+        terminal: {
+          iStarted: fields.terminalIStarted ?? false,
+          coinsOfInterest: fields.coinsOfInterest,
+          myAlias: fields.myAlias ?? null,
+          opponentAlias: fields.opponentAlias ?? null,
+        },
+        presentation: presentation(fields),
       },
-      presentation: presentation(fields),
     };
   }
   if (fields.pairingToken !== undefined) {
@@ -222,28 +231,52 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
     );
     return {
       ...shared,
-      phase: 'pre-handshake',
-      walletProviderScope: walletProviderScope(fields),
-      pairing: pairing(fields),
-      transport: {
-        messageNumber: fields.messageNumber ?? 1n,
-        remoteNumber: fields.remoteNumber ?? 0n,
-        unackedMessages: fields.unackedMessages ?? [],
-        disposition: fields.transportDisposition ?? 'active',
-        terminalHandoff: fields.terminalHandoff ?? null,
+      walletContext: walletProviderScope(fields),
+      session: {
+        phase: 'pre-handshake',
+        pairing: pairing(fields),
+        transport: {
+          messageNumber: fields.messageNumber ?? 1n,
+          remoteNumber: fields.remoteNumber ?? 0n,
+          unackedMessages: fields.unackedMessages ?? [],
+          disposition: fields.transportDisposition ?? 'active',
+          terminalHandoff: fields.terminalHandoff ?? null,
+        },
+        ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
       },
-      ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
-    } as SessionSave;
+    } as DurableApplicationState;
   }
   const invalidPresentation = [...PRESENTATION_KEYS].some((key) => fields[key] !== undefined);
   return {
     ...shared,
-    phase: 'preferences',
+    session: null,
     ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
-  } as SessionSave;
+  } as DurableApplicationState;
 }
 
-export function activeSave(fields: LegacyFields = {}): SessionSave {
+export function preHandshakeReplacement(fields: LegacyFields): {
+  walletProviderScope: WalletProviderScope;
+  pairing: PreHandshakeSessionSave['pairing'];
+  transport: PreHandshakeSessionSave['transport'];
+  identity?: Partial<SessionIdentitySave>;
+  history?: Partial<SessionHistorySave>;
+} {
+  const save = baseSave(fields);
+  if (save.session?.phase !== 'pre-handshake') {
+    throw new Error('expected pre-handshake fixture');
+  }
+  return {
+    walletProviderScope: save.walletContext!,
+    pairing: save.session.pairing,
+    transport: save.session.transport,
+    identity: Object.fromEntries(
+      Object.entries(save.identity).filter(([, value]) => value !== undefined),
+    ),
+    history: save.history,
+  };
+}
+
+export function activeSave(fields: LegacyFields = {}): DurableApplicationState {
   const merged = {
     serializedGameSession: new Uint8Array([1, 2, 3]),
     gameSessionSchemaVersion: 3n,
@@ -282,21 +315,23 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
   };
   return {
     ...common(merged),
-    phase: 'live',
-    walletProviderScope: walletProviderScope(merged),
-    pairing: pairing(merged),
-    live: {
-      serializedGameSession: merged.serializedGameSession,
-      gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
-      rewardPuzzleHash: merged.rewardPuzzleHash,
-      messageNumber: merged.messageNumber,
-      remoteNumber: merged.remoteNumber,
-      unackedMessages: merged.unackedMessages,
-      disposition: merged.transportDisposition ?? 'active',
-      terminalHandoff: merged.terminalHandoff ?? null,
-      durabilityWarning: merged.durabilityWarning,
+    walletContext: walletProviderScope(merged),
+    session: {
+      phase: 'live',
+      pairing: pairing(merged),
+      live: {
+        serializedGameSession: merged.serializedGameSession,
+        gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
+        rewardPuzzleHash: merged.rewardPuzzleHash,
+        messageNumber: merged.messageNumber,
+        remoteNumber: merged.remoteNumber,
+        unackedMessages: merged.unackedMessages,
+        disposition: merged.transportDisposition ?? 'active',
+        terminalHandoff: merged.terminalHandoff ?? null,
+        durabilityWarning: merged.durabilityWarning,
+      },
+      presentation: presentation(merged),
     },
-    presentation: presentation(merged),
     ...(merged.terminalIStarted !== undefined || merged.coinsOfInterest !== undefined
       ? {
           terminal: {
@@ -305,10 +340,10 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
           },
         }
       : {}),
-  } as SessionSave;
+  } as DurableApplicationState;
 }
 
-export function liveSave(fields: LegacyFields = {}): SessionSave {
+export function liveSave(fields: LegacyFields = {}): DurableApplicationState {
   const merged = {
     serializedGameSession: new Uint8Array([1, 2, 3]),
     gameSessionSchemaVersion: 3n,
@@ -326,21 +361,23 @@ export function liveSave(fields: LegacyFields = {}): SessionSave {
   };
   return {
     ...common(merged),
-    phase: 'live',
-    walletProviderScope: walletProviderScope(merged),
-    pairing: pairing(merged),
-    live: {
-      serializedGameSession: merged.serializedGameSession,
-      gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
-      rewardPuzzleHash: merged.rewardPuzzleHash,
-      messageNumber: merged.messageNumber,
-      remoteNumber: merged.remoteNumber,
-      unackedMessages: merged.unackedMessages,
-      disposition: merged.transportDisposition ?? 'active',
-      terminalHandoff: merged.terminalHandoff ?? null,
-      durabilityWarning: merged.durabilityWarning,
+    walletContext: walletProviderScope(merged),
+    session: {
+      phase: 'live',
+      pairing: pairing(merged),
+      live: {
+        serializedGameSession: merged.serializedGameSession,
+        gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
+        rewardPuzzleHash: merged.rewardPuzzleHash,
+        messageNumber: merged.messageNumber,
+        remoteNumber: merged.remoteNumber,
+        unackedMessages: merged.unackedMessages,
+        disposition: merged.transportDisposition ?? 'active',
+        terminalHandoff: merged.terminalHandoff ?? null,
+        durabilityWarning: merged.durabilityWarning,
+      },
+      presentation: presentation(merged),
     },
-    presentation: presentation(merged),
   };
 }
 
@@ -349,9 +386,15 @@ export function installSessionEnvelopeTestSetup(): void {
     storageRepository._resetForTests();
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
-    await storageRepository.claimLease();
+    await storageRepository.claimApplicationState();
     await storageRepository.clearSession();
-    await storageRepository.saveWalletOperations([]);
+    const empty = {
+      ...storageRepository.loadState(),
+      walletContext: null,
+      walletObligations: [],
+    };
+    storageRepository._replaceApplicationStateForTests(empty);
+    await storageRepository.checkpointApplicationState(empty);
   });
 
   afterEach(() => {
