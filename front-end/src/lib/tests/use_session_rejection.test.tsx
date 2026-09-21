@@ -21,7 +21,6 @@ describe('useSessionRejection authority owner', () => {
   function Harness() {
     api = useSessionRejection({
       getPrimaryPeer: () => primary,
-      getDurableSession: () => null,
       releasePrimaryPeer: (peer) => {
         if (primary === peer) primary = null;
       },

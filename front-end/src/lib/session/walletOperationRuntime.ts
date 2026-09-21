@@ -101,11 +101,6 @@ export class WalletOperationRuntime {
   private entries = (): WalletOperationEntry[] => storageRepository.walletObligations();
 
   // prettier-ignore
-  registerReserved(tradeId: string, owner: WalletOperationOwner, purpose: WalletOperationPurpose, reason = 'wallet-offer-created'): WalletOperationEntry {
-    this.dispatch({ kind: 'reserve', key: walletOperationTradeKey(tradeId), owner, purpose, tradeId, reason });
-    return structuredClone(this.trade(tradeId)!);
-  }
-  // prettier-ignore
   settleTrade(tradeId: string, disposition: 'consumed' | 'cancel-required' | 'retained-for-replay', reason: string, coordinated = false): void {
     this.dispatch({ kind: 'settle-obligation', target: { kind: 'trade', tradeId }, disposition, reason, coordinated }, coordinated);
   }
@@ -870,6 +865,8 @@ export class WalletOperationRuntime {
   }
 
   private async checkpointBeforeProviderMutation(generation: number): Promise<void> {
+    // Commit the provider obligation first; the RPC flight/result stays transient,
+    // and restore consumes only that obligation if the process stops mid-call.
     try {
       await storageRepository.flushAggregate();
     } catch (error) {

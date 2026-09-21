@@ -1,26 +1,18 @@
 import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
 import { CHANNEL_SEMANTIC_PHASES } from '../../types/ChiaGaming';
 import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
-import type {
-  LiveSessionSave,
-  SessionPairingSave,
-  DurableApplicationState,
-  SessionTransportSave,
-} from './saveEnvelope';
+import type { LiveSessionSave, SessionPairingSave, SessionTransportSave } from './saveEnvelope';
 import type {
   BetweenHandModeModel,
   GameInstanceModel,
   GameProtocolPresentation,
   GameTerminalModel,
   GameTerminalType,
-  QueuedNotificationModel,
 } from './types';
 import {
-  optionalBoolean,
   optionalString,
   parseDecimalString,
   parseDiscriminant,
-  parseStringArray,
   requireBigint,
   requireBoolean,
   requireExactKeys,
@@ -29,7 +21,6 @@ import {
   requireString,
 } from './persistencePrimitives';
 
-const NOTIFICATION_KEYS = new Set(['kind', 'id', 'title', 'message']);
 const GAME_TERMINAL_KEYS = new Set(['type', 'outcome', 'label', 'myReward', 'rewardCoinHex']);
 const GAME_INSTANCE_KEYS = new Set(['id', 'amount', 'coinHex', 'presentation', 'terminal']);
 const AMOUNT_KEYS = new Set(['Amount']);
@@ -76,16 +67,6 @@ export const BETWEEN_HAND_MODES: ReadonlySet<string> = new Set<BetweenHandModeMo
   'review-incoming-proposal',
 ]);
 
-const NOTIFICATION_KINDS = new Set([
-  'channel-state',
-  'action-failed',
-  'infra-error',
-  'recoverable-internal-error',
-  'durability-error',
-  'proposal-rejected',
-  'insufficient-bal',
-  'move-rejected',
-]);
 const SESSION_DISPOSITIONS = new Set(['AwaitOutboundTerminal', 'Abandoned']);
 const CHANNEL_SEMANTIC_PHASE_SET = new Set<string>(CHANNEL_SEMANTIC_PHASES);
 const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
@@ -109,33 +90,6 @@ const SAVED_GAME_PRESENTATIONS: ReadonlySet<string> = new Set<GameProtocolPresen
   'finishing-spending',
   'ended',
 ]);
-
-function parseNotificationId(id: unknown): bigint {
-  if (typeof id === 'bigint' && id >= 0n) return id;
-  throw new Error('Garbled save: missing notification id');
-}
-
-export function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
-  if (!Array.isArray(queue)) throw new Error('Garbled save: invalid notification queue');
-  const parsed = queue.map((notification, index) => {
-    const record = requireRecord(notification, `notification[${index}]`);
-    requireExactKeys(record, NOTIFICATION_KEYS, `notification[${index}]`);
-    return {
-      kind: parseDiscriminant<QueuedNotificationModel['kind']>(
-        record.kind,
-        NOTIFICATION_KINDS,
-        `notification[${index}].kind`,
-      ),
-      id: parseNotificationId(record.id),
-      title: requireString(record.title, `notification[${index}].title`, true),
-      message: requireString(record.message, `notification[${index}].message`, true),
-    };
-  });
-  if (new Set(parsed.map(({ id }) => id)).size !== parsed.length) {
-    throw new Error('Garbled save: duplicate notification id');
-  }
-  return parsed;
-}
 
 function parseGameTerminal(value: unknown, label: string): GameTerminalModel {
   const fields = requireRecord(value, label);
@@ -228,57 +182,6 @@ export function validateTerminalFields(terminal: GameTerminalModel, label: strin
     (terminal.myReward !== null || terminal.rewardCoinHex !== null)
   ) {
     throw new Error(`Garbled save: ${label} ${terminal.type} terminal contains reward data`);
-  }
-}
-
-export function validateCommonFields(save: DurableApplicationState): void {
-  requireString(save.identity.playerId, 'identity.playerId');
-  optionalString(save.identity.sessionId, 'identity.sessionId');
-  optionalString(save.identity.myHubPlayerId, 'identity.myHubPlayerId');
-  optionalString(save.preferences.alias, 'preferences.alias', true);
-  optionalString(save.preferences.hubUrl, 'preferences.hubUrl');
-  optionalString(save.preferences.activeTab, 'preferences.activeTab');
-  if (
-    save.preferences.theme !== undefined &&
-    save.preferences.theme !== 'dark' &&
-    save.preferences.theme !== 'light'
-  ) {
-    throw new Error('Garbled save: invalid theme');
-  }
-  if (
-    save.preferences.feeUnit !== undefined &&
-    save.preferences.feeUnit !== 'mojo' &&
-    save.preferences.feeUnit !== 'xch'
-  ) {
-    throw new Error('Garbled save: invalid feeUnit');
-  }
-  if (
-    save.preferences.blockchainType !== undefined &&
-    save.preferences.blockchainType !== 'simulator' &&
-    save.preferences.blockchainType !== 'walletconnect' &&
-    save.preferences.blockchainType !== 'cloud'
-  ) {
-    throw new Error('Garbled save: invalid blockchainType');
-  }
-  if (
-    save.preferences.network !== undefined &&
-    save.preferences.network !== 'mainnet' &&
-    save.preferences.network !== 'testnet'
-  ) {
-    throw new Error('Garbled save: invalid network');
-  }
-  if (save.preferences.defaultFee !== undefined) {
-    requireBigint(save.preferences.defaultFee, 'preferences.defaultFee');
-  }
-  optionalBoolean(save.preferences.unreadGame, 'preferences.unreadGame');
-  optionalBoolean(save.preferences.walletAlert, 'preferences.walletAlert');
-  optionalBoolean(save.preferences.hubAlert, 'preferences.hubAlert');
-  for (const [field, value] of [
-    ['history.humanHistory', save.history.humanHistory],
-    ['history.wasmNotificationHistory', save.history.wasmNotificationHistory],
-    ['history.diagnosticLog', save.history.diagnosticLog],
-  ] as const) {
-    if (value !== undefined) parseStringArray(value, field);
   }
 }
 
@@ -394,7 +297,6 @@ export function validateLive(live: LiveSessionSave['live']): void {
   if (!/^[0-9a-fA-F]{64}$/.test(live.rewardPuzzleHash)) {
     throw new Error('Garbled save: invalid live.rewardPuzzleHash');
   }
-  optionalString(live.durabilityWarning, 'live.durabilityWarning', true);
 }
 
 export function validateChannelStatus(value: unknown): ChannelStatusPayload | null {

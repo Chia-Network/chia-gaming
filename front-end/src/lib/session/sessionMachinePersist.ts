@@ -18,7 +18,6 @@ export interface SessionPersistDependencies {
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-  clearDurabilityWarning?: boolean;
 }
 
 export interface PreparedDurableApplicationStateCapture {
@@ -103,9 +102,6 @@ function liveTransform(
           unackedMessages: wasm.unackedMessages,
           terminalHandoff: wasm.terminalHandoff,
           disposition: wasm.transportDisposition,
-          durabilityWarning: dependencies.clearDurabilityWarning
-            ? undefined
-            : wasm.durabilityWarning,
         },
         presentation,
       },
@@ -142,7 +138,10 @@ function terminalTransform(capture: TerminalCapture) {
   });
 }
 
-/** Capture the complete aggregate before the returned closure performs I/O. */
+/**
+ * Commit one complete fixed-point boundary before I/O. Reducer/controller work,
+ * generated effects, adapter flights, and projection-only warnings stay transient.
+ */
 export function captureDurableApplicationState(
   capture:
     | ({ kind: 'live' } & SessionPersistDependencies)

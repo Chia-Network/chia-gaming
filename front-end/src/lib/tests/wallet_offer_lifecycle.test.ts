@@ -3,6 +3,7 @@ import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import type { WalletOperationEntry, WalletOperationOwner } from '../session/walletOperationStore';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 
 const owner: WalletOperationOwner = {
   installationPlayerId: 'player',
@@ -328,7 +329,7 @@ describe('aggregate wallet offer lifecycle', () => {
   });
 
   it('keeps replay fee ownership until explicit cleanup', () => {
-    walletOperationRuntime.registerReserved('Offer_fee', owner, {
+    installReservedWalletObligation('Offer_fee', owner, {
       kind: 'fee',
       operationId: 'submission',
     });

@@ -10,7 +10,9 @@ import {
 import {
   DURABLE_APPLICATION_STATE_SCHEMA,
   DURABLE_APPLICATION_STATE_VERSION,
+  MAX_DURABLE_REJECTION_TRANSPORTS,
   type DurableApplicationState,
+  type DurableRejectionTransport,
   type SessionTransportSave,
 } from './saveEnvelope';
 import { decodeDurableApplicationState } from './persistence';
@@ -35,6 +37,7 @@ import {
   type WalletOperationEffect,
   type WalletOperationEntry,
 } from './walletOperationStore';
+import { diagStack } from '../../services/log';
 
 type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
 interface ScheduledPersist {
@@ -204,6 +207,14 @@ class StorageRepository {
         hold.committed();
         await hold.barrier;
       }
+    }).catch((error) => {
+      if (
+        !(error instanceof StorageAuthorityLostError) &&
+        !(error instanceof StorageAuthorityRequiredError)
+      ) {
+        diagStack('aggregate checkpoint failed', error);
+      }
+      throw error;
     });
   }
 
@@ -385,7 +396,6 @@ class StorageRepository {
       void write.then(
         () => pending?.resolve(),
         (error) => {
-          console.error('[save] failed to persist session state:', error);
           pending?.reject(error);
         },
       );
@@ -639,6 +649,29 @@ class StorageRepository {
 
   patchPreHandshakeTransport(transport: SessionTransportSave): Promise<void> {
     return this.mutateSession((state) => sessionState.patchSessionTransport(state, transport));
+  }
+
+  persistRejectionTransport(tombstone: DurableRejectionTransport): Promise<void> {
+    return this.prepareApplicationStateCapture((state) => {
+      const session = state.session;
+      const matchesRejectedSession =
+        (session?.phase === 'live' || session?.phase === 'pre-handshake') &&
+        session.pairing.peerId === tombstone.peerId &&
+        session.pairing.gameSessionId === tombstone.sessionId;
+      const next = matchesRejectedSession ? sessionState.freshSessionState(state) : state;
+      return {
+        ...next,
+        rejectionTransports: [
+          ...next.rejectionTransports.filter(
+            (record) =>
+              record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
+          ),
+          structuredClone(tombstone),
+        ]
+          .sort((a, b) => a.createdAt - b.createdAt)
+          .slice(-MAX_DURABLE_REJECTION_TRANSPORTS),
+      };
+    }).write();
   }
 
   clearSessionPairing(): Promise<void> {

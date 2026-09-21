@@ -352,6 +352,47 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     claim.mockRestore();
   });
 
+  it('routes an unsupported cradle restore to hard-reset recovery without changing the root', async () => {
+    await storageRepository.claimApplicationState();
+    const save = liveSave({
+      sessionId: 'stable-restore-session',
+      pairingToken: 'unsupported-cradle-pair',
+      serializedGameSession: new Uint8Array([9, 8, 7]),
+      gameSessionSchemaVersion: 3n,
+      diagnosticLog: ['preserve restore evidence'],
+    });
+    await storageRepository.checkpointApplicationState(save);
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    localStorage.clear();
+    const onRestore = jest.fn(async () => {
+      throw new Error('Unsupported saved game format: cradle schema 3; current schema is 4');
+    });
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          onRestore,
+        }),
+      );
+    });
+
+    await waitForRender(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    await waitForRender(renderer!, 'Unsupported saved game format');
+
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(renderer!.root.findAllByProps({ children: 'Resume Session' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ children: 'Retry Hard Reset' })).toBeDefined();
+    expect(await readApplicationState()).toEqual(save);
+    expect(storageRepository.loadState()).toEqual(save);
+  });
+
   it('preserves malformed aggregate evidence and offers hard reset recovery', async () => {
     await storageRepository.claimApplicationState();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {

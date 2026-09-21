@@ -97,9 +97,7 @@ export interface WasmFields {
   terminalHandoff: SessionTerminalHandoffSave | null;
   wasmNotificationHistory: string[];
   diagnosticLog: string[];
-  durabilityWarning: string | undefined;
   transportDisposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
-  activeGameIds: string[];
   channelStatus: ChannelStatusPayload | null;
   myAlias: string | undefined;
   opponentAlias: string | undefined;
@@ -275,11 +273,10 @@ export class SessionController implements PollingGameSession {
   private retired = false;
   private terminalHandoff: SessionTerminalHandoffSave | null = null;
   private transportCheckpointRestored = false;
-  activeGameIds: string[] = [];
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
   opponentAlias: string | undefined = undefined;
-  durabilityWarning: string | undefined = undefined;
+  private durabilityFailureReported = false;
   private waitingStateEnteredAt: bigint | null = null;
   private cleanShutdownGraceStartedAt: bigint | null = null;
   private feeProvider: () => bigint = () => 0n;
@@ -674,22 +671,19 @@ export class SessionController implements PollingGameSession {
   }
 
   reportDurabilityError(error: unknown): void {
+    if (this.durabilityFailureReported) return;
+    this.durabilityFailureReported = true;
     const detail = extractErrorMessage(error);
     const warning = `Session storage failed: ${detail}. The session is continuing without a durable checkpoint; progress may be lost if this page closes before storage succeeds.`;
-    if (this.durabilityWarning === warning) return;
-    this.durabilityWarning = warning;
     this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
   }
 
   clearDurabilityError(): void {
-    this.durabilityWarning = undefined;
-    this.notifyTerminalFinalizationRetry();
+    this.durabilityFailureReported = false;
   }
 
   private reportBackgroundSaveError(error: unknown): void {
-    const warning = `Session storage failed: ${extractErrorMessage(error)}.`;
-    this.durabilityWarning = warning;
-    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+    this.reportDurabilityError(error);
   }
 
   notePeerActivity() {
@@ -1536,25 +1530,6 @@ export class SessionController implements PollingGameSession {
           this.ensureProtocolIdentities();
         }
       }
-      if (n.ProposalAcceptedGroup !== undefined) {
-        for (const member of n.ProposalAcceptedGroup.members) {
-          const acceptedId = String(member.id);
-          if (!this.activeGameIds.includes(acceptedId)) {
-            this.activeGameIds.push(acceptedId);
-          }
-        }
-      }
-      if (n.GameStatus !== undefined) {
-        const gs = n.GameStatus;
-        if (gs.status.startsWith('ended-')) {
-          const endedId = gs.id != null ? String(gs.id) : null;
-          this.activeGameIds = this.activeGameIds.filter((id) => id !== endedId);
-        }
-      }
-      if (n.GameSettled !== undefined) {
-        const settledId = String(n.GameSettled.id);
-        this.activeGameIds = this.activeGameIds.filter((id) => id !== settledId);
-      }
       this.wasmNotificationHistory = appendRecent(
         this.wasmNotificationHistory,
         jsonStringify(notification),
@@ -2022,9 +1997,7 @@ export class SessionController implements PollingGameSession {
         WASM_NOTIFICATION_HISTORY_LIMIT,
       ),
       diagnosticLog: recentDiagnosticEntries(this.diagnosticLog),
-      durabilityWarning: this.durabilityWarning,
       transportDisposition: this.reliableState.disposition ?? 'active',
-      activeGameIds: [...this.activeGameIds],
       channelStatus: this.lastChannelStatus,
       myAlias: this.myAlias,
       opponentAlias: this.opponentAlias,
@@ -2047,15 +2020,6 @@ export class SessionController implements PollingGameSession {
   reportRuntimeError(error: unknown): void {
     markClientErrorReported(error);
     this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
-  }
-
-  /**
-   * Game IDs and hand state are host-side presentation state. An abandoned
-   * session has no per-game terminal events to retire them individually.
-   */
-  clearDerivedGamePresentation(): void {
-    this.activeGameIds = [];
-    this.requestCommit();
   }
 
   // --- Game actions (called by higher layer) ---

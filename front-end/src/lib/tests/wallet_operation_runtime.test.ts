@@ -14,6 +14,7 @@ import {
 import { commitRuntime, ControlledRuntime, setup } from './runtime_capability.harness';
 import { storageRepository } from '../session/storageRepository';
 import type { WalletOperationEntry } from '../session/walletOperationStore';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 
 describe('durable wallet operation record', () => {
   const owner = {
@@ -340,6 +341,83 @@ describe('durable wallet operation record', () => {
     }
   });
 
+  it('reloads a reserved funding identity, cancels it, then re-offers on later Rust readiness', async () => {
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60n, args: ['launcher'] }],
+    });
+    const purpose = { kind: 'funding' as const, operationId: fundingRequestKey(request) };
+    const reserved: WalletOperationEntry = {
+      tradeId: 'trade-before-material-delivery',
+      owner,
+      purpose,
+      stage: 'reserved',
+      reason: 'wallet-reserved-before-delivery',
+    };
+    const persisted = {
+      ...storageRepository.loadState(),
+      walletContext: owner.providerScope,
+      walletObligations: [reserved],
+    };
+    storageRepository._replaceApplicationStateForTests(persisted);
+    await storageRepository.checkpointApplicationState(persisted);
+
+    const durableReservation = (await storageRepository.inspect()).applicationState
+      ?.walletObligations[0];
+    expect(durableReservation).toEqual(reserved);
+    expect(durableReservation).not.toHaveProperty('material');
+    expect(durableReservation).not.toHaveProperty('offer');
+    expect(durableReservation).not.toHaveProperty('bundle');
+
+    storageRepository._resetForTests();
+    walletOperationRuntime.resetForTests();
+    await storageRepository.claimApplicationState();
+    expect(storageRepository.walletObligations()).toEqual([
+      {
+        ...reserved,
+        stage: 'cancel-required',
+        reason: 'orphaned-reservation-restored',
+      },
+    ]);
+
+    const beginWalletOfferCancellation = jest
+      .fn()
+      .mockResolvedValue({ status: 'cancelled' as const });
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-reserved' as const,
+      material: { kind: 'offer' as const, offer: 'offer1aftercleanup' },
+      tradeId: 'trade-after-cleanup',
+    });
+    const { controller, cradle } = setup(jest.fn(), {
+      beginWalletOffer,
+      beginWalletOfferCancellation,
+    });
+    (
+      cradle as typeof cradle & {
+        provide_offer_bech32: jest.Mock;
+      }
+    ).provide_offer_bech32 = jest.fn(() => wasmResult());
+    try {
+      await walletOperationRuntime.awaitOwner(owner);
+      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-before-material-delivery');
+      expect(storageRepository.walletObligations()).toEqual([]);
+
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      commitRuntime(controller, new ControlledRuntime());
+      await controller.flushPendingWork();
+      await storageRepository.flushAggregate();
+
+      expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+      expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1aftercleanup');
+      expect(storageRepository.walletObligations()).toEqual([]);
+      expect((await storageRepository.inspect()).applicationState?.walletObligations).toEqual([]);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
   it('retains uncertain failure without a tight loop and retries on reattach', async () => {
     const beginWalletOfferCancellation = jest
       .fn()
@@ -501,8 +579,8 @@ describe('durable wallet operation record', () => {
       walletContext: owner.providerScope,
     });
     const purpose = { kind: 'funding' as const, operationId: 'conflicted-operation' };
-    walletOperationRuntime.registerReserved('trade-retry', owner, purpose);
-    walletOperationRuntime.registerReserved('trade-stale', owner, purpose);
+    installReservedWalletObligation('trade-retry', owner, purpose);
+    installReservedWalletObligation('trade-stale', owner, purpose);
     walletOperationRuntime.settleTrade(
       'trade-stale',
       'cancel-required',
@@ -523,11 +601,11 @@ describe('durable wallet operation record', () => {
       walletContext: owner.providerScope,
     });
     const otherPeer = { ...owner, peerSessionId: '11'.repeat(16) };
-    walletOperationRuntime.registerReserved('trade-first-session', owner, {
+    installReservedWalletObligation('trade-first-session', owner, {
       kind: 'funding',
       operationId: 'same-operation',
     });
-    walletOperationRuntime.registerReserved('trade-second-session', otherPeer, {
+    installReservedWalletObligation('trade-second-session', otherPeer, {
       kind: 'funding',
       operationId: 'same-operation',
     });

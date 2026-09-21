@@ -11,7 +11,7 @@ import {
   requireString,
 } from './persistencePrimitives';
 
-const COMPOSE_KEYS = new Set(['selected_game', 'game_timeout', 'proposal_sent']);
+const COMPOSE_KEYS = new Set(['selected_game', 'game_timeout']);
 const HAND_PROPOSAL_KEYS = new Set([
   'sender_is_player_a',
   'game_timeout',
@@ -26,7 +26,6 @@ export function encodeComposeDraftState(
   return {
     selected_game: compose.selectedGame,
     game_timeout: compose.gameTimeout.toString(),
-    proposal_sent: compose.proposalSent,
   };
 }
 
@@ -40,7 +39,7 @@ export function parseComposeDraftState(value: unknown): ComposeDraftState {
   return {
     selectedGame: selectedGame,
     gameTimeout: parseDecimalString(saved.game_timeout, 'betweenHandCompose.game_timeout', 0n),
-    proposalSent: requireBoolean(saved.proposal_sent, 'betweenHandCompose.proposal_sent'),
+    proposalSent: false,
   };
 }
 

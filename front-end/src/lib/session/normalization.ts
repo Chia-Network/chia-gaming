@@ -140,7 +140,6 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       ...partial.history,
       diagnosticLog: recentDiagnosticEntries(partial.history?.diagnosticLog ?? []),
     },
-    myRunningBalance: partial.myRunningBalance ?? 0n,
   };
 }
 export function clearDerivedGamePresentation(model: SessionModel): SessionModel {

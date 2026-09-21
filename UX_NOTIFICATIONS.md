@@ -5,15 +5,19 @@ hierarchy, notification routing, hub relay protocol, session persistence,
 peer message reliability, and reconnect reconciliation, see
 `FRONTEND_ARCHITECTURE.md`. For the authoritative settlement outcome glossary
 (off-chain accept + on-chain #1–#11), see
-[`NAMING_AUDIT.md` — Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux). The frontend supports full page reload — game state
-is continuously saved to IndexedDB and restored on reload with a fresh RNG
-seed.
+[`NAMING_AUDIT.md` — Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux).
+The frontend restores the latest successful fixed-point durable-residue
+checkpoint with a fresh RNG seed; that boundary supplies implicit crash
+rollback. See
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality).
 
 ## Authority vs projection
 
-Rust notifications are protocol facts. JavaScript renders and persists their
-browser envelope, but does not infer settlement, channel lifecycle, or
-protocol validity from display data. A UI action is an intent sent to Rust.
+Rust notifications are protocol facts. JavaScript renders them and persists
+their authoritative protocol consequences, but notification queue entries and
+dismissal residue remain live-process presentation state. JavaScript does not
+infer settlement, channel lifecycle, or protocol validity from display data.
+A UI action is an intent sent to Rust.
 `LocalActionApplied` is the host-only fact that an immediate or queued local
 action was actually applied. It updates protocol presentation only: it does not
 promote game-owned state and does not grant the game permission to act. An
@@ -31,10 +35,10 @@ stores its coin, terminal data, and one canonical `GameProtocolPresentation`
 discriminant; turn and hand labels are derived compatibility views, not
 separately mutable state. Local turns, non-terminal `GameStatus`, coin
 enrichment, settlement, and whole-group removal therefore update the owning
-instance or group atomically. Version-20 saves persist only `gameInstances` plus
-`lastDisplayedGameId` for protocol presentation. There are no aggregate
+instance or group atomically. The current aggregate persists only
+`gameInstances` plus `lastDisplayedGameId` for protocol presentation. There are no aggregate
 current-game presentation fields and no migration from older records:
-incompatible records are discarded.
+incompatible records reject the whole root.
 
 **Important naming note:** this document sometimes uses conceptual UX labels
 like "OpponentMoved" for readability. The canonical wire model in Rust is
@@ -150,9 +154,13 @@ preserving terminal queue replacement, delivery-critical save failure handling,
 and cooperative terminal-handoff acknowledgement behavior.
 
 Successful mutating WASM commands schedule a coalesced save even when they emit
-no events. Delivery-critical outbound messages and acknowledgements force the
-save to flush before they are sent; game-owned local-only state changes retain
-the existing debounce.
+no events. Delivery-critical outbound messages and acknowledgements wait for
+the checkpoint attempt, not for checkpoint success. Ordinary IndexedDB failure
+is logged, may surface one transient dismissible warning per degradation
+episode, and still releases the captured protocol work once; a later successful
+checkpoint clears any still-visible warning without replaying that work.
+Storage authority loss instead fences the obsolete runtime and withholds its
+pending work. Game-owned local-only state changes retain the existing debounce.
 
 ---
 
@@ -313,15 +321,19 @@ or another caller — it abandons locally before producing or submitting a new
 on-chain spend. This is a safety property of the protocol host, not a second
 frontend decision.
 
-On the final terminal drain, the JavaScript controller drops queued outbound protocol
-messages, acknowledgements, retries, durability sends, and new watch requests;
-it also replaces already-queued presentation work with presentation events from
-the terminal result. This prevents a final status from racing with stale local
-protocol work. The preceding terminal-handoff command is not terminal and
-intentionally retains its one required outbound message until acknowledged. The terminal signal can arrive
-before React has committed that final status, so Shell performs resolved-display
-cleanup from the status/phase update rather than using the signal to overwrite
-the dashboard snapshot.
+On the final terminal drain, the JavaScript controller drops queued outbound
+protocol messages, acknowledgements, retries, durability sends, and new watch
+requests; it also replaces already-queued presentation work with presentation
+events from the terminal result. This prevents a final status from racing with
+stale local protocol work. The preceding terminal-handoff command is not
+terminal and intentionally retains its one required outbound message until
+acknowledged. After terminal capture, an ordinary terminal-record write failure
+uses the same one-per-episode warning and does not block frozen presentation or
+protocol teardown; the in-memory terminal root remains pending for a later
+aggregate checkpoint. Authority loss still fences the obsolete owner. The
+terminal signal can arrive before React has committed that final status, so
+Shell performs resolved-display cleanup from the status/phase update rather
+than using the signal to overwrite the dashboard snapshot.
 
 ---
 
@@ -642,8 +654,9 @@ events.
 ### Data Model
 
 Each notification carries an `id` (unique integer), `kind`, `title`, `message`,
-and an optional `channel-state` payload. Queues are persisted to `SessionSave`
-(without non-serializable payloads) and restored on reload.
+and an optional `channel-state` payload. Queues and channel-status dismissal
+residue are transient: reload starts them empty while durable protocol facts
+rebuild the current presentation.
 
 ### Overlay Behavior
 

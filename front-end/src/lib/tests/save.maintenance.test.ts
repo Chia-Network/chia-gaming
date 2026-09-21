@@ -1,7 +1,7 @@
 import { checkLease, isLeaseConflict, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { SESSION_DB_NAME, StorageAuthorityLostError } from '../session/indexedDb';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import { liveSave } from './session_save_envelope.fixtures';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 import {
   startPendingWalletConnectWipe,
   _resetPendingWalletConnectWipeForTests,
@@ -120,7 +120,7 @@ describe('hard reset', () => {
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator', identity: 'installation' },
     });
-    walletOperationRuntime.registerReserved(
+    installReservedWalletObligation(
       'pre-reset-ledger',
       {
         installationPlayerId: 'installation',

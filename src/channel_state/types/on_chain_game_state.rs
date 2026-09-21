@@ -20,7 +20,6 @@ pub struct OnChainGameState {
     /// True once the on-chain timeout-claim path is armed for this game coin
     /// (eager register or explicit AcceptSettlement).
     pub timeout_claim_armed: bool,
-    pub notification_sent: bool,
     pub game_timeout: Timeout,
     /// True when the referee's game handler is None (no further moves possible).
     /// Distinguishes "real timeout" from "timeout on a terminal game state".

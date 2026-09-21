@@ -248,7 +248,6 @@ export function useGameSession(
     gameConnectionState: model.channel.connection,
     perGameAmount,
     currentHandAmount: view.currentHandAmount,
-    myRunningBalance: model.myRunningBalance,
     iStarted,
     playerNumber: iStarted ? 1 : 2,
     channelStatus: view.channelStatus,

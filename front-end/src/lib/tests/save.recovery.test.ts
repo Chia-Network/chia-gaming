@@ -15,8 +15,8 @@ import {
   SESSION_DB_NAME,
   StorageAuthorityLostError,
 } from '../session/indexedDb';
-import { baseSave } from './session_save_envelope.fixtures';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { activeSave, baseSave } from './session_save_envelope.fixtures';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { freshSessionState } from '../session/sessionStateTransitions';
 import type { DurableApplicationState } from '../session/saveEnvelope';
@@ -60,7 +60,7 @@ describe('session persistence: recovery', () => {
       ...before,
       walletContext: { provider: 'simulator', identity: before.identity.playerId },
     });
-    walletOperationRuntime.registerReserved(
+    installReservedWalletObligation(
       'pre-authority-trade',
       {
         installationPlayerId: before.identity.playerId,
@@ -347,7 +347,6 @@ describe('session persistence: recovery', () => {
     const checkpoint = storageRepository.flushAggregate();
     await reachedCommit;
     await storageRepository.claimApplicationState();
-    expectConsoleError('Durable storage authority was lost');
     release();
 
     await expect(checkpoint).rejects.toBeInstanceOf(StorageAuthorityLostError);
@@ -360,7 +359,7 @@ describe('session persistence: recovery', () => {
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator', identity: 'installation' },
     });
-    walletOperationRuntime.registerReserved(
+    installReservedWalletObligation(
       'trade-clear',
       {
         installationPlayerId: 'installation',
@@ -495,6 +494,81 @@ describe('session persistence: recovery', () => {
     },
   );
 
+  it.each(['pre-handshake', 'live'] as const)(
+    'atomically clears a matching %s session with its rejection tombstone',
+    async (phase) => {
+      const sessionId = '12'.repeat(16);
+      const fields = {
+        pairingToken: 'matching',
+        sessionPeerId: 'peer-a',
+        gameSessionId: sessionId,
+        iStarted: true,
+        myContribution: '20',
+        theirContribution: '20',
+        perGameAmount: '20',
+      };
+      const state = phase === 'live' ? activeSave(fields) : baseSave(fields);
+      storageRepository._replaceApplicationStateForTests(state);
+
+      const tombstone = {
+        kind: 'outbound-reject',
+        peerId: 'peer-a',
+        sessionId,
+        messageNumber: 2n,
+        remoteNumber: 1n,
+        unackedMessages: [],
+        createdAt: 1,
+      } as const;
+      await storageRepository.persistRejectionTransport(tombstone);
+
+      const persisted = await readApplicationState();
+      expect(persisted?.session).toBeNull();
+      expect(persisted?.rejectionTransports).toEqual([tombstone]);
+    },
+  );
+
+  it('preserves a nonmatching session on initial and subsequent tombstone updates', async () => {
+    const rejectedSessionId = '12'.repeat(16);
+    const unrelatedSessionId = '34'.repeat(16);
+    const state = baseSave({
+      pairingToken: 'unrelated',
+      sessionPeerId: 'peer-b',
+      gameSessionId: unrelatedSessionId,
+      iStarted: false,
+      myContribution: '20',
+      theirContribution: '20',
+      perGameAmount: '20',
+    });
+    storageRepository._replaceApplicationStateForTests(state);
+
+    const first = {
+      kind: 'outbound-reject',
+      peerId: 'peer-a',
+      sessionId: rejectedSessionId,
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      unackedMessages: [],
+      createdAt: 1,
+    } as const;
+    await storageRepository.persistRejectionTransport(first);
+    await storageRepository.persistRejectionTransport({
+      ...first,
+      messageNumber: 3n,
+      createdAt: 2,
+    });
+
+    const persisted = await readApplicationState();
+    expect(persisted?.session).toEqual(state.session);
+    expect(persisted?.rejectionTransports).toEqual([
+      expect.objectContaining({
+        peerId: 'peer-a',
+        sessionId: rejectedSessionId,
+        messageNumber: 3n,
+        createdAt: 2,
+      }),
+    ]);
+  });
+
   it('aggregate capture preserves blockchainType', async () => {
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });
     await storageRepository.flushAggregate();
@@ -511,7 +585,7 @@ describe('session persistence: recovery', () => {
       key: 'alias',
       value: 'Dirty Alice',
     });
-    expectConsoleError('failed to persist session state');
+    expectConsoleError('aggregate checkpoint failed');
     await expect(Promise.all([scheduled, storageRepository.flushAggregate()])).rejects.toThrow(
       'quota unavailable',
     );

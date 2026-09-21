@@ -60,8 +60,7 @@ export type SessionMachineEffect =
       generation: number;
       coin: unknown;
       channelState?: ChannelStatus;
-    }
-  | { type: 'clear-derived-game-presentation' };
+    };
 
 export type SessionMachineEvent =
   | { type: 'game'; action: GameSliceAction }

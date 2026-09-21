@@ -149,11 +149,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private commitScheduled = false;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private commitPromise: Promise<void> = Promise.resolve();
-  private reportingDurabilityFailure = false;
-  private readonly failureWarningEvents = new Set<SessionMachineEvent>();
   private readonly preparePersistence: (
     state: SessionMachineState,
-    clearDurabilityWarning: boolean,
   ) => PreparedDurableApplicationStateCapture | null;
   private readonly onError: (error: unknown) => void;
   private activated = false;
@@ -169,7 +166,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.restoreActiveHand(initial);
     this.preparePersistence = dependencies.persist
       ? (state) => ({ write: () => dependencies.persist!(state) })
-      : (state, clearDurabilityWarning) =>
+      : (state) =>
           captureDurableApplicationState({
             kind: 'live',
             controller: dependencies.controller,
@@ -177,7 +174,6 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
             restoring: dependencies.restoring,
             getRestoreStatus: dependencies.getRestoreStatus,
             getRestoreError: dependencies.getRestoreError,
-            clearDurabilityWarning,
           });
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
@@ -300,20 +296,31 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
 
   dispatch(event: SessionMachineEvent): void {
     if (this.retired) return;
+    const durabilityProjection =
+      (event.type === 'enqueue-error' && event.kind === 'durability-error') ||
+      ((event.type === 'dismiss-channel' || event.type === 'dismiss-channel-notification') &&
+        this.state.model.channel.queue[0]?.kind === 'durability-error');
     this.pendingEvents.push(event);
-    if (
-      this.reportingDurabilityFailure &&
-      event.type === 'enqueue-error' &&
-      event.kind === 'durability-error'
-    ) {
-      this.failureWarningEvents.add(event);
+    if (this.committing && durabilityProjection) {
       return;
     }
-    if (this.committing || this.transactionActive || this.dispatching) {
+    if (this.committing) {
+      this.commitActivityPending = true;
+      return;
+    }
+    if (this.transactionActive || this.dispatching) {
       this.scheduleCommit(false);
       return;
     }
-    this.runTransaction();
+    this.runTransaction(undefined, !durabilityProjection);
+    if (durabilityProjection && this.projectionPending) {
+      this.projectionPending = false;
+      try {
+        this.render(this.state);
+      } catch (error) {
+        this.onError(error);
+      }
+    }
   }
 
   private drainMachineEvents(): void {
@@ -330,11 +337,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
           if (transition.durability === 'durable') this.durabilityDirty = true;
         }
         for (const effect of transition.effects) {
-          if (effect.type === 'clear-derived-game-presentation') {
-            this.controller.clearDerivedGamePresentation();
-          } else {
-            this.interpreter.run(effect);
-          }
+          this.interpreter.run(effect);
         }
       }
     } catch (error) {
@@ -584,7 +587,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       : structuredClone(projectedState);
     const persistence =
       this.controller.prepareInboundSessionRejectPersistence?.() ??
-      this.preparePersistence(persistenceState, recoveringDurability);
+      this.preparePersistence(persistenceState);
     this.durabilityDirty = false;
     this.projectionPending = false;
     this.committing = true;
@@ -595,7 +598,6 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     } catch (error) {
       write = Promise.reject(error);
     }
-    let persistenceFailed = false;
     const releaseExternalEffects = () => {
       for (const [key, effect] of externalEffects) {
         if (this.pendingExternalEffects.get(key) !== effect) continue;
@@ -646,15 +648,9 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
             this.retire();
             throw error;
           }
-          persistenceFailed = true;
           this.durabilityDirty = true;
           this.durabilityDegraded = true;
-          this.reportingDurabilityFailure = true;
-          try {
-            this.controller.reportDurabilityError?.(error);
-          } finally {
-            this.reportingDurabilityFailure = false;
-          }
+          this.controller.reportDurabilityError?.(error);
           if (shouldProject) {
             try {
               this.render(projectedState);
@@ -675,21 +671,17 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
         this.committing = false;
         if (this.retired) {
           this.commitActivityPending = false;
-          this.failureWarningEvents.clear();
           return;
         }
         const activityPending = this.commitActivityPending;
         this.commitActivityPending = false;
-        const warningOnly =
-          persistenceFailed &&
-          !activityPending &&
-          this.pendingControllerWork.length === 0 &&
-          this.pendingEvents.length > 0 &&
-          this.pendingEvents.every((event) => this.failureWarningEvents.has(event));
-        this.failureWarningEvents.clear();
-        if (warningOnly) {
-          this.runTransaction(undefined, false);
-          if (this.projectionPending) {
+        if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
+          const work = this.pendingControllerWork.splice(0);
+          const requiresCheckpoint = activityPending || work.length > 0;
+          this.runTransaction(() => {
+            for (const task of work) task.run();
+          }, requiresCheckpoint);
+          if (!requiresCheckpoint && this.projectionPending) {
             this.projectionPending = false;
             try {
               this.render(this.state);
@@ -697,13 +689,6 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
               this.onError(error);
             }
           }
-          return;
-        }
-        if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
-          const work = this.pendingControllerWork.splice(0);
-          this.runTransaction(() => {
-            for (const task of work) task.run();
-          });
         } else if (activityPending) {
           this.scheduleCommit(false);
         }

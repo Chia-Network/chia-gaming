@@ -39,7 +39,6 @@ describe('useGameSession committed runtime', () => {
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
       reportRuntimeError: jest.fn(),
-      clearDerivedGamePresentation: jest.fn(),
       flushDeferredWork: jest.fn(),
       getWasmFields: () => null,
       prepareReliableCommit: jest.fn(() => ({

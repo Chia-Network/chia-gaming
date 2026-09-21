@@ -115,9 +115,8 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
   await exchangeUntilIdle(adapters);
   adapters[1].blob!.acceptProposal(outgoing.id);
   await exchangeUntilIdle(adapters);
-  const ids = [...lane.controller.activeGameIds];
+  const ids = [...lane.runtime.getState().model.game.activeIds];
   assert.equal(ids.length, 1);
-  assert.deepEqual(adapters[1].blob!.activeGameIds, ids);
 
   lane.controller.makeMove(ids[0], null);
   await exchangeUntilIdle(adapters);
@@ -304,7 +303,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
   await exchangeUntilIdle(adapters);
   adapters[1].blob!.acceptProposal(outgoing.id);
   await exchangeUntilIdle(adapters);
-  const [gameId] = [...lane.controller.activeGameIds];
+  const [gameId] = lane.runtime.getState().model.game.activeIds;
   assert.ok(gameId);
   lane.controller.makeMove(gameId, null);
   await exchangeUntilIdle(adapters);

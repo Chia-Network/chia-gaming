@@ -46,10 +46,25 @@ function assertNever(event: never): never {
   throw new Error(`Unhandled session machine event: ${JSON.stringify(event)}`);
 }
 
+function sameEntries(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
 function classifyTransition(
+  previous: SessionMachineState,
   event: SessionMachineEvent,
   transition: SessionMachineTransition,
 ): ClassifiedSessionMachineTransition {
+  if (
+    event.type === 'host-projection' &&
+    sameEntries(
+      previous.model.history.wasmNotificationHistory,
+      transition.state.model.history.wasmNotificationHistory,
+    ) &&
+    sameEntries(previous.model.history.diagnosticLog, transition.state.model.history.diagnosticLog)
+  ) {
+    return { ...transition, durability: 'projection-only' };
+  }
   if (
     event.type === 'wasm-notification' &&
     'MoveRejected' in event.notification &&
@@ -65,6 +80,17 @@ export function reduceSessionMachine(
   event: SessionMachineEvent,
   activeHand?: ActiveGameHandContext,
 ): ClassifiedSessionMachineTransition {
+  if (
+    event.type === 'clear-durability-error' ||
+    (event.type === 'enqueue-error' && event.kind === 'durability-error') ||
+    ((event.type === 'dismiss-channel' || event.type === 'dismiss-channel-notification') &&
+      state.model.channel.queue[0]?.kind === 'durability-error')
+  ) {
+    return {
+      ...reduceChannelEvent(state, event),
+      durability: 'projection-only',
+    };
+  }
   switch (event.type) {
     case 'choose-same-terms':
     case 'reject-current-proposal':
@@ -72,10 +98,11 @@ export function reduceSessionMachine(
     case 'submit-compose':
     case 'accept-review':
     case 'reject-review':
-      return classifyTransition(event, reduceSessionCommand(state, event));
+      return classifyTransition(state, event, reduceSessionCommand(state, event));
 
     case 'wasm-notification':
       return classifyTransition(
+        state,
         event,
         reduceSessionNotification(
           state,
@@ -102,10 +129,9 @@ export function reduceSessionMachine(
     case 'start-clean-shutdown':
     case 'go-on-chain':
     case 'go-on-chain-result':
-    case 'clear-durability-error':
     case 'enqueue-error':
     case 'coin-enrichment-completed':
-      return classifyTransition(event, reduceChannelEvent(state, event));
+      return classifyTransition(state, event, reduceChannelEvent(state, event));
 
     case 'set-between-hand-mode':
     case 'set-rejected-terms':
@@ -116,7 +142,7 @@ export function reduceSessionMachine(
     case 'set-compose-timeout':
     case 'set-compose-proposal-sent':
     case 'set-first-game-accepted':
-      return classifyTransition(event, reduceBetweenHandEvent(state, event));
+      return classifyTransition(state, event, reduceBetweenHandEvent(state, event));
 
     case 'upsert-pending-proposal':
     case 'set-proposal-lifecycle':
@@ -126,7 +152,7 @@ export function reduceSessionMachine(
     case 'request-propose-game':
     case 'proposal-sent':
     case 'proposal-command-succeeded':
-      return classifyTransition(event, reduceProposalEvent(state, event));
+      return classifyTransition(state, event, reduceProposalEvent(state, event));
 
     case 'game':
     case 'notification-accepted-group':
@@ -136,7 +162,7 @@ export function reduceSessionMachine(
     case 'hand-state-changed':
     case 'local-game-action-committed':
     case 'local-action-applied':
-      return classifyTransition(event, reduceDurableGameEvent(state, event, activeHand));
+      return classifyTransition(state, event, reduceDurableGameEvent(state, event, activeHand));
 
     default:
       return assertNever(event);

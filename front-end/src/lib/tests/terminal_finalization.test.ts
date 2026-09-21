@@ -19,7 +19,12 @@ import { storageRepository } from '../session/storageRepository';
 import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
 import { createSessionModel } from '../session/model';
 import type { SessionModel } from '../session/types';
-import { readApplicationState, SESSION_DB_NAME } from '../session/indexedDb';
+import {
+  readApplicationState,
+  SESSION_DB_NAME,
+  StorageAuthorityLostError,
+  StorageAuthorityRequiredError,
+} from '../session/indexedDb';
 import { decodeDurableApplicationState } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
 import {
@@ -291,6 +296,13 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
     restored?.session?.phase === 'terminal' &&
       restored.session.presentation.gameInstances?.['game-1']?.terminal.label,
   ).toBe('Finished');
+  if (restored?.session?.phase !== 'terminal') throw new Error('expected terminal record');
+  expect(restored.session).not.toHaveProperty('durabilityWarning');
+  expect(restored.session.presentation).not.toHaveProperty('myRunningBalance');
+  expect(restored.session.presentation).not.toHaveProperty('channelNotifQueue');
+  expect(restored.session.presentation).not.toHaveProperty('gameNotifQueue');
+  expect(restored.session.presentation).not.toHaveProperty('dismissedChannelStatus');
+  expect(restored.session.presentation.betweenHandCompose).not.toHaveProperty('proposal_sent');
   expect(restored).not.toHaveProperty('live');
   expect(restored).not.toHaveProperty('pairing');
 });
@@ -836,41 +848,43 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   );
 });
 
-it('keeps the latest terminal root dirty after failure, then retries without teardown', async () => {
+it('returns the terminal result and tears down after an ordinary write failure', async () => {
   const events: string[] = [];
-  let latestModel = structuredClone(model);
-  let latestCoins = [{ label: 'Reward coin', id: 'coin-1' }];
+  const reportDurabilityError = jest.fn();
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: async () => {
       events.push('controller-quiesce');
       return {
-        model: structuredClone(latestModel),
-        coinsOfInterest: structuredClone(latestCoins),
+        model: structuredClone(model),
+        coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
       };
     },
+    reportDurabilityError,
   } as unknown as SessionController;
-  const teardown = jest.fn();
-  let failWrite = true;
+  const teardown = jest.fn(() => events.push('teardown'));
   const dependencies: TerminalFinalizationDependencies = {
     captureTerminal: (capture) => {
-      const prepared = prepareTerminalCapture(capture);
+      prepareTerminalCapture(capture);
       return {
         write: async () => {
-          if (failWrite) throw new Error('deferred IndexedDB write failed');
-          await prepared.write();
+          throw new Error('deferred IndexedDB write failed');
         },
       };
     },
-    updateMarker: markSavedSession,
+    updateMarker: () => events.push('marker'),
     teardown,
   };
 
-  await expect(finalizeTerminalSession(finalizationArgs(controller), dependencies)).rejects.toThrow(
-    'deferred IndexedDB write failed',
-  );
+  const terminal = await finalizeTerminalSession(finalizationArgs(controller), dependencies);
 
-  expect(teardown).not.toHaveBeenCalled();
+  expect(terminal.model).toEqual(model);
+  expect(events).toEqual(['controller-quiesce', 'marker', 'teardown']);
+  expect(teardown).toHaveBeenCalledTimes(1);
+  expect(reportDurabilityError).toHaveBeenCalledTimes(1);
+  expect(reportDurabilityError).toHaveBeenCalledWith(
+    expect.objectContaining({ message: 'deferred IndexedDB write failed' }),
+  );
   expect(hasSavedSessionMarker()).toBe(true);
   const cached = storageRepository.loadState();
   expect(cached.session?.phase).toBe('terminal');
@@ -880,46 +894,49 @@ it('keeps the latest terminal root dirty after failure, then retries without tea
     decodedDurable?.session?.phase === 'live' && decodedDurable.session.live.serializedGameSession,
   ).toEqual(liveCradle);
 
-  failWrite = false;
-  latestModel = createSessionModel({
-    channel: {
-      ...model.channel,
-      status: {
-        ...model.channel.status,
-        state: 'ResolvedUnrolled',
-        ourBalance: '70',
-        theirBalance: '30',
-      },
-    },
-    game: {
-      ...model.game,
-      handState: {
-        ...handState,
-        state: { ...handState.state, moveNumber: 2n },
-      },
-    },
-    betweenHand: model.betweenHand,
-  });
-  latestCoins = [{ label: 'Fresh reward coin', id: 'coin-after-retry' }];
-  await finalizeTerminalSession(finalizationArgs(controller), dependencies);
+  await storageRepository.checkpointApplicationState(storageRepository.loadState());
 
-  expect(events).toEqual(['controller-quiesce', 'controller-quiesce']);
+  expect(events).toEqual(['controller-quiesce', 'marker', 'teardown']);
   expect(teardown).toHaveBeenCalledTimes(1);
+  expect(reportDurabilityError).toHaveBeenCalledTimes(1);
   storageRepository._resetForTests();
   const restored = await storageRepository.readCurrentState();
   expect(restored?.session).not.toHaveProperty('live');
   expect(
     restored?.session?.phase === 'terminal' && restored.session.presentation.channelStatus?.state,
-  ).toBe('ResolvedUnrolled');
-  expect(
-    restored?.session?.phase === 'terminal' &&
-      (
-        restored.session.presentation.handState as {
-          state: { moveNumber: bigint };
-        }
-      ).state.moveNumber,
-  ).toBe(2n);
+  ).toBe('ResolvedClean');
   expect(
     restored?.session?.phase === 'terminal' && restored.session.terminal.coinsOfInterest,
-  ).toEqual(latestCoins);
+  ).toEqual([{ label: 'Reward coin', id: 'coin-1' }]);
+});
+
+it.each([
+  ['lost', () => new StorageAuthorityLostError()],
+  ['required', () => new StorageAuthorityRequiredError()],
+])('propagates storage authority %s without publishing a terminal result', async (_kind, error) => {
+  const controller = {
+    getWalletProviderScope: () => walletProviderScope,
+    quiesceForTerminalFinalization: async () => ({
+      model: structuredClone(model),
+      coinsOfInterest: [],
+    }),
+    reportDurabilityError: jest.fn(),
+  } as unknown as SessionController;
+  const updateMarker = jest.fn();
+  const teardown = jest.fn();
+
+  await expect(
+    finalizeTerminalSession(finalizationArgs(controller), {
+      captureTerminal: (capture) => {
+        prepareTerminalCapture(capture);
+        return { write: async () => Promise.reject(error()) };
+      },
+      updateMarker,
+      teardown,
+    }),
+  ).rejects.toBeInstanceOf(error().constructor);
+
+  expect(controller.reportDurabilityError).not.toHaveBeenCalled();
+  expect(updateMarker).not.toHaveBeenCalled();
+  expect(teardown).not.toHaveBeenCalled();
 });

@@ -53,8 +53,8 @@ describe('submission controller handoff and quiescence', () => {
 
   it('revalidates quiescence when the committed runtime changes during snapshot', async () => {
     const { controller } = setup(jest.fn());
-    const firstModel = createSessionModel({ myRunningBalance: 1n });
-    const replacementModel = createSessionModel({ myRunningBalance: 2n });
+    const firstModel = createSessionModel({ restore: { status: 'restoring' } });
+    const replacementModel = createSessionModel({ restore: { status: 'restored' } });
     const replacementSnapshot = jest.fn(() => replacementModel);
     const replacement = new ControlledRuntime(undefined, undefined, replacementSnapshot);
     const firstSnapshot = jest.fn(() => {

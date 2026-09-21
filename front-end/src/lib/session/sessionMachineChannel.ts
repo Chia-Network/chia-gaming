@@ -237,6 +237,12 @@ export function reduceChannelEvent(
         effects: [],
       };
     case 'enqueue-error': {
+      if (
+        event.kind === 'durability-error' &&
+        state.model.channel.queue.some((notification) => notification.kind === 'durability-error')
+      ) {
+        return { state, effects: [] };
+      }
       const notification = {
         id: state.coordination.nextNotificationId + 1n,
         kind: event.kind,

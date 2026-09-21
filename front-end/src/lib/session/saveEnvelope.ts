@@ -7,7 +7,6 @@ import type { PersistedGameState, ProposalParameterValue } from '@games/host';
 import type { GameProtocolPresentation } from './gameSlice';
 import type {
   BetweenHandModeModel,
-  NotificationKind,
   PendingProposalLifecycle,
   ProposalOrigin,
   RegisteredGameType,
@@ -15,7 +14,7 @@ import type {
 import type { WalletOperationEntry } from './walletOperationStore';
 
 export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' as const;
-export const DURABLE_APPLICATION_STATE_VERSION = 1n;
+export const DURABLE_APPLICATION_STATE_VERSION = 3n;
 export const MAX_DURABLE_REJECTION_TRANSPORTS = 8;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
@@ -82,7 +81,6 @@ export interface SessionLiveSave extends SessionTransportSave {
   serializedGameSession: Uint8Array;
   gameSessionSchemaVersion: bigint;
   rewardPuzzleHash: string;
-  durabilityWarning?: string;
 }
 
 export interface SavedGameInstance {
@@ -109,13 +107,6 @@ export type SavedHandProposal = SavedHandProposalBase & {
   parameters: ProposalParameterValue;
 };
 
-export interface SavedQueuedNotification {
-  id: bigint;
-  kind: NotificationKind;
-  title: string;
-  message: string;
-}
-
 export interface SessionPresentationSave {
   handKey: bigint;
   activeGameIds: string[];
@@ -126,16 +117,11 @@ export interface SessionPresentationSave {
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
-  myRunningBalance: string;
-  channelNotifQueue: SavedQueuedNotification[];
-  gameNotifQueue: SavedQueuedNotification[];
-  dismissedChannelStatus: ChannelStatusPayload['state'] | null;
   cleanShutdownStarted: boolean;
   betweenHandMode: BetweenHandModeModel;
   betweenHandCompose: {
     selected_game: RegisteredGameType;
     game_timeout: string;
-    proposal_sent: boolean;
   };
   betweenHandLastHandProposal: SavedHandProposal | null;
   betweenHandRejectedOnceHandProposal: SavedHandProposal | null;

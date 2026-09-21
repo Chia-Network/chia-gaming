@@ -1,4 +1,4 @@
-import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming';
+import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type {
   LiveSessionSave,
   PreHandshakeSessionSave,
@@ -47,8 +47,6 @@ import {
 } from './persistenceBetweenHands';
 import {
   BETWEEN_HAND_MODES,
-  CHANNEL_STATUSES,
-  parseQueuedNotifications,
   parseSavedGameInstance,
   validateChannelStatus,
   validateLive,
@@ -59,7 +57,6 @@ import {
 } from './persistencePayloads';
 import {
   optionalString,
-  parseDecimalString,
   parseDiscriminant,
   requireBigintString,
   requireBigint,
@@ -135,7 +132,6 @@ const LIVE_FIELDS = new Set([
   'serializedGameSession',
   'gameSessionSchemaVersion',
   'rewardPuzzleHash',
-  'durabilityWarning',
 ]);
 const TERMINAL_HANDOFF_FIELDS = new Set(['id', 'message', 'msgno', 'sent', 'acknowledged']);
 const UNACKED_MESSAGE_FIELDS = new Set(['msgno', 'msg']);
@@ -160,10 +156,6 @@ const PRESENTATION_FIELDS = new Set([
   'activeGameType',
   'handState',
   'channelStatus',
-  'myRunningBalance',
-  'channelNotifQueue',
-  'gameNotifQueue',
-  'dismissedChannelStatus',
   'cleanShutdownStarted',
   'betweenHandMode',
   'betweenHandCompose',
@@ -364,7 +356,6 @@ function parseLive(value: unknown): LiveSessionSave['live'] {
       'live.gameSessionSchemaVersion',
     ),
     rewardPuzzleHash: requireString(fields.rewardPuzzleHash, 'live.rewardPuzzleHash'),
-    durabilityWarning: optionalString(fields.durabilityWarning, 'live.durabilityWarning', true),
   };
   validateLive(live);
   return live;
@@ -490,14 +481,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
       );
     }
   }
-  const dismissedChannelStatus =
-    fields.dismissedChannelStatus === null
-      ? null
-      : parseDiscriminant<ChannelStatus>(
-          fields.dismissedChannelStatus,
-          CHANNEL_STATUSES,
-          'dismissedChannelStatus',
-        );
   const compose = parseComposeDraftState(fields.betweenHandCompose);
   const lastHandProposal =
     fields.betweenHandLastHandProposal === null
@@ -533,13 +516,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     activeGameType: fields.activeGameType,
     handState: decodedHandState?.persisted ?? null,
     channelStatus: decodeChannelStatusPayload(fields.channelStatus),
-    myRunningBalance: (() => {
-      parseDecimalString(fields.myRunningBalance, 'myRunningBalance');
-      return requireString(fields.myRunningBalance, 'myRunningBalance');
-    })(),
-    channelNotifQueue: parseQueuedNotifications(fields.channelNotifQueue),
-    gameNotifQueue: parseQueuedNotifications(fields.gameNotifQueue),
-    dismissedChannelStatus,
     cleanShutdownStarted: requireBoolean(fields.cleanShutdownStarted, 'cleanShutdownStarted'),
     betweenHandMode: parseDiscriminant<BetweenHandModeModel>(
       fields.betweenHandMode,
@@ -842,8 +818,8 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
           ? { stateIdentifier: 'running', stateDetail: [] }
           : { stateIdentifier: 'starting', stateDetail: ['before handshake'] },
         cleanShutdownStarted: save.cleanShutdownStarted,
-        dismissedChannelStatus: save.dismissedChannelStatus,
-        queue: parseQueuedNotifications(save.channelNotifQueue),
+        dismissedChannelStatus: null,
+        queue: [],
       },
       game: {
         handKey: Number(save.handKey),
@@ -854,7 +830,7 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
         lastDisplayedId,
         activeGameType: save.activeGameType,
         handState,
-        queue: parseQueuedNotifications(save.gameNotifQueue),
+        queue: [],
       },
       betweenHand: {
         mode,
@@ -868,7 +844,13 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
           'betweenHandPendingRetryHandProposal',
         ),
         lastHandProposal,
-        compose,
+        compose: {
+          ...compose,
+          proposalSent: pendingProposals.some(
+            ({ lifecycle }) =>
+              lifecycle === 'local-outgoing' || lifecycle === 'local-cancel-queued',
+          ),
+        },
         newHandRequested: save.newHandRequested,
       },
       history: {
@@ -879,7 +861,6 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
         ),
         diagnosticLog: recentDiagnosticEntries(typedEnvelope.history.diagnosticLog ?? []),
       },
-      myRunningBalance: parseDecimalString(save.myRunningBalance, 'myRunningBalance'),
     }),
   );
   return {

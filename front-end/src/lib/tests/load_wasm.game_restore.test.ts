@@ -63,6 +63,22 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const cradles = await createActivePair(poller, index);
     const proposer = cradles[0].blob!;
     const mover = cradles[1].blob!;
+    let proposerActiveIds: string[] = [];
+    let moverActiveIds: string[] = [];
+    const proposerSubscription = proposer.getObservable().subscribe((event) => {
+      if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
+        proposerActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
+          String(member.id),
+        );
+      }
+    });
+    const moverSubscription = mover.getObservable().subscribe((event) => {
+      if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
+        moverActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
+          String(member.id),
+        );
+      }
+    });
     const proposalIds = proposer.proposeGame({
       game_type: protocolIdForCatalog(testCase.handProposal.gameType),
       timeout: testCase.handProposal.gameTimeout,
@@ -73,9 +89,9 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     await exchangeUntilIdle(cradles);
     mover.acceptProposal(proposalIds[0]);
     await exchangeUntilIdle(cradles);
-    const ids = [...mover.activeGameIds];
+    const ids = moverActiveIds;
     assert.equal(ids.length, testCase.expectedMembers);
-    assert.deepEqual(proposer.activeGameIds, ids);
+    assert.deepEqual(proposerActiveIds, ids);
 
     const actionIsProposer = testCase.handProposal.gameType !== 'krunk';
     const actionController = actionIsProposer ? proposer : mover;
@@ -155,7 +171,6 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         restoreSession(restored, bootstrap, new WasmStateInit(fetchPreset)),
       );
       assert.equal(restored.getRestoreStatus(), 'restored');
-      assert.deepEqual(restored.activeGameIds, ids);
       assert.deepEqual(
         restored.getWasmFields()!.serializedGameSession,
         reloaded.session.live.serializedGameSession,
@@ -174,6 +189,8 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     } finally {
       restored.cleanup();
       await restored.flushPendingWork();
+      proposerSubscription.unsubscribe();
+      moverSubscription.unsubscribe();
     }
 
     await Promise.all(cradles.map((cradle) => cradle.shutdown()));

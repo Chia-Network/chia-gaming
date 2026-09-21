@@ -330,6 +330,11 @@ that channel state and causes on-chain resolution.
 
 ### 5.1 Outbound durability
 
+This transport rule is one application of the canonical
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality)
+policy. Reliable frames are durable because the restored sender must replay an
+unacknowledged external obligation, not merely because messages are important.
+
 Before sending a data frame, including a proposal or rejection, the host:
 
 1. allocates the next message number;
@@ -338,12 +343,15 @@ Before sending a data frame, including a proposal or rejection, the host:
    number, and unacknowledged-message list; and
 4. sends the frame after that persistence attempt finishes.
 
-Successful persistence is the normal durability guarantee. If browser storage
-fails, the host warns the user but sends the prepared frame anyway rather than
-failing a live game for an internal storage problem. It retains dirty
-in-memory state for a later persistence attempt and does not send the same
-prepared frame again merely because that later attempt succeeds. A page crash
-during this degraded interval can restore a checkpoint older than a frame the
+Successful persistence is the normal durability guarantee, but completion of
+the checkpoint attempt—not success—gates release. If ordinary browser storage
+fails, the host logs the failure, may show one transient warning for that
+degradation episode, and sends the prepared frame anyway rather than failing a
+live game for an internal storage problem. It retains dirty in-memory state for
+a later persistence attempt and does not send the same prepared frame again
+merely because that later attempt succeeds. Storage authority loss is different:
+it fences the obsolete owner and withholds its pending work. A page crash during
+an ordinary degraded interval can restore a checkpoint older than a frame the
 peer observed.
 
 If sending fails because the hub connection is not open, the frame remains
@@ -744,14 +752,18 @@ count.
 
 ### 10.2 Atomic processing
 
-Before processing a received batch, the implementation snapshots:
+Before processing a received batch, Rust snapshots the complete
+`OffChainWorkingState`: channel state, local action queue, incoming-message
+queue, potato ownership and peer intent, clean-shutdown correlation, latest
+channel-spend commitment, and height. Any hard action error or final signature
+error restores that whole snapshot. No intermediate protocol mutation or effect
+from that batch may survive.
 
-- the complete channel state; and
-- the local pending-action queue.
-
-Any hard action error or final signature error restores both snapshots. No
-intermediate game, balance, settlement, nonce, or local-queue mutation from
-that batch may survive.
+This peer-validation rollback is wholly inside Rust and is independent of the
+browser checkpoint boundary. A valid batch remains committed in memory even if
+the later IndexedDB checkpoint attempt fails; reliable sends and ACKs are
+released once after that attempt and are not replayed merely by a later
+successful checkpoint.
 
 The sender is responsible for semantically useful action ordering. For example,
 settlements or acceptances that free funds must precede proposals or

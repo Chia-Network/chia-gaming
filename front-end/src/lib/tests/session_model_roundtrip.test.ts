@@ -32,28 +32,43 @@ const CAL_HAND_STATE = calpokerStateCodec.encode({
 });
 
 describe('session model round trips', () => {
-  it('round-trips current bigint notification ids', () => {
-    const save = liveEnvelope({
-      activeGameIds: [],
-      channelNotifQueue: [{ id: 7n, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-      gameNotifQueue: [{ id: 8n, kind: 'proposal-rejected', title: 'Game', message: 'Done' }],
-    } as unknown as Partial<DurableApplicationState>);
-
-    const restored = decodeDurableApplicationState(save).model;
-
-    expect(restored.channel.queue[0].id).toBe(7n);
-    expect(restored.game.queue[0].id).toBe(8n);
+  it('rejects the removed aggregate version without migration', () => {
+    expect(() =>
+      decodeDurableApplicationState({
+        ...liveSave(),
+        version: 1n,
+      } as unknown as DurableApplicationState),
+    ).toThrow('Garbled application state: unsupported version 1');
   });
 
-  it('rejects noncanonical persisted notification ids', () => {
-    const save = liveEnvelope({
-      activeGameIds: [],
-      channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-    } as unknown as Partial<DurableApplicationState>);
+  it('does not serialize notification residue and restores runtime defaults', () => {
+    const model = createSessionModel({
+      channel: {
+        dismissedChannelStatus: 'Active',
+        queue: [
+          {
+            id: 1n,
+            kind: 'durability-error',
+            title: 'Session Storage Error',
+            message: 'disk unavailable',
+          },
+          { id: 2n, kind: 'infra-error', title: 'Error', message: 'keep me' },
+        ],
+      },
+      game: {
+        queue: [{ id: 3n, kind: 'proposal-rejected', title: 'Game', message: 'dismiss me' }],
+      },
+    });
 
-    expect(() => decodeDurableApplicationState(save)).toThrow(
-      'Garbled save: missing notification id',
-    );
+    const snapshot = snapshotFromSessionModel(model);
+    expect(snapshot).not.toHaveProperty('channelNotifQueue');
+    expect(snapshot).not.toHaveProperty('gameNotifQueue');
+    expect(snapshot).not.toHaveProperty('dismissedChannelStatus');
+
+    const restored = decodeDurableApplicationState(liveSave(snapshot)).model;
+    expect(restored.channel.queue).toEqual([]);
+    expect(restored.game.queue).toEqual([]);
+    expect(restored.channel.dismissedChannelStatus).toBeNull();
   });
 
   it('round-trips keyed hand status without aggregate snapshot fields', () => {

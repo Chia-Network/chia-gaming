@@ -12,10 +12,7 @@ import type { HandProposal, ProposalOrigin } from '../session/types';
 interface SessionMachineEffectRunner {
   setAuthority(state: SessionMachineState): void;
   getAuthority(): SessionMachineState;
-  controller: { clearDerivedGamePresentation(): void };
-  runCommand(
-    effect: Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>,
-  ): void;
+  runCommand(effect: SessionMachineEffect): void;
   render(state: SessionMachineState): void;
 }
 
@@ -26,11 +23,7 @@ export function runSessionMachineTransition(
   runner.setAuthority(transition.state);
   try {
     for (const effect of transition.effects) {
-      if (effect.type === 'clear-derived-game-presentation') {
-        runner.controller.clearDerivedGamePresentation();
-      } else {
-        runner.runCommand(effect);
-      }
+      runner.runCommand(effect);
     }
   } finally {
     runner.render(runner.getAuthority());
@@ -87,9 +80,6 @@ export function run(
       authority = next;
     },
     getAuthority: () => authority,
-    controller: {
-      clearDerivedGamePresentation: () => order.push('controller-clear'),
-    },
     runCommand: () => order.push('command'),
     render: () => order.push('react'),
   });

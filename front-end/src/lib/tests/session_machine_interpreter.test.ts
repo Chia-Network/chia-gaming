@@ -169,7 +169,7 @@ describe('session machine causal sequences', () => {
           },
         ]),
         {
-          controller: fakeController({ clearDerivedGamePresentation: jest.fn() }),
+          controller: fakeController(),
           iStarted,
           restoring: false,
           getRestoreStatus: () => 'idle',
@@ -248,7 +248,7 @@ describe('session machine causal sequences', () => {
         { id: '7', handProposal: TERMS },
       ]),
       {
-        controller: fakeController({ clearDerivedGamePresentation: jest.fn() }),
+        controller: fakeController(),
         iStarted: false,
         restoring: false,
         getRestoreStatus: () => 'idle',
@@ -311,7 +311,7 @@ describe('session machine causal sequences', () => {
   it('persists each accepted deferred coin enrichment once and ignores stale generations', async () => {
     const pending: Array<(coinHex: string | null) => void> = [];
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
-    const controller = fakeController({ clearDerivedGamePresentation: jest.fn() });
+    const controller = fakeController();
     const hand = createRegisteredGameHand('calpoker', {
       members: [
         {
@@ -454,16 +454,32 @@ describe('session machine causal sequences', () => {
     expect(current.state.model.channel.status.coinHex).toBe('current');
   });
 
-  it('does not persist from host projection or rendering', () => {
-    const state = createSessionMachineState(createSessionModel());
-    const transition = reduceSessionMachine(state, {
+  it('persists host history changes but not restore-status flicker alone', () => {
+    const state = createSessionMachineState(
+      createSessionModel({
+        history: { wasmNotificationHistory: ['notification'], diagnosticLog: ['line'] },
+      }),
+    );
+    const restoreOnly = reduceSessionMachine(state, {
       type: 'host-projection',
-      restore: { restoring: false, status: 'idle', error: null },
+      restore: { restoring: true, status: 'restoring', error: null },
       wasmNotificationHistory: ['notification'],
       diagnosticLog: ['line'],
     });
-    expect(transition.effects).toEqual([]);
-    expect(transition.state.model.history.wasmNotificationHistory).toEqual(['notification']);
+    expect(restoreOnly.durability).toBe('projection-only');
+    expect(restoreOnly.state.model.restore.status).toBe('restoring');
+
+    const historyChanged = reduceSessionMachine(restoreOnly.state, {
+      type: 'host-projection',
+      restore: { restoring: false, status: 'restored', error: null },
+      wasmNotificationHistory: ['notification', 'next'],
+      diagnosticLog: ['line'],
+    });
+    expect(historyChanged.durability).toBe('durable');
+    expect(historyChanged.state.model.history.wasmNotificationHistory).toEqual([
+      'notification',
+      'next',
+    ]);
   });
 
   it('presents a recoverable internal error once and dismisses without replacing active state', () => {

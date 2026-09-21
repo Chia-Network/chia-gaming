@@ -14,6 +14,7 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { createSessionModel } from '../session/model';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 import {
   attachTestCommitCoordinator,
   channelStatus,
@@ -447,50 +448,6 @@ describe('SessionController WASM action results', () => {
 });
 
 describe('active game tracking', () => {
-  it('retires only the settled member of an atomic hand', () => {
-    const { blob } = createReadyBlob();
-    setActiveBlob(blob);
-    blob.activeGameIds = ['1', '3'];
-
-    blob.processResult({
-      ...wasmResult(),
-      events: [
-        {
-          Notification: {
-            GameSettled: {
-              id: '1',
-              outcome: 'accept_settlement',
-              on_chain: false,
-              our_share: '100',
-              coin_id: null,
-            },
-          },
-        },
-      ],
-    });
-    blob.flushDeferredWork();
-    expect(blob.activeGameIds).toEqual(['3']);
-
-    blob.processResult({
-      ...wasmResult(),
-      events: [
-        {
-          Notification: {
-            GameSettled: {
-              id: '3',
-              outcome: 'accept_settlement',
-              on_chain: false,
-              our_share: '100',
-              coin_id: null,
-            },
-          },
-        },
-      ],
-    });
-    blob.flushDeferredWork();
-    expect(blob.activeGameIds).toEqual([]);
-  });
-
   it.each([
     ['1', '3'],
     ['3', '1'],
@@ -586,7 +543,6 @@ describe('active game tracking', () => {
       });
 
       expect(settledIds).toEqual([firstId, firstId, lastId]);
-      expect(blob.activeGameIds).toEqual([]);
       expect(machine.model.game.activeIds).toEqual([]);
       expect(machine.model.game.instances['1'].presentation).toBe('ended');
       expect(machine.model.game.instances['3'].presentation).toBe('ended');
@@ -2166,7 +2122,7 @@ describe('wallet fee attachment on submission', () => {
       }
     ).walletOperationOwner();
     storageRepository.ensureWalletContext(owner.providerScope);
-    walletOperationRuntime.registerReserved(
+    installReservedWalletObligation(
       'retired-trade',
       owner,
       { kind: 'fee', operationId: 'retired-submission' },

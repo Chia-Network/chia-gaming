@@ -9,7 +9,7 @@ import type {
   LocalGameCommand,
 } from './sessionMachineTypes';
 
-type CommandEffect = Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>;
+type CommandEffect = SessionMachineEffect;
 
 export interface SessionMachineInterpreterDependencies {
   controller: SessionController;

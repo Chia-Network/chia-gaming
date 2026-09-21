@@ -7,7 +7,6 @@ import { type RehydratedDurableApplicationState } from '../lib/session/persisten
 import { storageRepository } from '../lib/session/storageRepository';
 import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
-import { markSavedSession } from './saveCoordination';
 import { coerceToBytes } from '../util';
 import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
@@ -133,8 +132,6 @@ export async function restoreSession(
   const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
   if (session.live.gameSessionSchemaVersion !== currentSchema) {
     const savedSchema = session.live.gameSessionSchemaVersion.toString();
-    await storageRepository.clearSession();
-    markSavedSession();
     throw new Error(
       `Unsupported saved game format: cradle schema ${savedSchema}; current schema is ${currentSchema}`,
     );
@@ -162,11 +159,6 @@ export async function restoreSession(
     WASM_NOTIFICATION_HISTORY_LIMIT,
   );
   sc.diagnosticLog = recentDiagnosticEntries(save.history.diagnosticLog ?? []);
-  sc.durabilityWarning = session.live.durabilityWarning;
-  if (!Array.isArray(session.presentation.activeGameIds)) {
-    throw new Error('restoreSession: missing or invalid activeGameIds');
-  }
-  sc.activeGameIds = [...session.presentation.activeGameIds];
   sc.restorePresentationTiming({
     waitingStateEnteredAt: session.presentation.waitingStateEnteredAt,
     cleanShutdownGraceStartedAt: session.presentation.cleanShutdownGraceStartedAt,

@@ -974,12 +974,31 @@ impl OnChainPhase {
             });
 
             if let Some((ph, amt)) = our_reward_coin {
-                if !old_definition.notification_sent {
-                    let reward_coin = if amt > Amount::default() {
-                        Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
-                    } else {
-                        None
-                    };
+                let reward_coin = if amt > Amount::default() {
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
+                } else {
+                    None
+                };
+                let outcome = if old_definition.game_finished {
+                    SettlementOutcome::SettledCleanly
+                } else {
+                    SettlementOutcome::WeAccepted
+                };
+                effects.push(self.emit_terminal(
+                    &old_definition.game_id,
+                    GameNotification::game_settled(
+                        old_definition.game_id,
+                        outcome,
+                        amt,
+                        reward_coin,
+                    ),
+                ));
+            } else {
+                let is_timeout = conditions.iter().any(
+                    |c| matches!(c, CoinCondition::CreateCoin(ph, _) if *ph == their_reward_ph),
+                );
+
+                if is_timeout {
                     let outcome = if old_definition.game_finished {
                         SettlementOutcome::SettledCleanly
                     } else {
@@ -990,33 +1009,10 @@ impl OnChainPhase {
                         GameNotification::game_settled(
                             old_definition.game_id,
                             outcome,
-                            amt,
-                            reward_coin,
+                            Amount::default(),
+                            None,
                         ),
                     ));
-                }
-            } else {
-                let is_timeout = conditions.iter().any(
-                    |c| matches!(c, CoinCondition::CreateCoin(ph, _) if *ph == their_reward_ph),
-                );
-
-                if is_timeout {
-                    if !old_definition.notification_sent {
-                        let outcome = if old_definition.game_finished {
-                            SettlementOutcome::SettledCleanly
-                        } else {
-                            SettlementOutcome::WeAccepted
-                        };
-                        effects.push(self.emit_terminal(
-                            &old_definition.game_id,
-                            GameNotification::game_settled(
-                                old_definition.game_id,
-                                outcome,
-                                Amount::default(),
-                                None,
-                            ),
-                        ));
-                    }
                 } else {
                     let created = conditions.iter().find_map(|c| match c {
                         CoinCondition::CreateCoin(ph, amt) => Some((ph.clone(), amt.clone())),
@@ -1265,31 +1261,29 @@ impl OnChainPhase {
                         format_coin(coin_id),
                     )));
                 }
-                if !old_definition.notification_sent {
-                    let notif = if is_slash && !old_definition.our_turn {
-                        GameNotification::game_settled(
-                            old_definition.game_id,
-                            SettlementOutcome::OpponentSlashedUs,
-                            Amount::default(),
-                            None,
-                        )
+                let notif = if is_slash && !old_definition.our_turn {
+                    GameNotification::game_settled(
+                        old_definition.game_id,
+                        SettlementOutcome::OpponentSlashedUs,
+                        Amount::default(),
+                        None,
+                    )
+                } else {
+                    let outcome = if old_definition.game_finished {
+                        SettlementOutcome::SettledCleanly
+                    } else if old_definition.our_turn {
+                        SettlementOutcome::TimedOutWaitingForOurMove
                     } else {
-                        let outcome = if old_definition.game_finished {
-                            SettlementOutcome::SettledCleanly
-                        } else if old_definition.our_turn {
-                            SettlementOutcome::TimedOutWaitingForOurMove
-                        } else {
-                            SettlementOutcome::OpponentTimedOut
-                        };
-                        GameNotification::game_settled(
-                            old_definition.game_id,
-                            outcome,
-                            amount.clone(),
-                            my_reward_coin_string.clone(),
-                        )
+                        SettlementOutcome::OpponentTimedOut
                     };
-                    effects.push(self.emit_terminal(&old_definition.game_id, notif));
-                }
+                    GameNotification::game_settled(
+                        old_definition.game_id,
+                        outcome,
+                        amount.clone(),
+                        my_reward_coin_string.clone(),
+                    )
+                };
+                effects.push(self.emit_terminal(&old_definition.game_id, notif));
                 unblock_queue = true;
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
@@ -1505,27 +1499,25 @@ impl OnChainPhase {
                     format_coin(coin_id),
                     format_coin(&reward_coin_debug),
                 )));
-                if !old_definition.notification_sent {
-                    let reward_coin = if amt > Amount::default() {
-                        Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
-                    } else {
-                        None
-                    };
-                    let outcome = if old_definition.game_finished {
-                        SettlementOutcome::SettledCleanly
-                    } else if old_definition.our_turn {
-                        SettlementOutcome::TimedOutWaitingForOurMove
-                    } else {
-                        SettlementOutcome::OpponentTimedOut
-                    };
-                    let notif = GameNotification::game_settled(
-                        old_definition.game_id,
-                        outcome,
-                        amt,
-                        reward_coin,
-                    );
-                    effects.push(self.emit_terminal(&old_definition.game_id, notif));
-                }
+                let reward_coin = if amt > Amount::default() {
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
+                } else {
+                    None
+                };
+                let outcome = if old_definition.game_finished {
+                    SettlementOutcome::SettledCleanly
+                } else if old_definition.our_turn {
+                    SettlementOutcome::TimedOutWaitingForOurMove
+                } else {
+                    SettlementOutcome::OpponentTimedOut
+                };
+                let notif = GameNotification::game_settled(
+                    old_definition.game_id,
+                    outcome,
+                    amt,
+                    reward_coin,
+                );
+                effects.push(self.emit_terminal(&old_definition.game_id, notif));
                 unblock_queue = true;
             }
         }
@@ -2183,7 +2175,6 @@ mod tests {
             pending_slash_amount: None,
             cheating_move_mover_share: None,
             timeout_claim_armed: false,
-            notification_sent: false,
             game_timeout: Timeout::new(1),
             game_finished: false,
         }

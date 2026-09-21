@@ -65,6 +65,7 @@ import {
 } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
 import { WalletOperationRuntime } from '../session/walletOperationRuntime';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
@@ -768,7 +769,7 @@ describe('RealBlockchainInterface', () => {
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
     storageRepository.ensureWalletContext(owner.providerScope);
-    ledger.registerReserved('trade-already-spent', owner, purpose);
+    installReservedWalletObligation('trade-already-spent', owner, purpose);
     ledger.settleOperation(owner, purpose, 'cancel-required', 'wallet-outcome-finalized');
     await ledger.awaitOwner(owner);
 

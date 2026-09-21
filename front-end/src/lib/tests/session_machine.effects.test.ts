@@ -24,7 +24,6 @@ describe('session machine behavior sequences', () => {
   ) {
     let coordinator: SessionMachineRuntime | undefined;
     const controller = {
-      clearDerivedGamePresentation: () => {},
       commitSessionRuntime: (runtime: SessionMachineRuntime) => {
         coordinator?.retire();
         coordinator = runtime;
@@ -234,6 +233,7 @@ describe('session machine behavior sequences', () => {
     const persist = jest.fn(async (state: ReturnType<typeof createSessionMachineState>) => {
       persisted.push(state);
       if (persisted.length === 1) throw new Error('disk full');
+      if (persisted.length === 3) throw new Error('different later failure');
     });
     const { runtime, coordinator, controller } = runtimeWithCoordinator(persist);
     (controller.reportDurabilityError as jest.Mock).mockImplementation(() => {
@@ -253,6 +253,14 @@ describe('session machine behavior sequences', () => {
       expect.objectContaining({ kind: 'durability-error' }),
     );
 
+    runtime.dispatch({ type: 'dismiss-channel' });
+    await Promise.resolve();
+    expect(persisted).toHaveLength(1);
+    expect(runtime.getState().model.channel.queue).not.toContainEqual(
+      expect.objectContaining({ kind: 'durability-error' }),
+    );
+
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await runtime.persist();
 
     expect(persisted).toHaveLength(2);
@@ -264,8 +272,13 @@ describe('session machine behavior sequences', () => {
     expect(controller.clearDurabilityError).toHaveBeenCalledTimes(1);
     expect(launcher).toHaveBeenCalledTimes(1);
 
-    await runtime.persist();
-    expect(persisted).toHaveLength(2);
+    runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
+    await expect(runtime.persist()).rejects.toThrow('different later failure');
+    expect(persisted).toHaveLength(3);
+    expect(runtime.getState().model.channel.queue).toContainEqual(
+      expect.objectContaining({ kind: 'durability-error' }),
+    );
+    expect(controller.reportDurabilityError).toHaveBeenCalledTimes(2);
   });
 
   it('returns and rejects typed work after its transaction reaches a fixed point', async () => {
@@ -430,7 +443,6 @@ describe('session machine behavior sequences', () => {
   it('queues dispatches requested during a React projection instead of re-entering it', async () => {
     jest.useFakeTimers();
     const controller = {
-      clearDerivedGamePresentation: () => {},
       commitSessionRuntime: jest.fn(),
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: jest.fn(() => ({
@@ -506,10 +518,6 @@ describe('session machine behavior sequences', () => {
         setAuthority: () => order.push('authority'),
 
         getAuthority: () => state,
-
-        controller: {
-          clearDerivedGamePresentation: () => order.push('controller-clear'),
-        },
 
         runCommand: () => order.push('command'),
 

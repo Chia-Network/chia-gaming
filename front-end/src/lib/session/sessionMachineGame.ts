@@ -266,7 +266,7 @@ export function reduceDurableGameEvent(
             },
           },
         },
-        effects: [{ type: 'clear-derived-game-presentation' }],
+        effects: [],
       };
     }
     case 'hand-state-changed': {

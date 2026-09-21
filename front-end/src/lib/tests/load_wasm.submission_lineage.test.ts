@@ -44,7 +44,7 @@ function captureRustSubmissions(
 }
 
 it(
-  'preserves Rust-issued submission lineage and exact bytes across schema-21 reload',
+  'preserves Rust-issued submission lineage and exact bytes across schema-22 reload',
   async () => {
     const poller = await startSimulator(['cafe00021', 'dead00021']);
     if (!poller) return;
@@ -91,7 +91,7 @@ it(
     };
 
     try {
-      assert.equal(WholeWasmObject.game_session_serialization_schema(), 21);
+      assert.equal(WholeWasmObject.game_session_serialization_schema(), 22);
       assert.equal(lane.controller.goOnChain(), true);
       await flushWrapperDrain(adapters);
 
@@ -115,7 +115,7 @@ it(
         if (restoredProvider) walletOperationRuntime.attachProvider(restoredProvider);
       });
       lane = restored.lane;
-      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 21n);
+      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 22n);
       captureRustSubmissions(lane.controller, rustSubmissions, acknowledged, relinquished);
 
       for (let attempt = 0; attempt < 20 && rustSubmissions.length < 3; attempt += 1) {

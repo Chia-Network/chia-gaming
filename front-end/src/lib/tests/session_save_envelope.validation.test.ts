@@ -54,6 +54,41 @@ const uncertainCancellation: WalletOperationEntry = {
   reason: 'response-lost',
 };
 
+const walletStageFixtures: WalletOperationEntry[] = [
+  creatingObligation,
+  {
+    owner: obligation.owner,
+    purpose: { kind: 'fee', operationId: 'fee-uncertain' },
+    stage: 'best-effort-uncertain',
+    disposition: 'active',
+    request: creatingObligation.request,
+    generation: 1n,
+    lastAttemptEpoch: 2n,
+    reason: 'response-lost',
+  },
+  obligation,
+  {
+    ...obligation,
+    purpose: { kind: 'fee', operationId: 'fee-replay' },
+    stage: 'retained-for-replay',
+    tradeId: 'trade-replay',
+  },
+  {
+    ...obligation,
+    purpose: { kind: 'funding', operationId: 'funding-cancel' },
+    stage: 'cancel-required',
+    tradeId: 'trade-cancel',
+  },
+  uncertainCancellation,
+  {
+    ...obligation,
+    purpose: { kind: 'funding', operationId: 'funding-cancelling' },
+    stage: 'cancelling',
+    tradeId: 'trade-cancelling-exact',
+    recoveryId: 'recovery-cancelling',
+  },
+];
+
 function completeAggregate(): DurableApplicationState {
   return activeSave({
     walletProviderScope: scope,
@@ -70,6 +105,15 @@ function completeAggregate(): DurableApplicationState {
       },
     ],
   });
+}
+
+function expectWholeRootRejection(
+  mutate: (state: any) => void,
+  source: DurableApplicationState = completeAggregate(),
+): void {
+  const state: any = structuredClone(source);
+  mutate(state);
+  expect(() => decodeDurableApplicationState(state)).toThrow();
 }
 
 describe('DurableApplicationState strict validation', () => {
@@ -90,10 +134,70 @@ describe('DurableApplicationState strict validation', () => {
     ['wallet obligation', (state: any) => (state.walletObligations[0].stage = 'unknown')],
     ['rejection transport', (state: any) => (state.rejectionTransports[0].sessionId = 'bad')],
   ])('rejects corruption in %s as whole-root corruption', (_label, corrupt) => {
-    const state: any = structuredClone(completeAggregate());
-    corrupt(state);
-    expect(() => decodeDurableApplicationState(state)).toThrow();
+    expectWholeRootRejection(corrupt);
   });
+
+  it.each([
+    ['aggregate root', (state: any) => (state.unexpected = true)],
+    ['identity', (state: any) => (state.identity.unexpected = true)],
+    ['preferences', (state: any) => (state.preferences.unexpected = true)],
+    ['history', (state: any) => (state.history.unexpected = true)],
+    ['session wrapper', (state: any) => (state.session.unexpected = true)],
+    ['pairing', (state: any) => (state.session.pairing.unexpected = true)],
+    ['live', (state: any) => (state.session.live.unexpected = true)],
+    ['presentation', (state: any) => (state.session.presentation.unexpected = true)],
+    ['rejection', (state: any) => (state.rejectionTransports[0].unexpected = true)],
+  ])('rejects an unknown key in %s at the whole-root boundary', (_label, mutate) => {
+    expectWholeRootRejection(mutate);
+  });
+
+  it('rejects the removed myRunningBalance presentation field', () => {
+    expectWholeRootRejection((state) => (state.session.presentation.myRunningBalance = '0'));
+  });
+
+  it.each(['channelNotifQueue', 'gameNotifQueue', 'dismissedChannelStatus'])(
+    'rejects removed presentation field %s',
+    (field) => {
+      expectWholeRootRejection((state) => (state.session.presentation[field] = null));
+    },
+  );
+
+  it('rejects removed betweenHandCompose.proposal_sent', () => {
+    expectWholeRootRejection(
+      (state) => (state.session.presentation.betweenHandCompose.proposal_sent = false),
+    );
+  });
+
+  it('rejects an unknown terminal key at the whole-root boundary', () => {
+    const terminal = baseSave({
+      channelStatus: {
+        state: 'ResolvedClean',
+        advisory: null,
+        coin: null,
+        our_balance: null,
+        their_balance: null,
+        game_allocated: null,
+      },
+      coinsOfInterest: [],
+    });
+    expect(decodeDurableApplicationState(terminal).save).toEqual(terminal);
+    expectWholeRootRejection((state) => (state.session.terminal.unexpected = true), terminal);
+  });
+
+  it.each(walletStageFixtures.map((entry) => [entry.stage, entry] as const))(
+    'rejects an unknown %s wallet-obligation key at the whole-root boundary',
+    (_stage, entry) => {
+      const state = activeSave({
+        walletProviderScope: scope,
+        walletObligations: [entry],
+      });
+      expect(decodeDurableApplicationState(state).save).toEqual(state);
+      expectWholeRootRejection(
+        (corrupt) => (corrupt.walletObligations[0].unexpected = true),
+        state,
+      );
+    },
+  );
 
   it('rejects duplicate wallet and rejection identities', () => {
     const duplicateWallet = completeAggregate();

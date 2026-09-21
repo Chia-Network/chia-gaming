@@ -1831,7 +1831,6 @@ mod sequencing_tests {
                     pending_slash_amount: None,
                     cheating_move_mover_share: None,
                     timeout_claim_armed: false,
-                    notification_sent: false,
                     game_timeout: Timeout::new(10),
                     game_finished: false,
                 },

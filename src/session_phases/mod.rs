@@ -669,6 +669,8 @@ impl OffChainPhase {
                     self.channel_spend_next_phase.is_none(),
                     "clean shutdown received with an unpublished next phase"
                 );
+                // Commit only after peer validation; this rollback copy is
+                // transient and must never become persisted session state.
                 let state_snapshot = self.state.clone();
                 match self.process_received_clean_shutdown(env, channel_half_sig) {
                     Ok(shutdown_effects) => {
@@ -791,6 +793,8 @@ impl OffChainPhase {
         actions: &[BatchAction],
         signatures: &StateUpdateSignatures,
     ) -> Result<Vec<Effect>, Error> {
+        // The validated peer batch commits as one working state. This snapshot
+        // exists only to restore a failed in-process validation attempt.
         let state_snapshot = self.state.clone();
         let peer_result = self
             .apply_received_batch(env, actions, signatures)

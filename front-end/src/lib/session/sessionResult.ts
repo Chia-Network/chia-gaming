@@ -28,7 +28,6 @@ export interface UseGameSessionResult {
   gameConnectionState: GameConnectionState;
   perGameAmount: bigint;
   currentHandAmount: bigint;
-  myRunningBalance: bigint;
   iStarted: boolean;
   playerNumber: number;
   channelStatus: ChannelStatusModel;
@@ -139,7 +138,6 @@ export function projectTerminalSessionResult(
     sessionModel: model,
     gameConnectionState: model.channel.connection,
     currentHandAmount: view.currentHandAmount,
-    myRunningBalance: model.myRunningBalance,
     iStarted,
     playerNumber: iStarted ? 1 : 2,
     channelStatus: view.channelStatus,

@@ -300,12 +300,13 @@ events, allowing multiple simultaneous sessions through one hub.
 
 ### Session Persistence
 
-**Design principle:** A page reload must be invisible to the user. The entire
-UX state — active tab, wallet connection, game session, form inputs — is
-continuously persisted so that after a reload the app returns to exactly where
-it was. The user should not be able to tell that a reload happened. Network
-connections (wallet backend, hub) treat a reload the same as a remote drop
-and silently reconnect in the background.
+The canonical model is
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality):
+each legitimate drain owner captures only its authoritative or unresolved
+fixed-point durable residue. Rehydrating the latest successful boundary supplies
+implicit crash rollback; this is not continuous save and does not imply that
+every changing or important value is durable. Network connections (wallet
+backend, hub) treat a reload like a remote drop and reconcile in the background.
 
 The one exception is the **restore / start over dialog**: when a saved game
 session exists, the app asks the user whether to resume or discard it before
@@ -363,15 +364,15 @@ cryptographic nonces or signatures (BLS signatures are deterministic).
 IndexedDB v5 holds one `application-state/current` record and one coordination
 store. The application record is a salt-prefixed, obfuscated Bencodex binary
 value; obfuscation deters casual inspection but is not a security boundary.
-The strict `chia-gaming-application-state` v1 root contains common
+The strict `chia-gaming-application-state` v3 root contains common
 identity/preferences/history, an optional `pre-handshake`, `live`, or
 `terminal` session, one canonical wallet context with wallet obligations, and
 bounded rejection transports. The serialized WASM cradle and unacknowledged
 frames remain raw `Uint8Array` values. localStorage contains only coordination
 and resume/reset hints; it is not preference or application-state authority.
 
-The nested Rust/WASM cradle is opaque schema 21. No app-owned persistence format
-has shipped, so only aggregate v1 decodes: there are no migrations, fallback
+The nested Rust/WASM cradle is opaque schema 22. No app-owned persistence format
+has shipped, so only aggregate v3 decodes: there are no migrations, fallback
 decoders, aliases, or predecessor reads. Unknown or missing fields, a malformed
 session, wallet obligation, rejection transport, hand state, or incompatible
 version reject the whole root and present Retry Hard Reset. Nothing is deleted,
@@ -384,14 +385,14 @@ pre-handshake owns pairing and transport, live adds the opaque cradle and
 presentation, and terminal owns frozen facts and presentation. Rejection
 transports and wallet obligations are nested sibling slices of the same root,
 so one capture and one write cannot observe mixed generations.
-The live and terminal `presentation` payload is wire-complete: empty collections,
-nullable identities, false flags, zero balances, and timer absence are encoded
-explicitly rather than reconstructed by decoder defaults. The following fields
-are grouped under those phase-owned payloads:
+The live and terminal `presentation` payload explicitly encodes every durable
+collection, nullable identity, flag, balance, and timer absence. Transient
+notification queues and dismissal residue are reconstructed at runtime instead.
+The following fields are grouped under those phase-owned payloads:
 
 | Field                                 | Type                                                 | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                             | `bigint`                                             | Aggregate version; currently `1`.                                                                                                                                                                                                                                                                                |
+| `version`                             | `bigint`                                             | Aggregate version; currently `3`.                                                                                                                                                                                                                                                                               |
 | `walletContext`                       | `WalletProviderScope \| null`                        | Single canonical provider/account scope for the session and nested wallet obligations.                                                                                                                                                                                                                          |
 | `playerId`                            | `string`                                             | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                           | `string?`                                            | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
@@ -406,7 +407,7 @@ are grouped under those phase-owned payloads:
 | `hubAlert`                            | `boolean?`                                           | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
 | `blockchainType`                      | `'simulator' \| 'walletconnect' \| 'cloud'?`         | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
 | `serializedGameSession`               | `Uint8Array?`                                        | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`            | `bigint?`                                            | Rust-owned schema ID for `serializedGameSession`; currently `21`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                 |
+| `gameSessionSchemaVersion`            | `bigint?`                                            | Rust-owned schema ID for `serializedGameSession`; currently `22`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                 |
 | `pairingToken`                        | `string?`                                            | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
 | `sessionPeerId`                       | `string?`                                            | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
 | `myHubPlayerId`                       | `string?`                                            | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
@@ -426,7 +427,6 @@ are grouped under those phase-owned payloads:
 | `humanHistory`                        | `string[]?`                                          | Recent user-facing transcript entries (capped at 1,000).                                                                                                                                                                                                                                                        |
 | `wasmNotificationHistory`             | `string[]?`                                          | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
 | `diagnosticLog`                       | `string[]?`                                          | Recent complete diagnostic entries, capped at 256 KiB total UTF-8 text; an individually oversized entry is dropped deterministically, and 2,000 entries remains a secondary cap.                                                                                                                                |
-| `durabilityWarning`                   | `string?`                                            | Last delivery-boundary storage failure warning.                                                                                                                                                                                                                                                                 |
 | `handKey`                             | `bigint`                                             | Monotonic host hand lifetime key. Reload preserves values greater than one so a restored hand keeps its identity.                                                                                                                                                                                               |
 | `activeGameIds`                       | `string[]`                                           | IDs of currently live games in an atomic group; empty when none are active.                                                                                                                                                                                                                                     |
 | `currentHandGameIds`                  | `string[]`                                           | IDs belonging to the current hand group; empty when there is no retained hand.                                                                                                                                                                                                                                  |
@@ -439,13 +439,9 @@ are grouped under those phase-owned payloads:
 | `myAlias`                             | `string?`                                            | Local player display name for the active pairing/session.                                                                                                                                                                                                                                                       |
 | `opponentAlias`                       | `string?`                                            | Opponent display name for the active pairing/session.                                                                                                                                                                                                                                                           |
 | `coinsOfInterest`                     | `Array<{ label, id }>?`                              | Actual live coin list frozen for terminal display.                                                                                                                                                                                                                                                              |
-| `myRunningBalance`                    | `string`                                             | Running balance delta from the initial amount, including explicit `"0"`.                                                                                                                                                                                                                                        |
-| `channelNotifQueue`                   | `QueuedNotification[]`                               | Persisted channel-scope notification queue, without non-serializable payloads.                                                                                                                                                                                                                                  |
-| `gameNotifQueue`                      | `QueuedNotification[]`                               | Persisted game-scope notification queue, without non-serializable payloads.                                                                                                                                                                                                                                     |
-| `dismissedChannelStatus`              | `string \| null`                                     | Last dismissed channel-status notification value.                                                                                                                                                                                                                                                               |
 | `cleanShutdownStarted`                | `boolean`                                            | Whether clean shutdown has been requested.                                                                                                                                                                                                                                                                      |
 | `betweenHandMode`                     | `string`                                             | Between-hand overlay state.                                                                                                                                                                                                                                                                                     |
-| `betweenHandCompose`                  | `{ selected_game, game_timeout, proposal_sent }`     | Host-owned compose state. Transient game controls are mounted package form state and are not persisted.                                                                                                                                                                                                         |
+| `betweenHandCompose`                  | `{ selected_game, game_timeout }`                    | User-authored host compose values. `proposalSent` is derived after restore from unresolved local outgoing/cancel-queued proposal lifecycle; transient game controls remain mounted package form state.                                                                                                                                    |
 | `betweenHandLastHandProposal`         | `SavedHandProposal \| null`                          | Last agreed generic A/B-oriented hand proposal, including the exact opaque `parameters`. Null when there is no agreed hand yet.                                                                                                                                                                                 |
 | `betweenHandRejectedOnceHandProposal` | `SavedHandProposal \| null`                          | Hand proposal already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                  |
 | `betweenHandPendingRetryHandProposal` | `SavedHandProposal \| null`                          | Local hand proposal waiting for retry after a proposal collision.                                                                                                                                                                                                                                               |
@@ -476,9 +472,8 @@ commit coordinator. A capture combines two authoritative sources:
    cradle serialization, message counters, protocol state, history, aliases,
    and other fields that originate inside the WASM bridge.
 2. **JS session state** — the current `SessionMachineState`: keyed game
-   protocol presentation, game-owned durable payload envelope, notification
-   queues, host-owned compose state, between-hand mode, running balance, and
-   dismissed notifications.
+   protocol presentation, game-owned durable payload envelope, user-authored
+   compose values, unresolved proposal intent, and between-hand mode.
 
 The two timer timestamps have one dedicated durable owner in
 `SessionController`. Shell schedules the browser timers, but changes enter the
@@ -628,8 +623,8 @@ that session has any unresolved ledger entry. Going offline detaches the
 provider RPC without discarding cleanup; retirement records the required
 transitions, and the next matching lifecycle attachment drains them.
 
-The app-owned persistence versions are aggregate v1, opaque Rust/WASM cradle
-schema 21, and IndexedDB v5. None has shipped, so only the current aggregate
+The app-owned persistence versions are aggregate v3, opaque Rust/WASM cradle
+schema 22, and IndexedDB v5. None has shipped, so only the current aggregate
 decodes.
 
 Transaction submission and resubmission remain owned by Rust's
@@ -746,7 +741,7 @@ Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The aggregate v1 presentation makes
+independently by `GameID`. The aggregate v3 presentation makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -783,12 +778,18 @@ work to a fixed point, then:
 
 1. Captures the staged reliable generation together with the final WASM and JS
    working state.
-2. Attempts exactly one `SessionSave` IndexedDB write.
+2. Attempts exactly one whole-aggregate IndexedDB write.
 3. Publishes the captured machine state to React once.
 4. Releases the captured outbound messages and acknowledgements in order.
 
 Pre-runtime negotiation uses the reliability owner's explicit flush path with
-the same persist-before-send rule.
+the same persist-before-send rule. Wallet operations separately checkpoint a
+new obligation before provider mutation, while `StorageRepository` coalesces
+preference/history drains outside protocol work. Those repository writes fold
+sibling changes into the last complete session capture; they cannot observe or
+persist a partially drained `SessionMachineRuntime`. See the canonical
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality)
+policy for the field-admission rule.
 
 On the normal path this preserves the transport invariant across reloads: the
 peer observes a message or ack only after the local save contains the
@@ -796,7 +797,7 @@ corresponding `messageNumber`/`unackedMessages` or `remoteNumber`/cradle state.
 A burst of events in one drain still causes only one full cradle serialization
 and one IndexedDB transaction instead of one write per message.
 
-If the transaction fails, the app shows a persistent session-storage warning
+If the transaction fails, the app shows one transient session-storage warning
 and releases the prepared messages/acks anyway. Released and persisted
 generations are tracked separately so a later successful save cannot duplicate
 wire effects. The machine/WASM boundary remains dirty for a later
@@ -810,7 +811,7 @@ history counts. The record-size walk is skipped in production.
 
 #### Prop-safe session values
 
-`SessionSave` contains raw `Uint8Array` cradles and message payloads plus
+`DurableApplicationState` contains raw `Uint8Array` cradles and message payloads plus
 `bigint` fields. React props cannot safely deep-enumerate those values:
 
 - Expanding a typed array into `{0:n,1:n,...}` destroys the cradle and makes
@@ -822,7 +823,7 @@ history counts. The record-size walk is skipped in production.
 dense byte-objects alone, hide bigints as non-enumerable properties, and Shell
 keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
 every parent render. Persistence never routes cradle bytes through this
-React-prop path: it bencodex-encodes the complete `SessionSave`, masks the
+React-prop path: it bencodex-encodes the complete aggregate, masks the
 salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
 
 This helper is an opaque persistence bridge, not a numeric conversion API.
@@ -1104,7 +1105,7 @@ The browser storage involved is split across three APIs:
 - `localStorage` holds small preferences, the resumable-session marker, tab
   lease, and reset coordination keys.
 - `sessionStorage` holds per-tab identity such as the tab id.
-- IndexedDB holds the raw binary `SessionSave`; WalletConnect may also maintain
+- IndexedDB holds the raw binary `DurableApplicationState`; WalletConnect may also maintain
   its own IndexedDB state after localStorage has been cleared.
 
 Because tabs and windows for the same origin can share `localStorage`, a hard
@@ -1642,13 +1643,14 @@ persistence, reliable transport, and end-to-end transaction submission
 promises. Those promises cover persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement or rejection, and fee-offer cleanup. The
 terminal presentation is taken from the authoritative runtime model returned
-after that quiescence, not from a pre-drain React projection. Shell then
-requires the terminal IndexedDB record write to succeed before it destroys the
-controller and releases the peer relay/hub busy state. If that terminal write
-fails, live protocol ownership is retained and teardown is blocked. This is
-stricter than a live checkpoint failure, which warns, releases already prepared
-gameplay/network effects once, leaves the in-memory boundary dirty, and retries
-on later activity.
+after that quiescence, not from a pre-drain React projection. Terminal capture
+installs the aggregate in the repository root before attempting IndexedDB. An
+ordinary write failure uses the existing one-per-episode durability warning,
+then still freezes presentation, destroys the controller, and releases the peer
+relay/hub busy state. The in-memory terminal root remains dirty for a later
+aggregate checkpoint without replaying finalization. Storage authority loss or
+missing authority still rejects and fences publication by the obsolete owner;
+unresolved protocol and wallet obligations remain quiescence blockers.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes
@@ -1738,7 +1740,7 @@ utilities in `front-end/src/util/jsonSafe.ts`:
   literals (via `toString()` directly into the JSON string), avoiding both the
   `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
 - `jsonParseLossless` / `jsonStringifyLossless` — JSON-only helpers used where
-  lossless JSON is explicitly required. They are not the `SessionSave`
+  lossless JSON is explicitly required. They are not the application-state
   persistence format.
 
 #### UX BigInt policy
@@ -1756,8 +1758,9 @@ CSS pixel values, `setTimeout` delays, and similar DOM/browser APIs. These
 conversions happen at the call site with an explicit `Number()` cast — the
 `bigint` remains the source of truth.
 
-**Persistence.** `SessionSave` fields including `version`, `messageNumber`,
-`remoteNumber`, `timestamp`, and all game-specific state use `bigint`.
+**Persistence.** Integer fields in `DurableApplicationState`, including
+`version`, `messageNumber`, `remoteNumber`, timestamps, and game-specific state,
+use `bigint`.
 Bencodex represents those integers and raw byte strings directly. IndexedDB
 stores one salt-prefixed, masked `Uint8Array` containing the bencodex record;
 there is no tagged-JSON save envelope and no structured-clone object graph.
@@ -2078,7 +2081,7 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/components/GameSession.tsx`            | Game session UI: header, coin status, game area, overlays                                                                                                       |
 | `front-end/src/hooks/useGameSession.ts`               | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                                           |
 | `front-end/src/lib/session/sessionMachine*.ts`        | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules                    |
-| `front-end/src/lib/session/persistence*.ts`           | Canonical strict aggregate-v1 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`                          |
+| `front-end/src/lib/session/persistence*.ts`           | Canonical strict aggregate-v3 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`                          |
 | `front-end/src/lib/session/sessionSnapshot.ts`        | Canonical `SessionModel` → aggregate presentation snapshot encoder                                                                                              |
 | `front-end/src/lib/gameRegistry.ts`                   | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                                                  |
 | `front-end/src/lib/session/incomingProposal.ts`       | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                                            |

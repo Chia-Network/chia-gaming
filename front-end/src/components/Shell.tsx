@@ -129,10 +129,7 @@ import {
 } from '../lib/session/peerSessionParams';
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../lib/session/receivePolicy';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
-import {
-  finalizeTerminalSession,
-  TerminalSessionStorageError,
-} from '../lib/session/terminalFinalization';
+import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import {
   appendDiagnosticEntry,
@@ -707,9 +704,8 @@ const Shell = () => {
     shellDispatchRef.current({ type: 'setPendingProposal', value: next });
   }, []);
   const peerSessionRef = useRef<PeerSession | null>(null);
-  const sessionSaveRef = useRef<DurableApplicationState | null>(null);
-  /** Stable prop-safe save — recomputing every render deep-clones and can OOM. */
-  const sessionSavePropRef = useRef<RehydratedDurableApplicationState | undefined>(undefined);
+  /** Immutable prop-safe bootstrap — recomputing every render deep-clones and can OOM. */
+  const bootstrapSessionPropRef = useRef<RehydratedDurableApplicationState | undefined>(undefined);
   const bootRejectionDescriptorsRef = useRef<DurableRejectionTransport[]>([]);
   const inboundSessionRejectHandlerRef = useRef<(sessionId: string, remoteNumber: bigint) => void>(
     () => {},
@@ -729,7 +725,6 @@ const Shell = () => {
     sendSessionReject,
   } = useSessionRejection({
     getPrimaryPeer: () => peerSessionRef.current,
-    getDurableSession: () => sessionSaveRef.current?.session ?? null,
     releasePrimaryPeer: (peer) => {
       if (peerSessionRef.current === peer) peerSessionRef.current = null;
       setPeerLiveness(null);
@@ -1214,7 +1209,7 @@ const Shell = () => {
 
   const networkLocked = sessionLocksNetwork(
     sessionPhase,
-    sessionSaveRef.current?.session?.phase,
+    storageRepository.loadState().session?.phase,
     sessionConfig?.pairingToken,
   );
 
@@ -1222,7 +1217,7 @@ const Shell = () => {
     if (
       sessionLocksNetwork(
         sessionPhaseRef.current,
-        sessionSaveRef.current?.session?.phase,
+        storageRepository.loadState().session?.phase,
         sessionConfigRef.current?.pairingToken,
       )
     ) {
@@ -1316,11 +1311,13 @@ const Shell = () => {
         pendingAdvisoryRef.current !== null,
         pendingProposalRef.current !== null,
         peerSessionRef.current !== null,
-        !!(
-          (sessionSaveRef.current?.session?.phase === 'live' ||
-            sessionSaveRef.current?.session?.phase === 'pre-handshake') &&
-          sessionSaveRef.current.session.pairing.peerId
-        ),
+        (() => {
+          const session = storageRepository.loadState().session;
+          return (
+            (session?.phase === 'live' || session?.phase === 'pre-handshake') &&
+            !!session.pairing.peerId
+          );
+        })(),
         walletConnectedRef.current,
         blockchainReadyRef.current,
       ) &&
@@ -1360,8 +1357,7 @@ const Shell = () => {
       } catch {
         /* not connected */
       }
-      sessionSaveRef.current = null;
-      sessionSavePropRef.current = undefined;
+      bootstrapSessionPropRef.current = undefined;
       sessionStartedRef.current = false;
       sessionFinishedCleanupRef.current = false;
       sessionPhaseRef.current = 'none';
@@ -1860,7 +1856,7 @@ const Shell = () => {
             sessionPhaseRef.current,
             true,
             !!sessionConfigRef.current?.restoring,
-            sessionSaveRef.current,
+            storageRepository.loadState(),
             {
               pending: isAcceptSessionTransition(shellTransitionRef.current),
               persistInFlight: freshStartPersistInFlightRef.current,
@@ -2035,7 +2031,6 @@ const Shell = () => {
                   transform: (state) => applyFreshStartCheckpoint(state, checkpoint),
                 })?.write();
                 if (peerSessionRef.current !== provisional) return;
-                sessionSaveRef.current = storageRepository.loadState();
                 setPendingProposalState({
                   from_id: fromId,
                   from_alias: peerAlias,
@@ -2109,13 +2104,12 @@ const Shell = () => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');
-            const save = sessionSaveRef.current;
+            const save = storageRepository.loadState();
             const pairing =
               save?.session?.phase === 'live' || save?.session?.phase === 'pre-handshake'
                 ? save.session.pairing
                 : undefined;
-            const prevMine =
-              save?.identity.myHubPlayerId ?? storageRepository.loadState().identity.myHubPlayerId;
+            const prevMine = save.identity.myHubPlayerId;
             const channelState = dashboardSessionModelRef.current?.channel.status.state;
             const pairingToken = pairing?.token ?? sessionConfigRef.current?.pairingToken;
             const remapAction = hubPlayerIdRemapAction(
@@ -2185,7 +2179,6 @@ const Shell = () => {
                   storageRepository.updateCommon({
                     identity: { myHubPlayerId: playerId },
                   });
-                  if (save) save.identity.myHubPlayerId = playerId;
                   sessionPhaseRef.current = 'on-chain';
                   setSessionPhase('on-chain');
                   conn.setBusy(presenceBusy('on-chain'));
@@ -2201,7 +2194,6 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            if (save) save.identity.myHubPlayerId = playerId;
             const terminalSave = save?.session?.phase === 'terminal';
             // Match getPresence: session/restore obligation OR the full-node-peer wait.
             // Broader than getPresence: also covers pairingToken-only / reserved peer
@@ -2275,7 +2267,7 @@ const Shell = () => {
             lastHubActivityRef.current = Date.now();
           },
           getPresence: () => {
-            const save = sessionSaveRef.current;
+            const save = storageRepository.loadState();
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
             // Backend not ready for play also stays busy. Accept-pending + persist-drain
@@ -2455,7 +2447,7 @@ const Shell = () => {
           sessionPhaseRef.current,
           true,
           !!sessionConfigRef.current?.restoring,
-          sessionSaveRef.current,
+          storageRepository.loadState(),
           {
             pending: isAcceptSessionTransition(shellTransitionRef.current),
             persistInFlight: freshStartPersistInFlightRef.current,
@@ -2621,7 +2613,7 @@ const Shell = () => {
     (options?: { retainFinishedGuard?: boolean }) => {
       bumpStartEpoch();
       abandonPendingRef.current = false;
-      const saved = sessionSaveRef.current;
+      const saved = storageRepository.loadState();
       const peerId =
         peerSessionRef.current?.peerId ??
         (saved?.session?.phase === 'live' || saved?.session?.phase === 'pre-handshake'
@@ -2631,12 +2623,6 @@ const Shell = () => {
       // decline/abort. Cooperative close already completed through the protocol;
       // the peer should keep pinging until its own local shutdown finishes.
       const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
-      const rejectingSavedSession =
-        retainRejectTransport &&
-        !!peerSessionRef.current &&
-        (saved?.session?.phase === 'live' || saved?.session?.phase === 'pre-handshake') &&
-        saved.session.pairing.peerId === peerSessionRef.current.peerId &&
-        saved.session.pairing.gameSessionId === peerSessionRef.current.sessionId;
       const finishCancellation = () => {
         if (!retainRejectTransport) {
           resetPeerRelayState();
@@ -2644,13 +2630,8 @@ const Shell = () => {
         destroySessionController();
         if (!retainRejectTransport) {
           clearSessionPreservingHistory();
-          sessionSaveRef.current = null;
-        } else if (rejectingSavedSession) {
-          sessionSaveRef.current = null;
-        } else {
-          sessionSaveRef.current = storageRepository.loadState();
         }
-        sessionSavePropRef.current = undefined;
+        bootstrapSessionPropRef.current = undefined;
         sessionStartedRef.current = false;
         sessionFinishedCleanupRef.current = !!options?.retainFinishedGuard;
         sessionPhaseRef.current = 'none';
@@ -2700,7 +2681,7 @@ const Shell = () => {
     abandonPendingRef.current = true;
     const state = dashboardSessionModelRef.current?.channel.status.state;
     if (state && PRE_ACTIVE_CHANNEL_STATES.has(state)) {
-      const saved = sessionSaveRef.current;
+      const saved = storageRepository.loadState();
       const peerId =
         peerSessionRef.current?.peerId ??
         (saved?.session?.phase === 'live' || saved?.session?.phase === 'pre-handshake'
@@ -2724,19 +2705,18 @@ const Shell = () => {
         setSessionError(true);
         return false;
       }
+      const durableState = storageRepository.loadState();
       const alias =
         sessionConfigRef.current?.myAlias ??
-        savedMyAlias(sessionSaveRef.current) ??
+        savedMyAlias(durableState) ??
         storageRepository.query('alias');
       const identity = {
         myName: alias ?? '',
-        opponentName:
-          sessionConfigRef.current?.opponentAlias ?? savedOpponentAlias(sessionSaveRef.current),
+        opponentName: sessionConfigRef.current?.opponentAlias ?? savedOpponentAlias(durableState),
         iStarted:
           sessionConfigRef.current?.iStarted ??
-          (sessionSaveRef.current?.session?.phase === 'live' ||
-          sessionSaveRef.current?.session?.phase === 'pre-handshake'
-            ? sessionSaveRef.current.session.pairing.iStarted
+          (durableState.session?.phase === 'live' || durableState.session?.phase === 'pre-handshake'
+            ? durableState.session.pairing.iStarted
             : false),
       };
       let terminal;
@@ -2749,8 +2729,6 @@ const Shell = () => {
         if (error instanceof WalletOfferCleanupPendingError) {
           setTerminalFinalizationBlocker(error.message);
           setWalletAlert(true);
-        } else if (error instanceof TerminalSessionStorageError) {
-          controller.reportDurabilityError(error);
         } else {
           setTerminalFinalizationBlocker(
             error instanceof Error ? error.message : 'Session finalization is blocked.',
@@ -2782,8 +2760,7 @@ const Shell = () => {
       // not wipe the dashboard model (that would flash "No Session").
       resetPeerRelayState({ persistSession: false });
 
-      sessionSaveRef.current = null;
-      sessionSavePropRef.current = undefined;
+      bootstrapSessionPropRef.current = undefined;
       clearSessionTimers();
       // Drop the restore mount flag before resetting status. A resumed
       // session keeps params.restoring=true; resetting gates alone would re-arm
@@ -2854,7 +2831,7 @@ const Shell = () => {
         markSavedSession();
         setSessionError(true);
       }
-      const currentSave = sessionSaveRef.current;
+      const currentSave = storageRepository.loadState();
       const currentPairingToken =
         sessionConfigRef.current?.pairingToken ??
         (currentSave?.session?.phase === 'live' || currentSave?.session?.phase === 'pre-handshake'
@@ -2881,7 +2858,6 @@ const Shell = () => {
         storageRepository.updateCommon({
           identity: { myHubPlayerId: pending.registeredPlayerId },
         });
-        if (currentSave) currentSave.identity.myHubPlayerId = pending.registeredPlayerId;
         sessionPhaseRef.current = 'on-chain';
         setSessionPhase('on-chain');
         hubConnRef.current?.setBusy(presenceBusy('on-chain'));
@@ -2934,7 +2910,7 @@ const Shell = () => {
           sessionPhaseRef.current,
           walletConnectedRef.current,
           !!sessionConfigRef.current?.restoring,
-          sessionSaveRef.current,
+          storageRepository.loadState(),
           {
             pending: isAcceptSessionTransition(shellTransitionRef.current),
             persistInFlight: freshStartPersistInFlightRef.current,
@@ -2993,8 +2969,7 @@ const Shell = () => {
         iStarted: terminal.iStarted,
       });
       setTerminalPresentation(null);
-      sessionSaveRef.current = save;
-      sessionSavePropRef.current = undefined;
+      bootstrapSessionPropRef.current = undefined;
       sessionStartedRef.current = false;
       setSessionConfig(null);
       setPeerConn(null);
@@ -3031,10 +3006,9 @@ const Shell = () => {
       setSessionPhase('none');
       setSessionError(false);
 
-      sessionSaveRef.current = save;
       // Cradle-less pairingToken saves are a pre-handshake checkpoint: mount
       // GameSession without sessionSave so getOrCreate runs newSession, not restore.
-      sessionSavePropRef.current =
+      bootstrapSessionPropRef.current =
         save.session?.phase === 'live' ? sessionSaveForReactProps(save, bootstrap) : undefined;
       const {
         myContribution,
@@ -3252,16 +3226,16 @@ const Shell = () => {
   // re-mark Resume from a stale hub pref.
   const cancelPendingMatchmaking = useCallback(
     ({ preserveHub }: { preserveHub: boolean }) => {
+      const durableState = storageRepository.loadState();
       const channelState =
-        dashboardSessionModelRef.current?.channel.status.state ??
-        (sessionSaveRef.current ? savedChannelStatus(sessionSaveRef.current) : null);
+        dashboardSessionModelRef.current?.channel.status.state ?? savedChannelStatus(durableState);
       const hasPendingPrompt =
         pendingAdvisoryRef.current !== null || pendingProposalRef.current !== null;
       const hasAttempt =
         peerSessionRef.current !== null ||
         !!sessionConfigRef.current?.pairingToken ||
-        sessionSaveRef.current?.session?.phase === 'live' ||
-        sessionSaveRef.current?.session?.phase === 'pre-handshake';
+        durableState.session?.phase === 'live' ||
+        durableState.session?.phase === 'pre-handshake';
       const accepting = isAcceptSessionTransition(shellTransitionRef.current);
       const shouldCancel = shouldCancelAttemptOnDisconnect(
         hasAttempt,
@@ -3274,9 +3248,8 @@ const Shell = () => {
           peerSessionRef.current?.peerId ??
           pendingProposalRef.current?.from_id ??
           pendingAdvisoryRef.current?.peer_id ??
-          (sessionSaveRef.current?.session?.phase === 'live' ||
-          sessionSaveRef.current?.session?.phase === 'pre-handshake'
-            ? sessionSaveRef.current.session.pairing.peerId
+          (durableState.session?.phase === 'live' || durableState.session?.phase === 'pre-handshake'
+            ? durableState.session.pairing.peerId
             : undefined);
         if (accepting) {
           if (!preserveHub) storageRepository.updatePreference({ key: 'hubUrl', value: undefined });
@@ -3350,10 +3323,11 @@ const Shell = () => {
     // force Resume just for a prior blockchainType. Mid-session / resumable
     // state must keep the marker — otherwise boot skips Resume while the
     // cradle remains in IDB and can be clobbered by incidental saves.
+    const durableSession = storageRepository.loadState().session;
     const hasResumableSession =
       sessionPhaseRef.current !== 'none' ||
-      sessionSaveRef.current?.session?.phase === 'live' ||
-      sessionSaveRef.current?.session?.phase === 'pre-handshake' ||
+      durableSession?.phase === 'live' ||
+      durableSession?.phase === 'pre-handshake' ||
       !!sessionConfigRef.current?.pairingToken;
     if (!hasResumableSession) {
       clearSavedSessionMarker();
@@ -3470,7 +3444,7 @@ const Shell = () => {
           // During Accept, Cancel before the checkpoint write lands must not wipe
           // a finished freeze — same disposition as a pre-persist start failure.
           if (isAcceptSessionTransition(shellState.transition)) {
-            const saved = sessionSaveRef.current;
+            const saved = storageRepository.loadState();
             const peerId =
               peerSessionRef.current?.peerId ??
               (saved?.session?.phase === 'live' || saved?.session?.phase === 'pre-handshake'
@@ -4351,7 +4325,7 @@ const Shell = () => {
                             peerConn={peerConn!}
                             registerMessageHandler={registerMessageHandler}
                             appendGameLog={appendHistory}
-                            sessionSave={sessionSavePropRef.current}
+                            sessionSave={bootstrapSessionPropRef.current}
                             blockchain={activeBlockchainPoller}
                             onGameActivity={onGameActivity}
                             onSessionPhaseChange={handleSessionPhaseChange}

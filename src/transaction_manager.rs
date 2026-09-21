@@ -609,7 +609,6 @@ pub struct WatchedCoin {
     pub timeout_spend: Option<TransactionSubmission>,
     /// UI context emitted when the manager submits this timeout spend.
     pub timeout_claim_semantic: Option<TimeoutClaimSemantic>,
-    pub creation_spend: Option<SpendBundle>,
 }
 
 impl WatchedCoin {
@@ -623,7 +622,6 @@ impl WatchedCoin {
             claim_submitted: false,
             timeout_spend: None,
             timeout_claim_semantic: None,
-            creation_spend: None,
         }
     }
 }
@@ -1231,6 +1229,9 @@ impl<C: ManagedGameSession> TransactionManager<C> {
     {
         let mut transients = ObservationTransients::detach(self);
         let result = (|| {
+            // Commit the complete durable manager/session only if the chain
+            // callback succeeds; detached output and this working copy remain
+            // transient across both commit and rollback.
             let checkpoint = bencodex::to_vec(&self).map_err(|e| {
                 Error::StrErr(format!(
                     "failed to encode transaction-manager working copy: {e}"
@@ -2418,13 +2419,18 @@ mod tests {
     }
 
     #[test]
-    fn serialization_prunes_transient_event_and_watch_delivery_queues() {
+    fn serialization_prunes_transient_event_watch_and_submission_delivery_queues() {
         let coin = test_coin(2);
         let mut mgr = TransactionManager::new(PersistableMockGameSession);
         mgr.pending_events
             .push_back(GameSessionEvent::Log("transient".to_string()));
         mgr.pending_watch_coins.push(coin);
         mgr.pending_unwatch_coins.push(test_coin(3));
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: test_submission("transient", None),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
 
         let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
         let decoded: TransactionManager<PersistableMockGameSession> =
@@ -2433,6 +2439,7 @@ mod tests {
         assert!(decoded.pending_events.is_empty());
         assert!(decoded.pending_watch_coins.is_empty());
         assert!(decoded.pending_unwatch_coins.is_empty());
+        assert!(decoded.pending_submissions.is_empty());
     }
 
     #[test]
@@ -2526,6 +2533,120 @@ mod tests {
             .expect("rolled-back snapshot");
         assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, None);
         assert!(mgr.vanished_coins().contains(&coin));
+    }
+
+    #[test]
+    fn serialized_chain_baselines_detect_and_reconcile_downtime_reorg() {
+        let mut allocator = AllocEncoder::new();
+        let vanished_before_reload = test_coin(14);
+        let present_before_reload = test_coin(15);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![
+            watch_event(&vanished_before_reload, 50),
+            watch_event(&present_before_reload, 50),
+        ]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator).expect("register");
+
+        mgr.report_coin_states(
+            &mut allocator,
+            10,
+            &[
+                CoinStateRecord {
+                    coin: vanished_before_reload.clone(),
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: present_before_reload.clone(),
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("initial authoritative snapshot");
+        mgr.report_coin_states(
+            &mut allocator,
+            8,
+            &[CoinStateRecord {
+                coin: present_before_reload.clone(),
+                created_height: Some(8),
+                spent_height: None,
+            }],
+        )
+        .expect("pre-reload rollback snapshot");
+
+        assert_eq!(mgr.last_snapshot_height, 8);
+        assert_eq!(
+            mgr.present_coins,
+            HashSet::from([present_before_reload.clone()])
+        );
+        assert_eq!(
+            mgr.vanished_coins,
+            HashSet::from([vanished_before_reload.clone()])
+        );
+
+        let encoded = bencodex::to_vec(&mgr).expect("serialize manager baselines");
+        let mut restored: TransactionManager<MockGameSession> =
+            bencodex::from_slice(&encoded).expect("restore manager baselines");
+        assert_eq!(restored.last_snapshot_height, 8);
+        assert_eq!(
+            restored.present_coins,
+            HashSet::from([present_before_reload.clone()])
+        );
+        assert_eq!(
+            restored.vanished_coins,
+            HashSet::from([vanished_before_reload.clone()])
+        );
+
+        let observations_before_fresh_snapshot = restored.cradle().seen_observations.len();
+        restored
+            .report_coin_states(&mut allocator, 7, &[])
+            .expect("fresh authoritative downtime-reorg snapshot");
+
+        assert_eq!(restored.last_snapshot_height, 7);
+        assert!(restored.present_coins.is_empty());
+        assert_eq!(
+            restored.vanished_coins,
+            HashSet::from([
+                vanished_before_reload.clone(),
+                present_before_reload.clone(),
+            ])
+        );
+        assert_eq!(
+            &restored.cradle().seen_observations[observations_before_fresh_snapshot],
+            &(7, Vec::new()),
+            "rolled-back creations must not be misreported as spends after reload"
+        );
+
+        restored
+            .report_coin_states(
+                &mut allocator,
+                9,
+                &[
+                    CoinStateRecord {
+                        coin: vanished_before_reload.clone(),
+                        created_height: Some(9),
+                        spent_height: None,
+                    },
+                    CoinStateRecord {
+                        coin: present_before_reload.clone(),
+                        created_height: Some(9),
+                        spent_height: None,
+                    },
+                ],
+            )
+            .expect("reconfirmed authoritative snapshot");
+        assert!(restored.vanished_coins.is_empty());
+        assert_eq!(
+            restored.present_coins,
+            HashSet::from([vanished_before_reload, present_before_reload])
+        );
+        assert_eq!(
+            restored.cradle().seen_observations.last(),
+            Some(&(9, Vec::new())),
+            "reconfirmed vanished coins must reconcile without duplicate creation callbacks"
+        );
     }
 
     #[test]

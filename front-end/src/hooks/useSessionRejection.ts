@@ -5,12 +5,10 @@ import {
   MAX_DURABLE_REJECTION_TRANSPORTS,
   rejectionTransportKey,
   type DurableApplicationState,
-  type DurableSessionPhase,
   type DurableRejectionTransport,
 } from '../lib/session/saveEnvelope';
 import { storageRepository } from '../lib/session/storageRepository';
 import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
-import { freshSessionState } from '../lib/session/sessionStateTransitions';
 import type { HubConnection } from '../services/HubConnection';
 import {
   decodePeerAppMessage,
@@ -21,7 +19,6 @@ import {
 
 interface UseSessionRejectionOptions {
   getPrimaryPeer(): PeerSession | null;
-  getDurableSession(): DurableSessionPhase | null;
   releasePrimaryPeer(peer: PeerSession): void;
 }
 
@@ -31,7 +28,7 @@ type RejectionStore = {
 };
 
 const repositoryStore: RejectionStore = {
-  write: (tombstone) => writeRejectionTransform((state) => addRejectionTransport(state, tombstone)),
+  write: (tombstone) => storageRepository.persistRejectionTransport(tombstone),
   delete: (peerId, sessionId) =>
     writeRejectionTransform((state) => ({
       ...state,
@@ -48,29 +45,6 @@ function writeRejectionTransform(
     kind: 'transform',
     transform,
   })!.write();
-}
-
-function addRejectionTransport(
-  state: DurableApplicationState,
-  tombstone: DurableRejectionTransport,
-): DurableApplicationState {
-  return {
-    ...state,
-    rejectionTransports: [
-      ...state.rejectionTransports.filter(
-        (record) => record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
-      ),
-      structuredClone(tombstone),
-    ]
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .slice(-MAX_DURABLE_REJECTION_TRANSPORTS),
-  };
-}
-
-function captureSessionRejection(tombstone: DurableRejectionTransport): Promise<void> {
-  return writeRejectionTransform((state) =>
-    addRejectionTransport(freshSessionState(state), tombstone),
-  );
 }
 
 export function useSessionRejection(options: UseSessionRejectionOptions) {
@@ -207,7 +181,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const persistInboundReceipt = useCallback(
     (peer: PeerSession, remoteNumber: bigint) =>
-      captureSessionRejection({
+      storageRepository.persistRejectionTransport({
         kind: 'inbound-receipt',
         peerId: peer.peerId,
         sessionId: peer.sessionId,
@@ -282,27 +256,8 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
     (peerId: string): Promise<void> => {
       const peer = optionsRef.current.getPrimaryPeer();
       if (!peer || peer.peerId !== peerId || peer.isDestroyed()) return Promise.resolve();
-      const session = optionsRef.current.getDurableSession();
-      const ownsResumableSave =
-        (session?.phase === 'live' || session?.phase === 'pre-handshake') &&
-        session.pairing.peerId === peer.peerId &&
-        session.pairing.gameSessionId === peer.sessionId;
-      let replacedResumableSave = false;
-      const store: RejectionStore = ownsResumableSave
-        ? {
-            write: async (tombstone) => {
-              if (!replacedResumableSave) {
-                await captureSessionRejection(tombstone);
-                replacedResumableSave = true;
-              } else {
-                await repositoryStore.write(tombstone);
-              }
-            },
-            delete: repositoryStore.delete,
-          }
-        : repositoryStore;
-      bindOutbound(peer, Date.now(), store);
-      retain(peer, store);
+      bindOutbound(peer, Date.now());
+      retain(peer);
       optionsRef.current.releasePrimaryPeer(peer);
       peer.reliableTransport.allocateOutbound(
         encodePeerAppMessage({ type: 'session_reject' }),

@@ -15,6 +15,7 @@ mandatory for deployed wallet APIs and Chia, on-chain, and peer protocol contrac
 
 - [Overview](#overview)
 - [Design Philosophy: Fail Fast](#design-philosophy-fail-fast)
+- [Persistence transactionality](#persistence-transactionality)
 - [State Channels: The Core Idea](#state-channels-the-core-idea)
 - [Coin Hierarchy](#coin-hierarchy)
 - [The Potato Protocol](#the-potato-protocol)
@@ -80,6 +81,64 @@ validation program is nil) can only happen if a caller is buggy — so the move
 handler asserts rather than silently discarding the move. Discarding it would
 hide the bug and leave the broken caller in place to cause subtler problems
 later.
+
+---
+
+## Persistence transactionality
+
+Persistence is crash transactionality over the residue of a completed drain,
+not continuous autosave and not a substitute for in-process rollback. A drain
+owner consumes one stimulus and all consequences to a fixed point, then captures
+the minimal state that remains authoritative or unresolved. If the process is
+lost, rehydrating the last successful boundary supplies the rollback
+implicitly. Explicit clone/restore is reserved for a narrow operation that can
+fail while the process continues—such as untrusted peer validation, a chain
+observation, or synchronous game-hand mutation—and its temporary working copy
+must disappear before capture.
+
+The live `SessionMachineRuntime` owns protocol/controller/UI/transport drains.
+Other boundaries are intentionally distinct: wallet operations checkpoint a
+new obligation before mutating the provider; pre-runtime reliable negotiation
+and rejection checkpoint before release; and `StorageRepository` coalesces
+preference and history mutations outside protocol work. Repository writes
+always retain the last complete session boundary while folding in those sibling
+changes; they never capture a partially drained runtime.
+
+An ordinary checkpoint failure does not stop play: project and release the
+captured boundary once, keep the latest in-memory root dirty, warn once per
+degradation episode, and retry on later activity without replaying released
+effects. Authority loss instead fences the obsolete owner. External work that
+is still unresolved at the fixed point remains durable until an explicit
+completion, acknowledgement, cancellation, replacement, or terminal event
+retires it.
+
+Durable inventory, grouped by restore consumer:
+
+- **Boot and UI:** identity, preferences, bounded history/logs, user-authored
+  compose values, actionable proposal/retry and clean-shutdown intent, policy
+  timer timestamps, last displayed hand, and frozen terminal presentation.
+- **Live session and peer transport:** the opaque Rust cradle, pairing facts,
+  unacknowledged reliable frames, terminal handoff, and bounded rejection
+  records; the receive reorder buffer is reconstructed by replay.
+- **Wallet and submission recovery:** provider scope, unresolved wallet
+  obligations, retained transaction/submission and replay intent, retired IDs,
+  and pending puzzle/solution requests. Wallet result bytes are deliberately
+  not durable; reservation identity is sufficient for cancel-and-reoffer
+  recovery. In Rust, the replay epoch, `pending_coin_solution_requests`, and
+  `retired_submission_ids` are durable deduplication or unresolved-work markers.
+- **Chain reconciliation:** the previous snapshot height and present/vanished
+  coin baselines, channel-status deduplication, and timeout-submission markers.
+  The corresponding `last_channel_status` and `timeout_finish_submitted` fields
+  are retained protocol residue needed to detect downtime reorgs and avoid
+  duplicate work, not disposable caches.
+- **Deliberately transient:** peer-message, chain-observation, local-hand, and
+  batch-plan rollback copies, adapter flights, promises, generated effects,
+  projection-only warnings, and other consumed or reconstructible work.
+
+Before admitting a field to a current persistence schema, name all four:
+**drain owner**, **restore consumer**, **why reconstruction is impossible or
+unsafe**, and **retirement event**. Importance alone is not a durability
+argument; a field without all four stays transient.
 
 ---
 
@@ -790,7 +849,7 @@ the wire or core ledger.
 | UI projection, notification presentation, client capability constraints                                                           | JavaScript UI   |
 
 `StorageRepository` atomically claims authority and reads one strict
-`DurableApplicationState` v1, then owns the in-memory root, mutation ordering,
+`DurableApplicationState` v3, then owns the in-memory root, mutation ordering,
 reset epochs, and aggregate checkpoints. IndexedDB v5 has exactly two stores:
 coordination metadata and `application-state/current`. Coordination is separate
 because it fences writes; it is not application state. Any incompatible or
@@ -853,8 +912,8 @@ orphaned reservation has settled; there is no successor/predecessor funding
 protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
-The browser aggregate is strict `DurableApplicationState` v1, its opaque
-Rust/WASM cradle is schema 21, and the app IndexedDB is schema 5. These
+The browser aggregate is strict `DurableApplicationState` v3, its opaque
+Rust/WASM cradle is schema 22, and the app IndexedDB is schema 5. These
 explicit versions remain future migration hooks. No app or hub persistence
 format has shipped, so only the current aggregate is decoded: there are no
 predecessor decoders, aliases, migrations, or fallback reads. Whole-root
@@ -932,12 +991,14 @@ newest complete entries and dropping an individually oversized entry; the
 JavaScript incident bounds still apply.
 
 Persistence is checkpointing, not permission to continue a game for money. If
-the browser write fails, the runtime reports a persistent durability warning
-but still projects and releases that captured boundary exactly once, including
+the browser write fails, the runtime reports one transient, dismissible
+durability warning for that degradation episode but still projects and releases
+that captured boundary exactly once, including
 wallet cleanup, transaction submission, and peer frame/ACK work. The in-memory
 state remains dirty and a later activity retries a full checkpoint containing
 all still-unresolved durable intent without resending already released effects;
-success clears the degraded warning. There is no immediate retry spin or
+success clears any still-visible warning and re-arms reporting for a later
+episode. The warning is projection-only and is never serialized. There is no immediate retry spin or
 durability-required effect gate. This deliberately accepts a degraded crash
 window: if the page dies before a later write succeeds, the peer or chain may
 have advanced beyond the last local checkpoint.
@@ -996,15 +1057,18 @@ puzzle/solution requests and reissues them once after restore; chain
 observations themselves are rebuilt from a fresh coherent poll.
 
 The browser also separates three lifetimes that end at different moments.
-Protocol lifetime ends only after queued terminal reductions and the durable
-terminal snapshot has been written. Unlike a live checkpoint failure, a
-terminal-record write failure retains live protocol ownership and blocks
-teardown so the terminal record cannot be skipped. Visual lifetime can
-continue after success: the same React hand component and `handKey` remain
-mounted, but receive the finalized model through the `frozen: true` branch of
-the same mount contract, which structurally has no intent port. The retained
-hand is restored from that finalized terminal model; `frozen` means terminal,
-read-only, and no port, not stale pre-finalization game state. Cold restoration
+Protocol lifetime ends after queued terminal reductions and terminal aggregate
+capture. An ordinary terminal-record write failure reports the existing
+one-per-episode durability warning but does not block the frozen presentation
+or protocol teardown; the in-memory terminal root remains dirty for a later
+aggregate checkpoint. Storage authority loss still fences the obsolete owner,
+and unresolved protocol or wallet obligations still block terminal capture.
+Visual lifetime can continue after finalization: the same React hand component
+and `handKey` remain mounted, but receive the finalized model through the
+`frozen: true` branch of the same mount contract, which structurally has no
+intent port. The retained hand is restored from that finalized terminal model;
+`frozen` means terminal, read-only, and no port, not stale pre-finalization game
+state. Cold restoration
 is separate again: `FinishedSessionGameView` always attempts a package's frozen
 mount from valid persisted hand state when no live tree survived (for example,
 after reload).

@@ -218,7 +218,6 @@ export interface SessionModel {
   game: GameModel;
   betweenHand: BetweenHandModel;
   history: SessionHistoryModel;
-  myRunningBalance: bigint;
 }
 
 type LegacyGameInput = Omit<Partial<GameModel>, 'instances'> & {
@@ -232,7 +231,6 @@ export interface SessionModelInput {
   game?: LegacyGameInput;
   betweenHand?: Partial<BetweenHandModel>;
   history?: Partial<SessionHistoryModel>;
-  myRunningBalance?: bigint;
 }
 
 export type GameDashboardActionKind =

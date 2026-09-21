@@ -39,6 +39,7 @@ import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 import { WalletOperationRuntime } from '../session/walletOperationRuntime';
 import { storageRepository } from '../session/storageRepository';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 
 const testOperation = {
   owner: {
@@ -611,7 +612,7 @@ describe('CloudBlockchainInterface fee support', () => {
     const coordinator = new WalletOperationRuntime();
     coordinator.attachProvider(provider);
     storageRepository.ensureWalletContext(owner.providerScope);
-    coordinator.registerReserved('Offer_1', owner, purpose);
+    installReservedWalletObligation('Offer_1', owner, purpose);
     coordinator.settleOperation(owner, purpose, 'cancel-required', 'retired');
     await coordinator.awaitOwner(owner);
 

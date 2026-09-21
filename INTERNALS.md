@@ -324,6 +324,11 @@ published. Received `CleanShutdown` has its own narrow snapshot because it
 cancels proposals before the peer signature is validated; trusted local entry
 points do not use a blanket transaction wrapper.
 
+This Rust rollback boundary is independent of browser persistence. Once valid
+peer processing commits, a later IndexedDB checkpoint failure cannot restore
+the pre-message `OffChainWorkingState` or suppress/replay the captured reliable
+ACKs and external effects.
+
 The queue snapshot matters even though the peer cannot directly enqueue local
 actions. A valid prefix of a malicious peer batch can make our pre-existing
 queued local actions stale before a later action or signature check fails. If
@@ -436,6 +441,12 @@ data.
 
 ## Browser Commit Boundary
 
+This section applies the canonical
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality)
+policy. Durability follows fixed-point durable residue and a named restore
+consumer; rehydrating the latest successful boundary supplies implicit crash
+rollback. Importance alone does not admit a field to the aggregate.
+
 `SessionMachineRuntime` construction is inert. The committed React layout
 effect installs its render callback and calls `activate()`; only then does it
 become the controller's exclusive committed runtime. Layout-effect cleanup calls
@@ -473,21 +484,26 @@ mechanism. Work arriving during the write belongs to the next commit and cannot
 change the captured payload.
 
 A live-checkpoint failure is serious but must not stop a game for money for an
-internal storage reason. Report a persistent durability warning, publish and
-release the captured gameplay/network boundary once—including cleanup,
-transaction submission, and peer frame/ACK work—retain the latest in-memory
-state as dirty, and retry only after later activity. Persisted and released
-generations are distinct: a later successful full checkpoint captures every
-still-unresolved durable intent, clears degraded durability, and does not resend
-effects already released in degraded mode. There is no durability-required
-effect gate. This availability choice admits a crash window in which external
-effects are newer than the last durable local checkpoint.
+internal storage reason. Log it and report at most one transient, dismissible
+durability warning for that degradation episode; publish and release the
+captured gameplay/network boundary once—including cleanup, transaction
+submission, and peer frame/ACK work—retain the latest in-memory state as dirty,
+and retry only after later activity. Persisted and released generations are
+distinct: a later successful full checkpoint captures every still-unresolved
+durable intent, clears any still-visible warning, re-arms reporting for a later
+episode, and does not resend effects already released in degraded mode. There
+is no durability-required effect gate. This availability choice admits a crash
+window in which external effects are newer than the last durable local
+checkpoint.
 
 Do not add active-session save timers, direct reducer/effect persistence,
 mid-drain React updates, or eager peer sends. Every new event source must feed
 the same coordinator. Pre-runtime negotiation may use the standalone reliable
 transport flush, but it follows the same attempt-persistence-before-release
-ordering and degraded failure policy.
+ordering and degraded failure policy. A wallet pre-provider checkpoint protects
+a newly installed external obligation, and repository-owned preference/history
+mutations use a coalesced repository drain. Those distinct owners retain the
+last complete session capture and never serialize a partial runtime drain.
 
 `SessionMachineRuntime` directly provides the peer transport's narrow
 `ReliableCommitCoordinator` facet and `snapshotModel()` returns its
@@ -507,8 +523,8 @@ Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned persistence contracts are `DurableApplicationState` v1,
-opaque Rust/WASM cradle schema 21, and app IndexedDB v5. Their explicit
+The current app-owned persistence contracts are `DurableApplicationState` v3,
+opaque Rust/WASM cradle schema 22, and app IndexedDB v5. Their explicit
 versions are future migration hooks. None has shipped, so strict decoding
 accepts only the current aggregate; it does not migrate, alias, salvage, or
 fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
@@ -588,9 +604,12 @@ Transaction submission promises span persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal
 finalization drains those promises, controller events, persistence, and reliable
 transport repeatedly to quiescence, then takes the terminal snapshot from that
-post-quiescence authoritative runtime model. The terminal record must be
-written before ownership is retired. Unlike a live-checkpoint failure, a
-terminal-record write failure retains live ownership and blocks teardown.
+post-quiescence authoritative runtime model. Terminal capture installs that
+record in the repository root before its write. An ordinary write failure
+reports degraded durability but still retires protocol ownership; a later
+aggregate checkpoint can persist the pending terminal root without replaying
+finalization. Authority loss still fences the obsolete owner, and unresolved
+wallet or protocol obligations still block quiescence.
 
 The live transport checkpoint includes the cooperative terminal handoff's Rust
 command identity, exact reliable frame bytes and message number, sent state, and

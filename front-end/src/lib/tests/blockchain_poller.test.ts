@@ -10,6 +10,7 @@ import { WalletOperationRuntime, walletOperationRuntime } from '../session/walle
 import { entriesForOwner, recoveryReadiness } from '../session/walletOperationSelectors';
 import { storageRepository } from '../session/storageRepository';
 import { walletProviderScopeKey } from '../session/walletOperationStore';
+import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 
 const walletOperation = {
   owner: {
@@ -1173,7 +1174,7 @@ describe('BlockchainPoller', () => {
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
-    walletOperationRuntime.registerReserved('trade-active-owner', owner, purpose);
+    installReservedWalletObligation('trade-active-owner', owner, purpose);
     walletOperationRuntime.settleOperation(
       owner,
       purpose,
@@ -1270,7 +1271,7 @@ describe('BlockchainPoller', () => {
         connectionListeners.delete(listener);
       };
     };
-    walletOperationRuntime.registerReserved(
+    installReservedWalletObligation(
       'trade-provider-readiness',
       walletOperation.owner,
       walletOperation.purpose,

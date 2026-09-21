@@ -213,7 +213,6 @@ describe('durable game envelope round trips', () => {
     expect(snapshot.betweenHandCompose).toEqual({
       selected_game: 'spacepoker',
       game_timeout: '47',
-      proposal_sent: false,
     });
 
     await saveLiveEnvelope(liveSave(snapshot));
@@ -309,6 +308,7 @@ describe('durable game envelope round trips', () => {
     const decoded = decodeDurableApplicationState(save);
     expect(decoded.model.game.handKey).toBe(4);
     expect(decoded.model.betweenHand.newHandRequested).toBe(true);
+    expect(decoded.model.betweenHand.compose.proposalSent).toBe(true);
     expect(
       snapshotFromSessionModel(decoded.model, {
         channelStatus: save.session.presentation.channelStatus,
@@ -317,6 +317,41 @@ describe('durable game envelope round trips', () => {
       }),
     ).toEqual(save.session.presentation);
   });
+
+  it.each(['local-outgoing', 'local-cancel-queued'] as const)(
+    'derives sent compose state from unresolved %s proposal intent',
+    (lifecycle) => {
+      const restored = decodeDurableApplicationState(
+        liveSave({
+          betweenHandCompose: {
+            selected_game: 'spacepoker',
+            game_timeout: '47',
+          },
+          pendingProposals: [
+            {
+              id: 'next-hand',
+              lifecycle,
+              hand_proposal: {
+                sender_is_player_a: true,
+                game_timeout: '47',
+                game_type: 'spacepoker',
+                parameters: [10n, 1n],
+              },
+            },
+          ],
+        }),
+      ).model;
+
+      expect(restored.betweenHand.compose).toEqual({
+        selectedGame: 'spacepoker',
+        gameTimeout: 47n,
+        proposalSent: true,
+      });
+      expect(snapshotFromSessionModel(restored).betweenHandCompose).not.toHaveProperty(
+        'proposal_sent',
+      );
+    },
+  );
 
   it('cold-decodes a live save written while protocol identities were bound', () => {
     const hashes = TEST_PROTOCOL_IDS;

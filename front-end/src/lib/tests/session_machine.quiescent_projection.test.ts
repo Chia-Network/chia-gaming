@@ -20,7 +20,6 @@ const proposal = {
 function controller(acceptProposal: (id: string) => void): SessionController {
   return {
     acceptProposal,
-    clearDerivedGamePresentation: jest.fn(),
     commitSessionRuntime: jest.fn(),
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
@@ -278,7 +277,6 @@ describe('SessionMachineRuntime quiescent projection', () => {
       unackedMessages: [],
       wasmNotificationHistory: [],
       diagnosticLog: [],
-      durabilityWarning: undefined,
       transportDisposition: 'active',
       activeGameIds: [],
       channelStatus: null,

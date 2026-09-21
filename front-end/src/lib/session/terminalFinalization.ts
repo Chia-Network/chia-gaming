@@ -9,6 +9,7 @@ import {
   type PreparedDurableApplicationStateCapture,
   type TerminalCapture,
 } from './sessionMachinePersist';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
 
 export interface TerminalSessionIdentity {
   myName: string;
@@ -29,13 +30,6 @@ const defaultDependencies: TerminalFinalizationDependencies = {
 };
 
 const pendingFinalizations = new WeakMap<SessionController, Promise<TerminalFinalizationResult>>();
-
-export class TerminalSessionStorageError extends Error {
-  constructor(readonly cause: unknown) {
-    super(cause instanceof Error ? cause.message : String(cause));
-    this.name = 'TerminalSessionStorageError';
-  }
-}
 
 export interface TerminalFinalizationResult {
   model: SessionModel;
@@ -73,7 +67,13 @@ export function finalizeTerminalSession(
     try {
       await dependencies.captureTerminal(capture).write();
     } catch (error) {
-      throw new TerminalSessionStorageError(error);
+      if (
+        error instanceof StorageAuthorityLostError ||
+        error instanceof StorageAuthorityRequiredError
+      ) {
+        throw error;
+      }
+      args.controller.reportDurabilityError(error);
     }
     dependencies.updateMarker();
     dependencies.teardown(args.controller);

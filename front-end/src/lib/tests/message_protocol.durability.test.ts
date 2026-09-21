@@ -9,6 +9,7 @@ import { storageRepository } from '../session/storageRepository';
 import { decodeDurableApplicationState } from '../session/persistence';
 import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
 import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { SESSION_DB_NAME } from '../session/indexedDb';
 
 import { liveSave } from './session_save_envelope.fixtures';
 import {
@@ -27,6 +28,24 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+
+async function readRawApplicationState(): Promise<Uint8Array> {
+  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(SESSION_DB_NAME);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  try {
+    return await new Promise<Uint8Array>((resolve, reject) => {
+      const transaction = db.transaction('application-state', 'readonly');
+      const request = transaction.objectStore('application-state').get('current');
+      request.onsuccess = () => resolve(request.result as Uint8Array);
+      request.onerror = () => reject(request.error);
+    });
+  } finally {
+    db.close();
+  }
+}
 
 describe('WASM command persistence', () => {
   it('coalesces successful eventless mutations and ignores read-only polling', async () => {
@@ -79,6 +98,29 @@ describe('WASM command persistence', () => {
 });
 
 describe('durability failures', () => {
+  it('emits once for differing failures until a successful checkpoint re-arms reporting', () => {
+    const { blob } = createReadyBlob();
+    const warnings: string[] = [];
+    const retry = jest.fn();
+    const unsubscribeRetry = blob.onTerminalFinalizationRetry(retry);
+    const sub = blob.getObservable().subscribe((event) => {
+      if (event.type === 'durability-error') warnings.push(event.error);
+    });
+
+    blob.reportDurabilityError(new Error('first failure'));
+    blob.reportDurabilityError(new Error('different failure'));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('first failure');
+
+    blob.clearDurabilityError();
+    expect(retry).not.toHaveBeenCalled();
+    blob.reportDurabilityError(new Error('later episode'));
+    expect(warnings).toHaveLength(2);
+    expect(warnings[1]).toContain('later episode');
+    unsubscribeRetry();
+    sub.unsubscribe();
+  });
+
   it('routes a rejected background save to the durability channel', async () => {
     jest.useFakeTimers();
     const { blob, cradle } = createReadyBlob();
@@ -122,9 +164,9 @@ describe('durability failures', () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
-  it('warns and releases messages and ACKs once before a later durability retry', async () => {
+  it('keeps valid WASM state and releases reliable effects once across IndexedDB failure', async () => {
     const helloBytes = enc('hello');
-    const { blob, sentMessages, sentAcks } = createReadyBlob(() => ({
+    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
       events: [{ OutboundMessage: helloBytes }],
     }));
     setActiveBlob(blob);
@@ -143,6 +185,8 @@ describe('durability failures', () => {
 
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('continuing without a durable checkpoint');
+      expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
+      expect(blob.remoteNumber).toBe(1n);
       expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
       expect(sentAcks).toEqual([1]);
       expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
@@ -153,6 +197,8 @@ describe('durability failures', () => {
     await blob.flushPendingSave();
     await blob.flushPendingWork();
 
+    expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
+    expect(blob.remoteNumber).toBe(1n);
     expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
     expect(sentAcks).toEqual([1]);
     sub.unsubscribe();
@@ -215,7 +261,7 @@ describe('durability failures', () => {
     }
 
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-    expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
+    expect(blob.getWasmFields()).not.toHaveProperty('durabilityWarning');
     expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
@@ -234,7 +280,7 @@ describe('durability failures', () => {
     expect(storageRepository.walletObligations()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
-    expect(blob.durabilityWarning).toBeUndefined();
+    expect(blob.getWasmFields()).not.toHaveProperty('durabilityWarning');
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
   });
 
@@ -528,6 +574,40 @@ describe('cradle serialization schema restore guard', () => {
 
     expect(deserializeMock).not.toHaveBeenCalled();
     expect(await storageRepository.readCurrentState()).toBeNull();
+  });
+
+  it('preserves the complete in-memory and durable aggregate on unsupported cradle schema', async () => {
+    const save = liveSave({
+      playerId: 'schema-evidence-player',
+      serializedGameSession: new Uint8Array([1, 2, 3]),
+      gameSessionSchemaVersion: 3n,
+      pairingToken: 'unsupported-schema-test',
+      diagnosticLog: ['preserve diagnostic evidence'],
+      rejectionTransports: [
+        {
+          kind: 'outbound-reject',
+          peerId: 'other-peer',
+          sessionId: 'ab'.repeat(16),
+          messageNumber: 2n,
+          remoteNumber: 1n,
+          unackedMessages: [{ msgno: 2n, msg: new Uint8Array([7, 8]) }],
+          createdAt: 1,
+        },
+      ],
+    });
+    storageRepository._replaceApplicationStateForTests(save);
+    await storageRepository.checkpointApplicationState(save);
+    const memoryBefore = structuredClone(storageRepository.loadState());
+    const durableBytesBefore = await readRawApplicationState();
+    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+
+    await expect(
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+    ).rejects.toThrow('Unsupported saved game format: cradle schema 3; current schema is 4');
+
+    expect(deserializeMock).not.toHaveBeenCalled();
+    expect(storageRepository.loadState()).toEqual(memoryBefore);
+    expect(await readRawApplicationState()).toEqual(durableBytesBefore);
   });
 
   it('does not delete same-schema records that fail deserialization', async () => {

@@ -107,20 +107,6 @@ export function snapshotFromSessionModel(
       facts.channelStatus === undefined
         ? channelStatusPayloadFromModel(model.channel.status)
         : facts.channelStatus,
-    myRunningBalance: model.myRunningBalance.toString(),
-    channelNotifQueue: model.channel.queue.map(({ id, kind, title, message }) => ({
-      id,
-      kind,
-      title,
-      message,
-    })),
-    gameNotifQueue: model.game.queue.map(({ id, kind, title, message }) => ({
-      id,
-      kind,
-      title,
-      message,
-    })),
-    dismissedChannelStatus: model.channel.dismissedChannelStatus,
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     betweenHandMode: model.betweenHand.mode,
     betweenHandCompose: encodeComposeDraftState(model.betweenHand.compose),
