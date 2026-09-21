@@ -591,8 +591,8 @@ export function decodeSessionSaveEnvelope(value: unknown): ParsedSessionSave {
   if (envelope.version !== SESSION_SAVE_ENVELOPE_VERSION) {
     throw new Error(`Garbled save: unsupported version ${String(envelope.version)}`);
   }
-  if (envelope.walletOperationService !== undefined) {
-    throw new Error('Garbled save: walletOperationService is not session-owned');
+  if (envelope.walletOperationRuntime !== undefined) {
+    throw new Error('Garbled save: walletOperationRuntime is not session-owned');
   }
   const identity = parseIdentity(envelope.identity);
   const preferences = parsePreferences(envelope.preferences);

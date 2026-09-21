@@ -2,9 +2,15 @@ import {
   WALLET_OPERATION_RECORD_VERSION,
   decodeWalletOperationRecord,
   encodeWalletOperationRecord,
+} from '../session/walletOperationCodec';
+import {
   reduceWalletOperation,
+  walletOperationEntryKey,
+  walletOperationRecoveryKey,
+  type WalletOperationEntry,
   type WalletOperationOwner,
   type WalletOperationPurpose,
+  type WalletOperationTransition,
 } from '../session/walletOperationStore';
 
 const owner: WalletOperationOwner = {
@@ -22,9 +28,22 @@ const request = {
   canonical: { amount: '10', fee: '0', conditions: [] },
 };
 
+function transition(
+  current: WalletOperationEntry | null,
+  command: WalletOperationTransition,
+): WalletOperationEntry | null {
+  const reduced = reduceWalletOperation(current ? [current] : [], {
+    ...command,
+    key: current ? walletOperationEntryKey(current) : walletOperationRecoveryKey(owner, purpose),
+    owner,
+    purpose,
+  });
+  return reduced.nextState[0] ?? null;
+}
+
 describe('WalletOperationStore reducer', () => {
   it('routes every durable creation and cancellation stage through pure transitions', () => {
-    const uncertain = reduceWalletOperation(null, owner, purpose, {
+    const uncertain = transition(null, {
       kind: 'creation-uncertain',
       request,
       generation: 0n,
@@ -40,27 +59,27 @@ describe('WalletOperationStore reducer', () => {
       orphanRisk: 'pre-id-response-lost',
     });
 
-    const duplicateEpoch = reduceWalletOperation(uncertain, owner, purpose, {
+    const duplicateEpoch = transition(uncertain, {
       kind: 'uncertain-attempt-launched',
       readinessEpoch: 4n,
       reason: 'duplicate',
     });
     expect(duplicateEpoch).toBe(uncertain);
 
-    const replacement = reduceWalletOperation(uncertain, owner, purpose, {
+    const replacement = transition(uncertain, {
       kind: 'uncertain-attempt-launched',
       readinessEpoch: 5n,
       reason: 'reconnected',
     });
     expect(replacement).toMatchObject({ generation: 1n, lastAttemptEpoch: 5n });
 
-    const retired = reduceWalletOperation(replacement, owner, purpose, {
+    const retired = transition(replacement, {
       kind: 'retire',
       reason: 'terminal-session',
     });
     expect(retired).toMatchObject({ disposition: 'cancel-on-create' });
 
-    const cancelRequired = reduceWalletOperation(retired, owner, purpose, {
+    const cancelRequired = transition(retired, {
       kind: 'creation-completed',
       tradeId: 'trade-late',
       reason: 'late-result',
@@ -68,7 +87,7 @@ describe('WalletOperationStore reducer', () => {
     expect(cancelRequired).toMatchObject({ stage: 'cancel-required', tradeId: 'trade-late' });
     expect(cancelRequired).toMatchObject({ orphanRisk: 'pre-id-response-lost' });
 
-    const cancellationUncertain = reduceWalletOperation(cancelRequired, owner, purpose, {
+    const cancellationUncertain = transition(cancelRequired, {
       kind: 'cancellation-uncertain',
       readinessEpoch: 8n,
       reason: 'response-lost',
@@ -78,7 +97,7 @@ describe('WalletOperationStore reducer', () => {
       lastAttemptEpoch: 8n,
     });
 
-    const rebasedCancellation = reduceWalletOperation(cancellationUncertain, owner, purpose, {
+    const rebasedCancellation = transition(cancellationUncertain, {
       kind: 'uncertain-cancellation-attempt-launched',
       readinessEpoch: 1n,
       reason: 'new-registry-generation',
@@ -86,21 +105,21 @@ describe('WalletOperationStore reducer', () => {
     });
     expect(rebasedCancellation).toMatchObject({ generation: 1n, lastAttemptEpoch: 1n });
 
-    const cancelling = reduceWalletOperation(rebasedCancellation, owner, purpose, {
+    const cancelling = transition(rebasedCancellation, {
       kind: 'cancellation-recovery-identified',
       recoveryId: 'cancel-exact',
     });
     expect(cancelling).toMatchObject({ stage: 'cancelling', recoveryId: 'cancel-exact' });
 
     expect(
-      reduceWalletOperation(cancelling, owner, purpose, {
+      transition(cancelling, {
         kind: 'cancellation-completed',
       }),
     ).toBeNull();
   });
 
   it('accepts only strict current v7 records', () => {
-    const entry = reduceWalletOperation(null, owner, purpose, {
+    const entry = transition(null, {
       kind: 'creation-uncertain',
       request,
       generation: 2n,
@@ -118,5 +137,73 @@ describe('WalletOperationStore reducer', () => {
         entries: [{ ...encoded.entries[0], unknown: true }],
       }),
     ).toThrow(/fields/);
+  });
+
+  it('allows only cancellation cleanup beside a creating recovery', () => {
+    const creating = {
+      owner,
+      purpose,
+      stage: 'creating' as const,
+      disposition: 'active' as const,
+      recoveryId: 'winner-recovery',
+      request,
+      reason: 'winner',
+    };
+    const cleanup = {
+      owner,
+      purpose,
+      stage: 'cancel-required' as const,
+      tradeId: 'stale-trade',
+      reason: 'stale-create-result',
+    };
+    expect(
+      decodeWalletOperationRecord(encodeWalletOperationRecord([creating, cleanup])).entries,
+    ).toEqual([creating, cleanup]);
+    expect(() =>
+      encodeWalletOperationRecord([{ ...cleanup, stage: 'reserved' as const }, creating]),
+    ).toThrow(/contradictory/);
+  });
+
+  it('rejects conflicting handed-off evidence without changing hydrated state', () => {
+    const creating: WalletOperationEntry = {
+      owner,
+      purpose,
+      stage: 'creating',
+      disposition: 'active',
+      recoveryId: 'winner-recovery',
+      request,
+      reason: 'winner',
+    };
+    expect(() =>
+      reduceWalletOperation([creating], {
+        kind: 'handoff-evidence',
+        evidence: {
+          kind: 'creation-recovery',
+          owner,
+          purpose,
+          disposition: 'active',
+          recoveryId: 'loser-recovery',
+          request: {
+            kind: 'funding',
+            canonical: { ...request.canonical, amount: '11' },
+          },
+          reason: 'loser',
+        },
+      }),
+    ).toThrow(/conflicts with hydrated recovery/);
+    expect(creating).toMatchObject({ recoveryId: 'winner-recovery', request });
+
+    expect(() =>
+      reduceWalletOperation([], {
+        kind: 'handoff-evidence',
+        evidence: {
+          kind: 'cancellation-recovery',
+          owner,
+          purpose,
+          tradeId: 'missing-trade',
+          recoveryId: 'loser-cancel',
+        },
+      }),
+    ).toThrow(/no matching hydrated trade/);
   });
 });

@@ -1,10 +1,14 @@
+import 'fake-indexeddb/auto';
+
 import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoller';
 import { activate, deactivate } from '../../hooks/activeBlockchain';
 import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
-import { walletOperationService } from '../session/walletOperationService';
+import { WalletOperationRuntime, walletOperationRuntime } from '../session/walletOperationRuntime';
+import { entriesForOwner, recoveryReadiness } from '../session/walletOperationSelectors';
+import { storageRepository } from '../session/storageRepository';
 
 const walletOperation = {
   owner: {
@@ -80,6 +84,14 @@ function makeCoinRecord(index: number): CoinRecord {
 }
 
 describe('BlockchainPoller', () => {
+  beforeAll(async () => {
+    await storageRepository.claimLease();
+  });
+
+  afterAll(() => {
+    storageRepository._resetForTests();
+  });
+
   it('reports a decreased height to the cradle (reorg signal not clamped)', async () => {
     // Height goes up then drops: a reorg.  The poller must forward the lower
     // height so the transaction manager can detect the rollback.
@@ -769,7 +781,7 @@ describe('BlockchainPoller', () => {
   });
 
   it('starts reads immediately but waits for successful ledger hydration before wallet mutation', async () => {
-    walletOperationService.resetForTests(false);
+    walletOperationRuntime.resetForTests(false);
     const getHeightInfo = jest.fn().mockResolvedValue(7n);
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
@@ -798,18 +810,18 @@ describe('BlockchainPoller', () => {
     await expect(read).resolves.toBe(7n);
     expect(beginWalletOffer).not.toHaveBeenCalled();
 
-    walletOperationService.hydrateFromDisk(null);
+    walletOperationRuntime.hydrateFromDisk(null);
     await expect(mutation).resolves.toEqual({
       kind: 'created',
       material: { kind: 'offer', offer: 'offer-ready' },
       tradeId: 'trade-ready',
     });
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    walletOperationService.resetForTests();
+    walletOperationRuntime.resetForTests();
   });
 
   it('fails wallet mutation closed when ledger hydration is malformed', async () => {
-    walletOperationService.resetForTests(false);
+    walletOperationRuntime.resetForTests(false);
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created',
       material: { kind: 'offer', offer: 'must-not-launch' },
@@ -830,10 +842,10 @@ describe('BlockchainPoller', () => {
     const mutation = poller.rpc
       .getWalletOfferProvider(walletOperation.owner)!
       .beginCreation(walletOperation, walletRequest);
-    expect(() => walletOperationService.hydrateFromDisk({ version: 2n })).toThrow();
+    expect(() => walletOperationRuntime.hydrateFromDisk({ version: 2n })).toThrow();
     await expect(mutation).rejects.toThrow();
     expect(beginWalletOffer).not.toHaveBeenCalled();
-    walletOperationService.resetForTests();
+    walletOperationRuntime.resetForTests();
   });
 
   it('revalidates the connection epoch after waiting at the shared gate', async () => {
@@ -1107,7 +1119,7 @@ describe('BlockchainPoller', () => {
 
   it('returns a stale successful wallet offer to durable lifecycle ownership', async () => {
     jest.useFakeTimers();
-    walletOperationService.resetForTests();
+    const walletRuntime = new WalletOperationRuntime();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstOffer = deferred<{
@@ -1141,11 +1153,11 @@ describe('BlockchainPoller', () => {
         };
       },
     } as unknown as InternalBlockchainInterface;
-    const poller = new BlockchainPoller(rpc, 1000);
-    walletOperationService.attachProvider(poller.rpc.getWalletOfferProvider()!);
+    const poller = new BlockchainPoller(rpc, 1000, undefined, walletRuntime);
+    walletRuntime.attachProvider(poller.rpc.getWalletOfferProvider()!);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
-    const stale = walletOperationService.createOffer(
+    const stale = walletRuntime.createOffer(
       walletOperation.owner,
       walletOperation.purpose,
       { ...walletRequest, uniqueId: 'old' },
@@ -1171,7 +1183,7 @@ describe('BlockchainPoller', () => {
       material: { kind: 'offer', offer: 'offer-old' },
       tradeId: 'trade-old',
     });
-    walletOperationService.settleOperation(
+    walletRuntime.settleOperation(
       walletOperation.owner,
       walletOperation.purpose,
       'cancel-required',
@@ -1180,17 +1192,17 @@ describe('BlockchainPoller', () => {
     await advanceLane(0);
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-old');
-    expect(walletOperationService.entriesFor(walletOperation.owner)).toEqual([
+    expect(entriesForOwner(walletRuntime.snapshot(), walletOperation.owner)).toEqual([
       expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
     ]);
     await advanceLane(0);
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-    walletOperationService.resetForTests();
+    walletRuntime.resetForTests();
     jest.useRealTimers();
   });
 
   it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
-    walletOperationService.resetForTests();
+    walletOperationRuntime.resetForTests();
     const activeRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const inactiveRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const activeRpc = {
@@ -1205,7 +1217,7 @@ describe('BlockchainPoller', () => {
       }),
       onConnectionChange: () => () => {},
     } as unknown as InternalBlockchainInterface;
-    walletOperationService.attachProvider(activeRpc.getWalletOfferProvider()!);
+    walletOperationRuntime.attachProvider(activeRpc.getWalletOfferProvider()!);
     new BlockchainPoller(
       {
         ...makeRpc([1n]),
@@ -1220,18 +1232,23 @@ describe('BlockchainPoller', () => {
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
-    walletOperationService.registerReserved('trade-active-owner', owner, purpose);
-    walletOperationService.requireCancellation('trade-active-owner', 'wallet-outcome-finalized');
-    await walletOperationService.awaitOwner(owner);
+    walletOperationRuntime.registerReserved('trade-active-owner', owner, purpose);
+    walletOperationRuntime.settleOperation(
+      owner,
+      purpose,
+      'cancel-required',
+      'wallet-outcome-finalized',
+    );
+    await walletOperationRuntime.awaitOwner(owner);
 
     expect(activeRelease).toHaveBeenCalledWith('trade-active-owner');
     expect(inactiveRelease).not.toHaveBeenCalled();
-    walletOperationService.resetForTests();
+    walletOperationRuntime.resetForTests();
   });
 
   it('detaches wallet recovery readiness while the active provider is disconnected', () => {
     jest.useFakeTimers();
-    walletOperationService.resetForTests();
+    walletOperationRuntime.resetForTests();
     let connected = true;
     const connectionListeners = new Set<(next: boolean) => void>();
     const sourceProvider = {
@@ -1249,7 +1266,7 @@ describe('BlockchainPoller', () => {
         connectionListeners.delete(listener);
       };
     };
-    walletOperationService.registerReserved(
+    walletOperationRuntime.registerReserved(
       'trade-provider-readiness',
       walletOperation.owner,
       walletOperation.purpose,
@@ -1257,18 +1274,33 @@ describe('BlockchainPoller', () => {
 
     try {
       activate(rpc, 60_000);
-      expect(walletOperationService.getRecoveryReadiness()).toBe('ready');
+      expect(
+        recoveryReadiness(
+          walletOperationRuntime.snapshot(),
+          walletOperationRuntime.providerScopeKeys(),
+        ),
+      ).toBe('ready');
 
       connected = false;
       for (const listener of connectionListeners) listener(false);
-      expect(walletOperationService.getRecoveryReadiness()).toBe('wallet-unavailable');
+      expect(
+        recoveryReadiness(
+          walletOperationRuntime.snapshot(),
+          walletOperationRuntime.providerScopeKeys(),
+        ),
+      ).toBe('wallet-unavailable');
 
       connected = true;
       for (const listener of connectionListeners) listener(true);
-      expect(walletOperationService.getRecoveryReadiness()).toBe('ready');
+      expect(
+        recoveryReadiness(
+          walletOperationRuntime.snapshot(),
+          walletOperationRuntime.providerScopeKeys(),
+        ),
+      ).toBe('ready');
     } finally {
       deactivate();
-      walletOperationService.resetForTests();
+      walletOperationRuntime.resetForTests();
       jest.useRealTimers();
     }
   });

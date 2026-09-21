@@ -1,13 +1,8 @@
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import {
-  discardStagedTerminalSession,
-  flushSessionSave,
-  markSavedSession,
-  peekSession,
-  stageTerminalSession,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
+import { markSavedSession } from '../../hooks/saveCoordination';
 import {
   channelStatusModelFromPayload,
   createSessionModel,
@@ -37,9 +32,9 @@ import * as assert from 'assert';
 import { createHash } from 'crypto';
 
 const harnessTerminalDependencies = {
-  stageTerminal: stageTerminalSession,
-  flushSave: flushSessionSave,
-  discardTerminal: discardStagedTerminalSession,
+  stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
+  flushSave: storageRepository.flushSessionSave.bind(storageRepository),
+  discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
   updateMarker: markSavedSession,
   teardown: () => {},
 };
@@ -50,18 +45,6 @@ function diagnosticBlobHash(blob: string): string {
 
 function diagnosticBlobSummary(blobs: string[]): string {
   return blobs.map((blob) => `{hash=${diagnosticBlobHash(blob)},length=${blob.length}}`).join(',');
-}
-
-async function runBoundedPollAttempts(
-  maxAttempts: number,
-  done: () => boolean,
-  pollAttempt: () => Promise<void>,
-): Promise<{ attempts: number; completed: boolean }> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await pollAttempt();
-    if (done()) return { attempts: attempt, completed: true };
-  }
-  return { attempts: maxAttempts, completed: false };
 }
 
 async function createAsymmetricActivePair(
@@ -218,7 +201,7 @@ async function runUnrollReloadAndAdvance(poller: BlockchainPoller): Promise<void
     },
     harnessTerminalDependencies,
   );
-  const terminalSave = await peekSession();
+  const terminalSave = await storageRepository.peekSession();
   assert.equal(terminalSave?.phase, 'terminal');
   assert.equal(
     terminalSave && sessionModelFromSave(terminalSave).game.instances[ids[0]]?.presentation,
@@ -286,7 +269,7 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
     },
     harnessTerminalDependencies,
   );
-  assert.equal((await peekSession())?.phase, 'terminal');
+  assert.equal((await storageRepository.peekSession())?.phase, 'terminal');
 }
 
 async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
@@ -327,8 +310,12 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
 
   const submittedBlobs: string[] = [];
   const puzzleSolutionCoinIds: string[] = [];
+  const registeredCoinIds: string[] = [];
+  const protocolWatchedCoinIds: string[] = [];
   const originalSpend = fakeBlockchainInfo.spend;
   const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
+  const originalRegisterCoins = fakeBlockchainInfo.registerCoins;
+  const originalWatchCoin = poller.watchCoin;
   fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
     submittedBlobs.push(args[0]);
     return originalSpend.apply(fakeBlockchainInfo, args);
@@ -339,9 +326,24 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     puzzleSolutionCoinIds.push(await coinIdFromBytes(toUint8(args[0])));
     return originalGetPuzzleAndSolution.apply(fakeBlockchainInfo, args);
   };
+  fakeBlockchainInfo.registerCoins = async (...args: Parameters<typeof originalRegisterCoins>) => {
+    registeredCoinIds.push(...args[0]);
+    return originalRegisterCoins.apply(fakeBlockchainInfo, args);
+  };
+  poller.watchCoin = (...args: Parameters<typeof originalWatchCoin>) => {
+    protocolWatchedCoinIds.push(args[1].coin_name);
+    return originalWatchCoin.apply(poller, args);
+  };
 
   try {
     const baselineSubmissionCount = submittedBlobs.length;
+    const channelWatches = lane.controller.snapshotWatchedCoins();
+    const channelCoin = lane.controller
+      .getCoinsOfInterest()
+      .find(({ label }) => label === 'Channel coin');
+    assert.ok(channelCoin, 'active protocol state must identify its channel coin');
+    const channelInput = channelWatches.find(({ coin_name }) => coin_name === channelCoin.id);
+    assert.ok(channelInput, 'the protocol channel coin must be present in the durable watch set');
     assert.equal(lane.controller.goOnChain(), true);
     await flushWrapperDrain(adapters);
     assert.equal(submittedBlobs.length, 1, 'unilateral spend must be submitted once');
@@ -366,34 +368,75 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
       'Unrolling',
       'the retained unilateral spend must land before the offline reorg',
     );
-    // The snapshot that first observes the channel spend registers the new
-    // unroll output but cannot include it retroactively. Refresh the expanded
-    // watch set so the retained submission records its output as landed.
-    const landedWatches = lane.controller.snapshotWatchedCoins();
-    poller.snapshotGameSessionCoinInterest(lane.controller, landedWatches);
+    const unrollCoin = lane.controller
+      .getCoinsOfInterest()
+      .find(({ label }) => label === 'Unroll coin');
+    assert.ok(unrollCoin, 'channel-spend observation must identify the exact unroll output');
+    const unrollOutput = lane.controller
+      .snapshotWatchedCoins()
+      .find(({ coin_name }) => coin_name === unrollCoin.id);
+    assert.ok(unrollOutput, 'the exact unroll output must be present in the durable watch set');
+    assert.deepEqual(
+      protocolWatchedCoinIds.filter((coinId) => coinId === unrollOutput.coin_name),
+      [unrollOutput.coin_name],
+      'the exact unroll output must arrive through one protocol watch intent',
+    );
+
+    // Registration follows the protocol watch on the next coherent poll. That
+    // poll must also observe the exact output as landed before replacement.
     await pollOnce(poller);
     await flushWrapperDrain(adapters);
-    const landedRecords = await fakeBlockchainInfo.getCoinRecordsByNames(
-      landedWatches.map(({ coin_name }) => coin_name),
+    assert.ok(
+      registeredCoinIds.includes(unrollOutput.coin_name),
+      'the exact unroll output must be registered with the chain provider before replacement',
+    );
+    const landedRecords = await fakeBlockchainInfo.getCoinRecordsByNames([
+      channelInput.coin_name,
+      unrollOutput.coin_name,
+    ]);
+    const landedRecordEntries = await Promise.all(
+      landedRecords.map(async (record) => [await coinRecordToName(record), record] as const),
+    );
+    const landedRecordsByName = new Map(
+      landedRecordEntries.filter(
+        (entry): entry is readonly [string, (typeof landedRecords)[number]] =>
+          entry[0] !== undefined,
+      ),
+    );
+    const landedChannelInput = landedRecordsByName.get(channelInput.coin_name);
+    const landedUnrollOutput = landedRecordsByName.get(unrollOutput.coin_name);
+    assert.equal(
+      landedChannelInput?.spent,
+      true,
+      'the finalized bundle must spend the exact watched channel input',
     );
     assert.equal(
-      landedRecords.length,
-      landedWatches.length,
-      'every retained watch, including the expected output, must exist before replacement',
+      landedUnrollOutput?.spent,
+      false,
+      'the exact protocol-watched unroll output must land unspent',
     );
-    await pollOnce(poller);
-    await flushWrapperDrain(adapters);
+    assert.ok(landedChannelInput);
+    assert.ok(landedUnrollOutput);
+    assert.equal(
+      landedChannelInput.spentBlockIndex,
+      landedUnrollOutput.confirmedBlockIndex,
+      'the exact channel spend and unroll output must land in the same block',
+    );
+    assert.ok(
+      landedUnrollOutput.confirmedBlockIndex > 0n,
+      'the landed unroll output must have a predecessor block',
+    );
+    const replacementBaseHeight = landedUnrollOutput.confirmedBlockIndex - 1n;
     const landedHeight = await fakeBlockchainInfo.getHeightInfo();
     assert.ok(landedHeight > preLandingHeight, 'landing must advance the simulator tip');
     const preReplacementSubmissionCount = submittedBlobs.length;
     const puzzleRequestsBeforeReload = puzzleSolutionCoinIds.length;
     const controllerBeforeReplacementReload = lane.controller;
-    let vanishedOutputCoinIds: string[] = [];
 
     lane = (
       await injectSessionReload(lane, poller, undefined, async () => {
         const replacementHeight = await fakeBlockchainInfo.replaceChain(
-          preLandingHeight,
+          replacementBaseHeight,
           landedHeight,
         );
         assert.equal(
@@ -401,21 +444,13 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
           landedHeight,
           'replacement chain must reach the persisted tip',
         );
-        const replacementRecords = await fakeBlockchainInfo.getCoinRecordsByNames(
-          landedWatches.map(({ coin_name }) => coin_name),
-        );
-        const landedRecordEntries = await Promise.all(
-          landedRecords.map(async (record) => [await coinRecordToName(record), record] as const),
-        );
+        const replacementRecords = await fakeBlockchainInfo.getCoinRecordsByNames([
+          channelInput.coin_name,
+          unrollOutput.coin_name,
+        ]);
         const replacementRecordEntries = await Promise.all(
           replacementRecords.map(
             async (record) => [await coinRecordToName(record), record] as const,
-          ),
-        );
-        const landedRecordsByName = new Map(
-          landedRecordEntries.filter(
-            (entry): entry is readonly [string, (typeof landedRecords)[number]] =>
-              entry[0] !== undefined,
           ),
         );
         const replacementRecordsByName = new Map(
@@ -424,26 +459,15 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
               entry[0] !== undefined,
           ),
         );
-        vanishedOutputCoinIds = landedWatches
-          .map(({ coin_name }) => coin_name)
-          .filter(
-            (coinName) =>
-              landedRecordsByName.has(coinName) && !replacementRecordsByName.has(coinName),
-          );
-        assert.ok(
-          vanishedOutputCoinIds.length > 0,
-          'equal-tip replacement must remove at least one landed watched output',
+        assert.equal(
+          replacementRecordsByName.has(unrollOutput.coin_name),
+          false,
+          'equal-tip replacement must remove the exact landed unroll output',
         );
-        const revivedInputCoinIds = landedWatches
-          .map(({ coin_name }) => coin_name)
-          .filter(
-            (coinName) =>
-              landedRecordsByName.get(coinName)?.spent === true &&
-              replacementRecordsByName.get(coinName)?.spent === false,
-          );
-        assert.ok(
-          revivedInputCoinIds.length > 0,
-          'equal-tip replacement must revive a spent input from the retained transaction',
+        assert.equal(
+          replacementRecordsByName.get(channelInput.coin_name)?.spent,
+          false,
+          'equal-tip replacement must revive the finalized bundle channel input',
         );
         // Force the poll that used to race teardown. Before the reload harness
         // retired the old controller first, it consumed this replacement and
@@ -453,35 +477,20 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     ).lane;
     assert.equal(lane.controller.getRestoreStatus(), 'restored');
 
-    // Scheduled polling is stopped for this offline lane. An explicit poll may
-    // intentionally decline to report after exhausting its coherent-snapshot
-    // attempts. The recorder is shared by both controllers, so only the exact
-    // retained bundle proves that the restored controller rebroadcast its transaction.
-    const transactionRebroadcastPoll = await runBoundedPollAttempts(
-      100,
-      () => submittedBlobs.slice(preReplacementSubmissionCount).includes(finalizedBlob),
-      async () => {
-        await pollOnce(poller);
-        await flushWrapperDrain(adapters);
-        // The first pass releases the transaction rebroadcast into the controller
-        // queue; the second persists finalization and releases its submission.
-        await flushWrapperDrain(adapters);
-      },
-    );
-    assert.equal(
-      transactionRebroadcastPoll.completed,
-      true,
-      `exact retained transaction did not rebroadcast within ${transactionRebroadcastPoll.attempts} attempts`,
-    );
+    // One coherent restored snapshot queues the replay; the two fixed-point
+    // drains persist finalization and release the exact broadcast.
+    await pollOnce(poller);
+    await flushWrapperDrain(adapters);
+    await flushWrapperDrain(adapters);
+    await lane.controller.flushPendingWork();
     const transactionRebroadcasts = submittedBlobs.slice(preReplacementSubmissionCount);
     const watchedCoins = lane.controller.snapshotWatchedCoins();
     const rebroadcastProvenance = async (observed: string[]): Promise<string> =>
-      `attempts=${transactionRebroadcastPoll.attempts}/100 completed=${transactionRebroadcastPoll.completed} ` +
       `peak=${await fakeBlockchainInfo.getHeightInfo()} ` +
       `submissions={total=${submittedBlobs.length},baseline=${baselineSubmissionCount},preReplacement=${preReplacementSubmissionCount},postReplacement=${observed.length}} ` +
       `expected={hash=${diagnosticBlobHash(finalizedBlob)},length=${finalizedBlob.length}} ` +
       `observed=[${diagnosticBlobSummary(observed)}] ` +
-      `vanishedOutputCoinIds=[${vanishedOutputCoinIds.join(',')}] ` +
+      `channelInput=${channelInput.coin_name} unrollOutput=${unrollOutput.coin_name} ` +
       `channelStatus=${lane.controller.lastChannelStatus?.state ?? 'none'} ` +
       `watchedCoins={count=${watchedCoins.length},ids=[${watchedCoins.map(({ coin_name }) => coin_name).join(',')}]} ` +
       `controller={uniqueId=${lane.controller.uniqueId},replaced=${controllerBeforeReplacementReload !== lane.controller},adapterOwnsController=${lane.adapter.blob === lane.controller}} ` +
@@ -494,11 +503,11 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     );
     const replacementPuzzleRequests = puzzleSolutionCoinIds.slice(puzzleRequestsBeforeReload);
     assert.deepEqual(
-      replacementPuzzleRequests.filter((coinId) => vanishedOutputCoinIds.includes(coinId)),
+      replacementPuzzleRequests.filter((coinId) => coinId === unrollOutput.coin_name),
       [],
-      `vanished output IDs must not request nonexistent puzzles and solutions; vanished=[${vanishedOutputCoinIds.join(',')}], requested=[${replacementPuzzleRequests.join(',')}]`,
+      `vanished unroll output must not request a nonexistent puzzle and solution; output=${unrollOutput.coin_name}, requested=[${replacementPuzzleRequests.join(',')}]`,
     );
-    assert.equal((await peekSession())?.phase, 'live');
+    assert.equal((await storageRepository.peekSession())?.phase, 'live');
     assert.equal(lane.controller.lastChannelStatus?.state, 'Unrolling');
     assert.notEqual(lane.controller.lastChannelStatus?.session_disposition, 'Abandoned');
     assert.equal(isTerminalChannelSnapshot(lane.controller.lastChannelStatus), false);
@@ -515,6 +524,8 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
   } finally {
     fakeBlockchainInfo.spend = originalSpend;
     fakeBlockchainInfo.getPuzzleAndSolution = originalGetPuzzleAndSolution;
+    fakeBlockchainInfo.registerCoins = originalRegisterCoins;
+    poller.watchCoin = originalWatchCoin;
   }
 }
 

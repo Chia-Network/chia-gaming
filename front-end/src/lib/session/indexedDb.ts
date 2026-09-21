@@ -2,9 +2,9 @@ import type { SessionSave } from './saveEnvelope';
 import {
   decodeWalletOperationRecord,
   encodeWalletOperationRecord,
-  type WalletOperationEntry,
   type WalletOperationRecord,
-} from './walletOperationStore';
+} from './walletOperationCodec';
+import type { WalletOperationEntry } from './walletOperationStore';
 import { decode, encode, type BencodexValue } from 'chia-gaming-bencodex';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
@@ -491,6 +491,18 @@ export async function readSessionRecord(): Promise<unknown | null> {
   }
 }
 
+export async function inspectSessionRecord(): Promise<{
+  sessionRecord: unknown | null;
+  sessionError?: InvalidSessionRecordError;
+}> {
+  try {
+    return { sessionRecord: await readSessionRecord() };
+  } catch (error) {
+    if (!(error instanceof InvalidSessionRecordError)) throw error;
+    return { sessionRecord: null, sessionError: error };
+  }
+}
+
 async function performWriteSessionRecord(
   record: SessionSave,
   authority: DurableStorageAuthority,
@@ -612,7 +624,7 @@ async function deleteWalletOperationRecordRaw(authority: DurableStorageAuthority
   }
 }
 
-/** IndexedDB transaction port consumed only by StorageCoordinator. */
+/** Stateless transaction port consumed only by StorageRepository. */
 export const indexedDbStoragePort = {
   claimAndRead: claimAndReadDurableStorageRaw,
   beginHardReset: beginDurableHardResetRaw,

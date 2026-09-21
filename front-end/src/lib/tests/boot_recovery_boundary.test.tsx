@@ -8,18 +8,11 @@ import {
   type BootRecoveryBoundaryDependencies,
   type BootRestoreSource,
 } from '../../components/BootRecoveryBoundary';
-import {
-  _resetForTests,
-  claimLease,
-  flushSessionSave,
-  releaseLeaseIfOwner,
-  saveSession,
-  setAlias,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
+import { releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
-import { SESSION_DB_NAME } from '../session/indexedDb';
+import { indexedDbStoragePort, readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
-import { StorageCoordinator, storageCoordinator } from '../session/storageCoordinator';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -71,7 +64,7 @@ function holdNextClaim(): { entered: Promise<void>; release: () => void } {
   const entered = new Promise<void>((resolve) => {
     claimed = resolve;
   });
-  storageCoordinator.holdNextClaimAfterCommitForTests(barrier, claimed);
+  storageRepository.holdNextClaimAfterCommitForTests(barrier, claimed);
   return { entered, release };
 }
 
@@ -142,7 +135,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   let renderer: ReactTestRenderer | null = null;
 
   beforeEach(async () => {
-    _resetForTests();
+    storageRepository._resetForTests();
     _resetPendingWalletConnectWipeForTests();
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
@@ -160,7 +153,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       act(() => renderer?.unmount());
       renderer = null;
     }
-    _resetForTests();
+    storageRepository._resetForTests();
     _resetPendingWalletConnectWipeForTests();
     await deleteSessionDatabase();
   });
@@ -182,8 +175,8 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         }),
       },
     });
-    const inspect = jest.spyOn(storageCoordinator, 'inspect');
-    const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+    const inspect = jest.spyOn(storageRepository, 'inspect');
+    const claim = jest.spyOn(storageRepository, 'claimAndRead');
     const onSessionId = jest.fn();
     const onRestore = jest.fn();
 
@@ -211,9 +204,10 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       value: originalIndexedDb,
     });
     for (const request of deletes) request.onsuccess?.();
-    await waitForRender(renderer!, 'saved session is unsupported');
+    await waitForRender(renderer!, 'Fresh dashboard');
 
     expect(inspect).toHaveBeenCalled();
+    expect(localStorage.getItem('appState_savedSession')).toBeNull();
     inspect.mockRestore();
     claim.mockRestore();
   });
@@ -233,8 +227,8 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         }),
       },
     });
-    const inspect = jest.spyOn(storageCoordinator, 'inspect');
-    const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+    const inspect = jest.spyOn(storageRepository, 'inspect');
+    const claim = jest.spyOn(storageRepository, 'claimAndRead');
 
     act(() => {
       renderer = create(
@@ -260,27 +254,27 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('shows local loading then restores while hub and wallet remain unresolved', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const save = liveSave({
       blockchainType: 'walletconnect',
       pairingToken: 'restore-pair',
       serializedGameSession: new Uint8Array([1, 2, 3]),
     });
     if (save.phase !== 'live') throw new Error('expected live save');
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'common',
       preferences: save.preferences,
     });
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'live',
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
       history: save.history,
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
 
     const hub = new Promise<void>(() => {});
     const wallet = new Promise<void>(() => {});
@@ -312,26 +306,26 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('offers and restores a durable live session without localStorage hints', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const save = liveSave({
       pairingToken: 'markerless-restore-pair',
       serializedGameSession: new Uint8Array([9, 8, 7]),
     });
     if (save.phase !== 'live') throw new Error('expected live save');
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'live',
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
       history: save.history,
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
     localStorage.clear();
 
     const onRestore = jest.fn();
-    const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+    const claim = jest.spyOn(storageRepository, 'claimAndRead');
     act(() => {
       renderer = create(
         createElement(ShellBootHarness, {
@@ -362,6 +356,69 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 
   it.each([
     [
+      'unreadable',
+      async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open(SESSION_DB_NAME);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        await new Promise<void>((resolve, reject) => {
+          const transaction = db.transaction('session', 'readwrite');
+          transaction.objectStore('session').put({ malformed: true }, 'current');
+          transaction.oncomplete = () => resolve();
+          transaction.onerror = () => reject(transaction.error);
+        });
+        db.close();
+      },
+    ],
+    [
+      'incompatible',
+      async () => {
+        await storageRepository.persist(
+          storageRepository.mutateRecords('write-session', {
+            schema: 'unsupported-session',
+            version: 999n,
+            phase: 'preferences',
+            identity: {},
+            preferences: {},
+            history: {},
+          } as never),
+        );
+      },
+    ],
+  ])(
+    'claims and authoritatively deletes a disposable %s session while preserving recovery UX',
+    async (_label, writeDisposableSession) => {
+      await storageRepository.claimLease();
+      await writeDisposableSession();
+      localStorage.setItem('appState_savedSession', '1');
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+
+      const claim = jest.spyOn(storageRepository, 'claimAndRead');
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+      act(() => {
+        renderer = create(
+          createElement(ShellBootHarness, {
+            externalHub: new Promise<void>(() => {}),
+            externalWallet: new Promise<void>(() => {}),
+            reload: jest.fn(),
+          }),
+        );
+      });
+
+      await waitForRender(renderer!, 'saved session is unsupported');
+      expect(claim).toHaveBeenCalledTimes(1);
+      expect(await readSessionRecord()).toBeNull();
+      expect(localStorage.getItem('appState_savedSession')).toBe('1');
+      error.mockRestore();
+      claim.mockRestore();
+    },
+  );
+
+  it.each([
+    [
       'live',
       () =>
         liveSave({
@@ -383,15 +440,14 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     'recovers a %s session committed between inspection and atomic claim without a second claim',
     async (_label, makeSave) => {
       const racingSave = makeSave();
-      const racingCoordinator = new StorageCoordinator();
-      const originalInspect = storageCoordinator.inspect.bind(storageCoordinator);
-      const inspect = jest.spyOn(storageCoordinator, 'inspect').mockImplementationOnce(async () => {
+      const originalInspect = storageRepository.inspect.bind(storageRepository);
+      const inspect = jest.spyOn(storageRepository, 'inspect').mockImplementationOnce(async () => {
         const inspected = await originalInspect();
-        await racingCoordinator.claimAndRead('racing-tab');
-        await racingCoordinator.persist(racingCoordinator.writeSession(racingSave));
+        const racingClaim = await indexedDbStoragePort.claimAndRead('racing-tab');
+        await indexedDbStoragePort.writeSession(racingSave, racingClaim.authority);
         return inspected;
       });
-      const claim = jest.spyOn(storageCoordinator, 'claimAndRead');
+      const claim = jest.spyOn(storageRepository, 'claimAndRead');
       const onFreshClaim = jest.fn();
       const onRestore = jest.fn();
 
@@ -428,7 +484,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   );
 
   it('preserves malformed wallet evidence and offers a successful hard reset retry', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
       request.onsuccess = () => resolve(request.result);
@@ -442,9 +498,10 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     });
     db.close();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
 
     const reload = jest.fn();
+    const claim = jest.spyOn(storageRepository, 'claimAndRead');
     act(() => {
       renderer = create(
         createElement(ShellBootHarness, {
@@ -455,14 +512,16 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       );
     });
     await waitForRender(renderer!, 'Stored wallet operation record is malformed');
+    expect(claim).not.toHaveBeenCalled();
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
     });
     expect(reload).toHaveBeenCalledTimes(1);
+    claim.mockRestore();
   });
 
   it('flushes pre-authority identity changes only after the atomic claim', async () => {
-    setAlias('Buffered Alice');
+    storageRepository.updatePreference({ key: 'alias', value: 'Buffered Alice' });
 
     act(() => {
       renderer = create(
@@ -475,7 +534,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     });
     await waitForRender(renderer!, 'Fresh dashboard');
     expect(renderer!.root.findByProps({ children: 'Fresh dashboard' })).toBeDefined();
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
   });
 
   it('suppresses fresh-claim callbacks when authority is lost before snapshot delivery', async () => {
@@ -500,7 +559,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       await claim.entered;
     });
 
-    act(() => storageCoordinator.loseAuthority('takeover'));
+    act(() => storageRepository.loseAuthority('takeover'));
     claim.release();
     await waitForRender(renderer!, 'Tab conflict');
 
@@ -535,7 +594,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       takeover = renderer!.root.findByProps({ children: 'Take over' }).props.onClick();
       await claim.entered;
     });
-    act(() => storageCoordinator.loseAuthority('takeover'));
+    act(() => storageRepository.loseAuthority('takeover'));
     claim.release();
     await act(async () => {
       await takeover;
@@ -548,22 +607,22 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('suppresses identity and restore callbacks when a resume claim becomes stale', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const save = liveSave({
       pairingToken: 'stale-resume-pair',
       serializedGameSession: new Uint8Array([7, 8, 9]),
     });
     if (save.phase !== 'live') throw new Error('expected live save');
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'live',
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
       history: save.history,
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
 
     const onSessionId = jest.fn();
     const onFreshClaim = jest.fn();
@@ -588,7 +647,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       resume = renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       await claim.entered;
     });
-    act(() => storageCoordinator.loseAuthority('takeover'));
+    act(() => storageRepository.loseAuthority('takeover'));
     claim.release();
     await act(async () => {
       await resume;
@@ -601,22 +660,22 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
   });
 
   it('does not finish an in-flight restore after storage authority is lost', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const save = liveSave({
       pairingToken: 'authority-loss-pair',
       serializedGameSession: new Uint8Array([4, 5, 6]),
     });
     if (save.phase !== 'live') throw new Error('expected live save');
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'live',
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
       history: save.history,
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
 
     let releaseRestore!: () => void;
     let restoreStarted!: () => void;
@@ -652,7 +711,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       resume = renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       await restoreEntered;
     });
-    act(() => storageCoordinator.loseAuthority('takeover'));
+    act(() => storageRepository.loseAuthority('takeover'));
     expect(renderer!.root.findByProps({ children: 'Tab conflict' })).toBeDefined();
 
     releaseRestore();

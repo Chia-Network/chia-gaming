@@ -1,6 +1,6 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { type SessionPresentationSave, type SessionSave } from '../session/sessionCache';
+import { type SessionPresentationSave, type SessionSave } from '../session/saveEnvelope';
 import {
   decodeSessionSaveEnvelope,
   sessionModelFromSave,
@@ -191,13 +191,11 @@ describe('validateSessionSaveEnvelope', () => {
     expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
   });
 
-  it('rejects the removed live funding outbox projection', () => {
+  it('rejects unknown live fields', () => {
     const save = liveSave();
     if (save.phase !== 'live') throw new Error('expected live fixture');
-    (save.live as unknown as Record<string, unknown>).obsoleteFundingQueue = [];
-    expect(() => decodeSessionSaveEnvelope(save)).toThrow(
-      'unexpected live field obsoleteFundingQueue',
-    );
+    (save.live as unknown as Record<string, unknown>).unknownLiveField = [];
+    expect(() => decodeSessionSaveEnvelope(save)).toThrow('unexpected live field unknownLiveField');
   });
 
   it('accepts cloud as preferences.blockchainType', () => {
@@ -216,9 +214,9 @@ describe('validateSessionSaveEnvelope', () => {
     expect(() =>
       decodeSessionSaveEnvelope({
         ...liveSave(),
-        walletOperationService: [],
+        walletOperationRuntime: [],
       }),
-    ).toThrow('walletOperationService is not session-owned');
+    ).toThrow('walletOperationRuntime is not session-owned');
   });
 
   it.each([
@@ -319,7 +317,7 @@ describe('validateSessionSaveEnvelope', () => {
     'waitingStateEnteredAt',
     'cleanShutdownGraceStartedAt',
   ] satisfies Array<keyof SessionPresentationSave>)(
-    'rejects a v13 presentation missing required %s',
+    'rejects a current presentation missing required %s',
     (field) => {
       const save = liveSave();
       if (save.phase !== 'live') throw new Error('expected live fixture');

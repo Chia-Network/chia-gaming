@@ -1,4 +1,4 @@
-import type { SessionSave } from '../session/sessionCache';
+import { type SessionSave } from '../session/saveEnvelope';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import {

@@ -62,7 +62,7 @@ import {
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
-import { WalletOperationService } from '../session/walletOperationService';
+import { WalletOperationRuntime } from '../session/walletOperationRuntime';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
@@ -577,7 +577,7 @@ describe('RealBlockchainInterface', () => {
     expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(1);
   });
 
-  it('records non-ephemeral root removals and never asks the wallet to add a fee', async () => {
+  it('keeps exact pushTransactions rebroadcast idempotent and outside orphan state', async () => {
     const parentCoinInfo = '11'.repeat(32);
     const puzzleHash = '22'.repeat(32);
     const amount = 100n;
@@ -647,6 +647,13 @@ describe('RealBlockchainInterface', () => {
         amount: peerAmount,
       },
     ]);
+    const walletOperations = new WalletOperationRuntime();
+    await expect(
+      blockchain.spend('80', submittedBundle, puzzleHash, 'submitTransaction', 10n),
+    ).resolves.toMatchObject({ status: 'acknowledged' });
+    expect(mockPushTransactions).toHaveBeenCalledTimes(2);
+    expect(mockPushTransactions.mock.calls[1][0]).toEqual(call);
+    expect(walletOperations.snapshot()).toEqual([]);
   });
 
   it('persists initiator funding offers without unsupported coin-selection fields', async () => {
@@ -718,7 +725,7 @@ describe('RealBlockchainInterface', () => {
   });
 
   it('preserves already-spent cancellation detail and converges the ledger', async () => {
-    const ledger = new WalletOperationService();
+    const ledger = new WalletOperationRuntime();
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({
       success: false,
@@ -751,7 +758,7 @@ describe('RealBlockchainInterface', () => {
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
 
     ledger.registerReserved('trade-already-spent', owner, purpose);
-    ledger.requireCancellation('trade-already-spent', 'wallet-outcome-finalized');
+    ledger.settleOperation(owner, purpose, 'cancel-required', 'wallet-outcome-finalized');
     await ledger.awaitOwner(owner);
 
     expect(ledger.snapshot()).toEqual([]);

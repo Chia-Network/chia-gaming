@@ -43,14 +43,12 @@ use crate::session_phases::effects::{
     TimeoutClaimSemantic, TransactionSubmission,
 };
 use observation::ObservationTransients;
-#[cfg(test)]
-use submission::DeliveryAttempt;
 use submission::{
     DeliveryTrigger as SubmissionDeliveryTrigger, PendingSubmissionIntent as PendingSubmission,
     SubmissionBook,
 };
 pub use submission::{
-    SubmissionAttemptStatus, SubmissionDeliveryGoal, SubmissionSuccessorRelationship,
+    SubmissionAttemptRelationship, SubmissionAttemptStatus, SubmissionDeliveryGoal,
 };
 
 /// Raw per-coin chain state as reported by the polling layer for a single
@@ -68,6 +66,11 @@ pub struct CoinStateRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SubmittedTx {
     id: u64,
+    /// The sole token currently authorized to mutate this retained intent.
+    active_attempt: Option<submission::DeliveryAttempt>,
+    /// The most recently completed token, retained only until relinquishment or
+    /// until it becomes the predecessor of a newly issued attempt.
+    completed_attempt: Option<submission::DeliveryAttempt>,
     /// Canonical identity of the exact Rust-owned submission intent. Bundle
     /// diagnostic metadata (`SpendBundle::name`) is deliberately excluded.
     intent_fingerprint: Hash,
@@ -128,10 +131,11 @@ enum SubmissionChainTerminality {
 pub struct DrainedSubmission {
     pub id: u64,
     pub attempt_token: u64,
+    pub predecessor_attempt_token: Option<u64>,
+    pub relationship: SubmissionAttemptRelationship,
     pub bundle: SpendBundle,
     pub expiry: Option<u64>,
     pub fee_intent: SubmissionFeeIntent,
-    pub intent_fingerprint: Hash,
     #[cfg(test)]
     pub goal: SubmissionDeliveryGoal,
     #[cfg(test)]
@@ -325,11 +329,15 @@ fn bounded_text(value: String, limit: usize) -> String {
     if value.len() <= limit {
         return value;
     }
-    let mut end = limit;
+    const ELLIPSIS: &str = "…";
+    if limit < ELLIPSIS.len() {
+        return String::new();
+    }
+    let mut end = limit - ELLIPSIS.len();
     while !value.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}…", &value[..end])
+    format!("{}{}", &value[..end], ELLIPSIS)
 }
 
 struct SubmissionPlanError {
@@ -511,6 +519,8 @@ fn plan_pending_submission(
             .collect();
         let retained = SubmittedTx {
             id: candidate_id,
+            active_attempt: None,
+            completed_attempt: None,
             intent_fingerprint: fingerprint.clone(),
             base_bundle: pending.submission.bundle.clone(),
             current_variant: SubmissionBroadcastVariant::Base,
@@ -550,6 +560,8 @@ fn plan_pending_submission(
         DrainedSubmission {
             id,
             attempt_token: 0,
+            predecessor_attempt_token: None,
+            relationship: SubmissionAttemptRelationship::Initial,
             bundle: retained.current_bundle().clone(),
             expiry: retained_expiry_update
                 .map(|(_, expiry)| expiry)
@@ -558,7 +570,6 @@ fn plan_pending_submission(
                 .unresolved_fee_intent()
                 .cloned()
                 .unwrap_or(SubmissionFeeIntent::AlreadyPaid),
-            intent_fingerprint: retained.intent_fingerprint.clone(),
             #[cfg(test)]
             goal,
             #[cfg(test)]
@@ -993,15 +1004,6 @@ impl<C> TransactionManager<C> {
         self.submission_book.acknowledge_attempt(attempt_token)
     }
 
-    pub fn submission_successor_relationship(
-        &mut self,
-        successor_attempt_token: u64,
-        completed_attempt_token: u64,
-    ) -> Result<SubmissionSuccessorRelationship, Error> {
-        self.submission_book
-            .classify_successor(successor_attempt_token, completed_attempt_token)
-    }
-
     pub fn stop_submission_attempt(
         &mut self,
         attempt_token: u64,
@@ -1018,7 +1020,7 @@ impl<C> TransactionManager<C> {
     }
 
     #[cfg(test)]
-    fn test_attempt_for_submission(&self, id: u64) -> Result<&DeliveryAttempt, Error> {
+    fn test_attempt_for_submission(&self, id: u64) -> Result<&submission::DeliveryAttempt, Error> {
         self.submission_book
             .test_attempt_for_submission(id)
             .ok_or_else(|| Error::StrErr(format!("unknown submission id {id}")))
@@ -1838,6 +1840,25 @@ mod tests {
 
     fn test_submission(name: &str, expiry: Option<u64>) -> TransactionSubmission {
         TransactionSubmission::already_paid(test_bundle(name), expiry)
+    }
+
+    #[test]
+    fn bounded_submission_diagnostics_include_ellipsis_within_exact_byte_caps() {
+        for limit in [
+            SUBMISSION_DRAIN_MESSAGE_LIMIT,
+            SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT,
+        ] {
+            let prefix = format!("{}a", "é".repeat((limit - "…".len() - 1) / 2));
+            assert_eq!(prefix.len(), limit - "…".len());
+            let bounded = bounded_text(format!("{prefix}overflow"), limit);
+            assert_eq!(bounded.len(), limit);
+            assert!(bounded.ends_with('…'));
+            assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+        }
+
+        let boundary_split = bounded_text("é".repeat(300), SUBMISSION_DRAIN_MESSAGE_LIMIT);
+        assert!(boundary_split.len() <= SUBMISSION_DRAIN_MESSAGE_LIMIT);
+        assert!(boundary_split.ends_with('…'));
     }
 
     fn timeout_submission(coin: &CoinString, bundle: SpendBundle) -> TransactionSubmission {
@@ -4309,9 +4330,26 @@ mod tests {
         let duplicate = mgr.drain_submissions().unwrap().submissions;
         assert_eq!(duplicate.len(), 1);
         assert_eq!(duplicate[0].id, first[0].id);
+        assert_eq!(
+            duplicate[0].predecessor_attempt_token,
+            Some(first[0].attempt_token)
+        );
+        assert_eq!(
+            duplicate[0].relationship,
+            SubmissionAttemptRelationship::Exact
+        );
+        assert_eq!(
+            mgr.acknowledge_submission_attempt(first[0].attempt_token)
+                .unwrap(),
+            SubmissionAttemptStatus::Stale
+        );
+        assert_eq!(
+            mgr.test_attempt_for_submission(first[0].id).unwrap().token,
+            duplicate[0].attempt_token
+        );
         assert_eq!(mgr.submission_book.test_submitted().len(), 1);
 
-        mgr.acknowledge_submission(first[0].id).unwrap();
+        mgr.acknowledge_submission(duplicate[0].id).unwrap();
         mgr.pending_submissions.push(PendingSubmission {
             id: None,
             submission: TransactionSubmission::already_paid(
@@ -5069,7 +5107,7 @@ mod tests {
         let upgrade = restored.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(upgrade.id, first.id);
         assert_eq!(upgrade.goal, SubmissionDeliveryGoal::FeeUpgrade);
-        assert_eq!(upgrade.intent_fingerprint, first.intent_fingerprint);
+        assert_eq!(upgrade.id, first.id);
         let unavailable_upgrade = restored
             .finalize_submission_delivery(
                 upgrade.id,
@@ -5159,15 +5197,11 @@ mod tests {
             .remove(0);
         assert_eq!(second.id, first.id);
         assert!(second.attempt_token > first.attempt_token);
+        assert_eq!(second.predecessor_attempt_token, Some(first.attempt_token));
         assert_eq!(
-            restored_after_completion
-                .submission_successor_relationship(second.attempt_token, first.attempt_token,)
-                .unwrap(),
-            SubmissionSuccessorRelationship::NewerFeeBearing
+            second.relationship,
+            SubmissionAttemptRelationship::NewerFeeBearing
         );
-        assert!(restored_after_completion
-            .submission_successor_relationship(second.attempt_token, first.attempt_token)
-            .is_err());
         assert_eq!(
             restored_after_completion
                 .acknowledge_submission_attempt(first.attempt_token)
@@ -5193,9 +5227,140 @@ mod tests {
             .submissions
             .remove(0);
         assert!(third.attempt_token > second.attempt_token);
+        assert_eq!(third.predecessor_attempt_token, Some(second.attempt_token));
+        assert_eq!(
+            third.relationship,
+            SubmissionAttemptRelationship::NewerFeeBearing
+        );
         assert!(restored_after_completion
             .stop_submission_attempt(second.attempt_token)
             .is_ok());
+    }
+
+    #[test]
+    fn issuing_attempt_rejects_cross_submission_predecessor_without_consuming_state() {
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        for (name, expiry) in [("lineage-a", Some(10)), ("lineage-b", Some(20))] {
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: test_submission(name, expiry),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            });
+        }
+        let drained = manager.drain_submissions().unwrap().submissions;
+        let first = &drained[0];
+        let second = &drained[1];
+        let next_token = manager.submission_book.test_next_attempt_token();
+        manager
+            .submission_book
+            .test_attempt_mut(second.attempt_token)
+            .unwrap()
+            .submission_id = first.id;
+        manager.pending_submissions.push(PendingSubmission {
+            id: Some(second.id),
+            submission: test_submission("lineage-b", Some(20)),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+
+        let error = manager.drain_submissions().unwrap_err();
+        assert!(format!("{error:?}").contains("belongs to submission"));
+        assert_eq!(
+            manager.submission_book.test_next_attempt_token(),
+            next_token
+        );
+        assert_eq!(
+            manager
+                .test_attempt_for_submission(second.id)
+                .unwrap()
+                .token,
+            second.attempt_token
+        );
+    }
+
+    fn manager_with_two_live_attempts() -> TransactionManager<PersistableMockGameSession> {
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        for (name, expiry) in [
+            ("restore-lineage-a", Some(10)),
+            ("restore-lineage-b", Some(20)),
+        ] {
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: test_submission(name, expiry),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            });
+        }
+        assert_eq!(manager.drain_submissions().unwrap().submissions.len(), 2);
+        manager
+    }
+
+    fn restored_manager_error(manager: &TransactionManager<PersistableMockGameSession>) -> String {
+        let encoded = bencodex::to_vec(manager).expect("serialize malformed manager");
+        match bencodex::from_slice::<TransactionManager<PersistableMockGameSession>>(&encoded) {
+            Ok(_) => panic!("malformed current-schema manager must be rejected"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    #[test]
+    fn restore_rejects_cross_owned_delivery_attempt() {
+        let mut manager = manager_with_two_live_attempts();
+        let first_id = manager.submission_book.test_submitted()[0].id;
+        let second_token = manager.submission_book.test_submitted()[1]
+            .active_attempt
+            .as_ref()
+            .unwrap()
+            .token;
+        manager
+            .submission_book
+            .test_attempt_mut(second_token)
+            .unwrap()
+            .submission_id = first_id;
+
+        assert!(restored_manager_error(&manager).contains("not containing submission"));
+    }
+
+    #[test]
+    fn restore_rejects_duplicate_or_out_of_range_delivery_tokens() {
+        let mut duplicate = manager_with_two_live_attempts();
+        let first_token = duplicate.submission_book.test_submitted()[0]
+            .active_attempt
+            .as_ref()
+            .unwrap()
+            .token;
+        let second_token = duplicate.submission_book.test_submitted()[1]
+            .active_attempt
+            .as_ref()
+            .unwrap()
+            .token;
+        duplicate
+            .submission_book
+            .test_attempt_mut(second_token)
+            .unwrap()
+            .token = first_token;
+        assert!(restored_manager_error(&duplicate).contains("retained more than once"));
+
+        let mut out_of_range = manager_with_two_live_attempts();
+        let token = out_of_range.submission_book.test_submitted()[0]
+            .active_attempt
+            .as_ref()
+            .unwrap()
+            .token;
+        let next_token = out_of_range.submission_book.test_next_attempt_token();
+        out_of_range
+            .submission_book
+            .test_attempt_mut(token)
+            .unwrap()
+            .token = next_token;
+        assert!(restored_manager_error(&out_of_range).contains("outside issued range"));
+    }
+
+    #[test]
+    fn restore_rejects_simultaneous_active_and_completed_attempts() {
+        let mut manager = manager_with_two_live_attempts();
+        let submitted = &mut manager.submission_book.test_submitted_mut()[0];
+        submitted.completed_attempt = submitted.active_attempt.clone();
+
+        assert!(restored_manager_error(&manager).contains("both active and completed"));
     }
 
     #[test]
@@ -5256,13 +5421,13 @@ mod tests {
             manager
                 .relinquish_submission_attempt(intermediate.attempt_token)
                 .unwrap(),
-            SubmissionAttemptStatus::Applied
+            SubmissionAttemptStatus::Stale
         );
         manager = bencodex::from_slice(
             &bencodex::to_vec(&manager).expect("serialize after intermediate relinquishment"),
         )
         .expect("restore after intermediate relinquishment");
-        assert_eq!(manager.submission_book.test_completed_attempt_count(), 1);
+        assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
         assert_eq!(
             manager
                 .finalize_submission_attempt(
@@ -5281,11 +5446,10 @@ mod tests {
             SubmissionAttemptStatus::Stale
         );
         assert_eq!(
-            manager
-                .submission_successor_relationship(successor.attempt_token, first.attempt_token)
-                .unwrap(),
-            SubmissionSuccessorRelationship::Exact
+            successor.predecessor_attempt_token,
+            Some(intermediate.attempt_token)
         );
+        assert_eq!(successor.relationship, SubmissionAttemptRelationship::Exact);
         assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
         assert_eq!(
             manager
@@ -5327,7 +5491,7 @@ mod tests {
                 .unwrap(),
             SubmissionAttemptStatus::Stale
         );
-        assert_eq!(manager.submission_book.test_completed_attempt_count(), 1);
+        assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
         assert_eq!(manager.drain_retired_submission_ids(), vec![attempt.id]);
         assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
         assert_eq!(
@@ -5360,7 +5524,7 @@ mod tests {
                     .unwrap(),
                 SubmissionAttemptStatus::Stale
             );
-            assert_eq!(manager.submission_book.test_completed_attempt_count(), 1);
+            assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
             assert_eq!(manager.drain_retired_submission_ids(), vec![attempt.id]);
             assert_eq!(manager.submission_book.test_completed_attempt_count(), 0);
             assert_eq!(

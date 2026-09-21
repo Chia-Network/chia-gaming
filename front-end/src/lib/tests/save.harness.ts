@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
-import { claimLease, saveSession, type SessionSave, _resetForTests } from '../session/sessionCache';
+import { type SessionSave } from '../session/saveEnvelope';
+import { storageRepository } from '../session/storageRepository';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import type { BlockchainType } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -69,7 +70,7 @@ export function saveLiveFields(fields: Record<string, unknown> = sampleSession):
     fields.defaultFee !== undefined ||
     fields.hubUrl !== undefined
   ) {
-    void saveSession({
+    void storageRepository.saveSession({
       scope: 'common',
       preferences: {
         blockchainType: fields.blockchainType as BlockchainType | undefined,
@@ -78,7 +79,7 @@ export function saveLiveFields(fields: Record<string, unknown> = sampleSession):
       },
     });
   }
-  return saveSession({
+  return storageRepository.saveSession({
     scope: 'live',
     pairing: save.pairing,
     live: save.live,
@@ -91,7 +92,7 @@ export function savePreferences(fields: {
   blockchainType?: BlockchainType;
   hubUrl?: string;
 }): Promise<void> {
-  return saveSession({ scope: 'common', preferences: fields });
+  return storageRepository.saveSession({ scope: 'common', preferences: fields });
 }
 
 export function saveHistory(fields: {
@@ -99,7 +100,7 @@ export function saveHistory(fields: {
   wasmNotificationHistory?: string[];
   diagnosticLog?: string[];
 }): Promise<void> {
-  return saveSession({ scope: 'common', history: fields });
+  return storageRepository.saveSession({ scope: 'common', history: fields });
 }
 
 export function requireLive(save: SessionSave | null): Extract<SessionSave, { phase: 'live' }> {
@@ -115,7 +116,7 @@ export function requirePreHandshake(
 }
 
 beforeEach(async () => {
-  _resetForTests();
+  storageRepository._resetForTests();
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
@@ -125,12 +126,12 @@ beforeEach(async () => {
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
   });
-  await claimLease();
+  await storageRepository.claimLease();
 });
 
 afterEach(() => {
   // Cancel debounced flushes so a late queueWrite cannot run after the suite.
-  _resetForTests();
+  storageRepository._resetForTests();
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');
 });

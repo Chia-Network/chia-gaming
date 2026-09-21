@@ -4,16 +4,12 @@ import { SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
 import { restoreSession } from '../../hooks/blobSingleton';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
-import {
-  flushSessionSave,
-  hasSavedSessionMarker,
-  markSavedSession,
-  peekSession,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
+import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
 import { validateSessionSaveEnvelope } from '../session/persistence';
 import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
-import { walletOperationService } from '../session/walletOperationService';
-import { encodeWalletOperationRecord } from '../session/walletOperationStore';
+import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { encodeWalletOperationRecord } from '../session/walletOperationCodec';
 
 import { liveSave } from './session_save_envelope.fixtures';
 import {
@@ -31,7 +27,7 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
-import { storageCoordinator } from '../session/storageCoordinator';
+import { storageRepository } from '../session/storageRepository';
 
 describe('WASM command persistence', () => {
   it('coalesces successful eventless mutations and ignores read-only polling', async () => {
@@ -172,7 +168,7 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     blob.blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000);
-    walletOperationService.attachProvider(
+    walletOperationRuntime.attachProvider(
       blob.blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
         peerSessionId: '00'.repeat(16),
@@ -185,7 +181,7 @@ describe('durability failures', () => {
       if (failPersistence) throw new Error('disk full');
     });
 
-    walletOperationService.hydrateFromDisk(
+    walletOperationRuntime.hydrateFromDisk(
       encodeWalletOperationRecord([
         {
           tradeId: 'trade-unresolved',
@@ -208,7 +204,7 @@ describe('durability failures', () => {
 
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     expect(blob.durabilityWarning).toContain('continuing without a durable checkpoint');
-    expect(walletOperationService.snapshot()).toEqual([
+    expect(walletOperationRuntime.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
 
@@ -218,7 +214,7 @@ describe('durability failures', () => {
     await blob.flushPendingSave();
 
     expect(checkpoints).toHaveLength(2);
-    expect(walletOperationService.snapshot()).toEqual([
+    expect(walletOperationRuntime.snapshot()).toEqual([
       expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
     ]);
     expect(blob.durabilityWarning).toBeUndefined();
@@ -226,7 +222,7 @@ describe('durability failures', () => {
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {
-    const { loadState } = await import('../session/sessionCache');
+    const { storageRepository } = await import('../session/storageRepository');
     const outbound = enc('outbound');
     const { blob, cradle, sentMessages } = createReadyBlob(() => ({
       events: [{ OutboundMessage: outbound }],
@@ -246,9 +242,8 @@ describe('durability failures', () => {
       });
       // Cached must already contain the cradle before the returned Promise
       // settles — durability flushes immediately after starting the prepared save.
-      expect(loadState().phase === 'live' && loadState().live.serializedGameSession).toEqual(
-        cradleBytes,
-      );
+      const state = storageRepository.loadState();
+      expect(state.phase === 'live' && state.live.serializedGameSession).toEqual(cradleBytes);
       saveReturned = true;
       return pending;
     });
@@ -257,7 +252,7 @@ describe('durability failures', () => {
     await blob.flushPendingWork();
 
     expect(saveReturned).toBe(true);
-    const persisted = await peekSession();
+    const persisted = await storageRepository.peekSession();
     expect(persisted?.phase === 'live' && persisted.live.serializedGameSession).toEqual(
       cradleBytes,
     );
@@ -280,7 +275,7 @@ describe('durability failures', () => {
       serializedGameSession: new Uint8Array([9, 9, 9]),
       pairingToken: 'previous-durable-record',
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     (cradle.serialize as jest.Mock).mockImplementation(() => {
       throw new Error('malformed cradle serialization');
     });
@@ -298,7 +293,7 @@ describe('durability failures', () => {
     expect(sentAcks).toEqual([1]);
     blob.cleanup();
     setActiveBlob(null);
-    const saved = await peekSession();
+    const saved = await storageRepository.peekSession();
     expect(saved?.phase === 'live' && saved.live.serializedGameSession).toEqual(
       new Uint8Array([9, 9, 9]),
     );
@@ -509,8 +504,8 @@ describe('cradle serialization schema restore guard', () => {
     async (_label, gameSessionSchemaVersion) => {
       expectConsoleError('[save] rejecting incompatible session record');
       markSavedSession();
-      await storageCoordinator.persist(
-        storageCoordinator.writeSession({
+      await storageRepository.persist(
+        storageRepository.mutateRecords('write-session', {
           version: 22n,
           playerId: 'restore-schema-player',
           rewardPuzzleHash: '11'.repeat(32),
@@ -523,7 +518,7 @@ describe('cradle serialization schema restore guard', () => {
 
       expect(deserializeMock).not.toHaveBeenCalled();
       expect(hasSavedSessionMarker()).toBe(true);
-      expect(await peekSession()).toBeNull();
+      expect(await storageRepository.peekSession()).toBeNull();
     },
   );
 
@@ -542,18 +537,18 @@ describe('cradle serialization schema restore guard', () => {
       perGameAmount: '10',
       rewardPuzzleHash: '11'.repeat(32),
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
       throw new Error('corrupt current-schema cradle');
     });
-    const save = (await peekSession())!;
+    const save = (await storageRepository.peekSession())!;
 
     await expect(restoreSession(blob, save, wasmStateInit)).rejects.toThrow(
       'corrupt current-schema cradle',
     );
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);
-    const saved = await peekSession();
+    const saved = await storageRepository.peekSession();
     expect(saved?.phase === 'live' && saved.live.serializedGameSession).toEqual(
       new Uint8Array([1, 2, 3]),
     );

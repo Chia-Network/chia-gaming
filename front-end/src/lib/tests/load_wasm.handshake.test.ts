@@ -4,14 +4,8 @@ import { PeerConnectionResult } from '../../types/ChiaGaming';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
-import {
-  claimLease,
-  flushSessionSave,
-  hasSavedSessionMarker,
-  peekSession,
-  saveSession,
-  _resetForTests as resetSaveState,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
+import { hasSavedSessionMarker } from '../../hooks/saveCoordination';
 import {
   SessionControllerAdapter,
   action_with_messages,
@@ -30,7 +24,7 @@ import { liveSave } from './session_save_envelope.fixtures';
 function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
   if (save.phase !== 'live') throw new Error('expected live save');
-  return saveSession({
+  return storageRepository.saveSession({
     scope: 'live',
     pairing: save.pairing,
     live: save.live,
@@ -165,22 +159,22 @@ it(
         gameSessionSchemaVersion: BigInt(WholeWasmObject.game_session_serialization_schema()),
         pairingToken: 'reload-regression',
       });
-      await flushSessionSave();
+      await storageRepository.flushSessionSave();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
       await flushWrapperDrain([cradle1, cradle2]);
-      resetSaveState();
-      await claimLease();
+      storageRepository._resetForTests();
+      await storageRepository.claimLease();
       assert.ok(hasSavedSessionMarker());
-      void saveSession({
+      void storageRepository.saveSession({
         scope: 'common',
         history: { diagnosticLog: ['boot-before-resume'] },
       });
-      await flushSessionSave();
+      await storageRepository.flushSessionSave();
 
-      resetSaveState();
-      await claimLease();
-      const reloaded = await peekSession();
+      storageRepository._resetForTests();
+      await storageRepository.claimLease();
+      const reloaded = await storageRepository.peekSession();
       assert.equal(reloaded?.phase, 'live');
       if (reloaded?.phase !== 'live') throw new Error('expected live reload');
       assert.ok(reloaded.live.serializedGameSession instanceof Uint8Array);

@@ -1,12 +1,7 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
 import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import {
-  _resetForTests,
-  flushSessionSave,
-  peekSession,
-  saveSession,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog, resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -24,14 +19,14 @@ import {
   installSessionEnvelopeTestSetup,
   liveSave,
 } from './session_save_envelope.fixtures';
-import { storageCoordinator } from '../session/storageCoordinator';
+import { storageRepository } from '../session/storageRepository';
 
 installSessionEnvelopeTestSetup();
 
 describe('durable game envelope round trips', () => {
   const saveLiveEnvelope = async (save: ReturnType<typeof liveSave>) => {
     if (save.phase !== 'live') throw new Error('test fixture did not produce a live save');
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'live',
       pairing: save.pairing,
       live: save.live,
@@ -90,13 +85,13 @@ describe('durable game envelope round trips', () => {
   ] as const)(
     'round-trips a legitimate %s phase through IndexedDB and canonical decode',
     async (_label, save, kind) => {
-      await storageCoordinator.persist(storageCoordinator.writeSession(save));
+      await storageRepository.persist(storageRepository.mutateRecords('write-session', save));
       const restored = await readSessionRecord();
       expect(restored).not.toBeNull();
       const decoded = decodeSessionSaveEnvelope(restored!);
       expect(decoded.phase).toBe(kind);
       expect(decoded.save).toEqual(save);
-      await storageCoordinator.persist(storageCoordinator.deleteSession());
+      await storageRepository.persist(storageRepository.mutateRecords('delete-session'));
     },
   );
 
@@ -179,10 +174,10 @@ describe('durable game envelope round trips', () => {
         },
       });
       await saveLiveEnvelope(save);
-      await flushSessionSave();
+      await storageRepository.flushSessionSave();
 
-      _resetForTests();
-      const loaded = await peekSession();
+      storageRepository._resetForTests();
+      const loaded = await storageRepository.peekSession();
       expect(loaded).not.toBeNull();
       const model = sessionModelFromSave(loaded!);
       expect(model.game.activeIds).toEqual(ids);
@@ -204,10 +199,10 @@ describe('durable game envelope round trips', () => {
     });
 
     await saveLiveEnvelope(liveSave(snapshot));
-    await flushSessionSave();
-    _resetForTests();
+    await storageRepository.flushSessionSave();
+    storageRepository._resetForTests();
 
-    const loaded = await peekSession();
+    const loaded = await storageRepository.peekSession();
     expect(loaded).not.toBeNull();
     expect(sessionModelFromSave(loaded!).betweenHand.compose).toEqual(compose);
   });

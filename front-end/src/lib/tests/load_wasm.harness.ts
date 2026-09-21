@@ -5,11 +5,7 @@ import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import {
-  claimLease,
-  flushSessionSave,
-  _resetForTests as resetSaveState,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
@@ -104,11 +100,11 @@ async function deleteSessionDatabase(): Promise<void> {
 }
 
 beforeEach(async () => {
-  resetSaveState();
+  storageRepository._resetForTests();
   _resetWasmLoadForTests();
   storeInitArgs(async () => {}, WholeWasmObject);
   await deleteSessionDatabase();
-  await claimLease();
+  await storageRepository.claimLease();
 });
 
 afterAll(async () => {
@@ -139,13 +135,13 @@ async function cleanupActiveResources() {
   testPoller?.stop();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
 }
 
 afterEach(async () => {
   try {
     await cleanupActiveResources();
-    resetSaveState();
+    storageRepository._resetForTests();
   } catch (e) {
     throw new Error(`[load_wasm cleanup failed]\n${String(e)}`, { cause: e });
   }

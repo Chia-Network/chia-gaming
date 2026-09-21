@@ -1,16 +1,11 @@
 import { SessionController } from './SessionController';
-import { walletOperationService } from '../lib/session/walletOperationService';
+import { walletOperationRuntime } from '../lib/session/walletOperationRuntime';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
-import {
-  clearSession,
-  clearGameSessionPreservingHistory,
-  flushSessionSave,
-  markSavedSession,
-  LiveSessionSave,
-  SessionSave,
-} from '../lib/session/sessionCache';
+import { type LiveSessionSave, type SessionSave } from '../lib/session/saveEnvelope';
+import { storageRepository } from '../lib/session/storageRepository';
+import { markSavedSession } from './saveCoordination';
 import { coerceToBytes } from '../util';
 import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
@@ -131,7 +126,7 @@ export async function restoreSession(
   const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
   if (save.live.gameSessionSchemaVersion !== currentSchema) {
     const savedSchema = save.live.gameSessionSchemaVersion.toString();
-    await clearSession();
+    await storageRepository.clearSession();
     markSavedSession();
     throw new Error(
       `Unsupported saved game format: cradle schema ${savedSchema}; current schema is ${currentSchema}`,
@@ -220,7 +215,7 @@ export function getOrCreateSessionController(
     myContribution,
     theirContribution,
     peerConn,
-    walletOperationService,
+    walletOperationRuntime,
   );
   if (sessionSave?.phase === 'live') {
     sessionController.restoreTransportCheckpoint(sessionSave.live);
@@ -283,9 +278,9 @@ export function getOrCreateSessionController(
         }
         // Pending handshake fields must already be on disk (Shell). Flush before
         // asset fetch so a stale-deploy reload can Resume into newSession again.
-        await flushSessionSave();
+        await storageRepository.flushSessionSave();
         if (sessionController !== owningController) return;
-        await clearGameSessionPreservingHistory();
+        await storageRepository.clearGameSessionPreservingHistory();
         if (sessionController !== owningController) return;
         await configSessionController(
           owningController,

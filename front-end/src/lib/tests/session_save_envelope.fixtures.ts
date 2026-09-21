@@ -1,15 +1,14 @@
 import 'fake-indexeddb/auto';
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { SESSION_SAVE_ENVELOPE_VERSION as CURRENT_VERSION } from '../session/persistence';
+import { storageRepository } from '../session/storageRepository';
 import {
-  CURRENT_VERSION,
-  _resetForTests,
-  claimLease,
+  SESSION_SAVE_SCHEMA,
   type SessionPresentationSave,
   type SessionSave,
-} from '../session/sessionCache';
-import { SESSION_SAVE_SCHEMA } from '../session/saveEnvelope';
+} from '../session/saveEnvelope';
 
-import { storageCoordinator } from '../session/storageCoordinator';
+import { storageRepository } from '../session/storageRepository';
 
 export const ACTIVE_INSTANCE = {
   id: 'game-1',
@@ -334,15 +333,15 @@ export function liveSave(fields: LegacyFields = {}): SessionSave {
 
 export function installSessionEnvelopeTestSetup(): void {
   beforeEach(async () => {
-    _resetForTests();
+    storageRepository._resetForTests();
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
-    await claimLease();
-    await storageCoordinator.persist(storageCoordinator.deleteSession());
-    await storageCoordinator.persist(storageCoordinator.deleteWalletOperations());
+    await storageRepository.claimLease();
+    await storageRepository.persist(storageRepository.mutateRecords('delete-session'));
+    await storageRepository.persist(storageRepository.mutateRecords('delete-wallet-operations'));
   });
 
   afterEach(() => {
-    _resetForTests();
+    storageRepository._resetForTests();
   });
 }

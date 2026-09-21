@@ -37,7 +37,8 @@ pub enum SubmissionDeliveryGoal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubmissionSuccessorRelationship {
+pub enum SubmissionAttemptRelationship {
+    Initial,
     Exact,
     NewerFeeBearing,
     Other,
@@ -77,12 +78,11 @@ impl DeliveryAttempt {
 /// rollback replay synchronization.
 ///
 /// This is flattened into [`TransactionManager`](super::TransactionManager),
-/// preserving the current schema-19 serialized field names.
+/// preserving the flattened transaction-manager representation.
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(try_from = "UncheckedSubmissionBook")]
 pub(super) struct SubmissionBook {
     pending_deliveries: Vec<PendingDelivery>,
-    delivery_attempts: Vec<DeliveryAttempt>,
-    completed_delivery_attempts: Vec<DeliveryAttempt>,
     next_delivery_attempt_token: u64,
     replay_epoch: ReplayEpoch,
     submitted: Vec<SubmittedTx>,
@@ -90,7 +90,93 @@ pub(super) struct SubmissionBook {
     next_submission_id: u64,
 }
 
+#[derive(Deserialize)]
+struct UncheckedSubmissionBook {
+    pending_deliveries: Vec<PendingDelivery>,
+    next_delivery_attempt_token: u64,
+    replay_epoch: ReplayEpoch,
+    submitted: Vec<SubmittedTx>,
+    retired_submission_ids: Vec<u64>,
+    next_submission_id: u64,
+}
+
+impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
+    type Error = String;
+
+    fn try_from(value: UncheckedSubmissionBook) -> Result<Self, Self::Error> {
+        let book = Self {
+            pending_deliveries: value.pending_deliveries,
+            next_delivery_attempt_token: value.next_delivery_attempt_token,
+            replay_epoch: value.replay_epoch,
+            submitted: value.submitted,
+            retired_submission_ids: value.retired_submission_ids,
+            next_submission_id: value.next_submission_id,
+        };
+        book.validate_restored_state()?;
+        Ok(book)
+    }
+}
+
 impl SubmissionBook {
+    fn validate_restored_state(&self) -> Result<(), String> {
+        let mut tokens = HashSet::new();
+        for submission in &self.submitted {
+            submission.validate().map_err(|error| {
+                format!("invalid retained submission {}: {error:?}", submission.id)
+            })?;
+            if submission.active_attempt.is_some() && submission.completed_attempt.is_some() {
+                return Err(format!(
+                    "submission {} retains both active and completed delivery attempts",
+                    submission.id
+                ));
+            }
+            for attempt in [
+                submission.active_attempt.as_ref(),
+                submission.completed_attempt.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if attempt.submission_id != submission.id {
+                    return Err(format!(
+                        "delivery attempt {} belongs to submission {}, not containing submission {}",
+                        attempt.token, attempt.submission_id, submission.id
+                    ));
+                }
+                if attempt.token >= self.next_delivery_attempt_token {
+                    return Err(format!(
+                        "delivery attempt token {} is outside issued range 0..{}",
+                        attempt.token, self.next_delivery_attempt_token
+                    ));
+                }
+                if !tokens.insert(attempt.token) {
+                    return Err(format!(
+                        "delivery attempt token {} is retained more than once",
+                        attempt.token
+                    ));
+                }
+                let current_fingerprint =
+                    submission.current_variant_fingerprint().map_err(|error| {
+                        format!(
+                            "submission {} has an invalid current variant: {error:?}",
+                            submission.id
+                        )
+                    })?;
+                let attempt_fingerprint = attempt
+                    .finalized_variant_fingerprint
+                    .as_ref()
+                    .unwrap_or(&attempt.drained_variant_fingerprint);
+                if attempt_fingerprint != &current_fingerprint {
+                    return Err(format!(
+                        "delivery attempt {} does not match submission {} current variant",
+                        attempt.token, submission.id
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn queue(
         &mut self,
         intent: PendingSubmissionIntent,
@@ -139,29 +225,18 @@ impl SubmissionBook {
                     if let Some(id) = delta.emitted_id {
                         emitted_ids.insert(id);
                     }
-                    if let Some(mut drained) = delta.drained {
+                    if let Some(drained) = delta.drained {
                         let drained_variant_fingerprint = self
                             .submitted
                             .iter()
                             .find(|tx| tx.id == drained.id)
                             .expect("drained submission must remain retained")
                             .current_variant_fingerprint()?;
-                        let token = self.next_delivery_attempt_token;
-                        self.next_delivery_attempt_token =
-                            token.checked_add(1).ok_or_else(|| {
-                                Error::StrErr(
-                                    "delivery attempt token source is exhausted".to_string(),
-                                )
-                            })?;
-                        drained.attempt_token = token;
-                        self.delivery_attempts.push(DeliveryAttempt {
-                            token,
-                            submission_id: drained.id,
+                        result.submissions.push(self.issue_attempt(
+                            drained,
                             goal,
                             drained_variant_fingerprint,
-                            finalized_variant_fingerprint: None,
-                        });
-                        result.submissions.push(drained);
+                        )?);
                     }
                 }
                 Err(error) => {
@@ -188,14 +263,16 @@ impl SubmissionBook {
     }
 
     pub(super) fn attempt(&self, token: u64) -> Option<&DeliveryAttempt> {
-        self.delivery_attempts
+        self.submitted
             .iter()
+            .filter_map(|tx| tx.active_attempt.as_ref())
             .find(|attempt| attempt.token == token)
     }
 
     pub(super) fn attempt_mut(&mut self, token: u64) -> Option<&mut DeliveryAttempt> {
-        self.delivery_attempts
+        self.submitted
             .iter_mut()
+            .filter_map(|tx| tx.active_attempt.as_mut())
             .find(|attempt| attempt.token == token)
     }
 
@@ -203,19 +280,60 @@ impl SubmissionBook {
         token < self.next_delivery_attempt_token && self.attempt(token).is_none()
     }
 
-    pub(super) fn archive_attempt(&mut self, attempt_index: usize) {
-        let completed = self.delivery_attempts.remove(attempt_index);
-        self.completed_delivery_attempts.push(completed);
-    }
-
-    pub(super) fn supersede_attempt(&mut self, submission_id: u64) {
-        if let Some(index) = self
-            .delivery_attempts
-            .iter()
-            .position(|attempt| attempt.submission_id == submission_id)
-        {
-            self.archive_attempt(index);
+    fn issue_attempt(
+        &mut self,
+        mut drained: super::DrainedSubmission,
+        goal: SubmissionDeliveryGoal,
+        drained_variant_fingerprint: Hash,
+    ) -> Result<super::DrainedSubmission, Error> {
+        let submission = self
+            .submitted
+            .iter_mut()
+            .find(|tx| tx.id == drained.id)
+            .expect("drained submission must remain retained");
+        let predecessor = submission
+            .active_attempt
+            .as_ref()
+            .or(submission.completed_attempt.as_ref());
+        if let Some(predecessor) = predecessor {
+            if predecessor.submission_id != submission.id {
+                return Err(Error::StrErr(format!(
+                    "delivery attempt {} belongs to submission {}, not successor submission {}",
+                    predecessor.token, predecessor.submission_id, submission.id
+                )));
+            }
         }
+        let token = self.next_delivery_attempt_token;
+        let next_token = token.checked_add(1).ok_or_else(|| {
+            Error::StrErr("delivery attempt token source is exhausted".to_string())
+        })?;
+        let predecessor = submission
+            .active_attempt
+            .take()
+            .or_else(|| submission.completed_attempt.take());
+        self.next_delivery_attempt_token = next_token;
+        drained.attempt_token = token;
+        drained.predecessor_attempt_token = predecessor.as_ref().map(|attempt| attempt.token);
+        drained.relationship = match &predecessor {
+            None => SubmissionAttemptRelationship::Initial,
+            Some(_) if goal == SubmissionDeliveryGoal::FeeUpgrade => {
+                SubmissionAttemptRelationship::NewerFeeBearing
+            }
+            Some(attempt)
+                if attempt.resolved_variant_fingerprint() == &drained_variant_fingerprint =>
+            {
+                SubmissionAttemptRelationship::Exact
+            }
+            Some(_) => SubmissionAttemptRelationship::Other,
+        };
+        submission.active_attempt = Some(DeliveryAttempt {
+            token,
+            submission_id: submission.id,
+            goal,
+            drained_variant_fingerprint,
+            finalized_variant_fingerprint: None,
+        });
+        Ok(drained)
     }
 
     pub(super) fn retain_submitted(
@@ -238,15 +356,6 @@ impl SubmissionBook {
                 .id
                 .is_some_and(|id| removed_ids.contains(&id))
         });
-        let attempts = std::mem::take(&mut self.delivery_attempts);
-        let (retired_attempts, live_attempts): (Vec<_>, Vec<_>) = attempts
-            .into_iter()
-            .partition(|attempt| removed_ids.contains(&attempt.submission_id));
-        self.delivery_attempts = live_attempts;
-        self.completed_delivery_attempts.extend(retired_attempts);
-        // Completed attempts are deliberate stale-token tombstones. Keeping the
-        // latest one per retired submission makes late wallet callbacks typed
-        // no-ops without permitting them to mutate current state.
         self.replay_epoch.retain(|id| !removed_ids.contains(&id));
 
         let mut sorted = removed_ids.into_iter().collect::<Vec<_>>();
@@ -264,13 +373,7 @@ impl SubmissionBook {
     }
 
     pub(super) fn drain_retirements(&mut self) -> Vec<u64> {
-        let retired = std::mem::take(&mut self.retired_submission_ids);
-        if !retired.is_empty() {
-            let retired_set = retired.iter().copied().collect::<HashSet<_>>();
-            self.completed_delivery_attempts
-                .retain(|attempt| !retired_set.contains(&attempt.submission_id));
-        }
-        retired
+        std::mem::take(&mut self.retired_submission_ids)
     }
 
     pub(super) fn reconciliation_input_coins(
@@ -446,11 +549,11 @@ impl SubmissionBook {
         &mut self,
         attempt_token: u64,
     ) -> Result<SubmissionAttemptStatus, Error> {
-        let Some(attempt_index) = self
-            .delivery_attempts
-            .iter()
-            .position(|attempt| attempt.token == attempt_token)
-        else {
+        let Some(submission_index) = self.submitted.iter().position(|tx| {
+            tx.active_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.token == attempt_token)
+        }) else {
             return if self.issued_token_is_inactive(attempt_token) {
                 Ok(SubmissionAttemptStatus::Stale)
             } else {
@@ -459,73 +562,39 @@ impl SubmissionBook {
                 )))
             };
         };
-        let attempt = self.delivery_attempts[attempt_index].clone();
+        let attempt = self.submitted[submission_index]
+            .active_attempt
+            .as_ref()
+            .expect("located active attempt")
+            .clone();
         if attempt.finalized_variant_fingerprint.is_none() {
             return Err(Error::StrErr(format!(
                 "delivery attempt token {attempt_token} was not finalized"
             )));
         }
         let variant_fingerprint = attempt.resolved_variant_fingerprint();
-        let Some(submission) = self
-            .submitted
-            .iter_mut()
-            .find(|tx| tx.id == attempt.submission_id)
-        else {
-            return Ok(SubmissionAttemptStatus::Stale);
-        };
+        let submission = &mut self.submitted[submission_index];
         if submission.current_variant_fingerprint()? != *variant_fingerprint {
             return Err(Error::StrErr(format!(
                 "delivery attempt token {attempt_token} refers to a stale broadcast variant"
             )));
         }
         submission.wallet_acknowledged_variant = Some(variant_fingerprint.clone());
-        self.archive_attempt(attempt_index);
+        submission.completed_attempt = submission.active_attempt.take();
         self.pending_deliveries
             .retain(|pending| pending.intent.id != Some(attempt.submission_id));
         Ok(SubmissionAttemptStatus::Applied)
-    }
-
-    pub(super) fn classify_successor(
-        &mut self,
-        successor_attempt_token: u64,
-        completed_attempt_token: u64,
-    ) -> Result<SubmissionSuccessorRelationship, Error> {
-        let attempt = self
-            .attempt(successor_attempt_token)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "unknown or stale delivery attempt token {successor_attempt_token}"
-                ))
-            })?
-            .clone();
-        let completed_index = self
-            .completed_delivery_attempts
-            .iter()
-            .position(|completed| completed.token == completed_attempt_token)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "unknown or stale completed delivery attempt token {completed_attempt_token}"
-                ))
-            })?;
-        let completed = self.completed_delivery_attempts.remove(completed_index);
-        Ok(if attempt.goal == SubmissionDeliveryGoal::FeeUpgrade {
-            SubmissionSuccessorRelationship::NewerFeeBearing
-        } else if attempt.drained_variant_fingerprint == *completed.resolved_variant_fingerprint() {
-            SubmissionSuccessorRelationship::Exact
-        } else {
-            SubmissionSuccessorRelationship::Other
-        })
     }
 
     pub(super) fn stop_attempt(
         &mut self,
         attempt_token: u64,
     ) -> Result<SubmissionAttemptStatus, Error> {
-        let Some(attempt_index) = self
-            .delivery_attempts
-            .iter()
-            .position(|attempt| attempt.token == attempt_token)
-        else {
+        let Some(submission) = self.submitted.iter_mut().find(|tx| {
+            tx.active_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.token == attempt_token)
+        }) else {
             return if self.issued_token_is_inactive(attempt_token) {
                 Ok(SubmissionAttemptStatus::Stale)
             } else {
@@ -534,7 +603,7 @@ impl SubmissionBook {
                 )))
             };
         };
-        self.archive_attempt(attempt_index);
+        submission.completed_attempt = submission.active_attempt.take();
         Ok(SubmissionAttemptStatus::Applied)
     }
 
@@ -542,12 +611,12 @@ impl SubmissionBook {
         &mut self,
         attempt_token: u64,
     ) -> Result<SubmissionAttemptStatus, Error> {
-        if let Some(index) = self
-            .completed_delivery_attempts
-            .iter()
-            .position(|attempt| attempt.token == attempt_token)
-        {
-            self.completed_delivery_attempts.remove(index);
+        if let Some(submission) = self.submitted.iter_mut().find(|tx| {
+            tx.completed_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.token == attempt_token)
+        }) {
+            submission.completed_attempt = None;
             return Ok(SubmissionAttemptStatus::Applied);
         }
         if attempt_token < self.next_delivery_attempt_token {
@@ -613,12 +682,8 @@ impl SubmissionBook {
             self.replay_epoch.remove(id);
             self.pending_deliveries
                 .retain(|pending| pending.intent.id != Some(id));
-            if let Some(index) = self
-                .delivery_attempts
-                .iter()
-                .position(|attempt| attempt.submission_id == id)
-            {
-                self.archive_attempt(index);
+            if let Some(submission) = self.submitted.iter_mut().find(|tx| tx.id == id) {
+                submission.completed_attempt = submission.active_attempt.take();
             }
             self.emit_retirement(id);
         }
@@ -709,20 +774,26 @@ impl SubmissionBook {
         trigger: DeliveryTrigger,
         goal: SubmissionDeliveryGoal,
     ) {
-        if matches!(
-            trigger,
-            DeliveryTrigger::FreshChain | DeliveryTrigger::Rollback
-        ) {
-            self.supersede_attempt(id);
-        }
         if self
             .pending_deliveries
             .iter()
             .any(|pending| pending.intent.id == Some(id))
-            || self
-                .delivery_attempts
-                .iter()
-                .any(|attempt| attempt.submission_id == id)
+        {
+            return;
+        }
+        let has_active_attempt = self
+            .submitted
+            .iter()
+            .find(|tx| tx.id == id)
+            .and_then(|tx| tx.active_attempt.as_ref())
+            .is_some();
+        if has_active_attempt
+            && !matches!(
+                trigger,
+                DeliveryTrigger::FreshChain
+                    | DeliveryTrigger::Rollback
+                    | DeliveryTrigger::ProviderReadiness
+            )
         {
             return;
         }
@@ -769,22 +840,22 @@ impl SubmissionBook {
     pub(super) fn clear_local_artifacts(&mut self) {
         self.retain_submitted(|_| false);
         self.pending_deliveries.clear();
-        self.delivery_attempts.clear();
-        self.completed_delivery_attempts.clear();
         self.replay_epoch.clear();
     }
 
     #[cfg(test)]
     pub(super) fn test_attempt_for_submission(&self, id: u64) -> Option<&DeliveryAttempt> {
-        self.delivery_attempts
+        self.submitted
             .iter()
-            .find(|attempt| attempt.submission_id == id)
+            .find(|tx| tx.id == id)
+            .and_then(|tx| tx.active_attempt.as_ref())
     }
 
     #[cfg(test)]
     pub(super) fn test_attempt_mut(&mut self, token: u64) -> Option<&mut DeliveryAttempt> {
-        self.delivery_attempts
+        self.submitted
             .iter_mut()
+            .filter_map(|tx| tx.active_attempt.as_mut())
             .find(|attempt| attempt.token == token)
     }
 
@@ -804,6 +875,11 @@ impl SubmissionBook {
     }
 
     #[cfg(test)]
+    pub(super) fn test_next_attempt_token(&self) -> u64 {
+        self.next_delivery_attempt_token
+    }
+
+    #[cfg(test)]
     pub(super) fn test_pending(&self) -> &[PendingDelivery] {
         &self.pending_deliveries
     }
@@ -815,6 +891,9 @@ impl SubmissionBook {
 
     #[cfg(test)]
     pub(super) fn test_completed_attempt_count(&self) -> usize {
-        self.completed_delivery_attempts.len()
+        self.submitted
+            .iter()
+            .filter(|tx| tx.completed_attempt.is_some())
+            .count()
     }
 }

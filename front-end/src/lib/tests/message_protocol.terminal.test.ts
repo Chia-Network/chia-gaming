@@ -798,7 +798,7 @@ describe('transaction submission', () => {
 
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(recoverableErrors).toEqual([]);
-    expect((blob as any).submissionDeliveries.hasPending()).toBe(false);
+    expect((blob as any).submissionPump.isQuiescent()).toBe(true);
     blob.cleanup();
   });
 

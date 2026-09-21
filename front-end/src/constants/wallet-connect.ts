@@ -10,7 +10,7 @@ import {
 } from './env';
 import { isTestnet } from './currency';
 import { PREFERENCES_KEY } from '../hooks/savePreferences';
-import { getNetwork } from '../lib/session/sessionCache';
+import { storageRepository } from '../lib/session/storageRepository';
 
 export enum ChiaMethod {
   GetWallets = 'chia_getWallets',
@@ -34,13 +34,13 @@ export enum ChiaMethod {
  */
 export function getChainId(): string {
   if (CHAIN_ID_OVERRIDE) return CHAIN_ID_OVERRIDE;
-  return getNetwork() === 'testnet' ? TESTNET_CHAIN_ID : MAINNET_CHAIN_ID;
+  return storageRepository.query('network') === 'testnet' ? TESTNET_CHAIN_ID : MAINNET_CHAIN_ID;
 }
 
 /**
  * True when the persisted connection preference is the local simulator.
  * Direct localStorage read: `getBlockchainType()` would seed the session-save
- * cache the same way `getNetwork()` would.
+ * cache the same way `storageRepository.query('network')` would.
  */
 function readBlockchainIsSimulator(): boolean {
   try {
@@ -63,7 +63,7 @@ function readBlockchainIsSimulator(): boolean {
  * WalletConnect chain id and currency labels; it is not a simulated network.
  *
  * Reads preferences via direct localStorage lookups (`isTestnet()`,
- * `readBlockchainIsSimulator()`) rather than `getNetwork()` /
+ * `readBlockchainIsSimulator()`) rather than `storageRepository.query('network')` /
  * `getBlockchainType()`, which would seed the session-save cache with a
  * non-durable `preferences` record as a side effect — that seeding trips the
  * durability guard when this runs inside session creation.

@@ -1,5 +1,6 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import { loadState, saveSession, type SessionCacheUpdate } from './sessionCache';
+import { type SessionStateUpdate } from './sessionStateTransitions';
+import { storageRepository } from './storageRepository';
 import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
 import { recentDiagnosticEntries } from './historyLimits';
 import { snapshotFromSessionModel } from './sessionSnapshot';
@@ -11,7 +12,7 @@ export interface SessionPersistDependencies {
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-  save?: typeof saveSession;
+  save?: typeof storageRepository.saveSession;
   clearDurabilityWarning?: boolean;
 }
 
@@ -21,7 +22,7 @@ export interface PreparedSessionPersistence {
 
 /** Assemble at effect execution time from WASM facts and machine authority. */
 export function assembleSessionSave(dependencies: SessionPersistDependencies): {
-  live: Extract<SessionCacheUpdate, { scope: 'live' }>;
+  live: Extract<SessionStateUpdate, { scope: 'live' }>;
 } | null {
   const wasm = dependencies.controller.getWasmFields();
   if (!wasm) return null;
@@ -44,7 +45,7 @@ export function assembleSessionSave(dependencies: SessionPersistDependencies): {
       diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
     },
   });
-  const current = loadState();
+  const current = storageRepository.loadState();
   const currentPairing =
     current.phase === 'pre-handshake' || current.phase === 'live' ? current.pairing : undefined;
   if (wasm.rewardPuzzleHash === null) {
@@ -102,7 +103,7 @@ export function prepareSessionPersistence(
   const assembled = assembleSessionSave(dependencies);
   if (!assembled) return null;
   const live = structuredClone(assembled.live);
-  const save = dependencies.save ?? saveSession;
+  const save = dependencies.save ?? storageRepository.saveSession.bind(storageRepository);
   return {
     write: () => save(live),
   };

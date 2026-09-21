@@ -1,13 +1,8 @@
 import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
 import type { SessionController } from '../../hooks/SessionController';
-import {
-  discardStagedTerminalSession,
-  flushSessionSave,
-  markSavedSession,
-  stageTerminalSession,
-  type SessionPresentationSave,
-  type TerminalSessionSave,
-} from './sessionCache';
+import { type SessionPresentationSave, type TerminalSessionSave } from './saveEnvelope';
+import { storageRepository } from './storageRepository';
+import { markSavedSession } from '../../hooks/saveCoordination';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
 import { channelStatusPayloadFromModel } from './normalization';
 import { selectDashboardCoins } from './selectors';
@@ -32,9 +27,9 @@ export interface TerminalFinalizationDependencies {
 }
 
 const defaultDependencies: TerminalFinalizationDependencies = {
-  stageTerminal: stageTerminalSession,
-  flushSave: flushSessionSave,
-  discardTerminal: discardStagedTerminalSession,
+  stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
+  flushSave: storageRepository.flushSessionSave.bind(storageRepository),
+  discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
   updateMarker: markSavedSession,
   teardown: destroyFlushedTerminalSessionController,
 };

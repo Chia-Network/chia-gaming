@@ -1,5 +1,5 @@
 import { log } from '../services/log';
-import { markAutoResumeOnce, markSavedSession } from './session/sessionCache';
+import { markAutoResumeOnce, markSavedSession } from '../hooks/saveCoordination';
 
 export function normalizeBasePath(path: string): string {
   return path.endsWith('/') ? path : `${path}/`;

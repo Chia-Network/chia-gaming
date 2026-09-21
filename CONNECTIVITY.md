@@ -130,9 +130,9 @@ up) = **9 reachable states**.
 
 Four of those are **ephemeral** — they exist for one tick and auto-transition:
 
-| Ephemeral state | Rule | Transitions to |
-|-----------------|------|----------------|
-| hub up, peer down, session off-chain | off-chain + no peer → on-chain | hub up, peer down, session on-chain |
+| Ephemeral state                        | Rule                           | Transitions to                        |
+| -------------------------------------- | ------------------------------ | ------------------------------------- |
+| hub up, peer down, session off-chain   | off-chain + no peer → on-chain | hub up, peer down, session on-chain   |
 | hub down, peer down, session off-chain | off-chain + no peer → on-chain | hub down, peer down, session on-chain |
 
 (Each of those can occur with or without wallet, but since wallet is
@@ -145,15 +145,15 @@ on-chain.** No dialog, no prompt, no user decision. This is automatic.
 
 After collapsing ephemeral states, the system has **7 resting states**:
 
-| # | Hub | Peer | Session | Description |
-|---|---------|------|---------|-------------|
-| 1 | up | up | none | Idle on a hub. Can accept challenges. |
-| 2 | up | up | off-chain | Playing a game through the relay. |
-| 3 | up | up | on-chain | Resolving on-chain, peer still connected. |
-| 4 | up | down | none | On a hub, no match. Waiting in hub. |
-| 5 | up | down | on-chain | Resolving on-chain, peer gone. Hub available for future matchmaking. |
-| 6 | down | down | none | Disconnected from everything. Can reconnect. |
-| 7 | down | down | on-chain | Resolving on-chain, no hub. Grinding through blockchain. |
+| #   | Hub  | Peer | Session   | Description                                                          |
+| --- | ---- | ---- | --------- | -------------------------------------------------------------------- |
+| 1   | up   | up   | none      | Idle on a hub. Can accept challenges.                                |
+| 2   | up   | up   | off-chain | Playing a game through the relay.                                    |
+| 3   | up   | up   | on-chain  | Resolving on-chain, peer still connected.                            |
+| 4   | up   | down | none      | On a hub, no match. Waiting in hub.                                  |
+| 5   | up   | down | on-chain  | Resolving on-chain, peer gone. Hub available for future matchmaking. |
+| 6   | down | down | none      | Disconnected from everything. Can reconnect.                         |
+| 7   | down | down | on-chain  | Resolving on-chain, no hub. Grinding through blockchain.             |
 
 The wallet can be up or down in any of these states. When the wallet is down,
 blockchain operations stall but the logical state is unchanged.
@@ -198,32 +198,32 @@ Specific rules:
 
 ### Wallet
 
-| Action | Allowed? | Warning | Consequence |
-|--------|----------|---------|-------------|
-| Disconnect | Always | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection kept. Pending pre-Active matchmaking cancelled. App reports `busy`. Session save preserved. |
-| Reconnect (same or different) | Always | None | Stalled operations resume. `busy` recomputed from session phase and any in-progress non-terminal restore cradle. Session continues. |
+| Action                        | Allowed? | Warning                                                                                                                                     | Consequence                                                                                                                            |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Disconnect                    | Always   | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection kept. Pending pre-Active matchmaking cancelled. App reports `busy`. Session save preserved. |
+| Reconnect (same or different) | Always   | None                                                                                                                                        | Stalled operations resume. `busy` recomputed from session phase and any in-progress non-terminal restore cradle. Session continues.    |
 
 ### Hub
 
-| Action | Allowed? | Warning | Consequence |
-|--------|----------|---------|-------------|
-| Disconnect | Always | If peer up: "This will end your peer connection." If session off-chain: "This will force your game on-chain." | Peer dies (cascade). |
-| Reconnect (same hub) | Always | None | Hub re-identifies. Resends un-acked messages if session active. |
-| Connect to new hub | Always | None | New hub. If session is active, join as unavailable. |
+| Action               | Allowed? | Warning                                                                                                       | Consequence                                                     |
+| -------------------- | -------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Disconnect           | Always   | If peer up: "This will end your peer connection." If session off-chain: "This will force your game on-chain." | Peer dies (cascade).                                            |
+| Reconnect (same hub) | Always   | None                                                                                                          | Hub re-identifies. Resends un-acked messages if session active. |
+| Connect to new hub   | Always   | None                                                                                                          | New hub. If session is active, join as unavailable.             |
 
 ### Peer
 
-| Action | Allowed? | Warning | Consequence |
-|--------|----------|---------|-------------|
-| End session | Always | None currently. | Player marks available (`setBusy(false)`). Off-chain session transitions to on-chain via the peer-loss cascade. |
-| Reconnect | Not a user action | — | Player resends un-acked messages after its own `registered` and on a matching `peer_available` hint for the remote endpoint. Keepalives and duplicate frames do not resend. |
+| Action      | Allowed?          | Warning         | Consequence                                                                                                                                                                 |
+| ----------- | ----------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| End session | Always            | None currently. | Player marks available (`setBusy(false)`). Off-chain session transitions to on-chain via the peer-loss cascade.                                                             |
+| Reconnect   | Not a user action | —               | Player resends un-acked messages after its own `registered` and on a matching `peer_available` hint for the remote endpoint. Keepalives and duplicate frames do not resend. |
 
 ### Session
 
-| Action | Allowed? | Warning | Consequence |
-|--------|----------|---------|-------------|
-| Go on-chain | When session = off-chain | None currently. | Session transitions to on-chain. Game messages stop. |
-| Clean shutdown | Between hands only, requires peer cooperation | None (it's the graceful path) | Cooperative close. Channel resolves cleanly. |
+| Action         | Allowed?                                      | Warning                       | Consequence                                          |
+| -------------- | --------------------------------------------- | ----------------------------- | ---------------------------------------------------- |
+| Go on-chain    | When session = off-chain                      | None currently.               | Session transitions to on-chain. Game messages stop. |
+| Clean shutdown | Between hands only, requires peer cooperation | None (it's the graceful path) | Cooperative close. Channel resolves cleanly.         |
 
 ---
 
@@ -231,12 +231,12 @@ Specific rules:
 
 ### Session States (as seen by Shell)
 
-| State | Derived from | Meaning |
-|-------|-------------|---------|
-| `none` | `sessionConfig === null` | No session. Not busy and available for matchmaking. |
-| `off-chain` | Session exists, not yet resolving on-chain | Playing through the peer relay. `cleanShutdown()` stays off-chain until the shutdown transaction is formed. |
-| `on-chain` | `goOnChain()` initiated, clean shutdown transaction submitted, or channel resolved while game outcomes are still pending | Resolving on the blockchain or waiting for remaining hand outcomes. May or may not have peer. |
-| `resolved` | Terminal channel state and no pending hand obligations | No live protocol obligation. Not busy and available for matchmaking, while the finished session may remain visible as display state. |
+| State       | Derived from                                                                                                             | Meaning                                                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `none`      | `sessionConfig === null`                                                                                                 | No session. Not busy and available for matchmaking.                                                                                  |
+| `off-chain` | Session exists, not yet resolving on-chain                                                                               | Playing through the peer relay. `cleanShutdown()` stays off-chain until the shutdown transaction is formed.                          |
+| `on-chain`  | `goOnChain()` initiated, clean shutdown transaction submitted, or channel resolved while game outcomes are still pending | Resolving on the blockchain or waiting for remaining hand outcomes. May or may not have peer.                                        |
+| `resolved`  | Terminal channel state and no pending hand obligations                                                                   | No live protocol obligation. Not busy and available for matchmaking, while the finished session may remain visible as display state. |
 
 The on-chain state persists until the broader session phase is terminal. A raw
 channel status of `ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or
@@ -434,13 +434,13 @@ The hub does not create a session. It can only advise and relay:
   with 45-second timeout.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
-- **Session persistence**: `StorageCoordinator` atomically claims and reads the
-  salt-prefixed, masked Bencodex records and owns ordered durable mutations.
-  `front-end/src/lib/session/sessionCache.ts` strictly decodes/hydrates the
-  `SessionSave` (including raw cradle/unacked byte strings), while
-  `WalletOperationService` decodes/hydrates its independent record. Small
+- **Session persistence**: `StorageRepository` atomically claims and reads the
+  salt-prefixed, masked Bencodex records, owns ordered durable mutations, and
+  strictly decodes/hydrates the `SessionSave` (including raw cradle/unacked byte
+  strings), while
+  `WalletOperationRuntime` decodes/hydrates its independent record. Small
   preferences and the resumable-session boot marker remain in localStorage.
-  The app-owned formats are session envelope v32, Rust/WASM cradle schema 19,
+  The app-owned formats are session envelope v32, Rust/WASM cradle schema 20,
   IndexedDB schema 4, and wallet-operation record v7. The app database's durable
   owner, write, and reset epochs are checked atomically with every mutation;
   localStorage lease/reset state is only an early UI hint. Ordinary I/O failure
@@ -482,7 +482,7 @@ The hub does not create a session. It can only advise and relay:
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
 
-- **Wallet operation recovery**: `WalletOperationService` strict-v7 entries bind installation,
+- **Wallet operation recovery**: `WalletOperationRuntime` strict-v7 entries bind installation,
   peer-session, and provider/account scope. Pending creation embeds the
   canonical request, exact recovery ID, and active/cancel-on-create disposition;
   pending cancellation preserves its exact IDs. Retired creation is cancelled
@@ -509,10 +509,10 @@ The hub does not create a session. It can only advise and relay:
 - **Submission evolution**: Rust broadcasts the no-fee base immediately while
   continuing to seek a fee under the same ID. Base acknowledgement does not stop
   seeking; readiness or `chain_snapshot_ready` triggers retry, and chain
-  terminality stops it. `SubmissionExecutor` receives only opaque attempt
-  tokens. An unavailable exact-variant successor waits for a coherent snapshot,
-  a newer fee-bearing successor may replace the base immediately, and unrelated
-  IDs remain independent.
+  terminality stops it. `SubmissionPump` receives only opaque attempts with
+  immutable Rust-issued lineage. An unavailable exact-variant successor waits
+  for a coherent snapshot, a newer fee-bearing successor may replace the base
+  immediately, and unrelated IDs remain independent.
 
 - **Session state surfaced to Shell**: `GameSession` reports coarse session
   phase (`off-chain | on-chain | resolved`) and an error flag to Shell via
@@ -589,11 +589,11 @@ are unchanged.
 Pipe marks answer only “is this pipe up?” Session mode lives on the game
 dashboard banner rail, not on the tabs.
 
-| Tab | Link | Broken chain |
-|-----|------|----------------|
-| Wallet | Connected. | Disconnected. The **Wallet** label is also red. |
-| Hub | `hubLiveness === 'connected'` | Reconnecting, inactive, disconnected, or never connected |
-| Game | Live session and peer is not `dead` | `sessionPhase` none/resolved, or `peerLiveness === 'dead'` |
+| Tab    | Link                                | Broken chain                                               |
+| ------ | ----------------------------------- | ---------------------------------------------------------- |
+| Wallet | Connected.                          | Disconnected. The **Wallet** label is also red.            |
+| Hub    | `hubLiveness === 'connected'`       | Reconnecting, inactive, disconnected, or never connected   |
+| Game   | Live session and peer is not `dead` | `sessionPhase` none/resolved, or `peerLiveness === 'dead'` |
 
 Handshake with `peerLiveness === null` counts as connected. `degraded` pings
 stay a link; that warning is banner-only. `sessionError` does not affect the
@@ -603,13 +603,13 @@ tab mark.
 
 The session dashboard has a full-height left-edge color rail:
 
-| Tone | Color | When |
-|------|-------|------|
-| `idle` | Gray | No session / never set up |
-| `playing` | Green | Setup, handshake, off-chain play, cooperative shutdown |
+| Tone        | Color  | When                                                                                                                    |
+| ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `idle`      | Gray   | No session / never set up                                                                                               |
+| `playing`   | Green  | Setup, handshake, off-chain play, cooperative shutdown                                                                  |
 | `pings-bad` | Yellow | Same as playing, but `peerLiveness === 'degraded'` (hub says the peer is disconnected, or no peer frame for 30 seconds) |
-| `on-chain` | Red | Going on-chain, unrolling, or a resolved unroll that still has games |
-| `ended` | Blue | Terminal dashboard still showing (clean resolve, failed, abandoned) |
+| `on-chain`  | Red    | Going on-chain, unrolling, or a resolved unroll that still has games                                                    |
+| `ended`     | Blue   | Terminal dashboard still showing (clean resolve, failed, abandoned)                                                     |
 
 On-chain beats yellow. Failed/stale outcomes that are actually over stay
 `ended`; the Channel label still names the outcome. Yellow also shows
@@ -659,17 +659,17 @@ The session banner and dashboard derive display text from
 `SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (sourced from
 the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)). Examples:
 
-| `outcome` (wire) | Display label |
-|------------------|---------------|
-| `accept_settlement` / `we_accepted` | Accepted |
-| `settled_cleanly` | Settled cleanly |
-| `opponent_timed_out` | Opponent timed out |
-| `forfeited_*` | Forfeited |
-| `attempt_to_move_failed` | Attempt to move failed |
-| `timed_out_waiting_for_our_move` | Timed out waiting for our move |
-| `slashed_opponent` | Slashed opponent |
-| `opponent_slashed_us` | Opponent slashed us |
-| `opponent_cheated` | Opponent cheated |
+| `outcome` (wire)                    | Display label                  |
+| ----------------------------------- | ------------------------------ |
+| `accept_settlement` / `we_accepted` | Accepted                       |
+| `settled_cleanly`                   | Settled cleanly                |
+| `opponent_timed_out`                | Opponent timed out             |
+| `forfeited_*`                       | Forfeited                      |
+| `attempt_to_move_failed`            | Attempt to move failed         |
+| `timed_out_waiting_for_our_move`    | Timed out waiting for our move |
+| `slashed_opponent`                  | Slashed opponent               |
+| `opponent_slashed_us`               | Opponent slashed us            |
+| `opponent_cheated`                  | Opponent cheated               |
 
 There is no session-level **Folded** label. Space Poker may still show **Fold**
 as a game-local button that calls `accept_settlement`.

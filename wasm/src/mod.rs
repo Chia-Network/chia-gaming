@@ -40,7 +40,7 @@ mod gaming_wasm {
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
         CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDrainFailureStage,
-        SubmissionAttemptStatus, SubmissionFeeSource, SubmissionSuccessorRelationship,
+        SubmissionAttemptRelationship, SubmissionAttemptStatus, SubmissionFeeSource,
         TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -76,7 +76,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 19;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 20;
 
     #[cfg(test)]
     mod serialization_schema_tests {
@@ -84,7 +84,7 @@ mod gaming_wasm {
 
         #[test]
         fn exported_game_session_serialization_schema_is_current() {
-            assert_eq!(game_session_serialization_schema(), 19);
+            assert_eq!(game_session_serialization_schema(), 20);
         }
     }
 
@@ -98,9 +98,10 @@ mod gaming_wasm {
     struct JsTransactionSubmission {
         id: String,
         attempt_token: String,
+        predecessor_attempt_token: Option<String>,
+        relationship: &'static str,
         bundle: JsSpendBundle,
         fee_request: Option<JsFeeRequest>,
-        intent_fingerprint: String,
     }
 
     #[derive(Serialize)]
@@ -480,6 +481,17 @@ mod gaming_wasm {
                         .map(|submission| JsTransactionSubmission {
                             id: submission.id.to_string(),
                             attempt_token: submission.attempt_token.to_string(),
+                            predecessor_attempt_token: submission
+                                .predecessor_attempt_token
+                                .map(|token| token.to_string()),
+                            relationship: match submission.relationship {
+                                SubmissionAttemptRelationship::Initial => "initial",
+                                SubmissionAttemptRelationship::Exact => "exact",
+                                SubmissionAttemptRelationship::NewerFeeBearing => {
+                                    "newer-fee-bearing"
+                                }
+                                SubmissionAttemptRelationship::Other => "other",
+                            },
                             bundle: spend_bundle_to_js(&submission.bundle),
                             fee_request: match &submission.fee_intent {
                                 SubmissionFeeIntent::Attach { target, amount, .. } => {
@@ -491,7 +503,6 @@ mod gaming_wasm {
                                 SubmissionFeeIntent::AlreadyPaid
                                 | SubmissionFeeIntent::NoFeeConfigured => None,
                             },
-                            intent_fingerprint: hex::encode(submission.intent_fingerprint.bytes()),
                         })
                         .collect::<Vec<_>>();
                     let retired_submission_ids = working
@@ -619,31 +630,6 @@ mod gaming_wasm {
             SubmissionAttemptStatus::Stale => "stale",
         }
         .to_string()
-    }
-
-    #[wasm_bindgen]
-    pub fn submission_successor_relationship(
-        cid: i32,
-        successor_attempt_token: &str,
-        completed_attempt_token: &str,
-    ) -> Result<String, JsValue> {
-        let successor_token = successor_attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        let completed_token = completed_attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid completed attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
-            Ok(match cradle
-                .cradle
-                .submission_successor_relationship(successor_token, completed_token)?
-            {
-                SubmissionSuccessorRelationship::Exact => "exact",
-                SubmissionSuccessorRelationship::NewerFeeBearing => "newer-fee-bearing",
-                SubmissionSuccessorRelationship::Other => "other",
-            }
-            .to_string())
-        })
     }
 
     /// Signal that raw height and every required watched-coin observation form

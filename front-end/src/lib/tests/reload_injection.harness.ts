@@ -2,14 +2,8 @@ import type { Subscription } from 'rxjs';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
-import {
-  claimLease,
-  _resetForTests as resetSaveState,
-  flushSessionSave,
-  peekSession,
-  saveSession,
-  type LiveSessionSave,
-} from '../session/sessionCache';
+import { type LiveSessionSave } from '../session/saveEnvelope';
+import { storageRepository } from '../session/storageRepository';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { sessionModelFromSave } from '../session/model';
@@ -59,7 +53,8 @@ function bindRuntime(
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
       onError: (error) => controller.reportRuntimeError(error),
-      save: (update) => persistOutsideReload(controller, () => saveSession(update)),
+      save: (update) =>
+        persistOutsideReload(controller, () => storageRepository.saveSession(update)),
     },
   );
   runtime.activate();
@@ -142,7 +137,7 @@ export async function injectSessionReload(
     releaseReload = resolve;
   });
   reloadController = lane.controller;
-  let save: Awaited<ReturnType<typeof peekSession>>;
+  let save: Awaited<ReturnType<typeof storageRepository.peekSession>>;
   try {
     await lane.runtime.persist();
     await prepareSessionPersistence({
@@ -152,14 +147,16 @@ export async function injectSessionReload(
       getRestoreStatus: () => lane.controller.getRestoreStatus(),
       getRestoreError: () => lane.controller.getRestoreError(),
     })?.write();
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     lane.subscription.unsubscribe();
     lane.runtime.setRender(() => {});
     lane.controller.cleanup();
     await lane.controller.flushPendingWork();
-    resetSaveState();
-    await claimLease();
-    save = await peekSession();
+    // This harness reloads one in-process lane while its peer remains live.
+    // Preserve the process-global wallet runtime and the peer's transient sink.
+    storageRepository._resetForTests({ preserveWalletOperationRuntime: true });
+    await storageRepository.claimLease();
+    save = await storageRepository.peekSession();
   } finally {
     reloadController = null;
     reloadBarrier = null;

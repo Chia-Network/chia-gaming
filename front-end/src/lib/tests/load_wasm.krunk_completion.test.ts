@@ -1,6 +1,6 @@
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { flushSessionSave, peekSession, saveSession } from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
 import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize';
@@ -106,8 +106,8 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
         save: async (save) => {
-          await saveSession(save);
-          validateSessionSaveEnvelope((await peekSession())!);
+          await storageRepository.saveSession(save);
+          validateSessionSaveEnvelope((await storageRepository.peekSession())!);
         },
       });
     };
@@ -163,7 +163,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const flushPersistence = async () => {
     await flushWrapperDrain(cradles);
     await Promise.all(controllers.map((controller) => controller.flushPendingSave()));
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
     await Promise.resolve();
     assert.deepEqual(errors, []);
   };

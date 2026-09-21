@@ -1,23 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { storageRepository } from '../lib/session/storageRepository';
 import {
-  claimAndHydrateSession,
   clearAutoResumeOnce,
-  ensureHubIdentity,
-  hydrateSessionCacheFromDisk,
   isLeaseConflict,
   markSavedSession,
   peekAutoResumeOnce,
-  peekSession,
-  shouldOfferResumeOrStartOver,
-  hardReset,
-} from '../lib/session/sessionCache';
+} from '../hooks/saveCoordination';
 import {
   reloadAfterSuccessfulHardReset,
   startPendingWalletConnectWipe,
 } from '../hooks/saveHardReset';
 import type { SessionSave } from '../lib/session/saveEnvelope';
-import { storageCoordinator } from '../lib/session/storageCoordinator';
 
 export type BootRecoveryState =
   | { kind: 'loading' }
@@ -103,7 +97,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         return;
       }
 
-      const hydration = await hydrateSessionCacheFromDisk();
+      const hydration = await storageRepository.hydrateSessionCacheFromDisk();
       if (cancelled || !recoveryIsCurrent(generation)) return;
       if (hydration.status === 'failed') {
         clearAutoResumeOnce();
@@ -111,7 +105,36 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         setState({ kind: 'resumeDialog', loadError: hydration.error });
         return;
       }
-      if (hydration.durableSession || shouldOfferResumeOrStartOver()) {
+      if (hydration.discardedSession) {
+        if (isLeaseConflict()) {
+          setState({ kind: 'tabConflict', save: null, midSession: false });
+          return;
+        }
+        try {
+          const save = await storageRepository.claimAndHydrateSession();
+          if (cancelled || !recoveryIsCurrent(generation)) return;
+          if (isDurableSession(save)) {
+            claimedRecoveryRef.current = save;
+            markSavedSession();
+            setState(
+              peekAutoResumeOnce()
+                ? { kind: 'autoResuming' }
+                : { kind: 'resumeDialog', loadError: null },
+            );
+          } else {
+            clearAutoResumeOnce();
+            markSavedSession();
+            setState(unavailableSavedSession());
+          }
+        } catch (error) {
+          if (cancelled || !recoveryIsCurrent(generation)) return;
+          clearAutoResumeOnce();
+          markSavedSession();
+          setState({ kind: 'resumeDialog', loadError: errorMessage(error) });
+        }
+        return;
+      }
+      if (hydration.durableSession || storageRepository.shouldOfferResumeOrStartOver()) {
         markSavedSession();
         setState(
           peekAutoResumeOnce()
@@ -126,7 +149,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
       }
 
       try {
-        const save = await claimAndHydrateSession();
+        const save = await storageRepository.claimAndHydrateSession();
         if (cancelled || !recoveryIsCurrent(generation)) return;
         if (isDurableSession(save)) {
           claimedRecoveryRef.current = save;
@@ -138,7 +161,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
           );
           return;
         }
-        const sessionId = await ensureHubIdentity();
+        const sessionId = await storageRepository.ensureHubIdentity();
         if (cancelled || !recoveryIsCurrent(generation)) return;
         dependenciesRef.current.onSessionId(sessionId);
         if (cancelled || !recoveryIsCurrent(generation)) return;
@@ -173,13 +196,12 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
       });
       setResuming(false);
     };
-    storageCoordinator.onAuthorityLost(authorityLost);
-    return () => storageCoordinator.offAuthorityLost(authorityLost);
+    return storageRepository.onAuthorityLost(authorityLost);
   }, [nextRecoveryGeneration]);
 
   const restoreClaimed = useCallback(
     async (save: SessionSave, source: BootRestoreSource, generation: number): Promise<void> => {
-      const sessionId = await ensureHubIdentity();
+      const sessionId = await storageRepository.ensureHubIdentity();
       if (!recoveryIsCurrent(generation)) return;
       dependenciesRef.current.onSessionId(sessionId);
       if (!recoveryIsCurrent(generation)) return;
@@ -209,7 +231,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         if (recoveryIsCurrent(generation)) claimedRecoveryRef.current = null;
         return;
       }
-      const inspected = await peekSession();
+      const inspected = await storageRepository.peekSession();
       if (!recoveryIsCurrent(generation)) return;
       if (!inspected) {
         clearAutoResumeOnce();
@@ -222,7 +244,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
         setState({ kind: 'tabConflict', save: inspected, midSession: false });
         return;
       }
-      const claimed = await claimAndHydrateSession();
+      const claimed = await storageRepository.claimAndHydrateSession();
       if (!recoveryIsCurrent(generation)) return;
       if (!claimed) {
         clearAutoResumeOnce();
@@ -253,9 +275,9 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
     const generation = nextRecoveryGeneration();
     setResuming(true);
     try {
-      const claimed = await claimAndHydrateSession();
+      const claimed = await storageRepository.claimAndHydrateSession();
       if (!recoveryIsCurrent(generation)) return;
-      const sessionId = await ensureHubIdentity();
+      const sessionId = await storageRepository.ensureHubIdentity();
       if (!recoveryIsCurrent(generation)) return;
       dependenciesRef.current.onSessionId(sessionId);
       if (!recoveryIsCurrent(generation)) return;
@@ -282,7 +304,7 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
     setStartingOver(true);
     try {
       await dependenciesRef.current.beforeHardReset();
-      const result = await hardReset();
+      const result = await storageRepository.hardReset();
       if (!result.success) {
         const blocked = result.failures.some((failure) => failure.reason === 'blocked');
         markSavedSession();

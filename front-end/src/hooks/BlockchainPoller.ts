@@ -15,9 +15,9 @@ import {
   AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
 import {
-  walletOperationService,
-  type WalletOperationService,
-} from '../lib/session/walletOperationService';
+  walletOperationRuntime,
+  type WalletOperationRuntime,
+} from '../lib/session/walletOperationRuntime';
 import { walletProviderScopeKey } from '../lib/session/walletOperationStore';
 import type { WalletOperationOwner } from '../lib/session/walletOperationStore';
 
@@ -57,7 +57,7 @@ type BalanceCallbacks = {
 
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
-  readonly walletOperations: WalletOperationService;
+  readonly walletOperations: WalletOperationRuntime;
   private readonly adapter: InternalBlockchainInterface;
   private sourceWalletProvider: WalletOfferProvider | null = null;
   private sourceWalletProviderKey: string | null = null;
@@ -94,7 +94,7 @@ export class BlockchainPoller {
     blockchain: InternalBlockchainInterface,
     pollIntervalMs: number,
     maxBackoffMs?: number,
-    walletOperations: WalletOperationService = walletOperationService,
+    walletOperations: WalletOperationRuntime = walletOperationRuntime,
   ) {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;

@@ -1,6 +1,4 @@
 import { isElectronDistribution } from '../util/distribution';
-import { type ClaimedStorageSnapshot } from '../lib/session/indexedDb';
-import { storageCoordinator } from '../lib/session/storageCoordinator';
 
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
@@ -9,7 +7,7 @@ const LEASE_KEY = 'appState_activeTab';
 const TAB_ID_SESSION_KEY = 'appState_tabId';
 
 let autoResumeLatch = false;
-export type { StorageAuthorityLossReason } from '../lib/session/storageCoordinator';
+export type StorageAuthorityLossReason = 'takeover' | 'sibling-reset' | 'durable-authority-lost';
 
 export function randomHex(): string {
   const bytes = new Uint8Array(16);
@@ -62,14 +60,12 @@ export function checkLease(): boolean {
   }
 }
 
-export async function claimLease(): Promise<ClaimedStorageSnapshot> {
-  const claimed = await storageCoordinator.claimAndRead(tabId);
+export function markLeaseClaimed(): void {
   try {
     localStorage.setItem(LEASE_KEY, tabId);
   } catch {
     /* ignore */
   }
-  return claimed;
 }
 
 /** Drop the lease only if this tab still holds it, so a closed owner does not look like a live conflict. */
@@ -164,29 +160,30 @@ export function signalHardResetToOtherTabs(): void {
   }
 }
 
-export function installStorageCoordination(onHardReset: () => void): void {
+export function installStorageCoordination(
+  onAuthorityLost: (reason: StorageAuthorityLossReason) => void,
+  onHardReset: () => void,
+): void {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key === RESET_KEY) {
-      storageCoordinator.loseAuthority('sibling-reset');
+      onAuthorityLost('sibling-reset');
       onHardReset();
       return;
     }
-    if (event.key === LEASE_KEY && event.newValue !== tabId && !storageCoordinator.isFenced()) {
-      storageCoordinator.loseAuthority('takeover');
+    if (event.key === LEASE_KEY && event.newValue !== tabId) {
+      onAuthorityLost('takeover');
     }
   });
 
   setInterval(() => {
-    if (storageCoordinator.isFenced()) return;
     if (!checkLease()) {
-      storageCoordinator.loseAuthority('takeover');
+      onAuthorityLost('takeover');
     }
   }, 3000);
 }
 
 export function resetStorageCoordinationForTests(): void {
-  storageCoordinator.resetForTests();
   autoResumeLatch = false;
   try {
     localStorage.removeItem(LEASE_KEY);

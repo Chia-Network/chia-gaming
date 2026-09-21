@@ -37,16 +37,18 @@ setTestGlobal('window', globalThis);
 // The Cloud Wallet fee comes from the global preference. Mock it so the test
 // controls the fee without exercising the persistence/IndexedDB layer.
 let mockFee = 0n;
-jest.mock('../session/sessionCache', () => ({
-  getDefaultFee: () => mockFee,
-  setDefaultFee: (fee: bigint) => {
-    mockFee = fee;
+jest.mock('../session/storageRepository', () => ({
+  storageRepository: {
+    getDefaultFee: () => mockFee,
+    setDefaultFee: (fee: bigint) => {
+      mockFee = fee;
+    },
   },
 }));
 
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
-import { WalletOperationService } from '../session/walletOperationService';
+import { WalletOperationRuntime } from '../session/walletOperationRuntime';
 
 const testOperation = {
   owner: {
@@ -608,10 +610,10 @@ describe('CloudBlockchainInterface fee support', () => {
       providerScope: provider.scope,
     };
     const purpose = { kind: 'fee' as const, operationId: 'submission' };
-    const coordinator = new WalletOperationService();
+    const coordinator = new WalletOperationRuntime();
     coordinator.attachProvider(provider);
     coordinator.registerReserved('Offer_1', owner, purpose);
-    coordinator.requireCancellation('Offer_1', 'retired');
+    coordinator.settleOperation(owner, purpose, 'cancel-required', 'retired');
     await coordinator.awaitOwner(owner);
 
     expect(coordinator.snapshot()).toEqual([

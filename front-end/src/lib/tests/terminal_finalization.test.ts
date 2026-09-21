@@ -15,20 +15,8 @@ import {
 } from '@games/krunk/ui/serialize';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
-import {
-  _resetForTests,
-  claimLease,
-  discardStagedTerminalSession,
-  flushSessionSave,
-  hasSavedSessionMarker,
-  loadState,
-  markSavedSession,
-  peekSession,
-  replaceSession,
-  saveSession,
-  saveTerminalSession,
-  stageTerminalSession,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
+import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
 import { createSessionModel } from '../session/model';
 import type { SessionModel } from '../session/types';
 import { readSessionRecord, SESSION_DB_NAME } from '../session/indexedDb';
@@ -173,14 +161,14 @@ async function seedLiveSession(): Promise<void> {
     activeGameIds: [],
   });
   if (live.phase !== 'live') throw new Error('expected live fixture');
-  saveSession({
+  storageRepository.saveSession({
     scope: 'live',
     pairing: live.pairing,
     live: live.live,
     presentation: live.presentation,
     history: live.history,
   });
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
   markSavedSession();
 }
 
@@ -201,7 +189,7 @@ function terminalUpdate(fields: {
 }
 
 beforeEach(async () => {
-  _resetForTests();
+  storageRepository._resetForTests();
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
@@ -211,12 +199,12 @@ beforeEach(async () => {
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
   });
-  await claimLease();
+  await storageRepository.claimLease();
   await seedLiveSession();
 });
 
 afterEach(() => {
-  _resetForTests();
+  storageRepository._resetForTests();
 });
 
 function finalizationArgs(controller: SessionController) {
@@ -241,15 +229,15 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   const dependencies: TerminalFinalizationDependencies = {
     stageTerminal: async (fields) => {
       events.push('stage-terminal');
-      await stageTerminalSession(fields);
+      await storageRepository.stageTerminalSession(fields);
     },
     flushSave: async () => {
       events.push('write-start');
       await writeGate;
-      await flushSessionSave();
+      await storageRepository.flushSessionSave();
       events.push('write-complete');
     },
-    discardTerminal: discardStagedTerminalSession,
+    discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
     updateMarker: () => events.push('marker'),
     teardown,
   };
@@ -280,8 +268,8 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   ]);
   expect(teardown).toHaveBeenCalledTimes(1);
 
-  _resetForTests();
-  const restored = await peekSession();
+  storageRepository._resetForTests();
+  const restored = await storageRepository.peekSession();
   expect(restored).toMatchObject({
     phase: 'terminal',
     terminal: {
@@ -470,20 +458,20 @@ it('round-trips an explicitly empty local alias without converting it to null', 
   args.identity.myName = '';
 
   await finalizeTerminalSession(args, {
-    stageTerminal: stageTerminalSession,
-    flushSave: flushSessionSave,
-    discardTerminal: discardStagedTerminalSession,
+    stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
+    flushSave: storageRepository.flushSessionSave.bind(storageRepository),
+    discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
     updateMarker: markSavedSession,
     teardown: jest.fn(),
   });
 
-  _resetForTests();
-  const restored = await peekSession();
+  storageRepository._resetForTests();
+  const restored = await storageRepository.peekSession();
   expect(restored?.phase === 'terminal' && restored.terminal.myAlias).toBe('');
 });
 
 it('atomically removes live restart fields through the real mutation queue', async () => {
-  const terminalWrite = saveTerminalSession(
+  const terminalWrite = storageRepository.saveTerminalSession(
     terminalUpdate({
       channelStatus: { state: 'ResolvedClean' },
       coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
@@ -506,10 +494,10 @@ it('atomically removes live restart fields through the real mutation queue', asy
     'unrollTimeout',
     'unackedMessages',
   ]) {
-    expect(loadState()).not.toHaveProperty(field);
+    expect(storageRepository.loadState()).not.toHaveProperty(field);
   }
 
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
   await terminalWrite;
   const stored = await readSessionRecord();
   expect(stored).not.toBeNull();
@@ -520,13 +508,13 @@ it('atomically removes live restart fields through the real mutation queue', asy
 });
 
 it('retires a resolved display before accepting a fresh live session', async () => {
-  await saveTerminalSession(
+  await storageRepository.saveTerminalSession(
     terminalUpdate({
       channelStatus: { state: 'ResolvedClean' },
       coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
     }),
   );
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
 
   let displayedSession = 'resolved';
   let mountedPairingToken: string | null = null;
@@ -538,7 +526,7 @@ it('retires a resolved display before accepting a fresh live session', async () 
       displayedSession = 'none';
     },
     persistLiveCheckpoint: async () => {
-      await replaceSession(
+      await storageRepository.replaceSession(
         baseSave({
           pairingToken,
           sessionPeerId: 'new-peer',
@@ -567,13 +555,13 @@ it('retires a resolved display before accepting a fresh live session', async () 
 });
 
 it('aborts after persist when the start epoch advances during replaceSession', async () => {
-  await saveTerminalSession(
+  await storageRepository.saveTerminalSession(
     terminalUpdate({
       channelStatus: { state: 'ResolvedClean' },
       coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
     }),
   );
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
 
   let displayedSession = 'resolved';
   let mounted = false;
@@ -584,7 +572,7 @@ it('aborts after persist when the start epoch advances during replaceSession', a
     reportBusy: () => {},
     shouldAbort: () => capturedEpoch !== startEpoch,
     persistLiveCheckpoint: async () => {
-      const prior = loadState();
+      const prior = storageRepository.loadState();
       const terminalBackup =
         prior.phase === 'terminal'
           ? {
@@ -592,7 +580,7 @@ it('aborts after persist when the start epoch advances during replaceSession', a
               presentation: structuredClone(prior.presentation),
             }
           : null;
-      await replaceSession(
+      await storageRepository.replaceSession(
         baseSave({
           pairingToken: 'cancelled-token',
           sessionPeerId: 'peer',
@@ -603,12 +591,12 @@ it('aborts after persist when the start epoch advances during replaceSession', a
           perGameAmount: '1',
         }),
       );
-      // Simulate dashboard Cancel bumping the epoch during replaceSession's
+      // Simulate dashboard Cancel bumping the epoch during storageRepository.replaceSession.bind(storageRepository)'s
       // awaits — restore the finished freeze rather than wiping IndexedDB.
       startEpoch += 1;
       if (capturedEpoch !== startEpoch) {
         if (terminalBackup) {
-          await saveTerminalSession(terminalBackup);
+          await storageRepository.saveTerminalSession(terminalBackup);
         }
         return;
       }
@@ -625,18 +613,18 @@ it('aborts after persist when the start epoch advances during replaceSession', a
   expect(outcome).toBe('aborted');
   expect(displayedSession).toBe('resolved');
   expect(mounted).toBe(false);
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
   expect(decodeSessionSaveEnvelope((await readSessionRecord())!).phase).toBe('terminal');
 });
 
 it('keeps the terminal checkpoint when Cancel aborts before replaceSession', async () => {
-  await saveTerminalSession(
+  await storageRepository.saveTerminalSession(
     terminalUpdate({
       channelStatus: { state: 'ResolvedClean' },
       coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
     }),
   );
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
 
   let displayedSession = 'resolved';
   let mounted = false;
@@ -653,7 +641,7 @@ it('keeps the terminal checkpoint when Cancel aborts before replaceSession', asy
     persistLiveCheckpoint: async () => {
       if (capturedEpoch !== startEpoch) return;
       replaceCalled = true;
-      await replaceSession(
+      await storageRepository.replaceSession(
         baseSave({
           pairingToken: 'should-not-write',
           sessionPeerId: 'peer',
@@ -682,13 +670,13 @@ it('keeps the terminal checkpoint when Cancel aborts before replaceSession', asy
 });
 
 it('keeps the resolved display and terminal checkpoint when fresh persistence fails', async () => {
-  await saveTerminalSession(
+  await storageRepository.saveTerminalSession(
     terminalUpdate({
       channelStatus: { state: 'ResolvedClean' },
       coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
     }),
   );
-  await flushSessionSave();
+  await storageRepository.flushSessionSave();
 
   let displayedSession = 'resolved';
   let mounted = false;
@@ -1063,12 +1051,12 @@ it('keeps live state and ownership after failure, then retries without teardown 
   const teardown = jest.fn();
   let failWrite = true;
   const dependencies: TerminalFinalizationDependencies = {
-    stageTerminal: stageTerminalSession,
+    stageTerminal: storageRepository.stageTerminalSession.bind(storageRepository),
     flushSave: async () => {
       if (failWrite) throw new Error('deferred IndexedDB write failed');
-      await flushSessionSave();
+      await storageRepository.flushSessionSave();
     },
-    discardTerminal: discardStagedTerminalSession,
+    discardTerminal: storageRepository.discardStagedTerminalSession.bind(storageRepository),
     updateMarker: markSavedSession,
     teardown,
   };
@@ -1079,7 +1067,7 @@ it('keeps live state and ownership after failure, then retries without teardown 
 
   expect(teardown).not.toHaveBeenCalled();
   expect(hasSavedSessionMarker()).toBe(true);
-  const cached = loadState();
+  const cached = storageRepository.loadState();
   expect(cached.phase === 'live' && cached.live.serializedGameSession).toEqual(liveCradle);
   const durable = await readSessionRecord();
   const decodedDurable = durable ? decodeSessionSaveEnvelope(durable).save : null;
@@ -1112,8 +1100,8 @@ it('keeps live state and ownership after failure, then retries without teardown 
 
   expect(events).toEqual(['controller-quiesce', 'controller-quiesce']);
   expect(teardown).toHaveBeenCalledTimes(1);
-  _resetForTests();
-  const restored = await peekSession();
+  storageRepository._resetForTests();
+  const restored = await storageRepository.peekSession();
   expect(restored).not.toHaveProperty('live');
   expect(restored?.phase === 'terminal' && restored.presentation.channelStatus?.state).toBe(
     'ResolvedUnrolled',

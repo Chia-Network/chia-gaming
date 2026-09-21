@@ -313,11 +313,6 @@ export interface WasmConnection {
   reject_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
   submission_attempt_unavailable: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
   relinquish_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
-  submission_successor_relationship: (
-    cid: number,
-    successor_attempt_token: string,
-    completed_attempt_token: string,
-  ) => WasmContract.SubmissionSuccessorRelationship;
   chain_snapshot_ready: (cid: number) => void;
   request_fee_upgrades: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
@@ -525,17 +520,6 @@ export class ChiaGame {
 
   relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
     return this.wasm.relinquish_submission_attempt(this.session, attemptToken);
-  }
-
-  submission_successor_relationship(
-    successorAttemptToken: string,
-    completedAttemptToken: string,
-  ): WasmContract.SubmissionSuccessorRelationship {
-    return this.wasm.submission_successor_relationship(
-      this.session,
-      successorAttemptToken,
-      completedAttemptToken,
-    );
   }
 
   chain_snapshot_ready(): void {

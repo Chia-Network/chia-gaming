@@ -1,5 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { walletOperationService } from '../session/walletOperationService';
+import { walletOperationRuntime } from '../session/walletOperationRuntime';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import type {
@@ -9,7 +9,7 @@ import type {
 } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { peekSession } from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { createSessionModel } from '../session/model';
@@ -245,7 +245,7 @@ describe('in-order delivery', () => {
     expect(sentAcks).toEqual([]);
     await blob.flushPendingWork();
     expect(sentAcks).toEqual([1, 2, 3]);
-    const saved = await peekSession();
+    const saved = await storageRepository.peekSession();
     expect(saved?.phase === 'live' && saved.live.remoteNumber).toBe(3n);
     expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
     expect((cradle.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0])).toEqual([
@@ -600,7 +600,7 @@ describe('lifecycle flush', () => {
     await blob.flushPendingSave();
 
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-    const saved = await peekSession();
+    const saved = await storageRepository.peekSession();
     expect(saved?.phase === 'live' && saved.live.remoteNumber).toBe(1n);
     expect(saved?.phase === 'live' && saved.live.messageNumber).toBe(2n);
     expect(saved?.phase === 'live' && saved.live.unackedMessages).toEqual([
@@ -1197,7 +1197,7 @@ describe('WASM wallet funding requests', () => {
     expect(walletCallbackFailed).toHaveBeenCalledWith(
       expect.stringContaining('concurrent funding request'),
     );
-    expect(walletOperationService.snapshot()).toEqual([]);
+    expect(walletOperationRuntime.snapshot()).toEqual([]);
   });
 
   it('cancels the original trade and reports one callback failure when offer validation throws', async () => {
@@ -1297,7 +1297,7 @@ describe('WASM wallet funding requests', () => {
     ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    await walletOperationService.awaitOwner({
+    await walletOperationRuntime.awaitOwner({
       installationPlayerId: 'test',
       peerSessionId: '00'.repeat(16),
       providerScope: { provider: 'simulator', identity: 'submission-handoff' },
@@ -1397,7 +1397,7 @@ describe('WASM wallet funding requests', () => {
     await blob.flushPendingWork();
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(walletCallbackFailed).not.toHaveBeenCalled();
-    expect(walletOperationService.snapshot()).toEqual([
+    expect(walletOperationRuntime.snapshot()).toEqual([
       expect.objectContaining({ stage: 'best-effort-uncertain' }),
     ]);
 
@@ -1638,7 +1638,7 @@ describe('wallet fee attachment on submission', () => {
       10n,
     );
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(walletOperationService.snapshot()[0]).toEqual(
+    expect(walletOperationRuntime.snapshot()[0]).toEqual(
       expect.objectContaining({
         tradeId: 'fee-aggregate-trade',
         stage: 'retained-for-replay',
@@ -1676,7 +1676,7 @@ describe('wallet fee attachment on submission', () => {
 
     expect(spend).not.toHaveBeenCalled();
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('fee-conversion-failure-trade');
-    expect(walletOperationService.snapshot()).toEqual([]);
+    expect(walletOperationRuntime.snapshot()).toEqual([]);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('failed to convert finalized transaction result'),
     );
@@ -1831,11 +1831,11 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
     const pendingEffects = (blob as unknown as { pendingEffects: Set<Promise<void>> })
       .pendingEffects;
-    const deliveries = (blob as any).submissionDeliveries;
+    const deliveries = (blob as any).submissionPump;
 
     submitTransaction(blob, testSpendBundle('first'), { target: feeTarget, amount: '10' });
     expect(pendingEffects.size).toBe(0);
-    expect(deliveries.hasPending()).toBe(true);
+    expect(deliveries.isQuiescent()).toBe(false);
     await blob.flushPendingSave();
     for (let i = 0; i < 10 && beginWalletOffer.mock.calls.length === 0; i += 1) {
       await Promise.resolve();
@@ -1843,22 +1843,22 @@ describe('wallet fee attachment on submission', () => {
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(pendingEffects.size).toBe(0);
-    expect(deliveries.hasPending()).toBe(true);
+    expect(deliveries.isQuiescent()).toBe(false);
 
     resolveFirstFee(unavailableFee);
     await blob.flushPendingWork();
     expect(pendingEffects.size).toBe(0);
-    expect(deliveries.hasPending()).toBe(false);
+    expect(deliveries.isQuiescent()).toBe(true);
 
     submitTransaction(blob, testSpendBundle('second'), { target: feeTarget, amount: '10' });
     expect(pendingEffects.size).toBe(0);
-    expect(deliveries.hasPending()).toBe(true);
+    expect(deliveries.isQuiescent()).toBe(false);
     await blob.quiesceForTerminalFinalization();
     expect(beginWalletOffer).toHaveBeenCalledTimes(2);
     expect(finalize).toHaveBeenCalledTimes(2);
     expect(spend).toHaveBeenCalledTimes(2);
     expect(pendingEffects.size).toBe(0);
-    expect(deliveries.hasPending()).toBe(false);
+    expect(deliveries.isQuiescent()).toBe(true);
   });
 
   it('keeps terminal quiescence blocked through broadcast and persists the wallet outcome', async () => {
@@ -1979,7 +1979,14 @@ describe('wallet fee attachment on submission', () => {
     (cradle.drain_submissions as jest.Mock)
       .mockReturnValueOnce(submissionDrain([submission]))
       .mockReturnValueOnce(
-        submissionDrain([{ ...submission, attempt_token: 'fee-upgrade-attempt' }]),
+        submissionDrain([
+          {
+            ...submission,
+            attempt_token: 'fee-upgrade-attempt',
+            predecessor_attempt_token: submission.id,
+            relationship: 'newer-fee-bearing',
+          },
+        ]),
       );
     (cradle.finalize_submission as jest.Mock)
       .mockImplementationOnce((_attemptToken: string, feeSourceJson: string) => {
@@ -2057,6 +2064,8 @@ describe('wallet fee attachment on submission', () => {
     const exactReplay = {
       ...initial,
       attempt_token: 'attached-replay-attempt-2',
+      predecessor_attempt_token: initial.id,
+      relationship: 'exact' as const,
       fee_request: null,
     };
     const beginWalletOffer = jest.fn().mockResolvedValue({
@@ -2101,7 +2110,7 @@ describe('wallet fee attachment on submission', () => {
     blob.processResult(wasmResult());
     await transactionSubmitQueue(blob);
 
-    expect(walletOperationService.snapshot()).toEqual([
+    expect(walletOperationRuntime.snapshot()).toEqual([
       expect.objectContaining({
         tradeId: 'attached-replay-trade',
         stage: 'retained-for-replay',
@@ -2118,7 +2127,7 @@ describe('wallet fee attachment on submission', () => {
       undefined,
     );
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(walletOperationService.snapshot()[0]).toEqual(
+    expect(walletOperationRuntime.snapshot()[0]).toEqual(
       expect.objectContaining({
         tradeId: 'attached-replay-trade',
         stage: 'retained-for-replay',
@@ -2137,13 +2146,18 @@ describe('wallet fee attachment on submission', () => {
         walletOperationOwner(): { installationPlayerId: string; peerSessionId: string };
       }
     ).walletOperationOwner();
-    walletOperationService.registerReserved(
+    walletOperationRuntime.registerReserved(
       'retired-trade',
       owner,
       { kind: 'fee', operationId: 'retired-submission' },
       'fee-offer-created',
     );
-    walletOperationService.retainForReplay('retired-trade');
+    walletOperationRuntime.settleOperation(
+      owner,
+      { kind: 'fee', operationId: 'retired-submission' },
+      'retained-for-replay',
+      'fee-source-attached',
+    );
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
       submissionDrain([], ['retired-submission']),
     );
@@ -2352,9 +2366,10 @@ describe('wallet fee attachment on submission', () => {
     const submission: TransactionSubmission = {
       id: 'rejected-with-fee',
       attempt_token: 'rejected-with-fee-attempt',
+      predecessor_attempt_token: null,
+      relationship: 'initial',
       bundle: testSpendBundle('coin'),
       fee_request: { target: feeTarget, amount: '10' },
-      intent_fingerprint: 'aa'.repeat(32),
     };
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
       submissionDrain([], [submission.id]),
@@ -2366,7 +2381,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(walletOperationService.snapshot()[0]).toEqual(
+    expect(walletOperationRuntime.snapshot()[0]).toEqual(
       expect.objectContaining({ tradeId: 'Offer_fee', stage: 'retained-for-replay' }),
     );
   });

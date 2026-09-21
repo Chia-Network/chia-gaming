@@ -1,13 +1,7 @@
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
-import {
-  claimLease,
-  _resetForTests as resetSaveState,
-  flushSessionSave,
-  peekSession,
-  saveSession,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';
@@ -132,19 +126,19 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     });
     assert.equal(save.phase, 'live');
     if (save.phase !== 'live') throw new Error('expected live save');
-    await saveSession({
+    await storageRepository.saveSession({
       scope: 'live',
       pairing: save.pairing,
       live: save.live,
       presentation: save.presentation,
       history: save.history,
     });
-    await flushSessionSave();
+    await storageRepository.flushSessionSave();
 
     await flushWrapperDrain(cradles);
-    resetSaveState();
-    await claimLease();
-    const reloaded = await peekSession();
+    storageRepository._resetForTests();
+    await storageRepository.claimLease();
+    const reloaded = await storageRepository.peekSession();
     assert.ok(
       reloaded,
       `${testCase.handProposal.gameType}: IndexedDB peek must return saved session`,
@@ -189,8 +183,8 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     }
 
     await Promise.all(cradles.map((cradle) => cradle.shutdown()));
-    await flushSessionSave();
-    resetSaveState();
+    await storageRepository.flushSessionSave();
+    storageRepository._resetForTests();
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
       request.onsuccess = () => resolve();
@@ -198,7 +192,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         reject(request.error ?? new Error('Failed to delete session database'));
       request.onblocked = () => reject(new Error('Session database deletion was blocked'));
     });
-    await claimLease();
+    await storageRepository.claimLease();
   }
 }
 

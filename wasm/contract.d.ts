@@ -22,10 +22,12 @@ export interface TransactionSubmission {
   id: string;
   /** Opaque Rust-issued identifier for this exact delivery attempt. */
   attempt_token: string;
+  /** Rust-issued predecessor in this stable submission's delivery lineage. */
+  predecessor_attempt_token?: string | null;
+  /** Immutable relationship to the predecessor. */
+  relationship: 'initial' | 'exact' | 'newer-fee-bearing' | 'other';
   bundle: SpendBundle;
   fee_request?: { target: string; amount: string } | null;
-  /** Stable fingerprint of the durable submission intent. */
-  intent_fingerprint: string;
 }
 
 export type SubmissionDrainFailureStage =
@@ -49,8 +51,6 @@ export interface SubmissionDrain {
   retired_submission_ids: string[];
   failures: SubmissionDrainFailure[];
 }
-
-export type SubmissionSuccessorRelationship = 'exact' | 'newer-fee-bearing' | 'other';
 
 export interface IChiaIdentity {
   private_key: string;

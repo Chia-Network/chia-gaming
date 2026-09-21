@@ -3,7 +3,7 @@ import {
   rejectionTombstoneKey,
   type DurableRejectionTombstone,
 } from '../lib/session/indexedDb';
-import { storageCoordinator } from '../lib/session/storageCoordinator';
+import { storageRepository } from '../lib/session/storageRepository';
 import { decodePeerAppMessage, encodePeerAppMessage, type PeerSession } from './PeerSession';
 
 export type RejectionPeerPool = Map<string, PeerSession>;
@@ -14,9 +14,12 @@ type RejectionStore = {
 };
 
 const durableRejectionStore: RejectionStore = {
-  write: (tombstone) => storageCoordinator.persist(storageCoordinator.writeRejection(tombstone)),
+  write: (tombstone) =>
+    storageRepository.persist(storageRepository.mutateRecords('write-rejection', tombstone)),
   delete: (peerId, sessionId) =>
-    storageCoordinator.persist(storageCoordinator.deleteRejection(peerId, sessionId)),
+    storageRepository.persist(
+      storageRepository.mutateRecords('delete-rejection', peerId, sessionId),
+    ),
 };
 
 export function retainRejectionPeer(

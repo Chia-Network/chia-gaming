@@ -1,12 +1,7 @@
 import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import {
-  CURRENT_VERSION,
-  flushSessionSave,
-  hasSavedSessionMarker,
-  markSavedSession,
-  peekSession,
-  saveSession,
-} from '../session/sessionCache';
+import { SESSION_SAVE_ENVELOPE_VERSION as CURRENT_VERSION } from '../session/persistence';
+import { storageRepository } from '../session/storageRepository';
+import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
 import { readSessionRecord, readWalletOperationRecord } from '../session/indexedDb';
 import {
   ACTIVE_INSTANCE,
@@ -15,7 +10,7 @@ import {
   installSessionEnvelopeTestSetup,
   liveSave,
 } from './session_save_envelope.fixtures';
-import { storageCoordinator } from '../session/storageCoordinator';
+import { storageRepository } from '../session/storageRepository';
 
 installSessionEnvelopeTestSetup();
 
@@ -119,7 +114,7 @@ describe('save boundary enforcement', () => {
 
   it('blocks session hydration when the independent wallet ledger is malformed', async () => {
     const session = liveSave();
-    await storageCoordinator.persist(storageCoordinator.writeSession(session));
+    await storageRepository.persist(storageRepository.mutateRecords('write-session', session));
     const malformedLedger = new Uint8Array([1, 2, 3]);
     await new Promise<void>((resolve, reject) => {
       const open = indexedDB.open('chia-gaming-session');
@@ -137,7 +132,9 @@ describe('save boundary enforcement', () => {
     });
     markSavedSession();
 
-    await expect(peekSession()).rejects.toThrow('Stored wallet operation record is malformed');
+    await expect(storageRepository.peekSession()).rejects.toThrow(
+      'Stored wallet operation record is malformed',
+    );
     expect(await readSessionRecord()).toEqual(session);
     await expect(readWalletOperationRecord()).rejects.toThrow(
       'Stored wallet operation record is malformed',
@@ -158,10 +155,12 @@ describe('save boundary enforcement', () => {
         reason: 'cleanup',
       },
     ];
-    await storageCoordinator.persist(storageCoordinator.writeWalletOperations(ledger));
+    await storageRepository.persist(
+      storageRepository.mutateRecords('write-wallet-operations', ledger),
+    );
     markSavedSession();
-    await storageCoordinator.persist(
-      storageCoordinator.writeSession({
+    await storageRepository.persist(
+      storageRepository.mutateRecords('write-session', {
         version: CURRENT_VERSION - 1n,
         playerId: 'old-player',
         serializedGameSession: new Uint8Array([1, 2, 3]),
@@ -169,7 +168,7 @@ describe('save boundary enforcement', () => {
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect((await readWalletOperationRecord())?.entries).toEqual(ledger);
     expect(hasSavedSessionMarker()).toBe(true);
@@ -185,22 +184,23 @@ describe('save boundary enforcement', () => {
       gameInstances: { 'game-1': ACTIVE_INSTANCE },
     });
     if (invalid.phase !== 'live') throw new Error('expected live fixture');
-    const scheduled = saveSession({
+    const scheduled = storageRepository.saveSession({
       scope: 'live',
       pairing: invalid.pairing,
       live: invalid.live,
       presentation: invalid.presentation,
     });
 
-    await expect(flushSessionSave()).rejects.toThrow('duplicate activeGameIds');
+    await expect(storageRepository.flushSessionSave()).rejects.toThrow('duplicate activeGameIds');
     await expect(scheduled).rejects.toThrow('duplicate activeGameIds');
     expect(await readSessionRecord()).toBeNull();
   });
 
-  it('deletes an invalid current-v13 game envelope while retaining the boot marker', async () => {
+  it('deletes an invalid current game envelope while retaining the boot marker', async () => {
     markSavedSession();
-    await storageCoordinator.persist(
-      storageCoordinator.writeSession(
+    await storageRepository.persist(
+      storageRepository.mutateRecords(
+        'write-session',
         activeSave({
           activeGameIds: ['game-1', 'game-1'],
         }),
@@ -208,16 +208,17 @@ describe('save boundary enforcement', () => {
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
   });
 
-  it('deletes a cross-phase v13 payload during hydration', async () => {
+  it('deletes a cross-phase current payload during hydration', async () => {
     markSavedSession();
-    await storageCoordinator.persist(
-      storageCoordinator.writeSession(
+    await storageRepository.persist(
+      storageRepository.mutateRecords(
+        'write-session',
         baseSave({
           activeGameIds: ['game-1'],
           currentHandGameIds: ['game-1'],
@@ -243,20 +244,20 @@ describe('save boundary enforcement', () => {
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
   });
 
-  it('deletes a live v13 record that restoreSession cannot consume', async () => {
+  it('deletes a current live record that restoreSession cannot consume', async () => {
     markSavedSession();
-    await storageCoordinator.persist(
-      storageCoordinator.writeSession(liveSave({ messageNumber: undefined })),
+    await storageRepository.persist(
+      storageRepository.mutateRecords('write-session', liveSave({ messageNumber: undefined })),
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
@@ -264,8 +265,9 @@ describe('save boundary enforcement', () => {
 
   it('deletes a persisted hand whose game type disagrees with its terms', async () => {
     markSavedSession();
-    await storageCoordinator.persist(
-      storageCoordinator.writeSession(
+    await storageRepository.persist(
+      storageRepository.mutateRecords(
+        'write-session',
         activeSave({
           activeGameType: 'spacepoker',
         }),
@@ -273,16 +275,17 @@ describe('save boundary enforcement', () => {
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
   });
 
-  it('deletes a malformed current-v16 metadata envelope read from IndexedDB', async () => {
+  it('deletes a malformed current metadata envelope read from IndexedDB', async () => {
     markSavedSession();
-    await storageCoordinator.persist(
-      storageCoordinator.writeSession(
+    await storageRepository.persist(
+      storageRepository.mutateRecords(
+        'write-session',
         baseSave({
           betweenHandCompose: {
             selected_game: 'calpoker',
@@ -299,7 +302,7 @@ describe('save boundary enforcement', () => {
     );
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
@@ -323,7 +326,7 @@ describe('save boundary enforcement', () => {
     markSavedSession();
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();
@@ -351,7 +354,7 @@ describe('save boundary enforcement', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
     await expect(readSessionRecord()).rejects.toThrow('Stored session record is malformed');
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.peekSession()).toBeNull();
     expect(await readSessionRecord()).toBeNull();
     expect(hasSavedSessionMarker()).toBe(true);
     errorSpy.mockRestore();

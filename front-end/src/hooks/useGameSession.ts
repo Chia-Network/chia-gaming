@@ -33,8 +33,8 @@ import type { GameSessionParams, PeerConnectionResult } from '../types/ChiaGamin
 import type { BlockchainPoller } from './BlockchainPoller';
 import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
 import type { SessionController } from './SessionController';
-import type { SessionSave } from '../lib/session/sessionCache';
-import { getDefaultFee, getPlayerId } from '../lib/session/sessionCache';
+import { type SessionSave } from '../lib/session/saveEnvelope';
+import { storageRepository } from '../lib/session/storageRepository';
 
 export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
@@ -74,14 +74,14 @@ export function useSessionControllerAfterCommit(
       blockchain,
       peerConn,
       registerMessageHandler,
-      getPlayerId(),
+      storageRepository.getPlayerId(),
       params.myContribution,
       params.theirContribution,
       params.iStarted,
       sessionSave,
       params.pairingToken,
       params.perGameAmount,
-      getDefaultFee,
+      () => storageRepository.query('defaultFee'),
       Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
       Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
     ).sessionController;

@@ -12,13 +12,13 @@ import type {
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { _resetForTests as resetSaveState, claimLease, saveSession } from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
-import { storageCoordinator } from '../session/storageCoordinator';
+import { storageRepository } from '../session/storageRepository';
 
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
@@ -44,7 +44,7 @@ export const mockRpc = new Proxy(
 
 export function saveLiveSession(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
-  return saveSession({
+  return storageRepository.saveSession({
     scope: 'live',
     pairing: save.pairing,
     live: save.live,
@@ -136,8 +136,10 @@ export function testSpendBundle(coinHex: string): SpendBundle {
 
 export function submissionDrain(
   submissions: Array<
-    Omit<TransactionSubmission, 'attempt_token' | 'intent_fingerprint'> &
-      Partial<Pick<TransactionSubmission, 'attempt_token' | 'intent_fingerprint'>>
+    Omit<TransactionSubmission, 'attempt_token' | 'predecessor_attempt_token' | 'relationship'> &
+      Partial<
+        Pick<TransactionSubmission, 'attempt_token' | 'predecessor_attempt_token' | 'relationship'>
+      >
   > = [],
   retired_submission_ids: string[] = [],
   failures: SubmissionDrainFailure[] = [],
@@ -145,7 +147,8 @@ export function submissionDrain(
   return {
     submissions: submissions.map((submission) => ({
       attempt_token: submission.id,
-      intent_fingerprint: 'aa'.repeat(32),
+      predecessor_attempt_token: null,
+      relationship: 'initial' as const,
       ...submission,
     })),
     retired_submission_ids,
@@ -185,7 +188,6 @@ export function makeMockCradle(
     reject_submission_attempt: rejectSubmissionAttempt,
     submission_attempt_unavailable: jest.fn(),
     relinquish_submission_attempt: jest.fn(),
-    submission_successor_relationship: jest.fn(() => 'exact'),
     chain_snapshot_ready: jest.fn(),
     request_fee_upgrades: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
@@ -402,9 +404,9 @@ beforeEach(async () => {
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
-  resetSaveState();
-  await claimLease();
-  await storageCoordinator.persist(storageCoordinator.deleteWalletOperations());
+  storageRepository._resetForTests();
+  await storageRepository.claimLease();
+  await storageRepository.persist(storageRepository.mutateRecords('delete-wallet-operations'));
 });
 
 afterEach(async () => {
@@ -429,7 +431,7 @@ afterEach(async () => {
       }
     }
   } finally {
-    resetSaveState();
+    storageRepository._resetForTests();
     _resetGameIdentityWarmupForTests();
     clearTestGlobal('localStorage');
     clearTestGlobal('sessionStorage');
@@ -453,9 +455,10 @@ export function submitTransaction(
   const submission: TransactionSubmission = {
     id: `test-${Math.random()}`,
     attempt_token: `attempt-${Math.random()}`,
+    predecessor_attempt_token: null,
+    relationship: 'initial',
     bundle,
     fee_request,
-    intent_fingerprint: 'aa'.repeat(32),
   };
   (
     blob as unknown as { submitTransaction: (submission: TransactionSubmission) => void }

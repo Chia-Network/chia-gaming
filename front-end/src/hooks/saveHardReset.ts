@@ -1,5 +1,4 @@
 import { SESSION_DB_NAME, type DurableStorageAuthority } from '../lib/session/indexedDb';
-import { storageCoordinator } from '../lib/session/storageCoordinator';
 import { isWalletConnectStorageKey, signalHardResetToOtherTabs } from './saveCoordination';
 
 export const OWNED_INDEXED_DB_EXACT_NAMES = [
@@ -120,18 +119,50 @@ function clearWalletConnectLocalStorageKeys(): void {
 }
 
 function clearOwnedStorageKeys(
+  name: 'localStorage' | 'sessionStorage',
   storage: Storage,
   exactKeys: readonly string[],
   prefixes: readonly string[],
-): void {
-  const toRemove = new Set(exactKeys);
-  for (let index = 0; index < storage.length; index++) {
-    const key = storage.key(index);
-    if (key && prefixes.some((prefix) => key.startsWith(prefix))) {
-      toRemove.add(key);
+  preservePendingWipe: boolean,
+): HardResetFailure | null {
+  try {
+    const toRemove = new Set(exactKeys);
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index);
+      if (key && prefixes.some((prefix) => key.startsWith(prefix))) {
+        toRemove.add(key);
+      }
     }
+    if (preservePendingWipe) toRemove.delete(PENDING_WIPE_KEY);
+    for (const key of toRemove) storage.removeItem(key);
+    return null;
+  } catch (error) {
+    console.error(`[save] failed to clear owned ${name} during hard reset:`, error);
+    return {
+      database: name,
+      reason: 'error',
+      detail: error instanceof Error ? error.message : String(error),
+    };
   }
-  for (const key of toRemove) storage.removeItem(key);
+}
+
+function clearOwnedBrowserStorageForHardReset(): HardResetFailure[] {
+  return [
+    clearOwnedStorageKeys(
+      'localStorage',
+      localStorage,
+      OWNED_LOCAL_STORAGE_EXACT_KEYS,
+      OWNED_LOCAL_STORAGE_PREFIXES,
+      true,
+    ),
+    clearOwnedStorageKeys(
+      'sessionStorage',
+      sessionStorage,
+      OWNED_SESSION_STORAGE_EXACT_KEYS,
+      OWNED_SESSION_STORAGE_PREFIXES,
+      true,
+    ),
+  ].filter((failure): failure is HardResetFailure => failure !== null);
 }
 
 /** Resolves true when every WalletConnect database was actually deleted. */
@@ -191,23 +222,42 @@ function markPendingWipe(): void {
 }
 
 function hasPendingWipe(): boolean {
+  let localPending = false;
   try {
-    return (
-      localStorage.getItem(PENDING_WIPE_KEY) !== null ||
-      sessionStorage.getItem(PENDING_WIPE_KEY) !== null
-    );
+    localPending = localStorage.getItem(PENDING_WIPE_KEY) !== null;
   } catch {
-    return false;
+    // The sessionStorage fallback may still be available.
   }
+  let sessionPending = false;
+  try {
+    sessionPending = sessionStorage.getItem(PENDING_WIPE_KEY) !== null;
+  } catch {
+    // The localStorage marker may still be available.
+  }
+  return localPending || sessionPending;
 }
 
-function clearPendingWipe(): void {
+function clearPendingWipe(): HardResetFailure[] {
+  const failures: HardResetFailure[] = [];
   try {
     localStorage.removeItem(PENDING_WIPE_KEY);
-    sessionStorage.removeItem(PENDING_WIPE_KEY);
-  } catch {
-    /* ignore */
+  } catch (error) {
+    failures.push({
+      database: 'localStorage',
+      reason: 'error',
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
+  try {
+    sessionStorage.removeItem(PENDING_WIPE_KEY);
+  } catch (error) {
+    failures.push({
+      database: 'sessionStorage',
+      reason: 'error',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return failures;
 }
 
 let pendingWipe: Promise<HardResetResult> | null = null;
@@ -223,10 +273,18 @@ let pendingWipe: Promise<HardResetResult> | null = null;
 export function startPendingWalletConnectWipe(): Promise<HardResetResult> {
   if (pendingWipe) return pendingWipe;
   if (!hasPendingWipe()) return Promise.resolve({ success: true });
-  pendingWipe = clearAllIndexedDbForHardReset().then((result) => {
-    if (result.success) clearPendingWipe();
-    else markPendingWipe();
-    return result;
+  const browserFailures = clearOwnedBrowserStorageForHardReset();
+  pendingWipe = clearAllIndexedDbForHardReset().then((databaseResult) => {
+    const failures = [
+      ...browserFailures,
+      ...(databaseResult.success ? [] : databaseResult.failures),
+    ];
+    if (failures.length === 0) failures.push(...clearPendingWipe());
+    if (failures.length > 0) {
+      markPendingWipe();
+      return { success: false, failures };
+    }
+    return { success: true };
   });
   return pendingWipe;
 }
@@ -284,32 +342,25 @@ async function clearAllIndexedDbForHardReset(): Promise<HardResetResult> {
   return failures.length === 0 ? { success: true } : { success: false, failures };
 }
 
-export function hardResetStorage(authority: DurableStorageAuthority): Promise<HardResetResult> {
+export function hardResetStorage(
+  authority: DurableStorageAuthority,
+  runValidatedReset: (
+    authority: DurableStorageAuthority,
+    reset: () => Promise<void>,
+  ) => Promise<void>,
+): Promise<HardResetResult> {
   signalHardResetToOtherTabs();
+  markPendingWipe();
   let result: HardResetResult = { success: false, failures: [] };
-  return storageCoordinator
-    .hardResetMutation(authority, async () => {
-      try {
-        clearOwnedStorageKeys(
-          localStorage,
-          OWNED_LOCAL_STORAGE_EXACT_KEYS,
-          OWNED_LOCAL_STORAGE_PREFIXES,
-        );
-      } catch (error) {
-        console.error('[save] failed to clear owned localStorage during hard reset:', error);
-      }
-      try {
-        clearOwnedStorageKeys(
-          sessionStorage,
-          OWNED_SESSION_STORAGE_EXACT_KEYS,
-          OWNED_SESSION_STORAGE_PREFIXES,
-        );
-      } catch (error) {
-        console.error('[save] failed to clear owned sessionStorage during hard reset:', error);
-      }
-      result = await clearAllIndexedDbForHardReset();
-      if (result.success) clearPendingWipe();
-      else markPendingWipe();
-    })
-    .then(() => result);
+  return runValidatedReset(authority, async () => {
+    const browserFailures = clearOwnedBrowserStorageForHardReset();
+    const databaseResult = await clearAllIndexedDbForHardReset();
+    const failures = [
+      ...browserFailures,
+      ...(databaseResult.success ? [] : databaseResult.failures),
+    ];
+    if (failures.length === 0) failures.push(...clearPendingWipe());
+    result = failures.length === 0 ? { success: true } : { success: false, failures };
+    if (!result.success) markPendingWipe();
+  }).then(() => result);
 }

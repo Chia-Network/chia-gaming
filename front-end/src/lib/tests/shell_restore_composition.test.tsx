@@ -5,16 +5,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
 import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
-import {
-  _resetForTests,
-  claimLease,
-  markSavedSession,
-  releaseLeaseIfOwner,
-} from '../session/sessionCache';
+import { storageRepository } from '../session/storageRepository';
+import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
-import { storageCoordinator } from '../session/storageCoordinator';
+import { storageRepository } from '../session/storageRepository';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -111,7 +107,7 @@ describe('Shell production restore composition', () => {
       configurable: true,
       value: { clipboard: { writeText: jest.fn() } },
     });
-    _resetForTests();
+    storageRepository._resetForTests();
     _resetPendingWalletConnectWipeForTests();
     await deleteSessionDatabase();
 
@@ -130,7 +126,7 @@ describe('Shell production restore composition', () => {
     }
     jest.restoreAllMocks();
     process.off('unhandledRejection', onUnhandledRejection);
-    _resetForTests();
+    storageRepository._resetForTests();
     _resetPendingWalletConnectWipeForTests();
     await deleteSessionDatabase();
     Reflect.deleteProperty(globalThis, 'window');
@@ -139,7 +135,7 @@ describe('Shell production restore composition', () => {
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const save = baseSave({
       blockchainType: 'walletconnect',
       hubUrl: 'https://hub.example.test',
@@ -154,10 +150,10 @@ describe('Shell production restore composition', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
     });
-    await storageCoordinator.persist(storageCoordinator.checkpoint(save, []));
+    await storageRepository.persist(storageRepository.checkpoint(save, []));
     markSavedSession();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
 
     act(() => {
       renderer = create(React.createElement(Shell));
@@ -186,7 +182,7 @@ describe('Shell production restore composition', () => {
   });
 
   it('surfaces malformed wallet evidence and completes Shell hard reset', async () => {
-    await claimLease();
+    await storageRepository.claimLease();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
       request.onsuccess = () => resolve(request.result);
@@ -200,7 +196,7 @@ describe('Shell production restore composition', () => {
     });
     db.close();
     releaseLeaseIfOwner();
-    _resetForTests();
+    storageRepository._resetForTests();
 
     act(() => {
       renderer = create(React.createElement(Shell));

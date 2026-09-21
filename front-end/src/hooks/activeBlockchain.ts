@@ -1,7 +1,7 @@
 import { InternalBlockchainInterface } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
-import { walletOperationService } from '../lib/session/walletOperationService';
-import { hydrateWalletOperations } from '../lib/session/sessionCache';
+import { walletOperationRuntime } from '../lib/session/walletOperationRuntime';
+import { storageRepository } from '../lib/session/storageRepository';
 
 let active: BlockchainPoller | null = null;
 
@@ -14,9 +14,9 @@ export function activate(
     active.stopBalanceInterest();
     active.stop();
   }
-  active = new BlockchainPoller(blockchain, pollIntervalMs, undefined, walletOperationService);
-  void hydrateWalletOperations().then(
-    () => walletOperationService.retryCancelRequired(),
+  active = new BlockchainPoller(blockchain, pollIntervalMs, undefined, walletOperationRuntime);
+  void storageRepository.hydrateOwnedStorage().then(
+    () => walletOperationRuntime.retryCancelRequired(),
     (error) => console.error('[save] failed to hydrate wallet operation record:', error),
   );
   active.start();
