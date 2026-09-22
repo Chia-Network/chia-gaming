@@ -4206,7 +4206,8 @@ const Shell = () => {
                   <Button
                     variant="solid"
                     fullWidth
-                    onClick={() => handleConnect('cloud', false, true)}
+                    disabled
+                    title="Cloud Wallet is temporarily unavailable"
                   >
                     Cloud Wallet
                   </Button>

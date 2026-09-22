@@ -1052,10 +1052,14 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        self.funding_coin
-            .as_ref()
-            .map(|coin| vec![(CoinOfInterest::Funding, coin.clone())])
-            .unwrap_or_default()
+        let mut coins = Vec::with_capacity(2);
+        if let Some(coin) = &self.funding_coin {
+            coins.push((CoinOfInterest::Funding, coin.clone()));
+        }
+        if let Some(channel) = &self.channel_state {
+            coins.push((CoinOfInterest::Channel, channel.channel_coin().clone()));
+        }
+        coins
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {
         HandshakeInitiatorPhase::channel_state(self)

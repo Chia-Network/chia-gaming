@@ -96,17 +96,15 @@ it(
       wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
+      const receiverCoins = wasm_blob2.getCoinsOfInterest();
       assert.deepEqual(
-        wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
-        ['Funding coin'],
+        receiverCoins.map((coin) => coin.label),
+        ['Funding coin', 'Channel coin'],
       );
       const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
       assert.equal(receiverChannelWatch.length, 1);
-      assert.notEqual(
-        receiverChannelWatch[0].coin_name,
-        wasm_blob2.getCoinsOfInterest()[0].id,
-        'funding coin presentation must not replace the direct channel watch',
-      );
+      assert.notEqual(receiverChannelWatch[0].coin_name, receiverCoins[0].id);
+      assert.equal(receiverChannelWatch[0].coin_name, receiverCoins[1].id);
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
@@ -117,17 +115,15 @@ it(
       wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
+      const initiatorCoins = wasm_blob1.getCoinsOfInterest();
       assert.deepEqual(
-        wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
-        ['Funding coin'],
+        initiatorCoins.map((coin) => coin.label),
+        ['Funding coin', 'Channel coin'],
       );
       const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
       assert.equal(initiatorChannelWatch.length, 1);
-      assert.notEqual(
-        initiatorChannelWatch[0].coin_name,
-        wasm_blob1.getCoinsOfInterest()[0].id,
-        'funding coin presentation must not replace the direct channel watch',
-      );
+      assert.notEqual(initiatorChannelWatch[0].coin_name, initiatorCoins[0].id);
+      assert.equal(initiatorChannelWatch[0].coin_name, initiatorCoins[1].id);
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
@@ -203,8 +199,8 @@ it(
       }>;
       assert.deepEqual(
         restoredCoins.map((coin) => coin.label),
-        ['Funding coin'],
-        'reload before channel creation must preserve the displayed funding coin',
+        ['Funding coin', 'Channel coin'],
+        'reload before channel creation must preserve both displayed setup coins',
       );
       // This fixture's funding bundle has seven creating inputs. They remain
       // bounded reconciliation interests until its watched channel output lands.

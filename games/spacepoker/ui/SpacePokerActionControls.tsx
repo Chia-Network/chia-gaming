@@ -41,6 +41,7 @@ export function SpacePokerActionControls({
   const actionsEnabled = interactive && myTurn && inBetting && !autoPong && !forcedAuto;
   const checkCallLabel =
     handler === SpHandler.MidRound && lastRaiseUnits !== '0' ? 'Call' : 'Check';
+  const canFold = handler === SpHandler.MidRound && lastRaiseUnits !== '0';
 
   useEffect(() => {
     if (!actionsEnabled) {
@@ -88,7 +89,7 @@ export function SpacePokerActionControls({
           {formatBet(BigInt(raiseAmountInput))}
         </span>
       </div>
-      <button onClick={handleFold} disabled={!actionsEnabled || isBeginRound} className={btnClass}>
+      <button onClick={handleFold} disabled={!actionsEnabled || !canFold} className={btnClass}>
         Fold
       </button>
     </div>

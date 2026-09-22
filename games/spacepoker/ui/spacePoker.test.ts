@@ -353,6 +353,28 @@ describe('Space Poker machine-owned hand state', () => {
     expect(hand?.handHistory).toEqual([{ player: 'opponent', action: 'raise', units: 4n }]);
   });
 
+  it('disables fold when checking is free and enables it when facing a raise', () => {
+    const port = { isChannelReady: () => true, dispatch: jest.fn() } as LiveGamePort;
+    const render = (lastRaise: bigint) =>
+      React.createElement(SpacePoker, {
+        view: liveSource(port, spacepokerStateCodec.encode(handState({ lastRaise }))),
+      });
+    const button = (label: string) =>
+      renderer!.root
+        .findAllByType('button')
+        .find((candidate) => String(candidate.children[0]) === label)!;
+
+    act(() => {
+      renderer = create(render(0n));
+    });
+    expect(button('Check').props.disabled).toBe(false);
+    expect(button('Fold').props.disabled).toBe(true);
+
+    act(() => renderer?.update(render(4n)));
+    expect(button('Call').props.disabled).toBe(false);
+    expect(button('Fold').props.disabled).toBe(false);
+  });
+
   it('does not expose protocol actions from a terminal hand source', () => {
     const source = {
       frozen: true as const,

@@ -1580,8 +1580,9 @@ the simulator test harness and passed explicitly.
 During channel opening, each handshake role registers the predicted channel
 coin as soon as its identity is known. The wallet funding input is validated as
 part of the assembled transaction and retained by the active handshake only for
-dashboard presentation; it is not used as an intermediate watch. Only observing
-the channel coin itself activates the channel.
+dashboard presentation; the setup dashboard surfaces both identities, but only
+the channel coin is registered as a watch. Only observing the channel coin
+itself activates the channel.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
