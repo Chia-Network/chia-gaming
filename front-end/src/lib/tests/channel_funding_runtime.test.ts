@@ -583,6 +583,45 @@ describe('durable channel funding record', () => {
     }
   });
 
+  it('retains an accepted reservation when host result processing fails', async () => {
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1accepted' },
+      tradeId: 'trade-accepted-material',
+    });
+    const { controller, cradle } = setup(jest.fn(), {
+      beginWalletOffer,
+      beginWalletOfferCancellation: cancel,
+    });
+    cradle.provide_offer_bech32 = jest.fn(() => wasmResult({ events: [{} as never] }));
+    cradle.wallet_callback_failed = jest.fn(() => wasmResult());
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60n, args: ['launcher'] }],
+    });
+    try {
+      expectConsoleError('cradle returned a malformed GameSessionEvent');
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      commitRuntime(controller, new ControlledRuntime());
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+
+      expect(cancel).not.toHaveBeenCalled();
+      expect(cradle.wallet_callback_failed).not.toHaveBeenCalled();
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([
+        expect.objectContaining({
+          providerReservationId: 'trade-accepted-material',
+          stage: 'awaiting-channel',
+        }),
+      ]);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
   it('scopes terminal obligations by the complete owner tuple', () => {
     storageRepository._replaceApplicationStateForTests({
       ...storageRepository.loadState(),

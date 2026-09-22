@@ -573,25 +573,32 @@ export class SessionController implements PollingGameSession {
     await this.runCommittedMutation(() => {
       try {
         if (outcome.warning) this.reportFundingWarning(outcome.warning);
-        if (!this.cradle) throw new Error('WASM cradle is unavailable for funding completion');
-        if (outcome.material.kind === 'offer') {
-          this.processResultNow(
-            requireWasmResult(this.cradle.provide_offer_bech32(outcome.material.offer)),
-          );
-          this.flushDeferredWork();
-        } else {
-          this.processResultNow(
-            this.cradle.provide_coin_spend_bundle(jsonStringify(outcome.material.bundle)),
-          );
+        if (!this.cradle) {
+          throw new Error('WASM cradle is unavailable for funding completion');
         }
-      } catch (error) {
-        const message = extractErrorMessage(error);
-        diagStack('handleNeedCoinSpend error', error);
-        if (outcome.kind === 'created-reserved') {
-          this.requireFundingRuntime().cancelIdentifiedReservation(outcome.tradeId);
+        let result: WasmResult;
+        try {
+          result =
+            outcome.material.kind === 'offer'
+              ? this.cradle.provide_offer_bech32(outcome.material.offer)
+              : this.cradle.provide_coin_spend_bundle(jsonStringify(outcome.material.bundle));
+        } catch (error) {
+          const message = extractErrorMessage(error);
+          diagStack('handleNeedCoinSpend error', error);
+          if (outcome.kind === 'created-reserved') {
+            this.requireFundingRuntime().cancelIdentifiedReservation(outcome.tradeId);
+          }
+          this.reportFundingWarning(message);
+          this.processResultNow(this.cradle.wallet_callback_failed(message));
+          return;
         }
-        this.reportFundingWarning(message);
-        if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(message));
+        try {
+          this.processResultNow(requireWasmResult(result));
+          if (outcome.material.kind === 'offer') this.flushDeferredWork();
+        } catch (error) {
+          this.reportAuthoritativeCompletionError('funding material', error);
+          throw error;
+        }
       } finally {
         this.pendingFunding = null;
         this.requestCommit();
