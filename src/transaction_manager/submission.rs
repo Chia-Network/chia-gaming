@@ -232,6 +232,11 @@ impl SubmissionBook {
                 }
                 _ => {}
             }
+            if pending.intent.id.is_none() && pending.trigger != DeliveryTrigger::Protocol {
+                return Err(
+                    "non-protocol pending delivery has no retained submission id".to_string(),
+                );
+            }
             let Some(id) = pending.intent.id else {
                 continue;
             };
@@ -268,6 +273,11 @@ impl SubmissionBook {
                 return Err(format!(
                     "retired submission id {id} is outside issued range 0..{}",
                     self.next_submission_id
+                ));
+            }
+            if pending_ids.contains(id) {
+                return Err(format!(
+                    "retired submission {id} still has a pending delivery"
                 ));
             }
         }

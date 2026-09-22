@@ -5565,6 +5565,10 @@ mod tests {
             manager.submission_book.test_submitted_mut()[0].chain_terminality =
                 SubmissionChainTerminality::Landed;
         }
+        fn unbound_non_protocol(manager: &mut TransactionManager<PersistableMockGameSession>) {
+            manager.chain_snapshot_ready();
+            manager.submission_book.test_pending_mut()[0].intent.id = None;
+        }
         fn absent_pending(manager: &mut TransactionManager<PersistableMockGameSession>) {
             manager.chain_snapshot_ready();
             manager.submission_book.test_pending_mut()[0].intent.id = Some(99);
@@ -5587,6 +5591,13 @@ mod tests {
         }
         fn duplicate_retirement(manager: &mut TransactionManager<PersistableMockGameSession>) {
             manager.submission_book.test_retired_mut().extend([0, 0]);
+        }
+        fn retirement_with_pending_delivery(
+            manager: &mut TransactionManager<PersistableMockGameSession>,
+        ) {
+            manager.chain_snapshot_ready();
+            let id = manager.submission_book.test_pending()[0].intent.id.unwrap();
+            manager.submission_book.test_retired_mut().push(id);
         }
         fn absent_replay_reference(manager: &mut TransactionManager<PersistableMockGameSession>) {
             manager
@@ -5627,6 +5638,11 @@ mod tests {
             ("next token", stale_next_token, "outside issued range"),
             ("landed active", landed_active, "landed submission"),
             (
+                "unbound non-protocol",
+                unbound_non_protocol,
+                "non-protocol pending delivery has no retained submission id",
+            ),
+            (
                 "absent pending",
                 absent_pending,
                 "references absent submission",
@@ -5650,6 +5666,11 @@ mod tests {
                 "duplicate retirement",
                 duplicate_retirement,
                 "retired more than once",
+            ),
+            (
+                "retirement with pending delivery",
+                retirement_with_pending_delivery,
+                "still has a pending delivery",
             ),
             (
                 "absent replay",
