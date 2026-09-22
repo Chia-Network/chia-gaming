@@ -76,7 +76,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 22;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 23;
 
     #[cfg(test)]
     mod serialization_schema_tests {
@@ -84,7 +84,7 @@ mod gaming_wasm {
 
         #[test]
         fn exported_game_session_serialization_schema_is_current() {
-            assert_eq!(game_session_serialization_schema(), 22);
+            assert_eq!(game_session_serialization_schema(), 23);
         }
     }
 

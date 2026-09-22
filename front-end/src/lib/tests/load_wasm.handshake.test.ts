@@ -98,11 +98,15 @@ it(
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
       assert.deepEqual(
         wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin'],
+        ['Funding coin'],
       );
       const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
       assert.equal(receiverChannelWatch.length, 1);
-      assert.equal(receiverChannelWatch[0].coin_name, wasm_blob2.getCoinsOfInterest()[0].id);
+      assert.notEqual(
+        receiverChannelWatch[0].coin_name,
+        wasm_blob2.getCoinsOfInterest()[0].id,
+        'funding coin presentation must not replace the direct channel watch',
+      );
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
@@ -115,11 +119,15 @@ it(
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
       assert.deepEqual(
         wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin'],
+        ['Funding coin'],
       );
       const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
       assert.equal(initiatorChannelWatch.length, 1);
-      assert.equal(initiatorChannelWatch[0].coin_name, wasm_blob1.getCoinsOfInterest()[0].id);
+      assert.notEqual(
+        initiatorChannelWatch[0].coin_name,
+        wasm_blob1.getCoinsOfInterest()[0].id,
+        'funding coin presentation must not replace the direct channel watch',
+      );
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
@@ -189,6 +197,15 @@ it(
         coin_name: string;
         coin_string: string;
       }>;
+      const restoredCoins = WholeWasmObject.coins_of_interest(restoredId) as Array<{
+        label: string;
+        id: string;
+      }>;
+      assert.deepEqual(
+        restoredCoins.map((coin) => coin.label),
+        ['Funding coin'],
+        'reload before channel creation must preserve the displayed funding coin',
+      );
       // This fixture's funding bundle has seven creating inputs. They remain
       // bounded reconciliation interests until its watched channel output lands.
       assert.ok(

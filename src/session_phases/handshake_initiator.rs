@@ -107,6 +107,7 @@ pub struct HandshakeInitiatorPhase {
 
     channel_state: Option<ChannelState>,
     channel_initiation_transaction: Option<SpendBundle>,
+    funding_coin: Option<CoinString>,
     opening_fee: Amount,
 
     private_keys: ChannelPrivateKeys,
@@ -141,6 +142,7 @@ impl HandshakeInitiatorPhase {
             state: InitiatorState::WaitingForStart,
             channel_state: None,
             channel_initiation_transaction: None,
+            funding_coin: None,
             opening_fee: Amount::default(),
             private_keys: phi.private_keys,
             game_types: phi.game_types,
@@ -827,7 +829,11 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
             let mut request = self.build_alice_coin_spend_request(env)?;
             request.max_height = self.channel_deadline;
-            validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
+            self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
+                env.allocator,
+                &wallet_bundle,
+                &request,
+            )?);
             effects.push(Effect::RegisterCoin {
                 coin: self.channel_state()?.channel_coin().clone(),
                 timeout: Timeout::new(1_000_000),
@@ -1046,9 +1052,9 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        self.channel_state
+        self.funding_coin
             .as_ref()
-            .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
+            .map(|coin| vec![(CoinOfInterest::Funding, coin.clone())])
             .unwrap_or_default()
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {

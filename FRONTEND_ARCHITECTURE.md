@@ -574,7 +574,7 @@ cleanup; retirement records the required transitions, and the next matching
 lifecycle attachment drains them.
 
 The app-owned persistence versions are aggregate v5, opaque Rust/WASM cradle
-schema 22, and IndexedDB v5. Their compatibility behavior is defined by the
+schema 23, and IndexedDB v5. Their compatibility behavior is defined by the
 [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
 
 Transaction submission and resubmission remain owned by Rust's
@@ -1579,8 +1579,9 @@ the simulator test harness and passed explicitly.
 
 During channel opening, each handshake role registers the predicted channel
 coin as soon as its identity is known. The wallet funding input is validated as
-part of the assembled transaction but is not used as an intermediate watch.
-Only observing the channel coin itself activates the channel.
+part of the assembled transaction and retained by the active handshake only for
+dashboard presentation; it is not used as an intermediate watch. Only observing
+the channel coin itself activates the channel.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized

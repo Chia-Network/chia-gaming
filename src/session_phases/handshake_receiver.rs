@@ -48,6 +48,7 @@ pub struct HandshakeReceiverPhase {
 
     channel_state: Option<ChannelState>,
     channel_finished_transaction: Option<SpendBundle>,
+    funding_coin: Option<CoinString>,
     opening_fee: Amount,
 
     private_keys: ChannelPrivateKeys,
@@ -81,6 +82,7 @@ impl HandshakeReceiverPhase {
             state: ReceiverState::WaitingForA,
             channel_state: None,
             channel_finished_transaction: None,
+            funding_coin: None,
             opening_fee: Amount::default(),
             private_keys: phi.private_keys,
             game_types: phi.game_types,
@@ -672,7 +674,11 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         };
         let mut request = self.build_bob_coin_spend_request(env)?;
         request.max_height = self.channel_deadline;
-        validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
+        self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
+            env.allocator,
+            &wallet_bundle,
+            &request,
+        )?);
 
         let amount = self.pre_launcher_amount()?;
         let pre_identity = self.pre_launcher_identity(env)?;
@@ -996,9 +1002,9 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         })
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
-        self.channel_state
+        self.funding_coin
             .as_ref()
-            .map(|ch| vec![(CoinOfInterest::Channel, ch.channel_coin().clone())])
+            .map(|coin| vec![(CoinOfInterest::Funding, coin.clone())])
             .unwrap_or_default()
     }
     fn channel_state(&self) -> Result<&ChannelState, Error> {

@@ -935,7 +935,7 @@ protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
 The browser aggregate is strict `DurableApplicationState` v5, its opaque
-Rust/WASM cradle is schema 22, and the app IndexedDB is schema 5. Under the
+Rust/WASM cradle is schema 23, and the app IndexedDB is schema 5. Under the
 [unreleased-format policy](#unreleased-app-owned-formats), any incompatible or
 malformed field rejects the whole root. The unchanged evidence remains
 available for diagnosis until explicit hard reset.

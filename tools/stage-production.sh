@@ -50,9 +50,17 @@ while IFS= read -r -d '' f; do
        -o -name '*.svg' \) -print0)
 
 echo "=== Sanity-checking Krunk files ==="
+PLAYER_BASE_PATH=$(node -e '
+const fs = require("fs");
+const meta = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+if (typeof meta.basePath !== "string" || !meta.basePath.startsWith("/app/")) {
+    throw new Error("invalid player build-meta basePath");
+}
+process.stdout.write(meta.basePath.replace(/^\/+|\/+$/g, ""));
+' "$PLAYER_STAGE/build-meta.json")
 for f in "games/krunk/clsp/factory_prepared.clvm.bin"
 do
-    if [ ! -f "$PLAYER_STAGE/$f" ]; then
+    if [ ! -f "$PLAYER_STAGE/$PLAYER_BASE_PATH/$f" ]; then
         echo "ERROR: missing $f in player staging"
         exit 1
     fi

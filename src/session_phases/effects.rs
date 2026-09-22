@@ -304,6 +304,7 @@ pub enum GameNotification {
 /// practice this can include multiple simultaneous game coins and payouts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoinOfInterest {
+    Funding,
     Channel,
     Unroll,
     UnrollChange,
@@ -314,6 +315,7 @@ pub enum CoinOfInterest {
 impl CoinOfInterest {
     pub fn label(self) -> String {
         match self {
+            CoinOfInterest::Funding => "Funding coin".to_string(),
             CoinOfInterest::Channel => "Channel coin".to_string(),
             CoinOfInterest::Unroll => "Unroll coin".to_string(),
             CoinOfInterest::UnrollChange => "Unroll change coin".to_string(),

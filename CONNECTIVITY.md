@@ -438,7 +438,7 @@ The hub does not create a session. It can only advise and relay:
   one salt-prefixed, masked Bencodex `DurableApplicationState` v5, owns ordered
   root transforms, and checkpoints the whole aggregate. IndexedDB v5 has only
   coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
-  schema 22. Owner-specific channel-funding operations, fee attachments, and
+  schema 23. Owner-specific channel-funding operations, fee attachments, and
   rejection transports are nested in the same root and have no independent
   record, version, hydration, or writer. A non-current version therefore blocks
   connectivity restore for the whole root rather than selecting a predecessor

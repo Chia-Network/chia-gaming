@@ -21,6 +21,8 @@ export default defineConfig([
     '**/node_modules/**',
     '**/public/index.js',
     '**/serve/**',
+    '.stage-hub/**',
+    '.stage-player/**',
     'deploy_hub/**',
     'deploy_player_app/**',
     'front-end/src/lib/pkg/**',

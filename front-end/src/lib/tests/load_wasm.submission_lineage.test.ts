@@ -91,7 +91,7 @@ it(
     };
 
     try {
-      assert.equal(WholeWasmObject.game_session_serialization_schema(), 22);
+      assert.equal(WholeWasmObject.game_session_serialization_schema(), 23);
       assert.equal(lane.controller.goOnChain(), true);
       await flushWrapperDrain(adapters);
 
@@ -115,7 +115,7 @@ it(
         if (restoredProvider) channelFundingRuntime.attachProvider(restoredProvider);
       });
       lane = restored.lane;
-      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 22n);
+      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 23n);
       captureRustSubmissions(lane.controller, rustSubmissions, acknowledged, relinquished);
 
       for (let attempt = 0; attempt < 20 && rustSubmissions.length < 3; attempt += 1) {
