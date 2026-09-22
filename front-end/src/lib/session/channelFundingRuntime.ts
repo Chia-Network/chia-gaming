@@ -267,8 +267,8 @@ export class ChannelFundingRuntime {
         );
         return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
       }
-      const retired = isRetired();
-      if (!retired) {
+      const retiredBeforeReconciliation = isRetired();
+      if (!retiredBeforeReconciliation) {
         if (recovery?.stage === 'best-effort-uncertain') {
           this.replace(recovery, { ...recovery, stage: 'creating', recoveryId });
         } else {
@@ -307,7 +307,13 @@ export class ChannelFundingRuntime {
       if (completion.kind === 'pending') {
         throw new Error('Provider reconciliation remained pending');
       }
-      if (retired) {
+      if (isRetired()) {
+        if (storageRepository.isGenerationCurrent(generation)) {
+          const current = entryForOperation(this.entries(), owner, purpose);
+          if (current?.stage === 'creating' && current.recoveryId === recoveryId) {
+            this.replace(current, null);
+          }
+        }
         if (completion.kind === 'created-reserved') {
           this.cancelLateReservation(
             provider,

@@ -187,6 +187,9 @@ describe('aggregate wallet offer lifecycle', () => {
 
     resolveReconcile({ kind: 'unavailable', reason: 'offline' });
     await expect(creation).resolves.toEqual({ kind: 'unavailable', reason: 'offline' });
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({ stage: 'creating', recoveryId: 'SR_exact' }),
+    ]);
   });
 
   it('reconciles a late recovery id locally without installing it for a retired consumer', async () => {
@@ -227,6 +230,77 @@ describe('aggregate wallet offer lifecycle', () => {
       expect.anything(),
       'SR_retired',
     );
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
+  });
+
+  it('removes an exact creating row when its consumer retires during reconciliation', async () => {
+    let resolveReconcile!: (value: {
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }) => void;
+    let retired = false;
+    const beginCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' as const });
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: owner.providerScope,
+      beginCreation: jest.fn().mockResolvedValue({
+        kind: 'pending',
+        recoveryId: 'SR_retired_during_reconcile',
+      }),
+      reconcileCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveReconcile = resolve;
+          }),
+      ),
+      beginCancellation,
+      reconcileCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    channelFundingRuntime.attachProvider(provider);
+
+    const creation = channelFundingRuntime.createOffer(
+      owner,
+      purpose,
+      providerRequest,
+      recoveryRequest,
+      () => retired,
+    );
+    await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        stage: 'creating',
+        recoveryId: 'SR_retired_during_reconcile',
+      }),
+    ]);
+
+    retired = true;
+    resolveReconcile({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1retired' },
+      tradeId: 'Offer_retired',
+    });
+
+    await expect(creation).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'Funding consumer retired during wallet creation',
+    });
+    await waitFor(() => beginCancellation.mock.calls.length === 1);
+    expect(beginCancellation).toHaveBeenCalledWith('Offer_retired');
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
+
+    channelFundingRuntime.providerReconnectReady(provider);
+    await Promise.resolve();
+    expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+
+    await storageRepository.write(
+      storageRepository.patchApplicationState(() => storageRepository.loadState()),
+    );
+    storageRepository.loseAuthority('test-reclaim');
+    await storageRepository.claimApplicationState();
+    await channelFundingRuntime.flush();
+    expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+    expect(beginCancellation).toHaveBeenCalledTimes(1);
     expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
