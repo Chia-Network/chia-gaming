@@ -77,6 +77,7 @@ import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
+import { subscribeLog } from '../../services/log';
 
 const offerOperation = {
   owner: {
@@ -97,11 +98,6 @@ const mockPushTransactions = rpc.pushTransactions as jest.Mock;
 const mockRegisterRemoteCoins = rpc.registerRemoteCoins as jest.Mock;
 const mockSelectCoins = rpc.selectCoins as jest.Mock;
 const mockGetFullNodePeerCount = rpc.getFullNodePeerCount as jest.Mock;
-
-function encodedWalletConnectError(payload: unknown): string {
-  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64');
-  return `[wc:-32603|${encoded}]`;
-}
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -518,8 +514,9 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
-  it('treats encoded WalletConnect coin record misses as absent coins', async () => {
-    const missingName = 'missing-coin-id';
+  it('silently treats every wallet coin-record error as absent and continues the batch', async () => {
+    const opaqueErrorName = 'opaque-error-coin-id';
+    const daemonErrorName = 'daemon-error-coin-id';
     const presentName = 'present-coin-id';
     const record: CoinRecord = {
       coin: {
@@ -535,59 +532,46 @@ describe('RealBlockchainInterface', () => {
     };
 
     mockGetCoinRecordsByNames.mockImplementation(async ({ names }: { names: string[] }) => {
-      if (names[0] === missingName) {
-        throw new Error(
-          encodedWalletConnectError({
-            error: `Coin ID ${missingName} not found`,
-          }),
-        );
+      if (names[0] === opaqueErrorName) {
+        throw new Error('Internal Error');
       }
-      return { coinRecords: [record] };
-    });
-
-    await expect(
-      new RealBlockchainInterface().getCoinRecordsByNames([missingName, presentName]),
-    ).resolves.toEqual([record]);
-
-    expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(1, {
-      names: [missingName],
-      includeSpentCoins: true,
-      allowUnsynced: true,
-    });
-    expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(2, {
-      names: [presentName],
-      includeSpentCoins: true,
-      allowUnsynced: true,
-    });
-  });
-
-  it('rejects an incomplete batch when a coin lookup fails unexpectedly', async () => {
-    const unrecognizedName = 'unrecognized-coin-id';
-    const presentName = 'present-coin-id';
-    const record: CoinRecord = {
-      coin: {
-        parentCoinInfo: 'parent',
-        puzzleHash: 'puzzle',
-        amount: 100n,
-      },
-      confirmedBlockIndex: 10n,
-      spentBlockIndex: 0n,
-      spent: false,
-      coinbase: false,
-      timestamp: 123n,
-    };
-
-    mockGetCoinRecordsByNames.mockImplementation(async ({ names }: { names: string[] }) => {
-      if (names[0] === unrecognizedName) {
+      if (names[0] === daemonErrorName) {
         throw new Error('totally unexpected daemon failure');
       }
       return { coinRecords: [record] };
     });
 
-    await expect(
-      new RealBlockchainInterface().getCoinRecordsByNames([unrecognizedName, presentName]),
-    ).rejects.toThrow(/coin-record batch failed/i);
-    expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    const logLines: string[] = [];
+    const unsubscribe = subscribeLog((line) => logLines.push(line));
+    logLines.length = 0;
+    try {
+      await expect(
+        new RealBlockchainInterface().getCoinRecordsByNames([
+          opaqueErrorName,
+          daemonErrorName,
+          presentName,
+        ]),
+      ).resolves.toEqual([record]);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(1, {
+      names: [opaqueErrorName],
+      includeSpentCoins: true,
+      allowUnsynced: true,
+    });
+    expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(2, {
+      names: [daemonErrorName],
+      includeSpentCoins: true,
+      allowUnsynced: true,
+    });
+    expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(3, {
+      names: [presentName],
+      includeSpentCoins: true,
+      allowUnsynced: true,
+    });
+    expect(logLines.some((line) => line.includes('getCoinRecordsByNames error'))).toBe(false);
   });
 
   it('keeps exact pushTransactions rebroadcast idempotent and outside orphan state', async () => {

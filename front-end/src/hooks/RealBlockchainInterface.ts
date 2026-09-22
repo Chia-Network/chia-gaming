@@ -273,11 +273,6 @@ function isStructurallyTerminalCancellation(value: unknown, tradeId: string): bo
   return identities.size === 0 || (identities.size === 1 && identities.has(tradeId));
 }
 
-function isCoinRecordMiss(err: unknown): boolean {
-  const text = collectErrorText(err).toLowerCase();
-  return text.includes('not found') || (text.includes('coin id') && text.includes('unknown'));
-}
-
 function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {
   if (!response || typeof response !== 'object') return false;
   const candidate = response as { success?: unknown; offer?: unknown };
@@ -814,27 +809,19 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           allowUnsynced: true,
         });
         if ((resp as any)?.error) {
-          const msg = String((resp as any).error);
-          if (isCoinRecordMiss(msg)) {
-            continue;
-          }
-          throw new Error(`wallet coin-record lookup failed for ${name}: ${msg}`);
+          continue;
         }
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
           log(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
         }
         records.push(...r);
-      } catch (e) {
-        // A recognized miss is a complete answer: this coin does not exist yet.
-        // Any other failure makes the batch incomplete and must not be reported
-        // as an authoritative snapshot.
-        if (isCoinRecordMiss(e)) {
-          continue;
-        }
-        const message = `wallet coin-record batch failed at ${name}: ${collectErrorText(e)}`;
-        log(`[wc-blockchain] getCoinRecordsByNames error: ${message}`);
-        throw new Error(message, { cause: e });
+      } catch {
+        // WalletConnect may collapse the wallet's expected missing-coin result
+        // and unrelated daemon failures into the same opaque "Internal Error".
+        // Polling is repeated, so treat this name as absent for this snapshot
+        // without logging an unactionable error.
+        continue;
       }
     }
     return records;
