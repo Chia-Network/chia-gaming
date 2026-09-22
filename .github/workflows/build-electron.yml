@@ -235,11 +235,13 @@ jobs:
           verify_dir="$RUNNER_TEMP/chia-gaming-mac-verify"
           mkdir -p "$verify_dir"
           unzip -q desktop/release/*.zip -d "$verify_dir"
-          app_path="$(find "$verify_dir" -maxdepth 1 -name '*.app' -print -quit)"
-          if [[ -z "$app_path" ]]; then
-            echo "::error::Packaged macOS application was not found"
+          shopt -s nullglob
+          app_paths=("$verify_dir"/*.app)
+          if [[ "${#app_paths[@]}" -ne 1 ]]; then
+            echo "::error::Expected one packaged macOS application, found ${#app_paths[@]}"
             exit 1
           fi
+          app_path="${app_paths[0]}"
           executable="$app_path/Contents/MacOS/Chia Gaming"
           architectures="$(lipo -archs "$executable")"
           [[ " $architectures " == *" arm64 "* ]] || {
@@ -260,6 +262,7 @@ jobs:
           APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          shopt -s nullglob
           for dmg in desktop/release/*.dmg; do
             xcrun notarytool submit \
               --wait \
@@ -281,11 +284,12 @@ jobs:
             rm -rf "$staple_dir"
             mkdir -p "$staple_dir"
             ditto -x -k "$zip" "$staple_dir"
-            app_path="$(find "$staple_dir" -maxdepth 1 -name '*.app' -print -quit)"
-            if [[ -z "$app_path" ]]; then
-              echo "::error::Notarized ZIP did not contain a macOS application"
+            app_paths=("$staple_dir"/*.app)
+            if [[ "${#app_paths[@]}" -ne 1 ]]; then
+              echo "::error::Expected one notarized macOS application, found ${#app_paths[@]}"
               exit 1
             fi
+            app_path="${app_paths[0]}"
             xcrun stapler staple "$app_path"
             xcrun stapler validate "$app_path"
             rm "$zip"
