@@ -371,6 +371,7 @@ jobs:
       - name: Upload installers to GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: |
           files=(release/*)
