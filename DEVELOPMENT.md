@@ -163,13 +163,15 @@ as the web archive name and Electron application version.
 4. Confirm every asset uses the tag version and smoke-test the native packages
    on clean target systems.
 
-Apple and Windows signing are opportunistic. A complete Apple credential set
-produces Developer ID signed, notarized, and stapled macOS installers; a
-complete Azure credential set signs and verifies Windows executables. No
-credentials deliberately produces unsigned beta installers, while a partial
-credential set fails the workflow. When unsigned installers are published,
-state that prominently in the release notes: macOS Gatekeeper and Windows
-SmartScreen will warn users.
+Apple and Windows signing are explicitly enabled. `ENABLE_APPLE_SIGNING=true`
+plus the complete Apple credential set produces Developer ID signed, notarized,
+and stapled macOS installers. `ENABLE_WINDOWS_SIGNING=true` in the
+`windows-code-signing` environment plus the complete Azure credential set signs
+and verifies Windows executables. Without those opt-in variables, CI deliberately
+produces unsigned installers even if stale credentials remain configured. Once
+signing is enabled, a partial credential set fails the workflow. When unsigned
+installers are published, state that prominently in the release notes: macOS
+Gatekeeper and Windows SmartScreen will warn users.
 
 For example:
 
@@ -180,6 +182,14 @@ gh release create 0.4.0-beta.1 \
   --title "Beta 0.4.0-beta.1" \
   --prerelease \
   --notes-file release-notes.md
+```
+
+To rebuild native assets for an existing release after a workflow-only fix:
+
+```bash
+gh workflow run build-electron.yml \
+  --ref main \
+  -f release_tag=0.4.0-beta.1
 ```
 
 # Build Details
