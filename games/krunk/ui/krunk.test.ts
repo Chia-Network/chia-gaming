@@ -24,12 +24,14 @@ import {
 import Krunk from './Krunk';
 import {
   initialKrunkGameState,
-  krunkStateCodec,
   restoreKrunkHand,
   type KrunkHand,
   type KrunkHandState,
 } from './serialize';
 import type { GameMountView, LiveGamePort } from '../../host';
+import { testStateCodec } from '../../testStateCodec';
+
+const krunkStateCodec = testStateCodec<KrunkHandState>('krunk');
 
 function testHand(persisted: ReturnType<typeof krunkStateCodec.encode>): KrunkHand {
   return restoreKrunkHand(krunkStateCodec.decode(persisted)!);
@@ -75,9 +77,9 @@ describe('Krunk hand restoration', () => {
   });
 
   it('rejects malformed saved state before constructing a hand', () => {
-    expect(() => restoreKrunkHand({ ...savedState, members: savedState.members.slice(0, 1) })).toThrow(
-      'Cannot restore Krunk hand: saved state is invalid',
-    );
+    expect(() =>
+      restoreKrunkHand({ ...savedState, members: savedState.members.slice(0, 1) }),
+    ).toThrow('Cannot restore Krunk hand: saved state is invalid');
   });
 });
 
@@ -114,10 +116,7 @@ describe('Krunk automatic moves', () => {
     });
 
     function Harness() {
-      useKrunkHand(
-        liveView(persisted, { isChannelReady: () => true, dispatch }),
-        0,
-      );
+      useKrunkHand(liveView(persisted, { isChannelReady: () => true, dispatch }), 0);
       return null;
     }
 
@@ -671,9 +670,7 @@ describe('Krunk draft continuity', () => {
       error: null,
     };
 
-    expect(krunkTerminalStatus(timedOut, 'Peer', 100n)).toBe(
-      'You got nothing due to timeout.',
-    );
+    expect(krunkTerminalStatus(timedOut, 'Peer', 100n)).toBe('You got nothing due to timeout.');
     expect(
       krunkTerminalStatus(
         {
@@ -767,9 +764,7 @@ describe('Krunk draft continuity', () => {
           : outcome === 'win'
             ? 'You won 100 mojo!'
             : "You didn't win anything.";
-      expect(
-        krunkBoardNotice(state, 'Peer', 100n),
-      ).toEqual({
+      expect(krunkBoardNotice(state, 'Peer', 100n)).toEqual({
         text: expected,
         kind: role === 'bob' && outcome === 'win' ? 'win' : 'info',
       });
@@ -843,9 +838,10 @@ describe('Krunk draft continuity', () => {
       moverShare: null,
       error: null,
     };
-    expect(
-      krunkBoardNotice(lost, 'Bob', 1_000_000_000_000n),
-    ).toEqual({ text: 'Bob won 1 chia!', kind: 'info' });
+    expect(krunkBoardNotice(lost, 'Bob', 1_000_000_000_000n)).toEqual({
+      text: 'Bob won 1 chia!',
+      kind: 'info',
+    });
   });
 
   it('derives the clean winner from completed play when outcome projection is late', () => {

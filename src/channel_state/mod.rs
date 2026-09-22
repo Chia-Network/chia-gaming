@@ -1,6 +1,7 @@
 pub mod game;
 pub mod game_handler;
 pub mod game_start_info;
+mod proposal_ledger;
 #[cfg(test)]
 pub mod runner;
 pub mod types;
@@ -16,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::game_start_info::GameStartInfo;
+use crate::channel_state::proposal_ledger::ProposalLedger;
 use crate::channel_state::types::{
     CachedAcceptSettlement, CachedRedoActions, CachedSendMove, ChannelCoinSpendInfo,
     ChannelCoinSpentResult, ChannelEnv, ChannelInitiationResult, ChannelMoveResult,
@@ -33,8 +35,8 @@ use crate::common::standard_coin::{
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
-    CoinString, Error, GameID, Hash, IntoErr, Node, PrivateKey, Program, PublicKey, Puzzle,
-    PuzzleHash, Sha256tree, Spend, Timeout,
+    CoinString, Error, GameID, Hash, IntoErr, LocalProposalId, Node, PrivateKey, Program,
+    PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend, Timeout, WireProposalId,
 };
 use crate::referee::types::{GameMoveDetails, ParsedRefereeSolution, TheirTurnCoinSpentResult};
 use crate::referee::Referee;
@@ -117,26 +119,15 @@ pub struct ChannelState {
     their_reward_payout_signature: Aggsig,
     reward_puzzle_hash: PuzzleHash,
 
-    my_out_of_game_balance: Amount,
-    their_out_of_game_balance: Amount,
-
-    my_allocated_balance: Amount,
-    their_allocated_balance: Amount,
+    acceptance_ledger: AcceptanceLedger,
 
     have_potato: bool,
 
     // Specifies the time lock that should be used in the unroll coin's conditions.
     unroll_advance_timeout: Timeout,
 
-    cached_redo_actions: Vec<CachedRedoActions>,
-
     // Latest potato number. Incremented on every send and receive.
     state_number: usize,
-    // Role-namespaced nonces for game proposals.  Initiator uses even
-    // values (0, 2, 4, …), responder uses odd (1, 3, 5, …).  The nonce
-    // doubles as the GameID.
-    my_next_nonce: u64,
-    their_next_nonce: u64,
 
     channel_coin_spend: CoinSpend,
 
@@ -151,23 +142,142 @@ pub struct ChannelState {
     // and preemption conditions are retained only for the latest two states.
     unroll_puzzle_hash_map: HashMap<PuzzleHash, HistoricalUnrollSpendInfo>,
 
-    // Live games
-    live_games: Vec<LiveGame>,
-
     // Games removed by send_accept_settlement_no_finalize / apply_received_accept_settlement that
     // haven't been confirmed by a full potato round-trip yet.  Kept so
     // set_state_for_coins and build_game_timeout_claim_spend can find them
     // if the channel goes on-chain before the round-trip completes.
     pending_settlements: Vec<LiveGame>,
-    // Games that have been proposed but not yet accepted or cancelled.
-    // These are metadata only — they do not affect the unroll commitment
-    // or player balances until accepted.
-    proposed_games: Vec<ProposedGame>,
 }
 
 pub struct InitiatorGenesisTransition {
     pub state_zero_spend: ChannelCoinSpendInfo,
     pub state_one_signatures: StateUpdateSignatures,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct AcceptanceLedger {
+    proposal_ledger: ProposalLedger,
+    // Accepted games use a shared, role-independent sequential namespace.
+    next_game_id: u64,
+    my_out_of_game_balance: Amount,
+    their_out_of_game_balance: Amount,
+    my_allocated_balance: Amount,
+    their_allocated_balance: Amount,
+    cached_redo_actions: Vec<CachedRedoActions>,
+    live_games: Vec<LiveGame>,
+}
+
+pub(crate) enum ProposalAcceptanceStatus {
+    Accepted,
+    Insufficient {
+        our_balance_short: bool,
+        their_balance_short: bool,
+    },
+}
+
+impl AcceptanceLedger {
+    fn game_ids_for_acceptance(&self, count: usize) -> Result<Vec<GameID>, Error> {
+        let end = self
+            .next_game_id
+            .checked_add(u64::try_from(count).map_err(|_| {
+                Error::StrErr("accepted factory member count exceeds u64".to_string())
+            })?)
+            .ok_or_else(|| Error::StrErr("accepted game id overflow".to_string()))?;
+        Ok((self.next_game_id..end).map(GameID).collect())
+    }
+
+    fn stage_proposal_acceptance(
+        &mut self,
+        local_id: LocalProposalId,
+        starts: &[Rc<GameStartInfo>],
+        cache_for_redo: bool,
+        mut create_live_game: impl FnMut(&Rc<GameStartInfo>) -> Result<LiveGame, Error>,
+    ) -> Result<ProposalAcceptanceStatus, Error> {
+        if self.proposal_ledger.find_local(local_id).is_none() {
+            return Err(Error::StrErr(format!("no proposal with id {local_id}")));
+        }
+        let ids = self.game_ids_for_acceptance(starts.len())?;
+        for (start, expected_id) in starts.iter().zip(&ids) {
+            if start.game_id != *expected_id {
+                return Err(Error::StrErr(format!(
+                    "accepted game id {:?} does not match next id {:?}",
+                    start.game_id, expected_id
+                )));
+            }
+        }
+
+        let (my_required, their_required) =
+            starts.iter().try_fold((0u64, 0u64), |(my, their), start| {
+                Ok::<_, Error>((
+                    my.checked_add(start.my_contribution_this_game.to_u64())
+                        .ok_or_else(|| {
+                            Error::StrErr("accepted local contributions overflow".into())
+                        })?,
+                    their
+                        .checked_add(start.their_contribution_this_game.to_u64())
+                        .ok_or_else(|| {
+                            Error::StrErr("accepted peer contributions overflow".into())
+                        })?,
+                ))
+            })?;
+        let our_balance_short = my_required > self.my_out_of_game_balance.to_u64();
+        let their_balance_short = their_required > self.their_out_of_game_balance.to_u64();
+        if our_balance_short || their_balance_short {
+            return Ok(ProposalAcceptanceStatus::Insufficient {
+                our_balance_short,
+                their_balance_short,
+            });
+        }
+
+        let my_out_of_game_balance = self
+            .my_out_of_game_balance
+            .checked_sub(&Amount::new(my_required))?;
+        let their_out_of_game_balance = self
+            .their_out_of_game_balance
+            .checked_sub(&Amount::new(their_required))?;
+        let my_allocated_balance = Amount::new(
+            self.my_allocated_balance
+                .to_u64()
+                .checked_add(my_required)
+                .ok_or_else(|| Error::StrErr("allocated local balance overflow".into()))?,
+        );
+        let their_allocated_balance = Amount::new(
+            self.their_allocated_balance
+                .to_u64()
+                .checked_add(their_required)
+                .ok_or_else(|| Error::StrErr("allocated peer balance overflow".into()))?,
+        );
+        let new_live_games = starts
+            .iter()
+            .map(&mut create_live_game)
+            .collect::<Result<Vec<_>, _>>()?;
+        let redo_actions = cache_for_redo.then(|| {
+            starts
+                .iter()
+                .map(|start| CachedRedoActions::ProposalAccepted(start.game_id))
+                .collect::<Vec<_>>()
+        });
+        let next_game_id = self
+            .next_game_id
+            .checked_add(u64::try_from(starts.len()).map_err(|_| {
+                Error::StrErr("accepted factory member count exceeds u64".to_string())
+            })?)
+            .ok_or_else(|| Error::StrErr("accepted game id overflow".to_string()))?;
+
+        self.proposal_ledger
+            .remove_local(local_id)
+            .expect("proposal existence was validated before acceptance commit");
+        self.my_out_of_game_balance = my_out_of_game_balance;
+        self.their_out_of_game_balance = their_out_of_game_balance;
+        self.my_allocated_balance = my_allocated_balance;
+        self.their_allocated_balance = their_allocated_balance;
+        self.live_games.extend(new_live_games);
+        if let Some(redo_actions) = redo_actions {
+            self.cached_redo_actions.extend(redo_actions);
+        }
+        self.next_game_id = next_game_id;
+        Ok(ProposalAcceptanceStatus::Accepted)
+    }
 }
 
 impl ChannelState {
@@ -258,14 +368,123 @@ impl ChannelState {
         self.private_keys.my_unroll_coin_private_key.clone()
     }
 
-    pub fn allocate_my_nonce(&mut self) -> u64 {
-        let n = self.my_next_nonce;
-        self.my_next_nonce += 2;
-        n
+    pub fn game_ids_for_acceptance(&self, count: usize) -> Result<Vec<GameID>, Error> {
+        self.acceptance_ledger.game_ids_for_acceptance(count)
     }
 
-    pub fn is_our_nonce_parity(&self, game_id: &GameID) -> bool {
-        game_id.0 % 2 == self.my_next_nonce % 2
+    pub fn is_our_proposal(&self, id: LocalProposalId) -> bool {
+        self.acceptance_ledger
+            .proposal_ledger
+            .find_local(id)
+            .is_some_and(|proposal| proposal.lifecycle.originated_locally())
+    }
+
+    #[cfg(test)]
+    pub fn next_game_id_for_testing(&self) -> GameID {
+        GameID(self.acceptance_ledger.next_game_id)
+    }
+
+    pub fn create_outgoing_proposal(
+        &mut self,
+        start: &crate::session_phases::proposal::GameProposal,
+    ) -> Result<LocalProposalId, Error> {
+        validate_game_timeout(start.timeout.to_u64())?;
+        self.acceptance_ledger
+            .proposal_ledger
+            .create_outgoing(start)
+    }
+
+    pub fn emit_outgoing_proposal(&mut self, id: LocalProposalId) -> Result<WireProposalId, Error> {
+        self.acceptance_ledger.proposal_ledger.emit_outgoing(id)
+    }
+
+    pub fn record_received_proposal(
+        &mut self,
+        origin_wire_id: WireProposalId,
+        start: &crate::session_phases::proposal::GameProposal,
+    ) -> Result<LocalProposalId, Error> {
+        validate_game_timeout(start.timeout.to_u64())?;
+        self.acceptance_ledger
+            .proposal_ledger
+            .record_incoming(origin_wire_id, start)
+    }
+
+    pub fn remove_proposal(&mut self, id: LocalProposalId) -> Result<ProposedGame, Error> {
+        self.acceptance_ledger.proposal_ledger.remove_local(id)
+    }
+
+    pub fn remove_wire_proposal(&mut self, id: WireProposalId) -> Result<ProposedGame, Error> {
+        self.acceptance_ledger.proposal_ledger.remove_wire(id)
+    }
+
+    pub fn local_proposal_id(&self, id: WireProposalId) -> Result<LocalProposalId, Error> {
+        self.acceptance_ledger
+            .proposal_ledger
+            .local_for_wire(id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with wire id {id}")))
+    }
+
+    pub fn proposal_wire_id(&self, id: LocalProposalId) -> Result<WireProposalId, Error> {
+        self.find_proposal(id)?
+            .lifecycle
+            .wire_id()
+            .ok_or_else(|| Error::StrErr(format!("proposal {id} has not been emitted")))
+    }
+
+    pub fn accept_proposal_games(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        local_id: LocalProposalId,
+        starts: &[Rc<GameStartInfo>],
+        cache_for_redo: bool,
+    ) -> Result<(), Error> {
+        match self.stage_proposal_acceptance(env, local_id, starts, cache_for_redo)? {
+            ProposalAcceptanceStatus::Accepted => Ok(()),
+            ProposalAcceptanceStatus::Insufficient { .. } => Err(Error::StrErr(
+                "accepted game contributions exceed available balances".into(),
+            )),
+        }
+    }
+
+    pub(crate) fn stage_proposal_acceptance(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        local_id: LocalProposalId,
+        starts: &[Rc<GameStartInfo>],
+        cache_for_redo: bool,
+    ) -> Result<ProposalAcceptanceStatus, Error> {
+        self.acceptance_ledger.stage_proposal_acceptance(
+            local_id,
+            starts,
+            cache_for_redo,
+            |start_info| {
+                let referee_identity = ChiaIdentity::new(
+                    env.allocator,
+                    self.private_keys.my_referee_private_key.clone(),
+                )?;
+                let (referee, puzzle_hash) = Referee::new(
+                    env.allocator,
+                    env.referee_coin_puzzle.clone(),
+                    env.referee_coin_puzzle_hash.clone(),
+                    start_info,
+                    referee_identity,
+                    &self.their_referee_pubkey,
+                    &self.their_reward_puzzle_hash,
+                    &self.their_reward_payout_signature,
+                    &self.reward_puzzle_hash,
+                    start_info.game_id.0,
+                    &env.agg_sig_me_additional_data,
+                    self.state_number,
+                )?;
+                Ok(LiveGame::new(
+                    start_info.game_id,
+                    puzzle_hash,
+                    Rc::new(referee),
+                    start_info.my_contribution_this_game.clone(),
+                    start_info.their_contribution_this_game.clone(),
+                ))
+            },
+        )
     }
 
     pub fn state_number(&self) -> usize {
@@ -307,11 +526,16 @@ impl ChannelState {
     }
 
     pub fn live_game_ids(&self) -> Vec<GameID> {
-        self.live_games.iter().map(|g| g.game_id).collect()
+        self.acceptance_ledger
+            .live_games
+            .iter()
+            .map(|g| g.game_id)
+            .collect()
     }
 
     pub fn all_game_ids(&self) -> Vec<GameID> {
-        self.live_games
+        self.acceptance_ledger
+            .live_games
             .iter()
             .chain(self.pending_settlements.iter())
             .map(|g| g.game_id)
@@ -320,7 +544,8 @@ impl ChannelState {
 
     /// Game IDs of proposal accepts whose potato round-trip hasn't completed.
     pub fn pending_proposal_accept_game_ids(&self) -> Vec<GameID> {
-        self.cached_redo_actions
+        self.acceptance_ledger
+            .cached_redo_actions
             .iter()
             .filter_map(|entry| {
                 if let CachedRedoActions::ProposalAccepted(gid) = entry {
@@ -333,7 +558,10 @@ impl ChannelState {
     }
 
     pub fn find_live_game(&self, game_id: &GameID) -> Option<&LiveGame> {
-        self.live_games.iter().find(|g| g.game_id == *game_id)
+        self.acceptance_ledger
+            .live_games
+            .iter()
+            .find(|g| g.game_id == *game_id)
     }
 
     pub fn private_keys(&self) -> &ChannelPrivateKeys {
@@ -341,11 +569,11 @@ impl ChannelState {
     }
 
     pub fn my_allocated_balance(&self) -> Amount {
-        self.my_allocated_balance.clone()
+        self.acceptance_ledger.my_allocated_balance.clone()
     }
 
     pub fn their_allocated_balance(&self) -> Amount {
-        self.their_allocated_balance.clone()
+        self.acceptance_ledger.their_allocated_balance.clone()
     }
 
     pub fn unroll_advance_timeout(&self) -> &Timeout {
@@ -353,7 +581,7 @@ impl ChannelState {
     }
 
     pub fn take_live_games(&mut self) -> Vec<LiveGame> {
-        std::mem::take(&mut self.live_games)
+        std::mem::take(&mut self.acceptance_ledger.live_games)
     }
 
     pub fn take_pending_settlements(&mut self) -> Vec<LiveGame> {
@@ -361,31 +589,34 @@ impl ChannelState {
     }
 
     pub fn take_cached_redo_actions(&mut self) -> Vec<CachedRedoActions> {
-        std::mem::take(&mut self.cached_redo_actions)
+        std::mem::take(&mut self.acceptance_ledger.cached_redo_actions)
     }
 
     pub fn amount(&self, on_chain: bool) -> Amount {
-        let allocated = self.my_allocated_balance.clone() + self.their_allocated_balance.clone();
+        let allocated = self.acceptance_ledger.my_allocated_balance.clone()
+            + self.acceptance_ledger.their_allocated_balance.clone();
 
         if on_chain {
             return allocated;
         }
 
-        allocated + self.my_out_of_game_balance.clone() + self.their_out_of_game_balance.clone()
+        allocated
+            + self.acceptance_ledger.my_out_of_game_balance.clone()
+            + self.acceptance_ledger.their_out_of_game_balance.clone()
     }
 
     pub fn get_our_current_share(&self) -> Amount {
-        self.my_out_of_game_balance.clone()
+        self.acceptance_ledger.my_out_of_game_balance.clone()
     }
 
     pub fn get_their_current_share(&self) -> Amount {
-        self.their_out_of_game_balance.clone()
+        self.acceptance_ledger.their_out_of_game_balance.clone()
     }
 
     /// Drain all cached CachedAcceptSettlement entries, returning (game_id, our_share_amount, game_finished) for each.
     pub fn drain_cached_accept_settlements(&mut self) -> Vec<(GameID, Amount, bool)> {
         let mut accepts = Vec::new();
-        self.cached_redo_actions.retain(|entry| {
+        self.acceptance_ledger.cached_redo_actions.retain(|entry| {
             if let CachedRedoActions::CachedAcceptSettlement(acc) = entry {
                 accepts.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
                 false
@@ -551,7 +782,7 @@ impl ChannelState {
     }
 
     pub fn has_active_games(&self) -> bool {
-        !self.live_games.is_empty()
+        !self.acceptance_ledger.live_games.is_empty()
     }
 
     /// No channel change remains for us and no live game can produce one.
@@ -666,21 +897,23 @@ impl ChannelState {
             their_referee_pubkey: their_referee_pubkey.clone(),
             their_reward_puzzle_hash: their_reward_puzzle_hash.clone(),
             their_reward_payout_signature: their_reward_payout_signature.clone(),
-            my_out_of_game_balance: my_contribution.clone(),
-            their_out_of_game_balance: their_contribution.clone(),
             unroll_advance_timeout: unroll_advance_timeout.clone(),
             reward_puzzle_hash: reward_puzzle_hash.clone(),
 
-            my_allocated_balance: Amount::default(),
-            their_allocated_balance: Amount::default(),
-
             have_potato: false,
 
-            cached_redo_actions: Vec::new(),
+            acceptance_ledger: AcceptanceLedger {
+                proposal_ledger: ProposalLedger::new(is_receiver),
+                next_game_id: 0,
+                my_out_of_game_balance: my_contribution.clone(),
+                their_out_of_game_balance: their_contribution.clone(),
+                my_allocated_balance: Amount::default(),
+                their_allocated_balance: Amount::default(),
+                cached_redo_actions: Vec::new(),
+                live_games: Vec::new(),
+            },
 
             state_number: 0,
-            my_next_nonce: if is_receiver { 0 } else { 1 },
-            their_next_nonce: if is_receiver { 1 } else { 0 },
 
             channel_coin_spend: CoinSpend {
                 coin: channel_coin_parent,
@@ -691,9 +924,7 @@ impl ChannelState {
             latest_received_unroll: None,
             unroll_puzzle_hash_map: HashMap::new(),
 
-            live_games: Vec::new(),
             pending_settlements: Vec::new(),
-            proposed_games: Vec::new(),
 
             private_keys,
         };
@@ -721,8 +952,8 @@ impl ChannelState {
         // The seq number is zero.
         // There are no game coins and a balance for both sides.
         let inputs = myself.unroll_coin_condition_inputs(
-            myself.my_out_of_game_balance.clone(),
-            myself.their_out_of_game_balance.clone(),
+            myself.acceptance_ledger.my_out_of_game_balance.clone(),
+            myself.acceptance_ledger.their_out_of_game_balance.clone(),
             &[],
         );
         myself.latest_sent_unroll.coin.update(
@@ -849,11 +1080,11 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
     ) -> Result<StateUpdateSignatures, Error> {
         let new_game_coins_on_chain: Vec<(PuzzleHash, Amount)> =
-            self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
+            self.compute_unroll_data_for_games(&[], None, &self.acceptance_ledger.live_games)?;
 
         let unroll_inputs = self.unroll_coin_condition_inputs(
-            self.my_out_of_game_balance.clone(),
-            self.their_out_of_game_balance.clone(),
+            self.acceptance_ledger.my_out_of_game_balance.clone(),
+            self.acceptance_ledger.their_out_of_game_balance.clone(),
             &new_game_coins_on_chain,
         );
 
@@ -978,19 +1209,21 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         signatures: &StateUpdateSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
-        let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
+        let unroll_data =
+            self.compute_unroll_data_for_games(&[], None, &self.acceptance_ledger.live_games)?;
 
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
             &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone(),
-                self.their_out_of_game_balance.clone(),
+                self.acceptance_ledger.my_out_of_game_balance.clone(),
+                self.acceptance_ledger.their_out_of_game_balance.clone(),
                 &unroll_data,
             ),
         )?;
 
-        self.cached_redo_actions
+        self.acceptance_ledger
+            .cached_redo_actions
             .retain(|entry| matches!(entry, CachedRedoActions::CachedAcceptSettlement(_)));
 
         Ok(ChannelCoinSpendInfo {
@@ -1055,19 +1288,21 @@ impl ChannelState {
         env: &mut ChannelEnv<'_>,
         signatures: &StateUpdateSignatures,
     ) -> Result<ChannelCoinSpendInfo, Error> {
-        let unroll_data = self.compute_unroll_data_for_games(&[], None, &self.live_games)?;
+        let unroll_data =
+            self.compute_unroll_data_for_games(&[], None, &self.acceptance_ledger.live_games)?;
 
         let spend = self.received_potato_verify_signatures(
             env,
             signatures,
             &self.unroll_coin_condition_inputs(
-                self.my_out_of_game_balance.clone(),
-                self.their_out_of_game_balance.clone(),
+                self.acceptance_ledger.my_out_of_game_balance.clone(),
+                self.acceptance_ledger.their_out_of_game_balance.clone(),
                 &unroll_data,
             ),
         )?;
 
-        self.cached_redo_actions
+        self.acceptance_ledger
+            .cached_redo_actions
             .retain(|entry| matches!(entry, CachedRedoActions::CachedAcceptSettlement(_)));
 
         Ok(ChannelCoinSpendInfo {
@@ -1077,362 +1312,62 @@ impl ChannelState {
         })
     }
 
-    /// Mutate state for sending a game proposal. Does NOT finalize signatures.
-    /// Call `update_cached_unroll_state` once after all batch mutations.
-    pub fn send_propose_game(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        start_info: &Rc<GameStartInfo>,
-        group_id: GameID,
-    ) -> Result<(), Error> {
-        let new_game_nonce = start_info.game_id.0;
-
-        let referee_identity = ChiaIdentity::new(
-            env.allocator,
-            self.private_keys.my_referee_private_key.clone(),
-        )?;
-        let ref_puzzle = env.referee_coin_puzzle.clone();
-        let ref_ph = env.referee_coin_puzzle_hash.clone();
-        let agg_sig_me = env.agg_sig_me_additional_data.clone();
-        let (r, ph) = Referee::new(
-            env.allocator,
-            ref_puzzle,
-            ref_ph,
-            start_info,
-            referee_identity,
-            &self.their_referee_pubkey,
-            &self.their_reward_puzzle_hash,
-            &self.their_reward_payout_signature,
-            &self.reward_puzzle_hash,
-            new_game_nonce,
-            &agg_sig_me,
-            self.state_number,
-        )?;
-
-        self.proposed_games.push(ProposedGame::new(
-            start_info.game_id,
-            group_id,
-            ph,
-            Rc::new(r),
-            start_info.player_a_contribution.clone(),
-            start_info.player_b_contribution.clone(),
-            start_info.my_contribution_this_game.clone(),
-            start_info.their_contribution_this_game.clone(),
-        ));
-
-        Ok(())
-    }
-
-    /// Propose a game and finalize unroll signatures in one call.
-    pub fn propose_game(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        start_info: &Rc<GameStartInfo>,
-    ) -> Result<StateUpdateSignatures, Error> {
-        self.send_propose_game(env, start_info, start_info.game_id)?;
-        self.update_cached_unroll_state(env)
-    }
-
-    /// Apply a received proposal without verifying signatures.
-    pub fn apply_received_proposal(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        start_info: &Rc<GameStartInfo>,
-        group_id: GameID,
-    ) -> Result<(), Error> {
-        let new_game_nonce = start_info.game_id.0;
-        let expected_parity = self.their_next_nonce % 2;
-        if new_game_nonce % 2 != expected_parity {
-            return Err(Error::StrErr(format!(
-                "received nonce {new_game_nonce} has wrong parity (expected {expected_parity})"
-            )));
-        }
-        if new_game_nonce < self.their_next_nonce {
-            return Err(Error::StrErr(format!(
-                "received nonce {new_game_nonce} < minimum expected {}",
-                self.their_next_nonce
-            )));
-        }
-
-        // 4.3: Sanity limit on nonce gap to prevent absurd jumps.
-        const MAX_NONCE_GAP: u64 = 1000;
-        if new_game_nonce > self.their_next_nonce + MAX_NONCE_GAP {
-            return Err(Error::StrErr(format!(
-                "received nonce {new_game_nonce} too far ahead of expected {} (max gap {MAX_NONCE_GAP})",
-                self.their_next_nonce
-            )));
-        }
-
-        // 4.6: amount must equal the sum of contributions (checked for overflow).
-        let sum = start_info
-            .my_contribution_this_game
-            .to_u64()
-            .checked_add(start_info.their_contribution_this_game.to_u64())
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "proposal contributions overflow: {} + {}",
-                    start_info.my_contribution_this_game.to_u64(),
-                    start_info.their_contribution_this_game.to_u64(),
-                ))
-            })?;
-        let expected_amount = Amount::new(sum);
-        if start_info.amount != expected_amount {
-            return Err(Error::StrErr(format!(
-                "proposal amount {} != my_contribution {} + their_contribution {}",
-                start_info.amount.to_u64(),
-                start_info.my_contribution_this_game.to_u64(),
-                start_info.their_contribution_this_game.to_u64(),
-            )));
-        }
-
-        validate_game_timeout(start_info.timeout.to_u64())?;
-
-        // 4.9: Limit on outstanding proposal count.
-        const MAX_PROPOSALS: usize = 100;
-        if self.proposed_games.len() >= MAX_PROPOSALS {
-            return Err(Error::StrErr(format!(
-                "too many outstanding proposals ({}, max {MAX_PROPOSALS})",
-                self.proposed_games.len(),
-            )));
-        }
-
-        let referee_identity = ChiaIdentity::new(
-            env.allocator,
-            self.private_keys.my_referee_private_key.clone(),
-        )?;
-        let ref_puzzle = env.referee_coin_puzzle.clone();
-        let ref_ph = env.referee_coin_puzzle_hash.clone();
-        let agg_sig_me = env.agg_sig_me_additional_data.clone();
-        let (r, ph) = Referee::new(
-            env.allocator,
-            ref_puzzle,
-            ref_ph,
-            start_info,
-            referee_identity,
-            &self.their_referee_pubkey,
-            &self.their_reward_puzzle_hash,
-            &self.their_reward_payout_signature,
-            &self.reward_puzzle_hash,
-            new_game_nonce,
-            &agg_sig_me,
-            self.state_number,
-        )?;
-
-        self.their_next_nonce = new_game_nonce + 2;
-
-        self.proposed_games.push(ProposedGame::new(
-            start_info.game_id,
-            group_id,
-            ph,
-            Rc::new(r),
-            start_info.player_a_contribution.clone(),
-            start_info.player_b_contribution.clone(),
-            start_info.my_contribution_this_game.clone(),
-            start_info.their_contribution_this_game.clone(),
-        ));
-
-        Ok(())
-    }
-
-    /// Mutate state for accepting a proposal. Does NOT finalize signatures.
-    fn accept_proposal_inner(&mut self, game_id: &GameID) -> Result<(), Error> {
-        let idx = self
-            .proposed_games
-            .iter()
-            .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        let proposal = self.proposed_games.remove(idx);
-
-        if proposal.my_contribution.clone() > self.my_out_of_game_balance
-            || proposal.their_contribution.clone() > self.their_out_of_game_balance
-        {
-            self.proposed_games.insert(idx, proposal);
-            return Err(Error::StrErr(
-                "insufficient balance to accept proposal".to_string(),
-            ));
-        }
-
-        self.my_allocated_balance += proposal.my_contribution.clone();
-        self.their_allocated_balance += proposal.their_contribution.clone();
-        self.my_out_of_game_balance = self
-            .my_out_of_game_balance
-            .checked_sub(&proposal.my_contribution)?;
-        self.their_out_of_game_balance = self
-            .their_out_of_game_balance
-            .checked_sub(&proposal.their_contribution)?;
-
-        let live_game = LiveGame::new(
-            proposal.game_id,
-            proposal.initial_puzzle_hash,
-            proposal.referee,
-            proposal.my_contribution,
-            proposal.their_contribution,
-        );
-        self.live_games.push(live_game);
-        Ok(())
-    }
-
-    pub fn send_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        self.accept_proposal_inner(game_id)?;
-        self.push_cached_action(CachedRedoActions::ProposalAccepted(*game_id));
-        Ok(())
-    }
-
-    /// Apply a received accept-proposal without verifying signatures.
-    pub fn apply_received_accept_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        if !self.is_our_nonce_parity(game_id) {
-            return Err(Error::StrErr(format!(
-                "peer attempted to accept their own proposal {game_id:?}"
-            )));
-        }
-        self.accept_proposal_inner(game_id)
-    }
-
-    /// Mutate state for cancelling a proposal. Does NOT finalize signatures.
-    pub fn send_cancel_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        let idx = self
-            .proposed_games
-            .iter()
-            .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("no proposal with id {game_id:?}")))?;
-        self.proposed_games.remove(idx);
-        Ok(())
-    }
-
-    pub fn received_cancel_proposal(&mut self, game_id: &GameID) -> Result<(), Error> {
-        let idx = self
-            .proposed_games
-            .iter()
-            .position(|p| p.game_id == *game_id)
-            .ok_or_else(|| Error::StrErr(format!("cancel for unknown proposal {game_id:?}")))?;
-        self.proposed_games.remove(idx);
-        Ok(())
-    }
-
-    pub fn cancel_all_proposals(&mut self) -> Vec<Vec<GameID>> {
-        let mut groups: Vec<Vec<GameID>> = Vec::new();
-        for proposal in &self.proposed_games {
-            if let Some(group) = groups
-                .iter_mut()
-                .find(|group| group[0] == proposal.group_id)
-            {
-                group.push(proposal.game_id);
-            } else {
-                groups.push(vec![proposal.game_id]);
-            }
-        }
-        self.proposed_games.clear();
-        groups
+    pub fn cancel_all_proposals(&mut self) -> Vec<LocalProposalId> {
+        self.acceptance_ledger.proposal_ledger.cancel_all()
     }
 
     pub fn has_our_outstanding_proposals(&self) -> bool {
-        self.proposed_games
-            .iter()
-            .any(|p| self.is_our_nonce_parity(&p.game_id))
+        self.acceptance_ledger.proposal_ledger.has_outgoing()
     }
 
-    pub fn find_proposal(&self, game_id: &GameID) -> Option<&ProposedGame> {
-        self.proposed_games.iter().find(|p| p.game_id == *game_id)
+    pub fn find_proposal(&self, id: LocalProposalId) -> Result<&ProposedGame, Error> {
+        self.acceptance_ledger
+            .proposal_ledger
+            .find_local(id)
+            .ok_or_else(|| Error::StrErr(format!("no proposal with id {id}")))
     }
 
-    #[cfg(test)]
-    pub fn proposal_contributions_for_testing(&self) -> Vec<(GameID, Amount, Amount)> {
-        self.proposed_games
-            .iter()
-            .map(|proposal| {
-                (
-                    proposal.game_id,
-                    proposal.my_contribution.clone(),
-                    proposal.their_contribution.clone(),
-                )
-            })
-            .collect()
-    }
-
-    /// Return all GameIDs that share a group_id with the given game.
-    /// Every proposal is a group (singletons have `group_id == game_id`).
-    pub fn group_member_ids(&self, game_id: &GameID) -> Result<Vec<GameID>, Error> {
-        let gid = self
-            .proposed_games
-            .iter()
-            .find(|p| p.game_id == *game_id)
-            .map(|p| p.group_id)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "group_member_ids: no proposal with id {:?}",
-                    game_id
-                ))
-            })?;
-        Ok(self
-            .proposed_games
-            .iter()
-            .filter(|p| p.group_id == gid)
-            .map(|p| p.game_id)
-            .collect())
-    }
-
-    /// Resolve a wire group ID to its members in factory insertion order.
-    /// Wire actions must name the canonical first member, never another member.
-    pub fn canonical_group_member_ids(&self, group_id: &GameID) -> Result<Vec<GameID>, Error> {
-        let proposal = self
-            .proposed_games
-            .iter()
-            .find(|p| p.game_id == *group_id)
-            .ok_or_else(|| {
-                Error::StrErr(format!(
-                    "canonical_group_member_ids: no proposal with id {:?}",
-                    group_id
-                ))
-            })?;
-        if proposal.group_id != *group_id {
-            return Err(Error::StrErr(format!(
-                "proposal group action used non-canonical member {:?}; expected {:?}",
-                group_id, proposal.group_id
-            )));
-        }
-        Ok(self
-            .proposed_games
-            .iter()
-            .filter(|p| p.group_id == *group_id)
-            .map(|p| p.game_id)
-            .collect())
-    }
-
-    pub fn pending_peer_proposal_ids(&self) -> Vec<GameID> {
-        self.proposed_games
-            .iter()
-            .filter(|p| !self.is_our_nonce_parity(&p.game_id))
-            .map(|p| p.game_id)
-            .collect()
+    pub fn pending_peer_proposal_ids(&self) -> Vec<LocalProposalId> {
+        self.acceptance_ledger.proposal_ledger.incoming_ids()
     }
 
     pub fn my_out_of_game_balance(&self) -> Amount {
-        self.my_out_of_game_balance.clone()
+        self.acceptance_ledger.my_out_of_game_balance.clone()
     }
 
     pub fn their_out_of_game_balance(&self) -> Amount {
-        self.their_out_of_game_balance.clone()
+        self.acceptance_ledger.their_out_of_game_balance.clone()
     }
 
     pub fn total_game_allocated(&self) -> Amount {
-        self.my_allocated_balance.clone() + self.their_allocated_balance.clone()
+        self.acceptance_ledger.my_allocated_balance.clone()
+            + self.acceptance_ledger.their_allocated_balance.clone()
     }
 
-    pub fn is_game_proposed(&self, game_id: &GameID) -> bool {
-        self.proposed_games.iter().any(|p| p.game_id == *game_id)
+    pub fn is_proposal_pending(&self, id: LocalProposalId) -> bool {
+        self.acceptance_ledger.proposal_ledger.is_pending(id)
     }
 
     pub fn has_live_game(&self, game_id: &GameID) -> bool {
-        self.live_games.iter().any(|g| &g.game_id == game_id)
+        self.acceptance_ledger
+            .live_games
+            .iter()
+            .any(|g| &g.game_id == game_id)
     }
 
     pub fn is_game_finished(&self, game_id: &GameID) -> Result<bool, Error> {
         let idx = self.get_game_by_id(game_id)?;
-        Ok(self.live_games[idx].is_my_turn() && self.live_games[idx].is_game_over())
+        Ok(self.acceptance_ledger.live_games[idx].is_my_turn()
+            && self.acceptance_ledger.live_games[idx].is_game_over())
     }
 
     pub fn get_game_our_current_share(&self, game_id: &GameID) -> Result<Amount, Error> {
-        if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
+        if let Some(g) = self
+            .acceptance_ledger
+            .live_games
+            .iter()
+            .find(|g| g.game_id == *game_id)
+        {
             return g.get_our_current_share();
         }
         if let Some(g) = self
@@ -1461,7 +1396,7 @@ impl ChannelState {
         surviving_ids: &HashSet<GameID>,
     ) -> Vec<(GameID, Amount, bool)> {
         let mut resolved = Vec::new();
-        self.cached_redo_actions.retain(|entry| {
+        self.acceptance_ledger.cached_redo_actions.retain(|entry| {
             if let CachedRedoActions::CachedAcceptSettlement(acc) = entry {
                 if !surviving_ids.contains(&acc.game_id) {
                     resolved.push((acc.game_id, acc.our_share_amount.clone(), acc.game_finished));
@@ -1477,7 +1412,12 @@ impl ChannelState {
     }
 
     pub fn get_game_amount(&self, game_id: &GameID) -> Result<Amount, Error> {
-        if let Some(g) = self.live_games.iter().find(|g| g.game_id == *game_id) {
+        if let Some(g) = self
+            .acceptance_ledger
+            .live_games
+            .iter()
+            .find(|g| g.game_id == *game_id)
+        {
             return Ok(g.get_amount());
         }
         if let Some(g) = self
@@ -1494,7 +1434,8 @@ impl ChannelState {
     }
 
     pub fn get_game_by_id(&self, game_id: &GameID) -> Result<usize, Error> {
-        self.live_games
+        self.acceptance_ledger
+            .live_games
             .iter()
             .position(|g| &g.game_id == game_id)
             .map(Ok)
@@ -1513,7 +1454,11 @@ impl ChannelState {
         new_entropy: Hash,
     ) -> Result<PreparedMove, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
-        self.live_games[game_idx].prepare_move(env.allocator, readable_move, new_entropy)
+        self.acceptance_ledger.live_games[game_idx].prepare_move(
+            env.allocator,
+            readable_move,
+            new_entropy,
+        )
     }
 
     /// Apply a prepared send-side move mutation. Does NOT finalize signatures.
@@ -1526,15 +1471,21 @@ impl ChannelState {
     ) -> Result<MoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
         let state_number = self.state_number;
-        let pre_move_puzzle_hash = self.live_games[game_idx].last_referee_puzzle_hash.clone();
+        let pre_move_puzzle_hash = self.acceptance_ledger.live_games[game_idx]
+            .last_referee_puzzle_hash
+            .clone();
 
-        let referee_result =
-            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
+        let referee_result = self.acceptance_ledger.live_games[game_idx].apply_prepared_move(
+            env.allocator,
+            prepared,
+            state_number,
+        )?;
 
-        self.live_games[game_idx].last_referee_puzzle_hash =
-            self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
+        self.acceptance_ledger.live_games[game_idx].last_referee_puzzle_hash =
+            self.acceptance_ledger.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
 
-        let (saved_referee, saved_ph) = self.live_games[game_idx].save_referee_state();
+        let (saved_referee, saved_ph) =
+            self.acceptance_ledger.live_games[game_idx].save_referee_state();
 
         let puzzle_hash = referee_result.puzzle_hash_for_unroll;
         let amount = referee_result.details.basic.mover_share.clone();
@@ -1552,7 +1503,7 @@ impl ChannelState {
         Ok(MoveResult {
             state_number: self.state_number,
             game_move: referee_result.details.clone(),
-            is_finished: self.live_games[game_idx].is_game_over(),
+            is_finished: self.acceptance_ledger.live_games[game_idx].is_game_over(),
         })
     }
 
@@ -1566,7 +1517,7 @@ impl ChannelState {
         mover_share: Amount,
     ) -> Result<ChannelMoveResult, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
-        let game_amount = self.live_games[game_idx].get_amount();
+        let game_amount = self.acceptance_ledger.live_games[game_idx].get_amount();
         if mover_share > game_amount {
             return Err(Error::StrErr(format!(
                 "received move with mover_share {} exceeding game amount {}",
@@ -1575,7 +1526,7 @@ impl ChannelState {
             )));
         }
 
-        let max_move_size = self.live_games[game_idx].get_max_move_size();
+        let max_move_size = self.acceptance_ledger.live_games[game_idx].get_max_move_size();
         if move_made.len() > max_move_size {
             return Err(Error::StrErr(format!(
                 "received move of {} bytes exceeds max_move_size {}",
@@ -1586,7 +1537,7 @@ impl ChannelState {
 
         let state_number = self.state_number;
 
-        let their_move_result = self.live_games[game_idx].internal_their_move(
+        let their_move_result = self.acceptance_ledger.live_games[game_idx].internal_their_move(
             env.allocator,
             move_made,
             mover_share,
@@ -1615,7 +1566,7 @@ impl ChannelState {
     ) -> Result<ReadableMove, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        self.live_games[game_idx].receive_readable(env.allocator, message)
+        self.acceptance_ledger.live_games[game_idx].receive_readable(env.allocator, message)
     }
 
     /// Apply a send-side accept mutation. Does NOT finalize signatures.
@@ -1630,15 +1581,17 @@ impl ChannelState {
         );
         let game_idx = self.get_game_by_id(game_id)?;
         game_assert!(
-            self.live_games[game_idx].is_my_turn(),
+            self.acceptance_ledger.live_games[game_idx].is_my_turn(),
             "accept_settlement requires it to be our turn"
         );
 
-        let live_game = self.live_games.remove(game_idx);
-        self.my_allocated_balance = self
+        let live_game = self.acceptance_ledger.live_games.remove(game_idx);
+        self.acceptance_ledger.my_allocated_balance = self
+            .acceptance_ledger
             .my_allocated_balance
             .checked_sub(&live_game.my_contribution)?;
-        self.their_allocated_balance = self
+        self.acceptance_ledger.their_allocated_balance = self
+            .acceptance_ledger
             .their_allocated_balance
             .checked_sub(&live_game.their_contribution)?;
 
@@ -1654,8 +1607,8 @@ impl ChannelState {
             live_game.their_contribution.clone(),
         ));
 
-        self.my_out_of_game_balance += amount.clone();
-        self.their_out_of_game_balance += at_stake.checked_sub(&amount)?;
+        self.acceptance_ledger.my_out_of_game_balance += amount.clone();
+        self.acceptance_ledger.their_out_of_game_balance += at_stake.checked_sub(&amount)?;
 
         let game_finished = live_game.is_game_over();
         self.push_cached_action(CachedRedoActions::CachedAcceptSettlement(Box::new(
@@ -1680,28 +1633,31 @@ impl ChannelState {
     ) -> Result<(Amount, bool), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        if self.live_games[game_idx].is_my_turn() {
+        if self.acceptance_ledger.live_games[game_idx].is_my_turn() {
             return Err(Error::StrErr(format!(
                 "received AcceptSettlement for game {game_id:?} but it is our turn"
             )));
         }
 
-        let game_finished = self.live_games[game_idx].is_game_over();
-        let game_amount_for_me = self.live_games[game_idx].get_our_current_share()?;
-        let game_amount_for_them = self.live_games[game_idx]
+        let game_finished = self.acceptance_ledger.live_games[game_idx].is_game_over();
+        let game_amount_for_me =
+            self.acceptance_ledger.live_games[game_idx].get_our_current_share()?;
+        let game_amount_for_them = self.acceptance_ledger.live_games[game_idx]
             .get_amount()
-            .checked_sub(&self.live_games[game_idx].get_our_current_share()?)?;
+            .checked_sub(&self.acceptance_ledger.live_games[game_idx].get_our_current_share()?)?;
 
-        self.my_allocated_balance = self
-            .my_allocated_balance
-            .checked_sub(&self.live_games[game_idx].my_contribution)?;
-        self.their_allocated_balance = self
+        self.acceptance_ledger.my_allocated_balance =
+            self.acceptance_ledger
+                .my_allocated_balance
+                .checked_sub(&self.acceptance_ledger.live_games[game_idx].my_contribution)?;
+        self.acceptance_ledger.their_allocated_balance = self
+            .acceptance_ledger
             .their_allocated_balance
-            .checked_sub(&self.live_games[game_idx].their_contribution)?;
-        self.my_out_of_game_balance += game_amount_for_me.clone();
-        self.their_out_of_game_balance += game_amount_for_them;
+            .checked_sub(&self.acceptance_ledger.live_games[game_idx].their_contribution)?;
+        self.acceptance_ledger.my_out_of_game_balance += game_amount_for_me.clone();
+        self.acceptance_ledger.their_out_of_game_balance += game_amount_for_them;
 
-        let removed = self.live_games.remove(game_idx);
+        let removed = self.acceptance_ledger.live_games.remove(game_idx);
         self.pending_settlements.push(removed);
         Ok((game_amount_for_me, game_finished))
     }
@@ -2001,7 +1957,7 @@ impl ChannelState {
     //    with a specific game.  will spend that game coin.  referee maker up to
     //    date after that.  aware of move relationship to game id.
     pub fn push_cached_action(&mut self, entry: CachedRedoActions) {
-        self.cached_redo_actions.push(entry);
+        self.acceptance_ledger.cached_redo_actions.push(entry);
     }
 
     /// After an unroll completes, map on-chain game coin puzzle hashes to the
@@ -2024,6 +1980,7 @@ impl ChannelState {
         let unroll_coin_id = unroll_coin.to_coin_id();
 
         let cached_moves: Vec<(GameID, PuzzleHash)> = self
+            .acceptance_ledger
             .cached_redo_actions
             .iter()
             .filter_map(|entry| {
@@ -2040,7 +1997,7 @@ impl ChannelState {
         for (coin_ph, coin_amt) in coins.iter() {
             let coin_id = CoinString::from_parts(&unroll_coin_id, coin_ph, coin_amt);
 
-            let live_latest = self.live_games.iter().find(|g| {
+            let live_latest = self.acceptance_ledger.live_games.iter().find(|g| {
                 !matched_game_ids.contains(&g.game_id)
                     && g.last_referee_puzzle_hash == *coin_ph
                     && g.get_amount() == *coin_amt
@@ -2048,7 +2005,8 @@ impl ChannelState {
             let live_redo = if live_latest.is_none() {
                 cached_moves.iter().find_map(|(gid, mph)| {
                     if *mph == *coin_ph && !matched_game_ids.contains(gid) {
-                        self.live_games
+                        self.acceptance_ledger
+                            .live_games
                             .iter()
                             .find(|g| g.game_id == *gid && g.get_amount() == *coin_amt)
                     } else {
@@ -2072,7 +2030,6 @@ impl ChannelState {
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
                         timeout_claim_armed: false,
-                        notification_sent: false,
                         game_timeout: live_game.get_game_timeout(),
                         game_finished: live_game.is_game_over(),
                     },
@@ -2093,7 +2050,6 @@ impl ChannelState {
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
                         timeout_claim_armed: false,
-                        notification_sent: false,
                         game_timeout: live_game.get_game_timeout(),
                         game_finished: live_game.is_game_over(),
                     },
@@ -2117,7 +2073,6 @@ impl ChannelState {
                         pending_slash_amount: None,
                         cheating_move_mover_share: None,
                         timeout_claim_armed: true,
-                        notification_sent: false,
                         game_timeout: pending.get_game_timeout(),
                         game_finished: false,
                     },
@@ -2130,15 +2085,9 @@ impl ChannelState {
     }
 
     pub fn game_is_my_turn(&self, game_id: &GameID) -> Option<bool> {
-        for g in self.live_games.iter() {
+        for g in &self.acceptance_ledger.live_games {
             if g.game_id == *game_id {
                 return Some(g.is_my_turn());
-            }
-        }
-
-        for p in self.proposed_games.iter() {
-            if p.game_id == *game_id {
-                return Some(p.referee.is_my_turn());
             }
         }
 
@@ -2152,12 +2101,12 @@ impl ChannelState {
         mover_share: Amount,
     ) -> Result<bool, Error> {
         let game_idx = self.get_game_by_id(game_id)?;
-        Ok(self.live_games[game_idx].enable_cheating(make_move, mover_share))
+        Ok(self.acceptance_ledger.live_games[game_idx].enable_cheating(make_move, mover_share))
     }
 
     pub fn save_game_state(&self, game_id: &GameID) -> Result<(Rc<Referee>, PuzzleHash), Error> {
         let idx = self.get_game_by_id(game_id)?;
-        Ok(self.live_games[idx].save_referee_state())
+        Ok(self.acceptance_ledger.live_games[idx].save_referee_state())
     }
 
     pub fn restore_game_state(
@@ -2167,7 +2116,7 @@ impl ChannelState {
         last_ph: PuzzleHash,
     ) -> Result<(), Error> {
         let idx = self.get_game_by_id(game_id)?;
-        self.live_games[idx].restore_referee_state(referee, last_ph);
+        self.acceptance_ledger.live_games[idx].restore_referee_state(referee, last_ph);
         Ok(())
     }
 
@@ -2178,7 +2127,7 @@ impl ChannelState {
         game_coin: &CoinString,
     ) -> Result<Spend, Error> {
         let idx = self.get_game_by_id(game_id)?;
-        self.live_games[idx].get_transaction_for_move(allocator, game_coin)
+        self.acceptance_ledger.live_games[idx].get_transaction_for_move(allocator, game_coin)
     }
 
     pub fn get_game_outcome_puzzle_hash(
@@ -2187,17 +2136,19 @@ impl ChannelState {
         game_id: &GameID,
     ) -> Result<PuzzleHash, Error> {
         let idx = self.get_game_by_id(game_id)?;
-        self.live_games[idx].outcome_puzzle_hash(env.allocator)
+        self.acceptance_ledger.live_games[idx].outcome_puzzle_hash(env.allocator)
     }
 
     /// Extract cached move data (including saved S' referee) from
     /// `cached_redo_actions` for a specific game, removing that entry.
     pub fn take_cached_move_for_game(&mut self, game_id: &GameID) -> Option<Rc<CachedSendMove>> {
-        let pos = self.cached_redo_actions.iter().position(
+        let pos = self.acceptance_ledger.cached_redo_actions.iter().position(
             |entry| matches!(entry, CachedRedoActions::CachedSendMove(d) if d.game_id == *game_id),
         );
         if let Some(idx) = pos {
-            if let CachedRedoActions::CachedSendMove(data) = self.cached_redo_actions.remove(idx) {
+            if let CachedRedoActions::CachedSendMove(data) =
+                self.acceptance_ledger.cached_redo_actions.remove(idx)
+            {
                 return Some(data);
             }
         }
@@ -2213,16 +2164,20 @@ impl ChannelState {
     ) -> Result<(PuzzleHash, PuzzleHash, usize, GameMoveDetails, Spend), Error> {
         let game_idx = self.get_game_by_id(game_id)?;
 
-        let last_puzzle_hash = self.live_games[game_idx].last_puzzle_hash();
+        let last_puzzle_hash = self.acceptance_ledger.live_games[game_idx].last_puzzle_hash();
         let state_number = self.state_number;
 
-        let move_result =
-            self.live_games[game_idx].apply_prepared_move(env.allocator, prepared, state_number)?;
+        let move_result = self.acceptance_ledger.live_games[game_idx].apply_prepared_move(
+            env.allocator,
+            prepared,
+            state_number,
+        )?;
 
-        let tx =
-            self.live_games[game_idx].get_transaction_for_move(env.allocator, existing_coin)?;
+        let tx = self.acceptance_ledger.live_games[game_idx]
+            .get_transaction_for_move(env.allocator, existing_coin)?;
 
-        let post_outcome = self.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
+        let post_outcome =
+            self.acceptance_ledger.live_games[game_idx].outcome_puzzle_hash(env.allocator)?;
 
         Ok((
             last_puzzle_hash,
@@ -2270,20 +2225,23 @@ impl ChannelState {
         // referee's expected outcome, the opponent's move brought the
         // on-chain state to where our referee already is. Skip the
         // referee's coin-spend processing and return Expected directly.
-        let our_on_chain_ph = self.live_games[live_game_idx].current_puzzle_hash(env.allocator)?;
-        let our_outcome_ph = self.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
+        let our_on_chain_ph =
+            self.acceptance_ledger.live_games[live_game_idx].current_puzzle_hash(env.allocator)?;
+        let our_outcome_ph =
+            self.acceptance_ledger.live_games[live_game_idx].outcome_puzzle_hash(env.allocator)?;
         if ph == our_on_chain_ph || ph == our_outcome_ph {
             let coin_being_spent_ph = coin_string.to_parts().map(|(_, p, _)| p);
             let matches_spent = coin_being_spent_ph.as_ref() == Some(&ph);
             if !matches_spent {
-                self.live_games[live_game_idx].last_referee_puzzle_hash = ph.clone();
+                self.acceptance_ledger.live_games[live_game_idx].last_referee_puzzle_hash =
+                    ph.clone();
                 return Ok(CoinSpentInformation::TheirSpend(
                     TheirTurnCoinSpentResult::Expected(state_number, ph, amt, None),
                 ));
             }
         }
 
-        let spent_result = self.live_games[live_game_idx].their_turn_coin_spent(
+        let spent_result = self.acceptance_ledger.live_games[live_game_idx].their_turn_coin_spent(
             env.allocator,
             coin_string,
             conditions,
@@ -2297,7 +2255,7 @@ impl ChannelState {
     /// [`take_cached_move_for_game`]). Used for Replaying status before the
     /// cache entry is taken.
     pub fn has_cached_move_for_game(&self, game_id: &GameID) -> bool {
-        self.cached_redo_actions.iter().any(
+        self.acceptance_ledger.cached_redo_actions.iter().any(
             |entry| matches!(entry, CachedRedoActions::CachedSendMove(d) if d.game_id == *game_id),
         )
     }
@@ -2319,7 +2277,7 @@ impl ChannelState {
         }
         // After the redo, our share is determined by the saved post-move
         // referee.
-        for entry in &self.cached_redo_actions {
+        for entry in &self.acceptance_ledger.cached_redo_actions {
             if let CachedRedoActions::CachedSendMove(move_data) = entry {
                 if move_data.game_id == *game_id {
                     let share = move_data.saved_post_move_referee.get_our_current_share()?;
@@ -2337,8 +2295,9 @@ impl ChannelState {
         coin: &CoinString,
     ) -> Result<Option<Spend>, Error> {
         if let Ok(game_idx) = self.get_game_by_id(game_id) {
-            let tx = self.live_games[game_idx].get_transaction_for_timeout(env.allocator, coin)?;
-            self.live_games.remove(game_idx);
+            let tx = self.acceptance_ledger.live_games[game_idx]
+                .get_transaction_for_timeout(env.allocator, coin)?;
+            self.acceptance_ledger.live_games.remove(game_idx);
             Ok(tx)
         } else if let Some(idx) = self
             .pending_settlements

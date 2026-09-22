@@ -33,6 +33,7 @@ const electronFuses = {
 module.exports = {
   appId: 'org.chia.gaming.desktop',
   productName: 'Chia Gaming',
+  artifactName: 'chia-gaming-${version}-${os}-${arch}.${ext}',
   // Not the conventional 'build' directory: the repository-wide .gitignore
   // excludes build/, which would drop the entitlements file from the repo.
   directories: { output: 'release', buildResources: 'packaging' },

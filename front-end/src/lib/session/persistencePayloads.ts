@@ -1,33 +1,39 @@
-import type { ChannelStatus } from '../../types/ChiaGaming';
+import type {
+  ChannelStatus,
+  ChannelStatusPayload,
+  CoinOfInterestEntry,
+} from '../../types/ChiaGaming';
 import { CHANNEL_SEMANTIC_PHASES } from '../../types/ChiaGaming';
-import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
-import type {
-  LiveSessionSave,
-  SessionPairingSave,
-  SessionPresentationSave,
-  SessionSave,
-  SessionTransportSave,
-} from './saveEnvelope';
-import type {
-  BetweenHandModeModel,
-  GameInstanceModel,
-  GameProtocolPresentation,
-  GameTerminalModel,
-  GameTerminalType,
-  QueuedNotificationModel,
-} from './types';
+import type { LiveSessionSave, SessionPairingSave, SessionTransportSave } from './saveEnvelope';
+import type { BetweenHandModeModel, GameTerminalModel } from './types';
 import {
-  optionalBoolean,
-  optionalString,
   parseDecimalString,
   parseDiscriminant,
-  parseStringArray,
   requireBigint,
   requireBoolean,
-  requireNullableString,
+  requireExactKeys,
   requireRecord,
   requireString,
 } from './persistencePrimitives';
+
+const AMOUNT_KEYS = new Set(['Amount']);
+export const CHANNEL_STATUS_KEYS = new Set([
+  'state',
+  'session_disposition',
+  'advisory',
+  'coin',
+  'our_balance',
+  'their_balance',
+  'game_allocated',
+  'have_potato',
+  'zero_payout',
+  'unroll_initiator',
+  'semantic_phase',
+  'state_number',
+  'unrolling_state_number',
+  'preempting_state_number',
+]);
+export const TERMINAL_COIN_KEYS = new Set(['label', 'id', 'game_id', 'game_coin_kind']);
 
 export const CHANNEL_STATUSES: ReadonlySet<string> = new Set<ChannelStatus>([
   'Handshaking',
@@ -54,127 +60,8 @@ export const BETWEEN_HAND_MODES: ReadonlySet<string> = new Set<BetweenHandModeMo
   'review-incoming-proposal',
 ]);
 
-const NOTIFICATION_KINDS = new Set([
-  'channel-state',
-  'action-failed',
-  'infra-error',
-  'durability-error',
-  'proposal-rejected',
-  'insufficient-bal',
-  'move-rejected',
-]);
 const SESSION_DISPOSITIONS = new Set(['AwaitOutboundTerminal', 'Abandoned']);
 const CHANNEL_SEMANTIC_PHASE_SET = new Set<string>(CHANNEL_SEMANTIC_PHASES);
-const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
-  'none',
-  'settled',
-  'insufficient-balance',
-  'ended-cancelled',
-  'game-error',
-]);
-const SAVED_GAME_PRESENTATIONS: ReadonlySet<string> = new Set<GameProtocolPresentation>([
-  'off-chain-my-turn',
-  'off-chain-their-turn',
-  'on-chain-my-turn',
-  'on-chain-their-turn',
-  'playing-move',
-  'replaying-move',
-  'illegal-move',
-  'submitting-timeout',
-  'finishing',
-  'finishing-waiting-timeout',
-  'finishing-spending',
-  'ended',
-]);
-
-function parseNotificationId(id: unknown): bigint {
-  if (typeof id === 'bigint' && id >= 0n) return id;
-  if (typeof id === 'number' && Number.isInteger(id) && id >= 0) return BigInt(id);
-  if (typeof id === 'string') {
-    try {
-      return parseDecimalString(id, 'notification id', 0n);
-    } catch {
-      throw new Error(`Garbled save: invalid notification id: ${id}`);
-    }
-  }
-  throw new Error('Garbled save: missing notification id');
-}
-
-export function parseQueuedNotifications(queue: unknown): QueuedNotificationModel[] {
-  if (!Array.isArray(queue)) throw new Error('Garbled save: invalid notification queue');
-  const parsed = queue.map((notification, index) => {
-    const record = requireRecord(notification, `notification[${index}]`);
-    return {
-      kind: parseDiscriminant<QueuedNotificationModel['kind']>(
-        record.kind,
-        NOTIFICATION_KINDS,
-        `notification[${index}].kind`,
-      ),
-      id: parseNotificationId(record.id),
-      title: requireString(record.title, `notification[${index}].title`, true),
-      message: requireString(record.message, `notification[${index}].message`, true),
-    };
-  });
-  if (new Set(parsed.map(({ id }) => id)).size !== parsed.length) {
-    throw new Error('Garbled save: duplicate notification id');
-  }
-  return parsed;
-}
-
-function parseGameTerminal(value: unknown, label: string): GameTerminalModel {
-  const fields = requireRecord(value, label);
-  const type = parseDiscriminant<GameTerminalType>(
-    fields.type,
-    GAME_TERMINAL_TYPES,
-    `${label}.type`,
-  );
-  let outcome: SettlementOutcome | null;
-  if (type === 'settled') {
-    if (!isSettlementOutcome(fields.outcome)) {
-      throw new Error(`Garbled save: invalid ${label}.outcome: ${String(fields.outcome)}`);
-    }
-    outcome = fields.outcome;
-  } else {
-    const nonSettledOutcome = requireNullableString(fields.outcome, `${label}.outcome`, true);
-    if (nonSettledOutcome !== null) {
-      throw new Error(`Garbled save: unexpected ${label}.outcome for ${type}`);
-    }
-    outcome = null;
-  }
-  return {
-    type,
-    outcome,
-    label: requireNullableString(fields.label, `${label}.label`, true),
-    myReward: requireNullableString(fields.myReward, `${label}.myReward`, true),
-    rewardCoinHex: requireNullableString(fields.rewardCoinHex, `${label}.rewardCoinHex`, true),
-  };
-}
-
-export function parseSavedGameInstance(key: string, value: unknown): GameInstanceModel {
-  const instance = requireRecord(value, `gameInstances.${key}`);
-  if (instance.id !== key) {
-    throw new Error(`Garbled save: game instance ${key} has mismatched id ${String(instance.id)}`);
-  }
-  if (typeof instance.amount !== 'string') {
-    throw new Error(`Garbled save: invalid gameInstances.${key}.amount`);
-  }
-  parseDecimalString(instance.amount, `gameInstances.${key}.amount`, 0n);
-  if (instance.coinHex !== null && typeof instance.coinHex !== 'string') {
-    throw new Error(`Garbled save: invalid gameInstances.${key}.coinHex`);
-  }
-  return {
-    id: key,
-    amount: instance.amount,
-    coinHex: instance.coinHex,
-    presentation: parseDiscriminant<GameProtocolPresentation>(
-      instance.presentation,
-      SAVED_GAME_PRESENTATIONS,
-      `gameInstances.${key}.presentation`,
-    ),
-    terminal: parseGameTerminal(instance.terminal, `gameInstances.${key}.terminal`),
-  };
-}
-
 export function validateTerminalFields(terminal: GameTerminalModel, label: string): void {
   const isNonEmpty = (value: string | null): boolean => value !== null && value.length > 0;
   const isAmount = (value: string | null): boolean => {
@@ -213,70 +100,10 @@ export function validateTerminalFields(terminal: GameTerminalModel, label: strin
   }
 }
 
-export function validateCommonFields(save: SessionSave): void {
-  requireString(save.identity.playerId, 'identity.playerId');
-  optionalString(save.identity.sessionId, 'identity.sessionId');
-  optionalString(save.identity.myHubPlayerId, 'identity.myHubPlayerId');
-  optionalString(save.preferences.alias, 'preferences.alias', true);
-  optionalString(save.preferences.hubUrl, 'preferences.hubUrl');
-  optionalString(save.preferences.activeTab, 'preferences.activeTab');
-  if (
-    save.preferences.theme !== undefined &&
-    save.preferences.theme !== 'dark' &&
-    save.preferences.theme !== 'light'
-  ) {
-    throw new Error('Garbled save: invalid theme');
-  }
-  if (
-    save.preferences.feeUnit !== undefined &&
-    save.preferences.feeUnit !== 'mojo' &&
-    save.preferences.feeUnit !== 'xch'
-  ) {
-    throw new Error('Garbled save: invalid feeUnit');
-  }
-  if (
-    save.preferences.blockchainType !== undefined &&
-    save.preferences.blockchainType !== 'simulator' &&
-    save.preferences.blockchainType !== 'walletconnect' &&
-    save.preferences.blockchainType !== 'cloud'
-  ) {
-    throw new Error('Garbled save: invalid blockchainType');
-  }
-  if (
-    save.preferences.network !== undefined &&
-    save.preferences.network !== 'mainnet' &&
-    save.preferences.network !== 'testnet'
-  ) {
-    throw new Error('Garbled save: invalid network');
-  }
-  if (save.preferences.defaultFee !== undefined) {
-    requireBigint(save.preferences.defaultFee, 'preferences.defaultFee');
-  }
-  optionalBoolean(save.preferences.unreadGame, 'preferences.unreadGame');
-  optionalBoolean(save.preferences.walletAlert, 'preferences.walletAlert');
-  optionalBoolean(save.preferences.hubAlert, 'preferences.hubAlert');
-  for (const [field, value] of [
-    ['history.humanHistory', save.history.humanHistory],
-    ['history.wasmNotificationHistory', save.history.wasmNotificationHistory],
-    ['history.diagnosticLog', save.history.diagnosticLog],
-  ] as const) {
-    if (value !== undefined) parseStringArray(value, field);
-  }
-}
-
 export function validatePairing(pairing: SessionPairingSave): void {
-  requireString(pairing.token, 'pairing.token');
-  optionalString(pairing.peerId, 'pairing.peerId');
-  requireString(pairing.gameSessionId, 'pairing.gameSessionId');
   if (!/^[0-9a-f]{32}$/.test(pairing.gameSessionId)) {
     throw new Error('Garbled save: invalid pairing.gameSessionId');
   }
-  requireBoolean(pairing.iStarted, 'pairing.iStarted');
-  optionalString(pairing.myAlias, 'pairing.myAlias', true);
-  optionalString(pairing.opponentAlias, 'pairing.opponentAlias', true);
-  requireString(pairing.myContribution, 'pairing.myContribution');
-  requireString(pairing.theirContribution, 'pairing.theirContribution');
-  requireString(pairing.perGameAmount, 'pairing.perGameAmount');
   for (const [field, minimum] of [
     ['myContribution', 0n],
     ['theirContribution', 0n],
@@ -293,29 +120,15 @@ export function validateTransport(
   transport: SessionTransportSave,
   label: 'transport' | 'live',
 ): void {
-  const messageNumber = requireBigint(transport.messageNumber, `${label}.messageNumber`);
-  const remoteNumber = requireBigint(transport.remoteNumber, `${label}.remoteNumber`);
+  const { messageNumber, remoteNumber } = transport;
   if (messageNumber < 1n || messageNumber > 0x1_0000_0000n) {
     throw new Error(`Garbled save: invalid ${label}.messageNumber`);
   }
   if (remoteNumber < 0n || remoteNumber > 0xffff_ffffn) {
     throw new Error(`Garbled save: invalid ${label}.remoteNumber`);
   }
-  if (
-    transport.disposition !== 'active' &&
-    transport.disposition !== 'proposal-received' &&
-    transport.disposition !== 'outbound-reject' &&
-    transport.disposition !== 'inbound-reject'
-  ) {
-    throw new Error(`Garbled save: invalid ${label}.disposition`);
-  }
-  if (!Array.isArray(transport.unackedMessages)) {
-    throw new Error(`Garbled save: invalid ${label}.unackedMessages`);
-  }
   const messageIds = new Set<bigint>();
-  transport.unackedMessages.forEach((message, index) => {
-    const record = requireRecord(message, `${label}.unackedMessages[${index}]`);
-    const msgno = requireBigint(record.msgno, `${label}.unackedMessages[${index}].msgno`);
+  transport.unackedMessages.forEach(({ msgno }) => {
     if (msgno < 1n || msgno >= messageNumber) {
       throw new Error(`Garbled save: invalid ${label}.unackedMessages msgno ${msgno}`);
     }
@@ -323,45 +136,51 @@ export function validateTransport(
       throw new Error(`Garbled save: duplicate ${label}.unackedMessages msgno ${msgno}`);
     }
     messageIds.add(msgno);
-    if (!(record.msg instanceof Uint8Array)) {
-      throw new Error(`Garbled save: invalid ${label}.unackedMessages[${index}].msg`);
-    }
   });
+  const terminalHandoff = transport.terminalHandoff;
+  if (terminalHandoff !== null) {
+    const { id, msgno, sent, acknowledged, message: commandMessage } = terminalHandoff;
+    if (id.length === 0 || msgno < 1n || msgno >= messageNumber) {
+      throw new Error(`Garbled save: invalid ${label}.terminalHandoff`);
+    }
+    if (acknowledged && !sent) {
+      throw new Error(`Garbled save: acknowledged ${label}.terminalHandoff was never sent`);
+    }
+    const boundFrame = transport.unackedMessages.find((message) => message.msgno === msgno);
+    if (acknowledged) {
+      if (transport.unackedMessages.some((message) => message.msgno <= msgno)) {
+        throw new Error(
+          `Garbled save: acknowledged ${label}.terminalHandoff remains in the unacked window`,
+        );
+      }
+    } else if (
+      !boundFrame ||
+      boundFrame.msg.length !== commandMessage.length ||
+      !boundFrame.msg.every((byte, index) => byte === commandMessage[index])
+    ) {
+      throw new Error(
+        `Garbled save: ${label}.terminalHandoff does not match its unacked reliable frame`,
+      );
+    }
+  }
 }
 
 export function validateLive(live: LiveSessionSave['live']): void {
   validateTransport(live, 'live');
-  if (!(live.serializedGameSession instanceof Uint8Array)) {
-    throw new Error('Garbled save: invalid live.serializedGameSession');
-  }
-  requireBigint(live.gameSessionSchemaVersion, 'live.gameSessionSchemaVersion');
-  requireString(live.rewardPuzzleHash, 'live.rewardPuzzleHash');
   if (!/^[0-9a-fA-F]{64}$/.test(live.rewardPuzzleHash)) {
     throw new Error('Garbled save: invalid live.rewardPuzzleHash');
   }
-  optionalString(live.durabilityWarning, 'live.durabilityWarning', true);
 }
 
-export function validatePresentationScalarFields(save: SessionPresentationSave): void {
-  if (save.waitingStateEnteredAt !== null) {
-    requireBigint(save.waitingStateEnteredAt, 'waitingStateEnteredAt');
-  }
-  if (save.cleanShutdownGraceStartedAt !== null) {
-    requireBigint(save.cleanShutdownGraceStartedAt, 'cleanShutdownGraceStartedAt');
-  }
-  if (
-    save.currentHandOrigin !== null &&
-    save.currentHandOrigin !== 'local' &&
-    save.currentHandOrigin !== 'peer'
-  ) {
-    throw new Error('Garbled save: invalid currentHandOrigin');
-  }
-  requireBoolean(save.cleanShutdownStarted, 'cleanShutdownStarted');
-}
-
-export function validateChannelStatus(value: unknown): void {
-  if (value == null) return;
+export function validateChannelStatus(value: unknown): ChannelStatusPayload | null {
+  if (value === null) return null;
   const status = requireRecord(value, 'channelStatus');
+  requireExactKeys(status, CHANNEL_STATUS_KEYS, 'channelStatus');
+  for (const required of ['advisory', 'coin', 'our_balance', 'their_balance', 'game_allocated']) {
+    if (!Object.hasOwn(status, required)) {
+      throw new Error(`Garbled save: channelStatus is missing ${required}`);
+    }
+  }
   parseDiscriminant<ChannelStatus>(status.state, CHANNEL_STATUSES, 'channelStatus.state');
   if (
     status.session_disposition !== undefined &&
@@ -382,10 +201,12 @@ export function validateChannelStatus(value: unknown): void {
   for (const field of ['our_balance', 'their_balance', 'game_allocated'] as const) {
     const amount = status[field];
     if (amount === undefined || amount === null) continue;
-    const raw =
-      typeof amount === 'object' && !Array.isArray(amount) && amount !== null
-        ? requireRecord(amount, `channelStatus.${field}`).Amount
-        : amount;
+    const raw = (() => {
+      if (typeof amount !== 'object' || Array.isArray(amount) || amount === null) return amount;
+      const record = requireRecord(amount, `channelStatus.${field}`);
+      requireExactKeys(record, AMOUNT_KEYS, `channelStatus.${field}`);
+      return record.Amount;
+    })();
     if (typeof raw === 'bigint') requireBigint(raw, `channelStatus.${field}`);
     else parseDecimalString(raw, `channelStatus.${field}`, 0n);
   }
@@ -416,34 +237,38 @@ export function validateChannelStatus(value: unknown): void {
   ] as const) {
     const value = status[field];
     if (value === undefined || value === null) continue;
-    if (typeof value === 'bigint') {
-      if (value < 0n) throw new Error(`Garbled save: invalid channelStatus.${field}`);
-      continue;
-    }
-    if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-      throw new Error(`Garbled save: invalid channelStatus.${field}`);
-    }
+    requireBigint(value, `channelStatus.${field}`);
   }
+  return status as unknown as ChannelStatusPayload;
 }
 
-export function validateTerminalCoins(value: unknown): void {
+export function decodeTerminalCoins(value: unknown): CoinOfInterestEntry[] {
   if (!Array.isArray(value)) {
     throw new Error('Garbled save: terminal phase is missing coinsOfInterest');
   }
   const coinIds = new Set<string>();
-  value.forEach((coin, index) => {
+  return value.map((coin, index) => {
     const record = requireRecord(coin, `terminal.coinsOfInterest[${index}]`);
+    requireExactKeys(record, TERMINAL_COIN_KEYS, `terminal.coinsOfInterest[${index}]`);
     const label = requireString(record.label, `terminal.coinsOfInterest[${index}].label`);
     const id = requireString(record.id, `terminal.coinsOfInterest[${index}].id`);
     if (!label || !id) throw new Error(`Garbled save: invalid terminal coin ${index}`);
-    if (record.parentId !== undefined) {
-      const parentId = requireString(
-        record.parentId,
-        `terminal.coinsOfInterest[${index}].parentId`,
-      );
-      if (!parentId) throw new Error(`Garbled save: invalid terminal coin parent ${index}`);
+    const gameId =
+      record.game_id === undefined
+        ? undefined
+        : requireString(record.game_id, `terminal.coinsOfInterest[${index}].game_id`);
+    if (gameId === '') throw new Error(`Garbled save: invalid terminal coin game id ${index}`);
+    const gameCoinKind = record.game_coin_kind;
+    if (gameCoinKind !== undefined && gameCoinKind !== 'current' && gameCoinKind !== 'reward') {
+      throw new Error(`Garbled save: invalid terminal coin kind ${index}`);
     }
     if (coinIds.has(id)) throw new Error(`Garbled save: duplicate terminal coin ${id}`);
     coinIds.add(id);
+    return {
+      label,
+      id,
+      ...(gameId === undefined ? {} : { game_id: gameId }),
+      ...(gameCoinKind === undefined ? {} : { game_coin_kind: gameCoinKind }),
+    };
   });
 }

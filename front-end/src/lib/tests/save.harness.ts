@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
-import { saveSession, type SessionSave, _resetForTests } from '../../hooks/save';
+import { type DurableApplicationState } from '../session/saveEnvelope';
+import { storageRepository } from '../session/storageRepository';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import type { BlockchainType } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -50,11 +51,9 @@ export const sampleSession = {
   perGameAmount: '10',
   rewardPuzzleHash: '11'.repeat(32),
   betweenHandLastHandProposal: {
-    player_a_contribution: '10',
-    player_b_contribution: '10',
-    sender_is_player_a: false,
-    game_timeout: '15',
-    game_type: 'calpoker',
+    senderIsPlayerA: false,
+    gameTimeout: 15n,
+    gameType: 'calpoker',
     parameters: null,
   },
   unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
@@ -65,35 +64,29 @@ export const sampleSession = {
 
 export function saveLiveFields(fields: Record<string, unknown> = sampleSession): Promise<void> {
   const save = liveSave(fields);
-  if (save.phase !== 'live') throw new Error('expected live fixture');
-  if (
-    fields.blockchainType !== undefined ||
-    fields.defaultFee !== undefined ||
-    fields.hubUrl !== undefined
-  ) {
-    void saveSession({
-      scope: 'common',
-      preferences: {
-        blockchainType: fields.blockchainType as BlockchainType | undefined,
-        defaultFee: fields.defaultFee as bigint | undefined,
-        hubUrl: fields.hubUrl as string | undefined,
-      },
-    });
-  }
-  return saveSession({
-    scope: 'live',
-    pairing: save.pairing,
-    live: save.live,
-    presentation: save.presentation,
+  if (save.session?.phase !== 'live') throw new Error('expected live fixture');
+  const current = storageRepository.loadState();
+  storageRepository._replaceApplicationStateForTests({
+    ...current,
+    identity: {
+      ...current.identity,
+      ...Object.fromEntries(
+        Object.entries(save.identity).filter(([, value]) => value !== undefined),
+      ),
+    },
+    preferences: { ...current.preferences, ...save.preferences },
     history: save.history,
+    walletContext: save.walletContext,
+    session: save.session,
   });
+  return storageRepository.updateCommon({});
 }
 
 export function savePreferences(fields: {
   blockchainType?: BlockchainType;
   hubUrl?: string;
 }): Promise<void> {
-  return saveSession({ scope: 'common', preferences: fields });
+  return storageRepository.updateCommon({ preferences: fields });
 }
 
 export function saveHistory(fields: {
@@ -101,23 +94,25 @@ export function saveHistory(fields: {
   wasmNotificationHistory?: string[];
   diagnosticLog?: string[];
 }): Promise<void> {
-  return saveSession({ scope: 'common', history: fields });
+  return storageRepository.updateCommon({ history: fields });
 }
 
-export function requireLive(save: SessionSave | null): Extract<SessionSave, { phase: 'live' }> {
-  if (save?.phase !== 'live') throw new Error('expected live save');
-  return save;
+export function requireLive(
+  save: DurableApplicationState | null,
+): Extract<DurableApplicationState['session'], { phase: 'live' }> {
+  if (save?.session?.phase !== 'live') throw new Error('expected live save');
+  return save.session;
 }
 
 export function requirePreHandshake(
-  save: SessionSave | null,
-): Extract<SessionSave, { phase: 'pre-handshake' }> {
-  if (save?.phase !== 'pre-handshake') throw new Error('expected pre-handshake save');
-  return save;
+  save: DurableApplicationState | null,
+): Extract<DurableApplicationState['session'], { phase: 'pre-handshake' }> {
+  if (save?.session?.phase !== 'pre-handshake') throw new Error('expected pre-handshake save');
+  return save.session;
 }
 
 beforeEach(async () => {
-  _resetForTests();
+  storageRepository._resetForTests();
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
@@ -127,11 +122,11 @@ beforeEach(async () => {
     request.onerror = () => resolve();
     request.onblocked = () => resolve();
   });
+  await storageRepository.claimApplicationState();
 });
 
 afterEach(() => {
-  // Cancel debounced flushes so a late queueWrite cannot run after the suite.
-  _resetForTests();
+  storageRepository._resetForTests();
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');
 });

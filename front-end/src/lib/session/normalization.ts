@@ -2,14 +2,8 @@ import type { ChannelStatus, ChannelStatusPayload } from '../../types/ChiaGaming
 import { coerceToBytes } from '../../util';
 import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import { emptyComposeDraftState } from './composeDraft';
-import { gameInstanceFromView } from './presentation';
-import type {
-  ChannelStatusModel,
-  GameInstanceModel,
-  GameInstanceViewModel,
-  SessionModel,
-  SessionModelInput,
-} from './types';
+import { recentDiagnosticEntries } from './historyLimits';
+import type { ChannelStatusModel, SessionModel, SessionModelInput } from './types';
 
 export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   state: 'Handshaking',
@@ -70,37 +64,29 @@ export function channelStatusModelFromPayload(status: ChannelStatusPayload): Cha
 export function channelStatusPayloadFromModel(status: ChannelStatusModel): ChannelStatusPayload {
   return {
     state: status.state,
-    session_disposition: status.sessionDisposition,
-    advisory: status.advisory,
-    coin: status.coin,
-    our_balance: status.ourBalance,
-    their_balance: status.theirBalance,
-    game_allocated: status.gameAllocated,
-    have_potato: status.havePotato,
-    zero_payout: status.zeroPayout,
-    unroll_initiator: status.unrollInitiator,
-    semantic_phase: status.semanticPhase,
-    state_number: status.stateNumber,
-    unrolling_state_number: status.unrollingStateNumber,
-    preempting_state_number: status.preemptingStateNumber,
+    session_disposition: status.sessionDisposition ?? null,
+    advisory: status.advisory ?? null,
+    coin: status.coin ?? null,
+    our_balance: status.ourBalance ?? null,
+    their_balance: status.theirBalance ?? null,
+    game_allocated: status.gameAllocated ?? null,
+    have_potato: status.havePotato ?? null,
+    zero_payout: status.zeroPayout ?? null,
+    unroll_initiator: status.unrollInitiator ?? null,
+    semantic_phase: status.semanticPhase ?? null,
+    state_number: status.stateNumber ?? null,
+    unrolling_state_number: status.unrollingStateNumber ?? null,
+    preempting_state_number: status.preemptingStateNumber ?? null,
   };
-}
-
-function canonicalInstance(instance: GameInstanceModel | GameInstanceViewModel): GameInstanceModel {
-  return 'presentation' in instance ? instance : gameInstanceFromView(instance);
 }
 
 export function createSessionModel(partial: SessionModelInput = {}): SessionModel {
   const game = partial.game ?? {};
-  const instances = Object.fromEntries(
-    Object.entries(game.instances ?? {}).map(([id, instance]) => [id, canonicalInstance(instance)]),
-  );
   return {
     restore: {
       restoring: false,
       status: 'idle',
       error: null,
-      hubReconciled: false,
       ...partial.restore,
     },
     peer: { connected: null, ...partial.peer },
@@ -122,11 +108,11 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       handState: null,
       queue: [],
       ...game,
-      instances,
+      instances: game.instances ?? {},
     },
     betweenHand: {
       mode: 'decision',
-      proposalGroups: [],
+      pendingProposals: [],
       rejectedOnceHandProposal: null,
       lastHandProposal: null,
       compose: emptyComposeDraftState(),
@@ -137,13 +123,13 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     history: {
       humanHistory: [],
       wasmNotificationHistory: [],
-      diagnosticLog: [],
       ...partial.history,
+      diagnosticLog: recentDiagnosticEntries(partial.history?.diagnosticLog ?? []),
     },
-    myRunningBalance: partial.myRunningBalance ?? 0n,
   };
 }
-export function clearDerivedGamePresentation(model: SessionModel): SessionModel {
+export function normalizeSessionPresentation(model: SessionModel): SessionModel {
+  if (model.channel.status.sessionDisposition !== 'Abandoned') return model;
   return {
     ...model,
     game: {
@@ -157,11 +143,6 @@ export function clearDerivedGamePresentation(model: SessionModel): SessionModel 
       handState: null,
     },
   };
-}
-export function normalizeSessionPresentation(model: SessionModel): SessionModel {
-  return model.channel.status.sessionDisposition === 'Abandoned'
-    ? clearDerivedGamePresentation(model)
-    : model;
 }
 
 export const RESOLVED_CHANNEL_STATES = new Set<ChannelStatus>([

@@ -1,39 +1,28 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
-import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope';
-import { encodeComposeDraftState } from './persistenceBetweenHands';
+import type { SessionPresentationSave } from './saveEnvelope';
 import { isCatalogGameType, validateHandProposal } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
-import type { HandProposal, RegisteredGameType, SessionModel } from './types';
+import { isUncancelledProposal } from './proposalPolicy';
+import type { RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
-  waitingStateEnteredAt?: bigint | null;
-  cleanShutdownGraceStartedAt?: bigint | null;
+  waitingStateEnteredAt: bigint | null;
+  cleanShutdownGraceStartedAt: bigint | null;
 }
 
 export function snapshotFromSessionModel(
   model: SessionModel,
-  facts: SessionPresentationFacts = {},
+  facts: SessionPresentationFacts = {
+    waitingStateEnteredAt: null,
+    cleanShutdownGraceStartedAt: null,
+  },
 ): SessionPresentationSave {
   const requireCatalogGameType = (gameType: string, label: string): RegisteredGameType => {
     if (!isCatalogGameType(gameType)) {
       throw new Error(`Session invariant broken: ${label} ${gameType} is not a catalog gameType`);
     }
     return gameType;
-  };
-
-  const handProposalSnapshot = (handProposal: HandProposal): SavedHandProposal => {
-    if (!validateHandProposal(handProposal)) {
-      throw new Error(`Session invariant broken: invalid ${handProposal.gameType} hand proposal`);
-    }
-    return {
-      player_a_contribution: handProposal.playerAContribution.toString(),
-      player_b_contribution: handProposal.playerBContribution.toString(),
-      sender_is_player_a: handProposal.senderIsPlayerA,
-      game_timeout: handProposal.gameTimeout.toString(),
-      game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),
-      parameters: handProposal.parameters,
-    };
   };
 
   const persistedGameIds = Array.from(
@@ -61,33 +50,27 @@ export function snapshotFromSessionModel(
       'Session invariant broken: persisted hand is missing betweenHandLastHandProposal',
     );
   }
-  const proposalMemberIds = new Set<string>();
-  let localOutgoingGroups = 0;
-  for (const group of model.betweenHand.proposalGroups) {
-    if (group.memberIds.length === 0 || group.primaryId !== group.memberIds[0]) {
-      throw new Error('Session invariant broken: proposal primary ID must be its first member');
-    }
-    if (
-      (group.disposition === 'incoming-cached' || group.disposition === 'incoming-review') &&
-      group.origin !== 'peer'
-    ) {
-      throw new Error('Session invariant broken: incoming proposal is not peer-originated');
-    }
-    if (group.disposition === 'outgoing') {
-      if (group.origin !== 'local') {
-        throw new Error('Session invariant broken: outgoing proposal is not local');
-      }
-      localOutgoingGroups += 1;
-    }
-    for (const id of group.memberIds) {
-      if (proposalMemberIds.has(id)) {
-        throw new Error(`Session invariant broken: proposal member ${id} belongs to two groups`);
-      }
-      proposalMemberIds.add(id);
+  for (const proposal of [
+    lastHandProposal,
+    model.betweenHand.rejectedOnceHandProposal,
+    model.betweenHand.pendingRetryHandProposal,
+    ...model.betweenHand.pendingProposals.map(({ handProposal }) => handProposal),
+  ]) {
+    if (proposal !== null && !validateHandProposal(proposal)) {
+      throw new Error(`Session invariant broken: invalid ${proposal.gameType} hand proposal`);
     }
   }
-  if (localOutgoingGroups > 1) {
-    throw new Error('Session invariant broken: multiple local outgoing proposal groups');
+  const proposalIds = new Set<string>();
+  let uncancelledProposals = 0;
+  for (const proposal of model.betweenHand.pendingProposals) {
+    if (proposalIds.has(proposal.id)) {
+      throw new Error(`Session invariant broken: pending proposal ${proposal.id} appears twice`);
+    }
+    proposalIds.add(proposal.id);
+    if (isUncancelledProposal(proposal)) uncancelledProposals += 1;
+  }
+  if (uncancelledProposals > 1) {
+    throw new Error('Session invariant broken: multiple uncancelled proposals');
   }
 
   if (model.game.handState !== null) {
@@ -95,64 +78,30 @@ export function snapshotFromSessionModel(
   }
 
   return {
+    handKey: BigInt(model.game.handKey),
     activeGameIds: model.game.activeIds,
     activeGameType: requireCatalogGameType(model.game.activeGameType, 'activeGameType'),
     handState: model.game.handState,
     currentHandGameIds: model.game.currentHandIds,
     currentHandOrigin: model.game.currentHandOrigin,
     lastDisplayedGameId: model.game.lastDisplayedId,
-    gameInstances: Object.fromEntries(
-      persistedGameIds.map((id) => {
-        const instance = model.game.instances[id];
-        return [
-          id,
-          {
-            id: instance.id,
-            amount: instance.amount,
-            coinHex: instance.coinHex,
-            presentation: instance.presentation,
-            terminal: instance.terminal,
-          },
-        ];
-      }),
-    ),
+    gameInstances: Object.fromEntries(persistedGameIds.map((id) => [id, model.game.instances[id]])),
     channelStatus:
       facts.channelStatus === undefined
         ? channelStatusPayloadFromModel(model.channel.status)
         : facts.channelStatus,
-    myRunningBalance: model.myRunningBalance.toString(),
-    channelNotifQueue: model.channel.queue.map(({ id, kind, title, message }) => ({
-      id,
-      kind,
-      title,
-      message,
-    })),
-    gameNotifQueue: model.game.queue.map(({ id, kind, title, message }) => ({
-      id,
-      kind,
-      title,
-      message,
-    })),
-    dismissedChannelStatus: model.channel.dismissedChannelStatus,
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     betweenHandMode: model.betweenHand.mode,
-    betweenHandCompose: encodeComposeDraftState(model.betweenHand.compose),
-    betweenHandLastHandProposal:
-      lastHandProposal === null ? null : handProposalSnapshot(lastHandProposal),
-    betweenHandRejectedOnceHandProposal: model.betweenHand.rejectedOnceHandProposal
-      ? handProposalSnapshot(model.betweenHand.rejectedOnceHandProposal)
-      : null,
-    betweenHandPendingRetryHandProposal: model.betweenHand.pendingRetryHandProposal
-      ? handProposalSnapshot(model.betweenHand.pendingRetryHandProposal)
-      : null,
-    proposalGroups: model.betweenHand.proposalGroups.map((group) => ({
-      primary_id: group.primaryId,
-      member_ids: [...group.memberIds],
-      origin: group.origin,
-      disposition: group.disposition,
-      hand_proposal: handProposalSnapshot(group.handProposal),
-    })),
-    waitingStateEnteredAt: facts.waitingStateEnteredAt ?? null,
-    cleanShutdownGraceStartedAt: facts.cleanShutdownGraceStartedAt ?? null,
+    betweenHandCompose: {
+      selectedGame: model.betweenHand.compose.selectedGame,
+      gameTimeout: model.betweenHand.compose.gameTimeout,
+    },
+    betweenHandLastHandProposal: lastHandProposal,
+    betweenHandRejectedOnceHandProposal: model.betweenHand.rejectedOnceHandProposal,
+    betweenHandPendingRetryHandProposal: model.betweenHand.pendingRetryHandProposal,
+    newHandRequested: model.betweenHand.newHandRequested,
+    pendingProposals: model.betweenHand.pendingProposals,
+    waitingStateEnteredAt: facts.waitingStateEnteredAt,
+    cleanShutdownGraceStartedAt: facts.cleanShutdownGraceStartedAt,
   };
 }

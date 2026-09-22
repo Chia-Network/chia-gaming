@@ -9,14 +9,13 @@ import type {
   LocalGameCommand,
 } from './sessionMachineTypes';
 
-type CommandEffect = Exclude<SessionMachineEffect, { type: 'clear-derived-game-presentation' }>;
+type CommandEffect = SessionMachineEffect;
 
 export interface SessionMachineInterpreterDependencies {
   controller: SessionController;
   iStarted: boolean;
   getState(): SessionMachineState;
   dispatch(event: SessionMachineEvent): void;
-  persist(): Promise<void>;
   onError(error: unknown): void;
   enrichCoin?: typeof coinIdHex;
 }
@@ -47,7 +46,6 @@ export class SessionMachineInterpreter {
               type: 'proposal-command-succeeded',
               command: 'accept-proposal',
               id: effect.id,
-              context: effect.context,
             }),
         );
         return;
@@ -60,7 +58,6 @@ export class SessionMachineInterpreter {
               type: 'proposal-command-succeeded',
               command: 'cancel-proposal',
               id: effect.id,
-              context: effect.context,
             }),
         );
         return;
@@ -79,15 +76,13 @@ export class SessionMachineInterpreter {
             dependencies.controller.proposeGame({
               game_type: protocolIdForCatalog(effect.handProposal.gameType),
               timeout: effect.handProposal.gameTimeout,
-              player_a_contribution: effect.handProposal.playerAContribution,
-              player_b_contribution: effect.handProposal.playerBContribution,
               sender_is_player_a: effect.handProposal.senderIsPlayerA,
               parameters: effect.handProposal.parameters,
             }),
-          (ids) =>
+          (id) =>
             dependencies.dispatch({
               type: 'proposal-sent',
-              ids,
+              id,
               handProposal: effect.handProposal,
             }),
         );
@@ -114,9 +109,6 @@ export class SessionMachineInterpreter {
         );
         return;
       }
-      case 'persist-session':
-        void dependencies.persist().catch(dependencies.onError);
-        return;
       case 'request-coin-enrichment':
         void (dependencies.enrichCoin ?? coinIdHex)(effect.coin)
           .then((coinHex) => {

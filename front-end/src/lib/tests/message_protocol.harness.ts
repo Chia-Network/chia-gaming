@@ -7,31 +7,67 @@ import type {
   InternalBlockchainInterface,
   PeerConnectionResult,
   SpendBundle,
+  TransactionSubmission,
+  SubmissionDrainFailure,
   ChannelStatusPayload,
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { _resetForTests as resetSaveState, saveSession } from '../../hooks/save';
+import { storageRepository } from '../session/storageRepository';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
+import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 export const testIndexedDb = indexedDB;
-export const mockRpc = new Proxy({ isConnected: () => true } as InternalBlockchainInterface, {
-  get: (target, property) =>
-    property in target ? Reflect.get(target, property) : () => Promise.resolve(undefined),
-});
+export const mockRpc = new Proxy(
+  {
+    isConnected: () => true,
+    getWalletOfferProvider(this: Record<string, any>) {
+      return {
+        capability: 'best-effort' as const,
+        scope: {
+          provider: 'simulator' as const,
+          identity: 'submission-handoff',
+        },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+      };
+    },
+  } as InternalBlockchainInterface,
+  {
+    get: (target, property) =>
+      property in target ? Reflect.get(target, property) : () => Promise.resolve(undefined),
+  },
+);
 
 export function saveLiveSession(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
-  return saveSession({
-    scope: 'live',
-    pairing: save.pairing,
-    live: save.live,
-    presentation: save.presentation,
-    history: save.history,
-  });
+  if (save.session?.phase !== 'live') throw new Error('expected live save fixture');
+  const walletProviderScope = (fields.walletProviderScope as
+    | NonNullable<typeof save.walletContext>
+    | undefined) ?? {
+    provider: 'simulator',
+    identity: 'submission-handoff',
+  };
+  const current = storageRepository.loadState();
+  return storageRepository.write(
+    storageRepository.patchApplicationState(() => ({
+      ...current,
+      identity: { ...current.identity, ...save.identity },
+      preferences: { ...current.preferences, ...save.preferences },
+      history: save.history,
+      walletContext: walletProviderScope,
+      session: save.session,
+    })),
+  );
 }
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
+
+export function setTestBlockchain(blob: SessionController, blockchain: BlockchainPoller): void {
+  blockchain.refreshProviderReadiness();
+  blob.blockchain = blockchain;
+}
 
 export function wasmResult(overrides: Partial<WasmResult> = {}): WasmResult {
   return {
@@ -113,21 +149,62 @@ export function testSpendBundle(coinHex: string): SpendBundle {
   };
 }
 
+export function submissionDrain(
+  submissions: Array<
+    Omit<TransactionSubmission, 'attempt_token' | 'predecessor_attempt_token' | 'relationship'> &
+      Partial<
+        Pick<TransactionSubmission, 'attempt_token' | 'predecessor_attempt_token' | 'relationship'>
+      >
+  > = [],
+  retired_submission_ids: string[] = [],
+  failures: SubmissionDrainFailure[] = [],
+) {
+  return {
+    submissions: submissions.map((submission) => ({
+      attempt_token: submission.id,
+      predecessor_attempt_token: null,
+      relationship: 'initial' as const,
+      ...submission,
+    })),
+    retired_submission_ids,
+    failures,
+  };
+}
+
 export function makeMockCradle(
   onDeliver: (msg: Uint8Array) => Partial<WasmResult> | undefined = () => wasmResult(),
 ): ChiaGame {
-  return {
+  const finalizeSubmissionAttempt = jest.fn((_attemptToken: string, feeSourceJson?: string) => ({
+    protocol_bundle: testSpendBundle('00'),
+    bundle: {},
+    applied_fee: '0',
+    warning: null,
+    fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
+    variant_fingerprint: 'bb'.repeat(32),
+    should_broadcast: true,
+  }));
+  const acknowledgeSubmissionAttempt = jest.fn();
+  const rejectSubmissionAttempt = jest.fn();
+  const cradle = {
     deliver_message: jest.fn((msg: Uint8Array) => {
       const result = onDeliver(msg);
       return result === undefined ? undefined : wasmResult(result);
     }),
     report_coin_states: jest.fn(() => wasmResult()),
     report_height: jest.fn(() => wasmResult()),
+    report_puzzle_and_solution: jest.fn(() => wasmResult()),
     snapshot_watched_coins: jest.fn(() => []),
-    drain_submissions: jest.fn(() => []),
-    acknowledge_submission: jest.fn(),
-    submission_is_finalized: jest.fn(() => false),
-    resubmit_submitted: jest.fn(),
+    snapshot_pending_coin_solution_requests: jest.fn(() => []),
+    coins_of_interest: jest.fn(() => []),
+    drain_submissions: jest.fn(() => submissionDrain()),
+    configure_submission_fee: jest.fn(),
+    finalize_submission_attempt: finalizeSubmissionAttempt,
+    acknowledge_submission_attempt: acknowledgeSubmissionAttempt,
+    reject_submission_attempt: rejectSubmissionAttempt,
+    submission_attempt_unavailable: jest.fn(),
+    relinquish_submission_attempt: jest.fn(),
+    chain_snapshot_ready: jest.fn(),
+    request_fee_upgrades: jest.fn(),
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),
     abandon: jest.fn(() => wasmResult()),
@@ -136,6 +213,7 @@ export function makeMockCradle(
     provide_coin_spend_bundle: jest.fn(() => wasmResult()),
     cradle: 0,
   } as unknown as ChiaGame;
+  return cradle;
 }
 
 export function makePeerConn(
@@ -173,6 +251,27 @@ export interface TestHarness {
   sentAcks: number[];
 }
 
+const testPersistence = new WeakMap<SessionController, () => void | Promise<void>>();
+const coordinatedControllers = new WeakSet<SessionController>();
+
+export function setTestPersistence(
+  blob: SessionController,
+  persist: () => void | Promise<void>,
+): void {
+  testPersistence.set(blob, persist);
+}
+
+/**
+ * Protocol unit tests intentionally isolate SessionController from React. Give
+ * them an explicit coordinator instead of reviving the removed production
+ * controller-owned persistence fallback.
+ */
+export function attachTestCommitCoordinator(blob: SessionController): void {
+  if (coordinatedControllers.has(blob)) return;
+  coordinatedControllers.add(blob);
+  createCoordinatorOnlySessionMachineRuntime(blob, () => testPersistence.get(blob)?.());
+}
+
 /**
  * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
@@ -181,6 +280,7 @@ export function createReadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
+  if (trackedBlobs.length === 0) mockBlockchain.refreshProviderReadiness();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -197,9 +297,11 @@ export function createReadyBlob(
   blob.pairingToken = 'test-pairing';
   blob.rewardPuzzleHash = '11'.repeat(32);
   blob.kickSystem(2);
+  attachTestCommitCoordinator(blob);
   blob.reportCoinStates(1n, []);
-  blob.onSaveNeeded = () =>
+  setTestPersistence(blob, () =>
     saveLiveSession({
+      walletProviderScope: blob.getWalletProviderScope(),
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
       gameSessionSchemaVersion: 4n,
@@ -213,7 +315,8 @@ export function createReadyBlob(
       rewardPuzzleHash: blob.rewardPuzzleHash,
       activeGameIds: [],
       unackedMessages: blob.unackedMessages,
-    });
+    }),
+  );
 
   (cradle.deliver_message as jest.Mock).mockClear();
   (cradle.report_coin_states as jest.Mock).mockClear();
@@ -229,6 +332,7 @@ export function createUnreadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
+  if (trackedBlobs.length === 0) mockBlockchain.refreshProviderReadiness();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -244,8 +348,10 @@ export function createUnreadyBlob(
   blob.setGameSession(cradle);
   blob.pairingToken = 'test-pairing';
   blob.rewardPuzzleHash = '11'.repeat(32);
-  blob.onSaveNeeded = () =>
+  attachTestCommitCoordinator(blob);
+  setTestPersistence(blob, () =>
     saveLiveSession({
+      walletProviderScope: blob.getWalletProviderScope(),
       blockchainType: 'simulator',
       serializedGameSession: cradle.serialize(),
       gameSessionSchemaVersion: 4n,
@@ -259,7 +365,8 @@ export function createUnreadyBlob(
       rewardPuzzleHash: blob.rewardPuzzleHash,
       activeGameIds: [],
       unackedMessages: blob.unackedMessages,
-    });
+    }),
+  );
 
   trackedBlobs.push(blob);
 
@@ -269,6 +376,7 @@ export function createUnreadyBlob(
 let activeBlob: SessionController | null = null;
 
 export function setActiveBlob(blob: SessionController | null): void {
+  if (blob) attachTestCommitCoordinator(blob);
   activeBlob = blob;
 }
 const trackedBlobs: SessionController[] = [];
@@ -285,10 +393,23 @@ export function clearTestGlobal(key: string) {
   Reflect.deleteProperty(globalThis, key);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
+  mockBlockchain.detachProvider();
+  storageRepository._resetForTests();
+  await storageRepository.claimApplicationState();
+  await storageRepository.clearSession();
+  const empty = {
+    ...storageRepository.loadState(),
+    walletContext: null,
+    channelFundingOperations: [],
+    feeAttachments: [],
+  };
+  storageRepository._replaceApplicationStateForTests(empty);
+  await storageRepository.write(storageRepository.patchApplicationState(() => empty));
+  channelFundingRuntime.resetForTests();
 });
 
 afterEach(async () => {
@@ -313,22 +434,38 @@ afterEach(async () => {
       }
     }
   } finally {
-    resetSaveState();
+    storageRepository._resetForTests();
     _resetGameIdentityWarmupForTests();
     clearTestGlobal('localStorage');
     clearTestGlobal('sessionStorage');
   }
 });
 
-export function transactionSubmitQueue(blob: SessionController): Promise<void> {
-  return (blob as unknown as { transactionSubmitQueue: Promise<void> }).transactionSubmitQueue;
+export async function transactionSubmitQueue(blob: SessionController): Promise<void> {
+  await blob.flushPendingSave();
+  await blob.flushTransactionSubmissions();
+  await blob.flushPendingSave();
 }
 
-export function submitTransaction(blob: SessionController, tx: SpendBundle): void {
+export function submitTransaction(
+  blob: SessionController,
+  bundle: SpendBundle,
+  fee_request: { target: string; amount: string } | null = null,
+): void {
   if (!blob.rewardPuzzleHash) {
     blob.rewardPuzzleHash = '11'.repeat(32);
   }
-  (blob as unknown as { submitTransaction: (tx: SpendBundle) => void }).submitTransaction(tx);
+  const submission: TransactionSubmission = {
+    id: `test-${Math.random()}`,
+    attempt_token: `attempt-${Math.random()}`,
+    predecessor_attempt_token: null,
+    relationship: 'initial',
+    bundle,
+    fee_request,
+  };
+  (
+    blob as unknown as { submitTransaction: (submission: TransactionSubmission) => void }
+  ).submitTransaction(submission);
 }
 
 export async function flushPromiseJobs(): Promise<void> {

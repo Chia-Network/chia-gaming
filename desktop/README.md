@@ -18,6 +18,18 @@ That runs `tools/build-player-bundle.sh` (chialisp, the release WASM engine, and
 the bundled React app, shared with `tools/build-deploy.sh`) and then packages the
 Electron app.
 
+Release CI builds a universal macOS app plus x64 Windows and Linux packages:
+
+```bash
+tools/build-electron.sh \
+  --platform=mac \
+  --arch=universal \
+  --release-version=0.4.0-beta.1
+```
+
+The semantic release version is embedded in the Electron package and used in
+the installer filename. Windows and Linux use `--arch=x64`.
+
 For iterating on the desktop shell without repackaging:
 
 ```bash
@@ -52,7 +64,7 @@ owner in `localStorage` but identifies itself from `sessionStorage`, so a quit
 orphans it and the next launch would read a dead run as a live peer and open the
 "Another tab is active" dialog on every start. `requestSingleInstanceLock` plus a
 single window means a foreign owner here is always stale, so
-`front-end/src/hooks/save.ts` treats it as no peer at all.
+`front-end/src/lib/session/storageRepository.ts` treats it as no peer at all.
 
 Because wallets display the dapp `url` to the user and fetch its icon over the
 public internet, `front-end/src/util/walletConnectMetadata.ts` substitutes a
@@ -247,6 +259,20 @@ launch in dyld with "different Team IDs".
 codesign, because macOS stamps `com.apple.provenance` on executables it writes
 and codesign rejects that as "detritus".
 
+## Release signing
+
+CI signs opportunistically. A complete Apple credential set enables Developer
+ID signing followed by notarization and stapling. A complete Azure credential
+set signs and verifies the Windows application and installer. Partial
+credential sets fail rather than silently degrading.
+
+When no credential set is configured, CI intentionally produces unsigned beta
+installers. The macOS package is still checked for both arm64 and x86_64 slices
+and for a valid post-fuse bundle signature. Users should expect Gatekeeper or
+SmartScreen warnings, and the GitHub release notes must identify the installers
+as unsigned. Linux packages are distributed with SHA-256 checksums but are not
+repository-signed.
+
 ## Known gaps
 
 - **Trusting a new hub costs a renderer reload.** The main-process checks
@@ -263,11 +289,7 @@ and codesign rejects that as "detritus".
 - **Session state at rest is unchanged** — the bencodex session blob still uses
   the front-end's own IndexedDB obfuscation. Electron's `safeStorage` could key
   it to the OS keychain, which needs the front-end to opt in.
-- **The orphaned tab lease is only suppressed, not released.** `clearLease()` is
-  exported from `front-end/src/hooks/save.ts` and still never called, so the dead
-  run's owner id stays in `localStorage` until the next `claimLease()` overwrites
-  it. That is harmless here because the desktop build ignores a foreign owner
-  outright, but the web build still prompts after a tab is closed and reopened.
-- **No code signing, notarization, or auto-update** is configured.
+- **No auto-update is configured.** Signing and notarization depend on optional
+  CI credentials; unsigned beta fallback remains enabled.
 - **Fuses are only exercised in packaged builds**, so `pnpm start` will not
   catch a fuse-related regression.

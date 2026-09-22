@@ -1,16 +1,24 @@
-import type { ChannelStatusPayload } from '../../types/ChiaGaming';
-import type { PersistedGameState, ProposalParameterValue } from '@games/host';
-import type { GameProtocolPresentation } from './gameSlice';
+import type {
+  ChannelStatusPayload,
+  CoinOfInterestEntry,
+  WalletProviderScope,
+} from '../../types/ChiaGaming';
+import type { PersistedGameState } from '@games/host';
 import type {
   BetweenHandModeModel,
-  NotificationKind,
-  ProposalGroupDisposition,
-  ProposalGroupOrigin,
+  GameInstanceModel,
+  HandProposal,
+  PendingProposalModel,
+  ProposalOrigin,
   RegisteredGameType,
 } from './types';
+import type { ComposeDraftState } from './composeDraft';
+import type { ChannelFundingEntry } from './channelFundingStore';
+import type { FeeAttachment } from './feeAttachmentStore';
 
-export const SESSION_SAVE_SCHEMA = 'chia-gaming-session' as const;
-export const SESSION_SAVE_VERSION = 24n;
+export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' as const;
+export const DURABLE_APPLICATION_STATE_VERSION = 5n;
+export const MAX_DURABLE_REJECTION_TRANSPORTS = 8;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
 
@@ -61,124 +69,94 @@ export interface SessionTransportSave {
   remoteNumber: bigint;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+  terminalHandoff: SessionTerminalHandoffSave | null;
+}
+
+export interface SessionTerminalHandoffSave {
+  id: string;
+  message: Uint8Array;
+  msgno: bigint;
+  sent: boolean;
+  acknowledged: boolean;
 }
 
 export interface SessionLiveSave extends SessionTransportSave {
   serializedGameSession: Uint8Array;
   gameSessionSchemaVersion: bigint;
   rewardPuzzleHash: string;
-  durabilityWarning?: string;
-}
-
-export interface SavedGameInstance {
-  id: string;
-  amount: string;
-  coinHex: string | null;
-  presentation: GameProtocolPresentation;
-  terminal: {
-    type: string;
-    outcome: string | null;
-    label: string | null;
-    myReward: string | null;
-    rewardCoinHex: string | null;
-  };
-}
-
-interface SavedHandProposalBase {
-  player_a_contribution: string;
-  player_b_contribution: string;
-  sender_is_player_a: boolean;
-  game_timeout: string;
-}
-
-export type SavedHandProposal = SavedHandProposalBase & {
-  game_type: RegisteredGameType;
-  parameters: ProposalParameterValue;
-};
-
-export interface SavedQueuedNotification {
-  id: bigint;
-  kind: NotificationKind;
-  title: string;
-  message: string;
 }
 
 export interface SessionPresentationSave {
+  handKey: bigint;
   activeGameIds: string[];
   currentHandGameIds: string[];
-  currentHandOrigin: ProposalGroupOrigin | null;
+  currentHandOrigin: ProposalOrigin | null;
   lastDisplayedGameId: string | null;
-  gameInstances: Record<string, SavedGameInstance>;
+  gameInstances: Record<string, GameInstanceModel>;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
-  myRunningBalance: string;
-  channelNotifQueue: SavedQueuedNotification[];
-  gameNotifQueue: SavedQueuedNotification[];
-  dismissedChannelStatus: ChannelStatusPayload['state'] | null;
   cleanShutdownStarted: boolean;
   betweenHandMode: BetweenHandModeModel;
-  betweenHandCompose: {
-    selected_game: RegisteredGameType;
-    game_timeout: string;
-    proposal_sent: boolean;
-  };
-  betweenHandLastHandProposal: SavedHandProposal | null;
-  betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
-  betweenHandPendingRetryHandProposal: SavedHandProposal | null;
-  proposalGroups: Array<{
-    primary_id: string;
-    member_ids: string[];
-    origin: ProposalGroupOrigin;
-    disposition: ProposalGroupDisposition;
-    hand_proposal: SavedHandProposal;
-  }>;
+  betweenHandCompose: Pick<ComposeDraftState, 'selectedGame' | 'gameTimeout'>;
+  betweenHandLastHandProposal: HandProposal | null;
+  betweenHandRejectedOnceHandProposal: HandProposal | null;
+  betweenHandPendingRetryHandProposal: HandProposal | null;
+  newHandRequested: boolean;
+  pendingProposals: PendingProposalModel[];
   waitingStateEnteredAt: bigint | null;
   cleanShutdownGraceStartedAt: bigint | null;
 }
 
-interface SessionSaveBase {
-  schema: typeof SESSION_SAVE_SCHEMA;
-  version: typeof SESSION_SAVE_VERSION;
-  identity: SessionIdentitySave;
-  preferences: SessionPreferencesSave;
-  history: SessionHistorySave;
-}
-
-export interface PreferencesSessionSave extends SessionSaveBase {
-  phase: 'preferences';
-}
-
-export interface PreHandshakeSessionSave extends SessionSaveBase {
+export interface PreHandshakeSessionSave {
   phase: 'pre-handshake';
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
 }
 
-export interface LiveSessionSave extends SessionSaveBase {
+export interface LiveSessionSave {
   phase: 'live';
   pairing: SessionPairingSave;
   live: SessionLiveSave;
   presentation: SessionPresentationSave;
 }
 
-export interface TerminalSessionSave extends SessionSaveBase {
+export interface TerminalSessionSave {
   phase: 'terminal';
   terminal: {
     iStarted: boolean;
-    coinsOfInterest: Array<{ label: string; id: string }>;
+    coinsOfInterest: CoinOfInterestEntry[];
     myAlias: string | null;
     opponentAlias: string | null;
   };
   presentation: SessionPresentationSave;
 }
 
-export type SessionSave =
-  | PreferencesSessionSave
-  | PreHandshakeSessionSave
-  | LiveSessionSave
-  | TerminalSessionSave;
+export type DurableSessionPhase = PreHandshakeSessionSave | LiveSessionSave | TerminalSessionSave;
 
-export function assertNever(value: never): never {
-  throw new Error(`Unexpected session phase: ${String(value)}`);
+export interface DurableRejectionTransport {
+  kind: 'outbound-reject' | 'inbound-receipt';
+  peerId: string;
+  sessionId: string;
+  messageNumber: bigint;
+  remoteNumber: bigint;
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+  createdAt: number;
+}
+
+export function rejectionTransportKey(peerId: string, sessionId: string): string {
+  return JSON.stringify([peerId, sessionId]);
+}
+
+export interface DurableApplicationState {
+  schema: typeof DURABLE_APPLICATION_STATE_SCHEMA;
+  version: typeof DURABLE_APPLICATION_STATE_VERSION;
+  identity: SessionIdentitySave;
+  preferences: SessionPreferencesSave;
+  history: SessionHistorySave;
+  session: DurableSessionPhase | null;
+  walletContext: WalletProviderScope | null;
+  channelFundingOperations: ChannelFundingEntry[];
+  feeAttachments: FeeAttachment[];
+  rejectionTransports: DurableRejectionTransport[];
 }

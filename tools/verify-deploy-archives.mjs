@@ -1,6 +1,7 @@
 // Verify deploy archives produced by tools/build-deploy.sh.
 //
 // Usage: node tools/verify-deploy-archives.mjs [--platform=linux|macos]
+//        node tools/verify-deploy-archives.mjs --release-version=X.Y.Z[-PRERELEASE]
 //
 // Discovers tgz/zip pairs in deploy_player_app/ and deploy_hub/, extracts
 // each format, runs verify-stage + floor checks, compares tgz vs zip trees,
@@ -25,13 +26,29 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const VERIFY_STAGE = join(ROOT, "tools", "verify-stage.mjs");
 
 let platform = "";
+let releaseVersion = "";
 for (const arg of process.argv.slice(2)) {
   if (arg.startsWith("--platform=")) {
     platform = arg.slice("--platform=".length);
+  } else if (arg.startsWith("--release-version=")) {
+    releaseVersion = arg.slice("--release-version=".length);
   } else {
     console.error(`verify-deploy-archives: unknown argument: ${arg}`);
     process.exit(2);
   }
+}
+if (platform && releaseVersion) {
+  console.error("verify-deploy-archives: choose either --platform or --release-version");
+  process.exit(2);
+}
+if (
+  releaseVersion &&
+  !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(
+    releaseVersion,
+  )
+) {
+  console.error(`verify-deploy-archives: invalid release version: ${releaseVersion}`);
+  process.exit(2);
 }
 
 function fail(msg) {
@@ -40,10 +57,12 @@ function fail(msg) {
 }
 
 function playerPrefix() {
+  if (releaseVersion) return `chia-gaming-${releaseVersion}`;
   return platform ? `chia-gaming-${platform}-` : "chia-gaming-";
 }
 
 function hubPrefix() {
+  if (releaseVersion) return `chia-gaming-hub-${releaseVersion}`;
   return platform ? `chia-gaming-hub-${platform}-` : "chia-gaming-hub-";
 }
 
@@ -52,7 +71,9 @@ function findOneArchive(dir, prefix, ext) {
     fail(`directory not found: ${dir}`);
   }
   const matches = readdirSync(dir)
-    .filter((f) => f.startsWith(prefix) && f.endsWith(ext))
+    .filter((f) =>
+      releaseVersion ? f === `${prefix}${ext}` : f.startsWith(prefix) && f.endsWith(ext),
+    )
     .sort();
   if (matches.length === 0) {
     fail(`no ${prefix}*${ext} in ${dir}`);
@@ -99,14 +120,14 @@ function resolveNonceDir(stageDir) {
   return nonceDir;
 }
 
-function dirHasHexFiles(dir) {
+function dirHasClvmBinaries(dir) {
   if (!existsSync(dir)) return false;
   const walk = (d) => {
     for (const entry of readdirSync(d)) {
       const p = join(d, entry);
       if (statSync(p).isDirectory()) {
         if (walk(p)) return true;
-      } else if (p.endsWith(".hex")) {
+      } else if (p.endsWith(".clvm.bin")) {
         return true;
       }
     }
@@ -137,11 +158,11 @@ function floorCheckPlayer(stageDir) {
       errors.push(`missing app bundle file: ${f}`);
     }
   }
-  if (!dirHasHexFiles(join(nonceDir, "clsp"))) {
-    errors.push("clsp/ is missing or has no .hex files");
+  if (!dirHasClvmBinaries(join(nonceDir, "clsp"))) {
+    errors.push("clsp/ is missing or has no binary CLVM files");
   }
-  if (!dirHasHexFiles(join(nonceDir, "games"))) {
-    errors.push("games/ is missing or has no factory .hex files");
+  if (!dirHasClvmBinaries(join(nonceDir, "games"))) {
+    errors.push("games/ is missing or has no binary CLVM files");
   }
   if (!dirIsNonempty(join(nonceDir, "images"))) {
     errors.push("images/ is missing or empty");

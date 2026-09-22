@@ -72,10 +72,42 @@ function toDebugJson(value: unknown): string {
   }
 }
 
-function walletConnectError(method: ChiaMethod, detail: string, cause?: unknown): Error {
-  const err = new Error(`WalletConnect RPC ${method} failed: ${detail}`);
-  (err as any).cause = cause;
-  return err;
+function errorWithCause<T extends Error>(error: T, cause?: unknown): T {
+  if (cause !== undefined) (error as T & { cause?: unknown }).cause = cause;
+  return error;
+}
+
+export class WalletConnectTransportError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'WalletConnectTransportError';
+    errorWithCause(this, cause);
+  }
+}
+
+export class WalletConnectResponseError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'WalletConnectResponseError';
+    errorWithCause(this, cause);
+  }
+}
+
+function transportError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+  return new WalletConnectTransportError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
+}
+
+function responseError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+  return new WalletConnectResponseError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
+}
+
+function isNarrowWalletConnectTransportFailure(error: unknown): boolean {
+  const detail = getErrorText(error);
+  return (
+    /\b(?:timeout|timed out|network error|network request failed|socket closed)\b/i.test(detail) ||
+    /\brelayer\b.*\b(?:disconnect|closed|connect|unavailable|timeout)\b/i.test(detail) ||
+    /\b(?:session|pairing|request)\b.*\b(?:expired|expiry)\b/i.test(detail)
+  );
 }
 
 function shouldLogRpcError(method: ChiaMethod): boolean {
@@ -161,17 +193,25 @@ class WalletConnectRpcClient {
     try {
       prepared = this.prepareRpc(method, data);
     } catch (e) {
-      return Promise.reject(e);
+      if (e instanceof WalletConnectTransportError) return Promise.reject(e);
+      return Promise.reject(responseError(method, getErrorText(e), e));
     }
     return this.runPreparedRpc<T>(prepared).catch((e) => {
       this.logRpcError(prepared, e);
-      throw walletConnectError(method, getErrorText(e), e);
+      if (e instanceof WalletConnectTransportError || e instanceof WalletConnectResponseError) {
+        throw e;
+      }
+      throw responseError(method, getErrorText(e), e);
     });
   }
 
   private prepareRpc<D extends object>(method: ChiaMethod, data: D): PreparedRpc {
-    if (!walletConnectState.getClient()) throw new Error('WalletConnect is not initialized');
-    if (!walletConnectState.getSession()) throw new Error('Session is not connected');
+    if (!walletConnectState.getClient()) {
+      throw transportError(method, 'WalletConnect is not initialized');
+    }
+    if (!walletConnectState.getSession()) {
+      throw transportError(method, 'Session is not connected');
+    }
 
     const address = walletConnectState.getAddress();
     if (!address) {
@@ -201,10 +241,14 @@ class WalletConnectRpcClient {
   private async runPreparedRpc<T>(prepared: PreparedRpc): Promise<T> {
     const session = walletConnectState.getSession();
     const client = walletConnectState.getClient();
-    if (!session) throw new Error('Session is not connected');
-    if (!client) throw new Error('WalletConnect is not initialized');
+    if (!session) throw transportError(prepared.method, 'Session is not connected');
+    if (!client) throw transportError(prepared.method, 'WalletConnect is not initialized');
 
-    await waitForRelayerConnected();
+    try {
+      await waitForRelayerConnected();
+    } catch (error) {
+      throw transportError(prepared.method, getErrorText(error), error);
+    }
 
     if (shouldLogRpcTraffic(prepared.method)) {
       log(
@@ -212,11 +256,23 @@ class WalletConnectRpcClient {
       );
     }
 
-    const raw = await client.request({
-      topic: session.topic,
-      chainId: walletConnectState.getChainId(),
-      request: { method: prepared.method, params: prepared.params },
-    });
+    let raw: unknown;
+    try {
+      raw = await client.request({
+        topic: session.topic,
+        chainId: walletConnectState.getChainId(),
+        request: { method: prepared.method, params: prepared.params },
+      });
+    } catch (error) {
+      const connected =
+        walletConnectState.getClient() === client &&
+        walletConnectState.getSession()?.topic === session.topic &&
+        client.core.relayer.connected;
+      if (!connected || isNarrowWalletConnectTransportFailure(error)) {
+        throw transportError(prepared.method, getErrorText(error), error);
+      }
+      throw responseError(prepared.method, getErrorText(error), error);
+    }
     const result = this.normalizeResult<T>(prepared, raw);
     if (shouldLogRpcTraffic(prepared.method)) {
       const elapsed = Date.now() - prepared.enqueuedAt;
@@ -238,7 +294,7 @@ class WalletConnectRpcClient {
           `[WC RPC rejected] method=${prepared.method} paramKeys=[${prepared.paramKeys}] error=${errorText}`,
         );
       }
-      throw walletConnectError(prepared.method, errorText, result.error);
+      throw responseError(prepared.method, errorText, result.error);
     }
 
     if (result?.data !== undefined) return result.data as T;
@@ -290,7 +346,16 @@ async function createOfferForIds(data: CreateOfferForIdsRequest) {
 }
 
 async function cancelOffer(data: { tradeId: string; secure: boolean; fee: bigint }) {
-  return await request<{ success: boolean }, typeof data>(ChiaMethod.CancelOffer, data);
+  return await request<
+    {
+      success: boolean;
+      error?: unknown;
+      message?: unknown;
+      detail?: unknown;
+      data?: unknown;
+    },
+    typeof data
+  >(ChiaMethod.CancelOffer, data);
 }
 
 async function pushTransactions(data: PushTransactionsRequest) {

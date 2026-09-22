@@ -75,6 +75,11 @@ fail with clang errors.
 ./tools/local-wasm-tests.sh
 ```
 
+The heavyweight load-WASM suites run in parallel simulator shards. Their shared
+ten-minute per-test timeout is a hang guard, not an expected runtime or a
+performance target; avoid adding smaller test-local budgets that become flaky
+under concurrent load.
+
 
 # Running from tarball or zipfile
 
@@ -103,6 +108,16 @@ This produces four files in subdirectories (tgz and zip of each artifact):
 Both formats have identical contents, ready to extract onto their respective
 servers.
 
+For a release build, pass the semantic version from the GitHub tag:
+
+```bash
+./tools/build-deploy.sh --release-version=0.4.0-beta.1
+```
+
+This produces `chia-gaming-0.4.0-beta.1.*` and
+`chia-gaming-hub-0.4.0-beta.1.*`. The tag is the product release version; the
+workspace package versions are not separate player, hub, or desktop releases.
+
 ### Verifying archives
 
 After building, run the deploy archive test to confirm both tgz and zip
@@ -112,17 +127,60 @@ formats extract correctly, contain a complete staged tree, and serve over HTTP:
 ./tools/test-deploy-archives.sh
 ```
 
-With a platform-tagged build (as in CI):
+With an ad hoc platform-tagged build:
 
 ```bash
 ./tools/test-deploy-archives.sh --platform=linux
 ```
 
+For a release-versioned build:
+
+```bash
+./tools/test-deploy-archives.sh --release-version=0.4.0-beta.1
+```
+
 The test extracts each archive, runs `verify-stage.mjs`, floor-checks required
 bundle files (WASM, clsp hex, images, service.js, etc.), compares tgz vs zip
 trees for parity, and smoke-tests HTTP serving via `static-server.js` (player)
-and `service.js` (hub). CI runs this automatically after `build-deploy.sh` in
-the Linux and macOS release jobs.
+and `service.js` (hub). CI runs this automatically in the Linux release job,
+which publishes the platform-neutral player and hub archives.
+
+## Publishing a release
+
+One GitHub tag owns every product artifact. The release workflows use the tag
+as the web archive name and Electron application version.
+
+1. Merge the release candidate to `main` and wait for required checks.
+2. Create and push an annotated semantic-version tag.
+3. Publish a GitHub prerelease for that tag. The `release: published` workflows
+   build and attach:
+   - player `.tgz` and `.zip`
+   - hub `.tgz` and `.zip`
+   - universal macOS `.dmg` and `.zip`
+   - Windows x64 NSIS `.exe`
+   - Linux x64 `.AppImage` and `.deb`
+   - SHA-256 checksum files
+4. Confirm every asset uses the tag version and smoke-test the native packages
+   on clean target systems.
+
+Apple and Windows signing are opportunistic. A complete Apple credential set
+produces Developer ID signed, notarized, and stapled macOS installers; a
+complete Azure credential set signs and verifies Windows executables. No
+credentials deliberately produces unsigned beta installers, while a partial
+credential set fails the workflow. When unsigned installers are published,
+state that prominently in the release notes: macOS Gatekeeper and Windows
+SmartScreen will warn users.
+
+For example:
+
+```bash
+git tag -a 0.4.0-beta.1 -m "Beta 0.4.0-beta.1"
+git push origin 0.4.0-beta.1
+gh release create 0.4.0-beta.1 \
+  --title "Beta 0.4.0-beta.1" \
+  --prerelease \
+  --notes-file release-notes.md
+```
 
 # Build Details
 

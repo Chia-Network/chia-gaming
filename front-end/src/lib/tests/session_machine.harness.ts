@@ -1,47 +1,101 @@
+import type { SessionController } from '../../hooks/SessionController';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
-import { runSessionMachineTransition } from '../session/sessionMachineEffects';
-import type { HandProposal, ProposalGroupOrigin } from '../session/types';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import type {
+  SessionMachineEffect,
+  SessionMachineEvent,
+  SessionMachineState,
+  SessionMachineTransition,
+} from '../session/sessionMachineTypes';
+import type { HandProposal, ProposalOrigin } from '../session/types';
+import {
+  createRegisteredGameHand,
+  restoreRegisteredGameHandState,
+  snapshotRegisteredGameHand,
+  type RegisteredGameHand,
+} from '../gameRegistry';
+
+export function reduceSessionMachineForTest(
+  state: SessionMachineState,
+  event: SessionMachineEvent,
+): ReturnType<typeof reduceSessionMachine> {
+  let gameType = state.model.game.activeGameType;
+  let hand: RegisteredGameHand | null =
+    state.model.game.handState === null
+      ? null
+      : restoreRegisteredGameHandState(gameType, state.model.game.handState);
+  return reduceSessionMachine(state, event, {
+    create: (nextGameType, init) => {
+      gameType = nextGameType;
+      hand = createRegisteredGameHand(gameType, init);
+      return snapshotRegisteredGameHand(gameType, hand);
+    },
+    receive: (update) => {
+      if (hand === null) throw new Error('Test game update requires an active hand');
+      hand.receive(update);
+      return snapshotRegisteredGameHand(gameType, hand);
+    },
+    clear: () => {
+      hand = null;
+    },
+  });
+}
+
+interface SessionMachineEffectRunner {
+  setAuthority(state: SessionMachineState): void;
+  getAuthority(): SessionMachineState;
+  runCommand(effect: SessionMachineEffect): void;
+  render(state: SessionMachineState): void;
+}
+
+export function runSessionMachineTransition(
+  transition: SessionMachineTransition,
+  runner: SessionMachineEffectRunner,
+): void {
+  runner.setAuthority(transition.state);
+  try {
+    for (const effect of transition.effects) {
+      runner.runCommand(effect);
+    }
+  } finally {
+    runner.render(runner.getAuthority());
+  }
+}
 
 export const CALPOKER_TERMS = {
   gameType: 'calpoker' as const,
-  playerAContribution: 10n,
-  playerBContribution: 10n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 10n,
 };
 
 export const KRUNK_TERMS = {
   gameType: 'krunk' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: true,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 100n,
 };
 
 export function send(
   state: ReturnType<typeof createSessionMachineState>,
   event: Parameters<typeof reduceSessionMachine>[1],
 ) {
-  return reduceSessionMachine(state, event).state;
+  return reduceSessionMachineForTest(state, event).state;
 }
 
 export function trackProposal(
   state: ReturnType<typeof createSessionMachineState>,
-  memberIds: string[],
+  id: string,
   handProposal: HandProposal,
-  origin: ProposalGroupOrigin = 'local',
+  origin: ProposalOrigin = 'local',
 ) {
   return send(state, {
-    type: 'upsert-proposal-group',
-    group: {
-      primaryId: memberIds[0],
-      memberIds,
+    type: 'upsert-pending-proposal',
+    proposal: {
+      id,
       handProposal,
-      origin,
-      disposition: origin === 'local' ? 'outgoing' : 'incoming-cached',
+      lifecycle: origin === 'local' ? 'local-outgoing' : 'peer-cached',
     },
   });
 }
@@ -51,7 +105,7 @@ export function run(
   event: Parameters<typeof reduceSessionMachine>[1],
   order: string[] = [],
 ) {
-  const transition = reduceSessionMachine(state, event);
+  const transition = reduceSessionMachineForTest(state, event);
   let authority = state;
   runSessionMachineTransition(transition, {
     setAuthority: (next) => {
@@ -59,9 +113,6 @@ export function run(
       authority = next;
     },
     getAuthority: () => authority,
-    controller: {
-      clearDerivedGamePresentation: () => order.push('controller-clear'),
-    },
     runCommand: () => order.push('command'),
     render: () => order.push('react'),
   });
@@ -70,4 +121,23 @@ export function run(
 
 export function activeMachineState() {
   return createSessionMachineState(createSessionModel());
+}
+
+export function createCoordinatorOnlySessionMachineRuntime(
+  controller: SessionController,
+  persist: () => void | Promise<void> = () => {},
+): SessionMachineRuntime {
+  const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    controller,
+    iStarted: controller.iStarted,
+    restoring: false,
+    getRestoreStatus: () => controller.getRestoreStatus(),
+    getRestoreError: () => controller.getRestoreError(),
+    onError: (error) => controller.reportRuntimeError(error),
+    persist: async () => {
+      await persist();
+    },
+  });
+  runtime.activate();
+  return runtime;
 }

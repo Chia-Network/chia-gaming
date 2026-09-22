@@ -11,9 +11,9 @@ import type { ComposeDraftState } from './composeDraft';
 import type { PersistedGameState, SettlementOutcome } from '@games/host';
 
 export type { HandProposalBase } from '@games/host';
-export type { ProposalGroupOrigin } from './proposalOrigin';
+export type { ProposalOrigin } from './proposalOrigin';
 import type { HandProposal as HostHandProposal } from '@games/host';
-import type { ProposalGroupOrigin } from './proposalOrigin';
+import type { ProposalOrigin } from './proposalOrigin';
 import type { CatalogGameType } from '../../generated/gamePresets';
 
 export type RegisteredGameType = CatalogGameType;
@@ -97,7 +97,7 @@ export interface GameInstanceModel {
   terminal: GameTerminalModel;
 }
 
-/** Derived compatibility view; never stored in SessionModel or SessionSave. */
+/** Derived compatibility view; never stored in the model or durable aggregate. */
 export interface GameInstanceViewModel {
   id: string;
   amount: string;
@@ -116,6 +116,7 @@ export type NotificationKind =
   | 'channel-state'
   | 'action-failed'
   | 'infra-error'
+  | 'recoverable-internal-error'
   | 'durability-error'
   | 'proposal-rejected'
   | 'insufficient-bal'
@@ -148,18 +149,18 @@ export interface QueuedNotificationModel {
   payload?: ChannelStatusModel;
 }
 
-export type ProposalGroupDisposition =
-  | 'outgoing'
-  | 'incoming-cached'
-  | 'incoming-review'
-  | 'accepted';
+export type PendingProposalLifecycle =
+  | 'local-outgoing'
+  | 'local-cancel-queued'
+  | 'peer-cached'
+  | 'peer-review'
+  | 'peer-accept-queued'
+  | 'peer-cancel-queued';
 
-export interface ProposalGroupModel {
-  primaryId: string;
-  memberIds: string[];
+export interface PendingProposalModel {
+  id: string;
   handProposal: HandProposal;
-  origin: ProposalGroupOrigin;
-  disposition: ProposalGroupDisposition;
+  lifecycle: PendingProposalLifecycle;
 }
 
 export type BetweenHandModeModel = 'decision' | 'compose-proposal' | 'review-incoming-proposal';
@@ -168,7 +169,6 @@ export interface RestoreModel {
   restoring: boolean;
   status: RestoreStatus;
   error: string | null;
-  hubReconciled: boolean;
 }
 
 export interface PeerModel {
@@ -187,7 +187,7 @@ export interface GameModel {
   handKey: number;
   activeIds: string[];
   currentHandIds: string[];
-  currentHandOrigin: ProposalGroupOrigin | null;
+  currentHandOrigin: ProposalOrigin | null;
   instances: Record<string, GameInstanceModel>;
   lastDisplayedId: string | null;
   activeGameType: RegisteredGameType;
@@ -197,7 +197,7 @@ export interface GameModel {
 
 export interface BetweenHandModel {
   mode: BetweenHandModeModel;
-  proposalGroups: ProposalGroupModel[];
+  pendingProposals: PendingProposalModel[];
   rejectedOnceHandProposal: HandProposal | null;
   lastHandProposal: HandProposal | null;
   compose: ComposeDraftState;
@@ -218,21 +218,15 @@ export interface SessionModel {
   game: GameModel;
   betweenHand: BetweenHandModel;
   history: SessionHistoryModel;
-  myRunningBalance: bigint;
 }
-
-type LegacyGameInput = Omit<Partial<GameModel>, 'instances'> & {
-  instances?: Record<string, GameInstanceModel | GameInstanceViewModel>;
-};
 
 export interface SessionModelInput {
   restore?: Partial<RestoreModel>;
   peer?: Partial<PeerModel>;
   channel?: Partial<ChannelModel>;
-  game?: LegacyGameInput;
+  game?: Partial<GameModel>;
   betweenHand?: Partial<BetweenHandModel>;
   history?: Partial<SessionHistoryModel>;
-  myRunningBalance?: bigint;
 }
 
 export type GameDashboardActionKind =

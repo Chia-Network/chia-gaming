@@ -10,7 +10,7 @@ export type { RegisteredGameHand, RegisteredGamePackage } from './gamePackage';
 import type { HandProposal } from './session/types';
 import { isValidGameTimeoutBlocks } from './session/gameTimeout';
 import type { SessionModel } from './session/types';
-import type { ProposalGroupOrigin } from './session/proposalOrigin';
+import type { ProposalOrigin } from './session/proposalOrigin';
 
 export type { CatalogGameType } from '../generated/gamePresets';
 export type RegisteredGameType = CatalogGameType;
@@ -40,18 +40,19 @@ export const REGISTERED_GAMES = PRODUCTION_PACKAGE_KEYS.map((gameType) => ({
   displayName: packageFor(gameType).displayName,
 }));
 
-export interface DecodedPersistedGameState {
-  persisted: PersistedGameState;
-}
-
 /** Decode only the generic host envelope; the game-owned state remains opaque. */
-export function decodePersistedGameState(value: unknown): DecodedPersistedGameState | null {
+export function decodePersistedGameState(value: unknown): PersistedGameState | null {
   if (typeof value !== 'object' || value === null) return null;
   const persisted = value as Partial<PersistedGameState>;
-  if (!isCatalogGameType(persisted.gameType) || !Object.hasOwn(persisted, 'state')) return null;
-  return {
-    persisted: { gameType: persisted.gameType, state: persisted.state },
-  };
+  if (
+    Object.keys(persisted).length !== 2 ||
+    !Object.hasOwn(persisted, 'gameType') ||
+    !Object.hasOwn(persisted, 'state') ||
+    !isCatalogGameType(persisted.gameType)
+  ) {
+    return null;
+  }
+  return { gameType: persisted.gameType, state: persisted.state };
 }
 
 export function createRegisteredGameHand(
@@ -98,10 +99,6 @@ export function isProposalParameterValue(value: unknown): value is ProposalParam
 export function validateHandProposal(handProposal: HandProposal): boolean {
   return (
     isCatalogGameType(handProposal.gameType) &&
-    typeof handProposal.playerAContribution === 'bigint' &&
-    handProposal.playerAContribution > 0n &&
-    typeof handProposal.playerBContribution === 'bigint' &&
-    handProposal.playerBContribution > 0n &&
     typeof handProposal.senderIsPlayerA === 'boolean' &&
     typeof handProposal.gameTimeout === 'bigint' &&
     isValidGameTimeoutBlocks(handProposal.gameTimeout) &&
@@ -134,16 +131,14 @@ function proposalParameterValuesEqual(
 
 export function handProposalsEqual(
   a: HandProposal | null,
-  aOrigin: ProposalGroupOrigin | null,
+  aOrigin: ProposalOrigin | null,
   b: HandProposal | null,
-  bOrigin: ProposalGroupOrigin | null,
+  bOrigin: ProposalOrigin | null,
 ): boolean {
   if (!a || !b || !aOrigin || !bOrigin || a.gameType !== b.gameType) return false;
   const localIsPlayerAForA = (aOrigin === 'local') === a.senderIsPlayerA;
   const localIsPlayerAForB = (bOrigin === 'local') === b.senderIsPlayerA;
   return (
-    a.playerAContribution === b.playerAContribution &&
-    a.playerBContribution === b.playerBContribution &&
     localIsPlayerAForA === localIsPlayerAForB &&
     a.gameTimeout === b.gameTimeout &&
     proposalParameterValuesEqual(a.parameters, b.parameters)

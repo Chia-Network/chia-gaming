@@ -4,6 +4,12 @@ This document describes the architecture of the frontend JavaScript/TypeScript
 code. It reflects the current implementation unless explicitly marked as a future
 direction.
 
+This player is a security-sensitive application that constructs and submits
+transactions controlling real value. JavaScript/TypeScript is therefore treated
+as an integration and presentation environment, not as the authority for
+protocol or transaction correctness. Value-bearing rules, transaction intent,
+wallet-output validation, and durable protocol/retry state belong in Rust.
+
 For the backend/WASM architecture, see `OVERVIEW.md`. For the connectivity
 model (wallet, hub, peer, session interactions and rollover), see
 `CONNECTIVITY.md`.
@@ -123,24 +129,24 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
 
 **Player App → Hub:**
 
-| Event      | Payload                          | Purpose                                                                                                                                                                                         |
-| ---------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identify` | `{ session_id: Bytes(16), busy }` | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                                                                        |
-| `relay`    | `{ to: Bytes(16), payload: Bytes }` | Send opaque peer bytes to a specific public player ID.                                                                                                                                          |
-| `set_busy` | `{ busy }`                       | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting`.                                           |
+| Event      | Payload                             | Purpose                                                                                                                                               |
+| ---------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `identify` | `{ session_id: Bytes(16), busy }`   | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                             |
+| `relay`    | `{ to: Bytes(16), payload: Bytes }` | Send opaque peer bytes to a specific public player ID.                                                                                                |
+| `set_busy` | `{ busy }`                          | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
 
 **Hub → Player App:**
 
-| Event              | Payload                                                                               | Purpose                                                                                                                                                                                                                                                   |
-| ------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `registered`       | `{ player_id: Bytes(16) }`                                                            | Confirmation of routing identity. Sent in response to `identify`.                                                                                                                                                                                         |
+| Event              | Payload                                                                               | Purpose                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `registered`       | `{ player_id: Bytes(16) }`                                                            | Confirmation of routing identity. Sent in response to `identify`.                                                                                                                                                                                                                                                                                                                                          |
 | `advisory_start`   | `{ peer_id, peer_alias, my_amount, their_amount, channel_timeout?, unroll_timeout? }` | The hub suggests starting a session with this peer (triggered by challenge acceptance in the hub). One-sided: only sent to the challenge accepter, who may become the channel initiator after local consent. Amounts are from the accepter's perspective. The client ignores advisories with invalid amounts or out-of-range timeouts (no consent UI; advisory is hub-originated, so no `session_reject`). |
-| `relay`            | `{ from: Bytes(16), alias, payload: Bytes }`                                          | A peer payload with the hub-bound sender ID and hub-owned display alias.                                                                                                                                                                                  |
-| `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                     |
-| `alias_updated`    | `{ alias }`                                                                           | Updates the player's own display alias independently of registration.                                                                                                                                                                                      |
-| `peer_available`   | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent connected; matching active peer state restores liveness and replays its own unacknowledged messages.                                                                                                                  |
-| `peer_unavailable` | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent disconnected; matching active peer state degrades liveness. Does not replay.                                                                                                                                          |
-| `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                  |
+| `relay`            | `{ from: Bytes(16), alias, payload: Bytes }`                                          | A peer payload with the hub-bound sender ID and hub-owned display alias.                                                                                                                                                                                                                                                                                                                                   |
+| `delivery_failure` | `{ to }`                                                                              | The target peer is not connected; the message could not be delivered.                                                                                                                                                                                                                                                                                                                                      |
+| `alias_updated`    | `{ alias }`                                                                           | Updates the player's own display alias independently of registration.                                                                                                                                                                                                                                                                                                                                      |
+| `peer_available`   | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent connected; matching active peer state restores liveness and replays its own unacknowledged messages.                                                                                                                                                                                                                                                                   |
+| `peer_unavailable` | `{ player_id: Bytes(16) }`                                                            | Advises that a recent correspondent disconnected; matching active peer state degrades liveness. Does not replay.                                                                                                                                                                                                                                                                                           |
+| `hub_attention`    | `{}`                                                                                  | Signals that something happened in the hub that the user should look at.                                                                                                                                                                                                                                                                                                                                   |
 
 **Connection lifecycle:**
 
@@ -294,12 +300,13 @@ events, allowing multiple simultaneous sessions through one hub.
 
 ### Session Persistence
 
-**Design principle:** A page reload must be invisible to the user. The entire
-UX state — active tab, wallet connection, game session, form inputs — is
-continuously persisted so that after a reload the app returns to exactly where
-it was. The user should not be able to tell that a reload happened. Network
-connections (wallet backend, hub) treat a reload the same as a remote drop
-and silently reconnect in the background.
+The canonical model is
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality):
+each legitimate drain owner captures only its authoritative or unresolved
+fixed-point durable residue. Rehydrating the latest successful boundary supplies
+implicit crash rollback; this is not continuous save and does not imply that
+every changing or important value is durable. Network connections (wallet
+backend, hub) treat a reload like a remote drop and reconcile in the background.
 
 The one exception is the **restore / start over dialog**: when a saved game
 session exists, the app asks the user whether to resume or discard it before
@@ -313,6 +320,15 @@ This is always-on — not a feature the user opts into.
 The WASM module and its host JavaScript execute in the **same trust domain** —
 they are served from the same origin, run in the same process, and share the
 same memory. The WASM-to-JS boundary is not a security boundary.
+
+Sharing a security domain does not make the layers interchangeable. Browser
+JavaScript has a large, dynamic API surface and provider-specific failure modes.
+It should transport opaque values, adapt wallet/browser APIs, and render
+Rust-owned facts. Logic equivalent to backend business logic—especially
+authorization, protocol transitions, spend construction or validation, fee
+policy, and durable retry decisions—must remain in Rust unless an external API
+can only be invoked from JavaScript. In that case JavaScript reports a typed raw
+outcome and Rust retains the authoritative state.
 
 Private keys (channel, unroll, referee) are intentionally included in the
 serialized cradle state. Without them, a deserialized session cannot resume
@@ -343,142 +359,105 @@ guarantees fresh entropy after every save/restore cycle. The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).
 
-#### What is saved (`SessionSave`)
+#### What is saved (`DurableApplicationState`)
 
-IndexedDB holds one complete `SessionSave` record as one salt-prefixed,
-obfuscated binary value. The record is encoded with bencodex, then XOR-masked
-with a stream derived from the fresh salt and a key compiled into the client.
-This deters casual inspection but is not a security boundary: the client has
-everything needed to reverse it. The serialized WASM cradle and unacknowledged
-protocol messages remain raw `Uint8Array` values within that binary encoding;
-they are not base64-expanded. localStorage holds only small preferences, the
-resumable-session marker, and tab/reset coordination keys, inside the same-origin
-trust model described above.
+IndexedDB v5 holds one `application-state/current` record and one coordination
+store. The application record is a salt-prefixed, obfuscated Bencodex binary
+value; obfuscation deters casual inspection but is not a security boundary.
+The exact aggregate schema and validation live in
+[`saveEnvelope.ts`](front-end/src/lib/session/saveEnvelope.ts); phase payload
+construction and restore normalization live in
+[`persistence.ts`](front-end/src/lib/session/persistence.ts).
 
-The current and only legal envelope schema is `chia-gaming-session` version
-`23`. Early-beta compatibility is best-effort, and every other version is
-currently deleted wholesale without decoding or migration. A decoded v23
-record must also satisfy the complete phase-owned
-envelope contract (keyed game membership, generic game-state envelope agreement,
-terminal data, and frozen terminal coin list); malformed v23 records are
-deleted rather than partially restored. The boot marker is retained after an
-incompatible or malformed resumable record is discarded so the failure remains
-visible at the Resume / Start Over boundary. The `version` field is kept as a
-future migration hook for when there is an installed base to preserve.
-`decodeSessionSaveEnvelope` is the one envelope decoder used by both the
-pre-write check and the IndexedDB read check. Acceptance always constructs the
-normalized `SessionModel`; validation is not maintained as a second,
-shape-only parser. Game-owned `handState` is decoded only as the generic
-`{ gameType, state }` envelope. The owning package does not participate in
-persistence decoding.
-The envelope is a discriminated union. Every variant has `schema`, `version`,
-`phase`, `identity`, `preferences`, and `history`; `pre-handshake` adds pairing
-and peer-transport state; `live` adds complete pairing, the same transport
-state, serialized game state, and presentation; and `terminal` adds terminal
-facts plus frozen presentation. A preferences record cannot carry resumable
-state, a pre-handshake record cannot carry game state, and an ordinary terminal
-record cannot carry a cradle. Rejection reliability records are kept in a
-separate IndexedDB store so rejecting an unrelated proposal cannot replace a
-live or frozen session envelope. The store holds outbound rejection replay
-records and inbound duplicate-ack receipts, capped at eight records in total
-and expired after seven days.
-The live and terminal `presentation` payload is wire-complete: empty collections,
-nullable identities, false flags, zero balances, and timer absence are encoded
-explicitly rather than reconstructed by decoder defaults. The following fields
-are grouped under those phase-owned payloads:
+The architectural invariants are smaller than the field list:
 
-| Field                           | Type                                                                                                       | Purpose                                                                                                                                                                                                                                                                                                         |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                       | `bigint`                                                                                                   | Save envelope version; currently `23`.                                                                                                                                                                                                                                                                          |
-| `playerId`                      | `string`                                                                                                   | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
-| `sessionId`                     | `string?`                                                                                                  | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
-| `alias`                         | `string?`                                                                                                  | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
-| `theme`                         | `'dark' \| 'light'?`                                                                                       | Persisted player app theme.                                                                                                                                                                                                                                                                                     |
-| `defaultFee`                    | `bigint?`                                                                                                  | Default transaction fee preference.                                                                                                                                                                                                                                                                             |
-| `feeUnit`                       | `'mojo' \| 'xch'?`                                                                                         | Display/editing unit for the transaction fee preference.                                                                                                                                                                                                                                                        |
-| `hubUrl`                        | `string?`                                                                                                  | Last selected hub origin for reconnect on reload.                                                                                                                                                                                                                                                               |
-| `activeTab`                     | `string?`                                                                                                  | Last selected top-level tab.                                                                                                                                                                                                                                                                                    |
-| `unreadGame`                    | `boolean?`                                                                                                 | Whether the Game tab has unread activity.                                                                                                                                                                                                                                                                       |
-| `walletAlert`                   | `boolean?`                                                                                                 | Whether the Wallet tab should show an alert dot.                                                                                                                                                                                                                                                                |
-| `hubAlert`                      | `boolean?`                                                                                                 | Whether the Hub tab should show an alert dot.                                                                                                                                                                                                                                                                   |
-| `blockchainType`                | `'simulator' \| 'walletconnect' \| 'cloud'?`                                                               | Which wallet backend is active or should be reconnected.                                                                                                                                                                                                                                                        |
-| `serializedGameSession`         | `Uint8Array?`                                                                                              | Raw binary WASM game-session state via `serialize()`.                                                                                                                                                                                                                                                           |
-| `gameSessionSchemaVersion`      | `bigint?`                                                                                                  | Rust-owned schema ID for `serializedGameSession`; currently `8`. Missing or mismatched IDs are unsupported and cleared before deserialization.                                                                                                                                                                  |
-| `pairingToken`                  | `string?`                                                                                                  | Locally generated identity for the current peer-session/controller instance. It is persisted so pre-cradle setup or a full session resumes into the same instance, and it correlates Shell transition completion with that instance; it is not protocol authority.                                              |
-| `sessionPeerId`                 | `string?`                                                                                                  | Public hub peer id of the current opponent, used to rebind `PeerSession` on restore.                                                                                                                                                                                                                            |
-| `myHubPlayerId`                 | `string?`                                                                                                  | Last public player id assigned by the hub, used only to detect remapping during resume.                                                                                                                                                                                                                         |
-| `gameSessionId`                 | `string?`                                                                                                  | Canonical lowercase-hex storage representation of the 16-byte peer session ID carried by every reliable frame. Required whenever pairing/transport state exists.                                                                                                                                                 |
-| `messageNumber`                 | `bigint?`                                                                                                  | Next outbound semantic-message sequence number within the peer session.                                                                                                                                                                                                                                         |
-| `remoteNumber`                  | `bigint?`                                                                                                  | Last durably delivered inbound semantic-message sequence number within the peer session.                                                                                                                                                                                                                        |
-| `iStarted`                      | `boolean?`                                                                                                 | Whether this player was the channel/session initiator.                                                                                                                                                                                                                                                          |
-| `terminalIStarted`              | `boolean?`                                                                                                 | Display-only initiator role retained after terminal protocol fields are cleared.                                                                                                                                                                                                                                |
-| `myContribution`                | `string?`                                                                                                  | This player's channel buy-in contribution as a decimal bigint string.                                                                                                                                                                                                                                           |
-| `theirContribution`             | `string?`                                                                                                  | Opponent's channel buy-in contribution as a decimal bigint string.                                                                                                                                                                                                                                              |
-| `perGameAmount`                 | `string?`                                                                                                  | Default per-hand amount as a decimal bigint string.                                                                                                                                                                                                                                                             |
-| `channelTimeout`                | `string?`                                                                                                  | Channel timeout retained for pre-cradle handshake resume.                                                                                                                                                                                                                                                       |
-| `unrollTimeout`                 | `string?`                                                                                                  | Unroll timeout retained for pre-cradle handshake resume.                                                                                                                                                                                                                                                        |
-| `rewardPuzzleHash`              | `string \| null`                                                                                           | Immutable reward/change address for the active session, or `null` when none is active.                                                                                                                                                                                                                          |
-| `unackedMessages`               | `Array<{ msgno, msg }>?`                                                                                   | Outbound Bencodex semantic-message bodies, including negotiation messages, that have not been acknowledged by the peer.                                                                                                                                                                                         |
-| `humanHistory`                  | `string[]?`                                                                                                | Recent user-facing transcript entries (capped at 1,000).                                                                                                                                                                                                                                                        |
-| `wasmNotificationHistory`       | `string[]?`                                                                                                | Recent serialized WASM notifications (capped at 1,000).                                                                                                                                                                                                                                                         |
-| `diagnosticLog`                 | `string[]?`                                                                                                | Recent diagnostic entries (capped at 2,000).                                                                                                                                                                                                                                                                    |
-| `durabilityWarning`             | `string?`                                                                                                  | Last delivery-boundary storage failure warning.                                                                                                                                                                                                                                                                 |
-| `activeGameIds`                 | `string[]`                                                                                                 | IDs of currently live games in an atomic group; empty when none are active.                                                                                                                                                                                                                                     |
-| `currentHandGameIds`            | `string[]`                                                                                                 | IDs belonging to the current hand group; empty when there is no retained hand.                                                                                                                                                                                                                                  |
-| `lastDisplayedGameId`           | `string \| null`                                                                                           | Key of the game instance selected for display when no active game supersedes it.                                                                                                                                                                                                                                |
-| `gameInstances`                 | `Record<string, …>`                                                                                        | Keyed-only per-game protocol snapshots: amount, coin, canonical `GameProtocolPresentation`, and terminal data.                                                                                                                                                                                                  |
-| `currentHandOrigin`             | `'local' \| 'peer' \| null`                                                                                | Canonical origin of the current hand, owned by the game slice and retained through independent member settlement and terminal display.                                                                                                                                                                          |
-| `activeGameType`                | `string`                                                                                                   | Current registered game type (`calpoker`, `spacepoker`, or `krunk`).                                                                                                                                                                                                                                            |
-| `handState`                     | `PersistedGameState \| null`                                                                               | Opaque game-owned state envelope (`gameType`, payload) for live restore and finished remounts.                                                                                                                                                                                                                  |
-| `channelStatus`                 | `ChannelStatusPayload \| null`                                                                             | Last Rust-owned canonical snapshot for UI restore: actual channel lifecycle plus optional local `session_disposition`, advisory, coin identity/amount, balances, allocation, potato ownership, and `zero_payout`. It is normalized once into `ChannelStatusModel` before any view or lifecycle policy reads it. |
-| `myAlias`                       | `string?`                                                                                                  | Local player display name for the active pairing/session.                                                                                                                                                                                                                                                       |
-| `opponentAlias`                 | `string?`                                                                                                  | Opponent display name for the active pairing/session.                                                                                                                                                                                                                                                           |
-| `coinsOfInterest`               | `Array<{ label, id }>?`                                                                                    | Actual live coin list frozen for terminal display.                                                                                                                                                                                                                                                              |
-| `myRunningBalance`              | `string`                                                                                                   | Running balance delta from the initial amount, including explicit `"0"`.                                                                                                                                                                                                                                        |
-| `channelNotifQueue`             | `QueuedNotification[]`                                                                                     | Persisted channel-scope notification queue, without non-serializable payloads.                                                                                                                                                                                                                                  |
-| `gameNotifQueue`                | `QueuedNotification[]`                                                                                     | Persisted game-scope notification queue, without non-serializable payloads.                                                                                                                                                                                                                                     |
-| `dismissedChannelStatus`        | `string \| null`                                                                                           | Last dismissed channel-status notification value.                                                                                                                                                                                                                                                               |
-| `cleanShutdownStarted`          | `boolean`                                                                                                  | Whether clean shutdown has been requested.                                                                                                                                                                                                                                                                      |
-| `betweenHandMode`               | `string`                                                                                                   | Between-hand overlay state.                                                                                                                                                                                                                                                                                     |
-| `betweenHandCompose`            | `{ selected_game, game_timeout, proposal_sent }` | Host-owned compose state. Transient game controls are mounted package form state and are not persisted. |
-| `betweenHandLastHandProposal`          | `SavedHandProposal \| null`                                                                                   | Last agreed generic A/B-oriented hand proposal, including the exact opaque `parameters`. Null when there is no agreed hand yet. |
-| `betweenHandRejectedOnceHandProposal`  | `SavedHandProposal \| null`                                                                                   | Hand proposal already rejected once, used to avoid repeated automatic retries.                                                                                                                                                                                                                                          |
-| `betweenHandPendingRetryHandProposal`  | `SavedHandProposal \| null`                                                                                   | Local hand proposal waiting for retry after a proposal collision.                                                                                                                                                                                                                                              |
-| `proposalGroups`                | `Array<{ primary_id, member_ids, hand_proposal, origin, disposition }>`                                            | Normalized proposal projection. Each group owns its canonical first ID, ordered factory members, one HandProposal object, local/peer origin, and outgoing/incoming-cached/incoming-review/accepted disposition. Member lookup is derived rather than persisted.                                                            |
-| `waitingStateEnteredAt`         | `bigint \| null`                                                                                           | Epoch ms when the channel entered an abandon-eligible waiting state.                                                                                                                                                                                                                                            |
-| `cleanShutdownGraceStartedAt`   | `bigint \| null`                                                                                           | Epoch ms when the clean-shutdown grace timer started.                                                                                                                                                                                                                                                           |
+- one strict v5 root owns common state, exactly one optional session phase,
+  bounded rejection records, and owner-specific wallet-reservation slices;
+- the live cradle and reliable frame bodies remain opaque `Uint8Array` values,
+  while game-owned `handState` restores only through its registered package;
+- phase discriminants own exact payloads, including explicit null/absence, so a
+  complete write cannot mix generations;
+- durable fields are authoritative quiescent residue or unresolved external
+  obligations with named restore consumers and retirement events;
+- rollback copies for peer validation, local hand mutation, and batch planning
+  are ephemeral and must disappear before capture; notification queues,
+  drafts, liveness, derived views, and released effects are reconstructed;
+- incompatible aggregate or cradle schemas reject and preserve the whole root
+  until explicit hard reset. No nested session, wallet, rejection, or hand
+  slice is salvaged.
+
+The version behavior follows the canonical
+[unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
+`localStorage` contains only coordination and resume/reset hints; it is not
+preference or application-state authority.
 
 #### Save architecture
 
-Session persistence is executed by the session-machine runtime. A save combines
-two authoritative sources:
+`StorageRepository` is the sole aggregate owner. It atomically claims
+coordination authority and reads the root, serializes root mutations, and
+performs exact whole-root writes. It has no timer, debounce, capture closure, or
+second persistence scheduler. Claims, authority loss, and hard reset publish a
+new monotonic lifecycle generation so transient runtimes can fence stale
+completions. Ordinary I/O failure leaves the latest in-memory aggregate dirty
+and still releases permitted effects; authority loss retires the obsolete
+runtime and releases nothing. `ChannelFundingRuntime` and
+`FeeAttachmentRuntime` are the two explicit transient provider-orchestration
+owners over their separate aggregate slices.
+
+Session persistence is executed by `SessionMachineRuntime`, the sole active
+dirty/coalescing/drain scheduler. One synchronous snapshot combines two
+authoritative sources:
 
 1. **WASM-native state** — `SessionController.getWasmFields()` returns the
    cradle serialization, message counters, protocol state, history, aliases,
    and other fields that originate inside the WASM bridge.
 2. **JS session state** — the current `SessionMachineState`: keyed game
-   protocol presentation, game-owned durable payload envelope, notification
-   queues, host-owned compose state, between-hand mode, running balance, and
-   dismissed notifications.
+   protocol presentation, game-owned durable payload envelope, user-authored
+   compose values, unresolved proposal intent, and between-hand mode.
 
-The pure root reducer returns the next authority and ordered effects.
-`SessionMachineRuntime` publishes that authority, runs commands (including
-`persist-session`), and only then schedules React. Games dispatch a
-`GameIntent`. A command result distinguishes rejection, queueing, and actual
-application. A game mutates its concrete hand before requesting an action; the
-public intent carries no state. The runtime keeps the previous canonical
+The two timer timestamps have one dedicated durable owner in
+`SessionController`. Shell schedules the browser timers, but changes enter the
+runtime coordinator and aggregate capture reads the controller-owned facts
+synchronously with the cradle boundary; no cache patch may compete with a
+machine checkpoint.
+
+The following ordering is a design invariant for every active-session stimulus,
+including work resumed after rehydration:
+
+1. Reduce the stimulus and continue through commands, controller/WASM results,
+   generated events, and UX-model feedback until no synchronous work remains.
+2. Synchronously freeze the resulting JS, WASM, and reliable-transport state.
+3. Await one persistence attempt for that captured boundary.
+4. Project the captured state to React.
+5. Finalize peer sends, acknowledgements, wallet/chain work, and completion
+   callbacks exactly once.
+
+“UX-model feedback” is reducer state and belongs inside the drain; React
+rendering is an externally visible projection and belongs after persistence.
+This distinction lets the UX participate fully in event processing without
+displaying intermediate states. It is the general flicker-prevention rule, not
+a collection of feature-specific rendering exceptions.
+
+The pure root reducer returns the next unpublished authority and ordered
+commands. `SessionMachineRuntime` drains reducer events, reentrant controller
+events, WASM results, and generated commands to a fixed point. It then persists
+or attempts to persist one combined snapshot, publishes the final authority to
+React once, and releases the staged effects. Games dispatch a `GameIntent`.
+A command result distinguishes rejection, queueing, and actual application. A
+game mutates its concrete hand before requesting an action; the public intent
+carries no state. The runtime keeps the previous canonical
 `handState` only as a temporary synchronous checkpoint while it calls Rust. A
 synchronous command exception or `MoveRejected` restores that checkpoint. If
-Rust accepts the action as queued or already applied, the runtime rereads
-`getState()`, commits the mutated complete hand canonically, and persists it in
-the same session snapshot as the serialized Rust queue. There is no persisted
-checkpoint and no `pendingCandidates` state. `LocalActionApplied` is a host-only
-protocol-presentation fact; it can update the keyed turn presentation, but it
-does not promote game-owned state and does not grant game permission. Rejection
-is not delivered to the game.
-`assembleSessionSave` reads game-owned canonical `handState` from current
-machine authority and combines it with
-the controller's WASM-origin snapshot at effect execution time. Every package
+Rust accepts the action as queued or already applied, the runtime snapshots the
+mutated complete hand into canonical `handState` and persists it in the same
+session snapshot as the serialized Rust queue. `activeHand` is only a cache
+rebuilt from and snapshotted back into `handState`; shared code does not inspect
+package-owned fields. Rejection restores both cache and model. There is no
+persisted checkpoint or `pendingCandidates` state. `LocalActionApplied` is only
+a host lifecycle fact and does not grant game permission.
+Before starting the asynchronous write, the runtime synchronously freezes
+canonical `handState`, the serialized WASM cradle, and the reliable boundary
+into one immutable save input. Every package
 has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
 the live branch has an intent port. It is not per-move permission; game controls
 derive availability from their own handler, turn, and terminal state. The view
@@ -487,20 +466,200 @@ service. Accepted stakes, factory-ordered member state, and terminal outcomes
 are part of the complete hand state rather than parallel mount projections.
 Protocol IDs remain in the host session model and never enter package state. A new
 `handKey` creates a fresh component and `GameHand` lifetime.
-`SessionController.onSaveNeeded` invokes the same runtime persistence path for
-ordinary debounced WASM changes. Every successful mutating WASM command
-schedules that coalesced save even when it emits no events; read-only polling
-does not. Delivery-critical outbound messages and acknowledgements still bypass
-the delay and flush immediately before sending. Game-owned local-only
-`state-changed` updates retain the existing outer persistence debounce.
+Every successful mutating WASM command marks the same runtime transaction dirty
+even when it emits no events; read-only polling does not. The runtime keeps
+intermediate machine states unpublished. Stimuli arriving while persistence is
+in flight are retained for the next transaction and cannot alter the snapshot
+or React projection being committed.
+Code must not bypass this boundary with an active-session save timer, direct
+effect persistence, an intermediate render, or an eager reliable send. New
+controller, wallet, chain, game, and peer event sources enter the coordinator
+and are drained by the same rule. A failed browser write reports a persistent
+warning but is not permission to stop a game for money: protocol/UX progression,
+wallet cleanup, transaction submission, and peer frame/ACK release continue
+once. The current in-memory boundary remains dirty, and later activity retries
+a full checkpoint with every still-unresolved durable intent without replaying
+released effects. A successful retry clears degraded durability. A crash before
+that retry succeeds can restore an older local checkpoint; this degraded window
+is an explicit availability-over-durability choice, not an effect gate.
+`releaseAfterPersistence(key, launcher)` deduplicates an effect only while that
+key is pending and returns the same completion promise to every duplicate
+caller. The persistence attempt gates invoking `launcher`, not completion of
+the promise it returns: the coordinator proceeds without awaiting that external
+work, while callers can still observe its eventual success or failure. The key
+is removed before invocation, so reentrant work may schedule the same key for a
+later captured boundary. `ReliableCommitCoordinator.enqueueResult<T>` is the
+result-bearing companion to `enqueue`: it runs typed controller work inside the
+same serialized runtime transaction and resolves or rejects its promise when
+that work executes, including when an active commit temporarily queues it.
+
+Runtime construction itself is inert. The committed React layout effect first
+installs the render callback and then calls `activate()`. The controller attaches
+that committed, retire-aware `SessionMachineRuntime` as the persistence and
+reliable-commit owner only after serializable WASM fields are available; before
+then explicit pre-runtime boundaries persist reliable work. React cleanup only
+calls `clearRender()` and therefore cannot retire protocol ownership.
+Replacement of the committed runtime and `SessionController` cleanup—including
+terminal cleanup—own retirement. Retirement discards queued events and
+fire-and-forget controller work, rejects queued result promises and
+not-yet-launched persistence-gated effects, and makes completion from an
+in-flight write inert. An obsolete runtime therefore cannot publish, persist,
+or release effects after replacement. The runtime directly implements the
+peer `ReliableCommitCoordinator` facet and provides `snapshotModel()` for the
+authoritative runtime model. Controller capabilities hide the only
+retire-before-launch retry loop from submission and coin-delivery callers.
+
+`ChannelFundingRuntime` attaches one stable funding inbox per session and owns
+the durable operation lifecycle; there is no replaceable demand identity or
+duplicate persisted funding queue. `amount`, `fee`, and optional `max_height` are canonical
+decimal `u64` strings; every condition opcode is a bounded `bigint` `u32`;
+absent `coin_id` and `max_height` options are omitted, never stored as null.
+Distinct concurrent requests are an internal protocol-state violation. Rust
+remains the durable owner of submission/retry intent; `SubmissionPump`
+serializes one-shot wallet delivery and reports the typed outcome back to Rust.
+
+The external wallet constructs each funding offer from Rust's canonical
+request; Rust validates the result. Rejection terminates the handshake and does
+not create controller-owned successor or predecessor requests. Persisted
+funding and fee offers enter strict, separate `channelFundingOperations` and
+`feeAttachments` slices.
+Every trade owns its exact provider trade ID and exact
+`(installationPlayerId, peerSessionId, provider/account scope, purpose kind,
+operationId)` identity;
+one operation may retain multiple historical trades without conflating owners
+or cleanup. Pending creation uses `creating` with its embedded canonical request
+and exact recovery ID; pending cancellation uses `cancelling` with its exact
+trade and recovery ID. A pre-ID response loss uses
+`best-effort-uncertain`; the aggregate records its typed
+`orphanRisk: 'pre-id-response-lost'` provenance and carries that marker through
+a later `creating` recovery or created trade. Recovery reconciles exact
+post-ID requests instead of starting replacements. Funding unavailability
+remains pending; it is not converted into rejection. Post-creation stages include `reserved`,
+`retained-for-replay`, and `cancel-required`. `creating` also records active
+versus cancel-on-create disposition. Funding remains in `awaiting-channel`
+after material delivery until typed Rust `ChannelCoinConfirmed` forgets it
+without cancellation or `ChannelCreationTimedOut` cancels its exact
+`providerReservationId`. An unknown pre-ID timeout retains cancel-on-create
+orphan evidence and cannot synthesize a cancellation ID. An attached fee
+source remains retained while Rust may replay its current exact variant;
+wallet acknowledgement does not retire it, and Rust submission retirement
+moves its exact `providerReservationId` through typed cancellation before removal.
+Controller retirement promotes only `reserved` entries; replay-retained fee
+sources stay retained until Rust explicitly retires their stable submission.
+Only reservation-creating offer, funding, or fee creation has this deliberate
+duplicate-reservation risk: before a provider returns an ID, a lost response
+can hide a successful external reservation, so one replacement is allowed on
+each later readiness epoch and the orphan warning remains. Broadcasting the
+same finalized spend through WalletConnect `pushTransactions` is instead
+idempotent exact-byte replay; it creates no provider-reservation entry and carries
+no orphan-risk provenance.
+Wallet mutation starts only after the aggregate claim is installed. Malformation
+of any nested field rejects the whole root and remains visible on Resume /
+Start Over. A connected provider/account scope that differs from the durable
+owner is shown as a recovery mismatch rather than touching the wrong wallet.
+
+The complete aggregate is written in one IndexedDB transaction. Strict
+validation rejects unknown or missing fields, duplicate identified
+`providerReservationId` values within or across both slices, provider scope
+mismatch, invalid discriminants, and non-current versions. Persistence failure does not gate
+offer use, transaction release, or cancellation; the latest in-memory root is
+captured again on later activity. Only the active-blockchain lifecycle attaches
+the cancellation RPC. A failed cancellation stays durable and retries only on
+restore or matching wallet reconnect/readiness. There is no timer, immediate
+retry loop, broad terminal sweep, or generic wallet-operation, settlement, or
+session cancellation path. Identified cleanup remains durable but does not
+block terminal capture; only funding material still owed to Rust blocks
+finalization. Going offline detaches the provider RPC without discarding
+cleanup; retirement records the required transitions, and the next matching
+lifecycle attachment drains them.
+
+The app-owned persistence versions are aggregate v5, opaque Rust/WASM cradle
+schema 23, and IndexedDB v5. Their compatibility behavior is defined by the
+[unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
+
 Transaction submission and resubmission remain owned by Rust's
 `TransactionManager`, not by a frontend transaction field.
+Each retained submission has a stable Rust identifier and owns at most one
+active delivery attempt. A drain carries expiry, an opaque Rust-issued token,
+and immutable predecessor/relationship metadata. Rust emits the no-fee base
+immediately when fee acquisition fails or is unavailable and continues seeking
+after base acknowledgement. Matching provider readiness or an explicit
+fresh-chain rebroadcast epoch may later upgrade that ID to a fee-bearing
+variant; chain terminality stops acquisition. Rust deduplicates only an exact canonical intent fingerprint; two
+different transactions that spend the same inputs retain different IDs.
+Rejection retires only its exact ID. The manager separately retains wallet
+delivery acknowledgement and chain finality. JavaScript makes one wallet call
+and reports a typed `acknowledged`, `unavailable`, or `rejected` result:
+acknowledgement ends ordinary app rebroadcast, while unavailability remains
+eligible for replay after fresh chain synchronization. A lower-tip rollback
+queues every surviving retained transaction once for that epoch. An
+equal-or-higher replacement tip queues only the retained transaction whose
+watched output is explicitly absent and whose own input is explicitly live.
+Rollback and fresh-sync replay use the current exact Rust-owned variant without
+rebuilding it or creating a second wallet trade. Successful poll batches
+represent every queried interest explicitly;
+failed or malformed batches are not reported as authoritative snapshots.
+The poller signals that coherent boundary only through `chain_snapshot_ready`.
+If an exact attempted variant was unavailable, its successor waits for that
+snapshot. A genuinely newer fee-bearing successor for the same stable intent
+may launch immediately as a mempool replacement, and unrelated IDs remain
+independent. JavaScript consumes the relationship emitted with the attempt and
+returns only opaque tokens for outcomes; it never echoes delivery goals or
+fingerprints as correctness input.
+This chain operation is **transaction rebroadcast**. It is distinct from
+**reliable peer-frame replay**, which resends unacknowledged numbered transport
+frames only at reconnect or peer-availability boundaries.
+`TransactionManager` is the durable retained owner of each transaction intent.
+`SubmissionPump` spans the interval after Rust drains an intent through
+persistence-gated launch, optional fee acquisition, exact-byte broadcast,
+typed completion, and relinquishment. Committed-runtime replacement reschedules
+only an unlaunched entry; the ordered queue retains launched work and terminal
+quiescence. The pump is neither persisted nor a retry authority. Rust validates
+stable identity before issuing each successor.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
 frontend does not persist a move journal or receive replay instructions.
 Following browser restore, an ordinary game effect may submit an automatic move
 again only when the restored canonical state still precedes it. An action
 accepted into Rust's durable queue commits the advanced hand state in the same
 snapshot, so that queued or applied action does not autoplay again.
+
+Puzzle/solution callbacks obey the same transaction boundary as coin
+observations: Rust applies each callback against a serialized working copy of
+the complete `TransactionManager` and nested session, committing manager state,
+watch deltas, effects, and callback completion together only on success.
+Outstanding requested coin IDs are durable Rust state; restore reissues each
+still-live request once, while retire-aware controller completion prevents an
+old runtime from delivering into its replacement. A successful wallet RPC does
+not make its puzzle/solution bytes structurally trusted: malformed data is
+fatal protocol evidence, leaves the request terminally blocked, and is not
+retried on ordinary readiness or height triggers.
+
+Submission draining applies the same isolation principle at item granularity.
+WASM drains on a serialized canonical working copy and constructs the
+JavaScript result before committing it, so conversion failure rolls back the
+whole drain.
+Each candidate is planned against a working copy; a malformed middle candidate
+is consumed and reported once while valid candidates before and after it
+commit. Rust emits retirement for abandoned retained submissions before
+removing them. Only this proven-local failure class is recoverable: the host
+persists one bounded incident with JavaScript stack and Rust context, displays
+one dismissible nonfatal modal, and leaves the game/dashboard active without an
+ordinary or global error duplicate. Unknown manager/session integrity remains
+fatal. Release follows the live failed-checkpoint policy: attempt persistence,
+release the isolated safe boundary once, and retain dirty in-memory state.
+
+Rust local batch packaging is modular and host-invisible. `OffChainPhase`
+exclusively owns a `BatchPlan` containing cloned channel state, queue
+disposition, actions, and staged effects; planning changes only that value, and
+commit installs the live state only after cached-unroll finalization succeeds.
+The plan clones only durable protocol and queue working state. Transient,
+nonserialized caches stay outside the transactional plan and are not cloned.
+Rust tests access this through `GameSession`'s concrete test-only
+`OffChainPhase` seam rather than production debug operations on the lifecycle
+trait.
+
+These runtime, persistence, and host ownership changes do not alter the peer
+wire schema.
 
 `GameSlice` atomically owns `activeIds`, `currentHandIds`, `currentHandOrigin`,
 keyed instances, `lastDisplayedId`, hand key, and active game type. Its reducer updates a game
@@ -524,57 +683,81 @@ inbound update clones the full hand, replaces only the addressed member, and
 leaves its sibling's move/handler state untouched; the persisted opaque hand
 state still contains both members.
 
-Proposal state is one normalized `proposalGroups` collection. Each entry owns
-its canonical first ID, ordered members, one HandProposal object, origin, and explicit
-UI/lifecycle disposition. Member-ID lookup scans this collection as a pure
-derivation; there are no per-ID terms/group maps or parallel outgoing/accepted
-ledgers to rebuild on restore. Product policy permits at most one outgoing local
-group while one incoming collision may coexist. During an acceptance wave the
-same entry changes to `accepted`, preserving terms and ordered Krunk membership
-across the single ordered `ProposalAcceptedGroup`. An `InsufficientBalance` removes
-the affected group atomically; successful Krunk members still settle
-independently, and the accepted entry is removed only after the hand is fully
-settled. The current v21 envelope makes
+Proposal state is one normalized `pendingProposals` collection. Each entry owns
+one endpoint-local proposal ID, one `HandProposal`, and one lifecycle
+discriminant that also determines local/peer origin. Rust alone maps that local
+ID to the origin's parity-sequenced wire ID while the proposal remains pending.
+Acceptance removes
+the proposal and creates factory-ordered game members in `GameSlice`;
+`InsufficientBalance` and proposal cancellation remove only the proposal.
+Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
+independently by `GameID`. The aggregate v5 presentation makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
 sidecar.
-This schema does not migrate incompatible records from aggregate current-game
-fields; they are deleted instead.
+This schema does not migrate or decode incompatible predecessor records; they
+remain available only as whole-root corruption evidence until explicit reset.
 
-Rejecting an incoming proposal returns the model to compose as soon as the
-cancel command succeeds. There is no `expectingCounterProposal` flag or timer.
-A legitimate crossed proposal may therefore produce a brief compose-state
-flicker before its `ProposalMade` arrives and is reduced normally.
+The current frontend admits at most one uncancelled proposal across local and
+peer origins. An additional incoming proposal is automatically and definitively
+cancelled without being inserted into `pendingProposals`; a
+`local-cancel-queued` or `peer-cancel-queued` entry does not block its
+replacement. This is intentionally a single-hand presentation capability, not
+a Rust or wire invariant. Rust retains multiple proposals so planned multi-hand
+UX can lift this frontend policy without a protocol migration.
+
+Rejecting an incoming proposal returns the unpublished model to compose as soon
+as the cancel command succeeds. There is no `expectingCounterProposal` flag or
+timer. Any crossed `ProposalMade` in the same runnable event wave is reduced
+before the single post-persistence React projection, so intermediate compose
+state is not displayed.
 
 #### Delivery-critical saves
 
-Peer message counters and queues are part of the reliable transport protocol,
-so they are not allowed to wait for the normal debounce. The shared reliability
-owner exists before the WASM controller: it increments `messageNumber`, appends
-every outbound semantic body to `unackedMessages`, and queues the actual
-WebSocket send. When an inbound body is delivered to negotiation or WASM, it
-advances `remoteNumber` and queues the ack. The queued sends/acks are held until
-the corresponding semantic state is durable.
+Peer message counters and queues are part of the reliable transport protocol.
+The shared reliability owner exists before the WASM controller: it increments
+`messageNumber`, appends every outbound semantic body to `unackedMessages`, and
+stages the actual WebSocket send. When an inbound body is delivered to
+negotiation or WASM, it advances `remoteNumber` and stages the ack. With a live
+runtime these allocations participate in the same fixed-point drain and active
+commit as all other session work.
 
-At that point the reliability owner performs one immediate durability flush:
+At quiescence `SessionMachineRuntime` drains machine, controller, and generated
+work to a fixed point, then:
 
-1. Cancel any pending debounced save.
-2. Call its save boundary, which records pending negotiation directly or
-   serializes the cradle and merges the current WASM/JS fields into
-   `SessionSave`.
-3. Await `flushSessionSave()` to commit the record through an IndexedDB
-   read/write transaction.
-4. Send all queued outbound messages and acks.
+1. Captures the staged reliable generation together with the final WASM and JS
+   working state.
+2. Attempts exactly one whole-aggregate IndexedDB write.
+3. Publishes the captured machine state to React once.
+4. Releases the captured outbound messages and acknowledgements in order.
 
-This preserves the transport invariant across reloads: the peer only observes a
-message or ack after the local save contains the corresponding
-`messageNumber`/`unackedMessages` or `remoteNumber`/cradle state. A burst of
-events in one drain still causes only one full cradle serialization and one
-IndexedDB transaction instead of one write per message. If the transaction
-fails, the app shows a persistent session-storage warning and leaves the
-messages/acks queued; none cross the protocol boundary until a later durability
-retry succeeds.
+Pre-runtime negotiation and rejection use explicit immediate whole-root writes
+with the same persist-before-release rule. Channel-funding and fee-attachment
+owners separately checkpoint a reservation before provider mutation. Once a
+runtime exists, preference, history, and wallet-ledger mutations only mark that
+runtime dirty and are folded into its next quiescent snapshot; the repository
+never schedules a competing write or observes a partially drained runtime. See
+the canonical
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality)
+policy for the field-admission rule.
+
+On the normal path this preserves the transport invariant across reloads: the
+peer observes a message or ack only after one persistence attempt. On success,
+the local save contains the corresponding `messageNumber`/`unackedMessages` or
+`remoteNumber`/cradle state; ordinary write failure still releases the frame or
+ack once and accepts the degraded crash window, while authority loss fences the
+obsolete owner and releases nothing. A burst of events in one drain still
+causes only one full cradle serialization and one IndexedDB transaction instead
+of one write per message.
+
+If the transaction fails, the app shows one transient session-storage warning
+and releases the prepared messages/acks anyway. Released and persisted
+generations are tracked separately so a later successful save cannot duplicate
+wire effects. The machine/WASM boundary remains dirty for a later
+activity-driven retry; failure reporting does not immediately reschedule the
+same failed write. This deliberately weakens crash recovery during degraded
+storage rather than failing live play for an internal browser-storage problem.
 
 Development builds log the raw cradle byte count, an estimated total IndexedDB
 record size, the compact historical-unroll count when available, and all three
@@ -582,7 +765,7 @@ history counts. The record-size walk is skipped in production.
 
 #### Prop-safe session values
 
-`SessionSave` contains raw `Uint8Array` cradles and message payloads plus
+`DurableApplicationState` contains raw `Uint8Array` cradles and message payloads plus
 `bigint` fields. React props cannot safely deep-enumerate those values:
 
 - Expanding a typed array into `{0:n,1:n,...}` destroys the cradle and makes
@@ -594,7 +777,7 @@ history counts. The record-size walk is skipped in production.
 dense byte-objects alone, hide bigints as non-enumerable properties, and Shell
 keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
 every parent render. Persistence never routes cradle bytes through this
-React-prop path: it bencodex-encodes the complete `SessionSave`, masks the
+React-prop path: it bencodex-encodes the complete aggregate, masks the
 salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
 
 This helper is an opaque persistence bridge, not a numeric conversion API.
@@ -621,12 +804,14 @@ WASM, hub, wallet/blockchain, restore snapshots, and user intents. Selectors
 then derive the props consumed by `Shell`, `GameSession`, and game-specific
 views.
 
-The migration is intentionally incremental: existing screens should continue to
-look and behave the same while individual state slices move from scattered React
-state into selector-derived view models. Local React state should remain for
-ephemeral display-only details such as input drafts, copied flags, hover state,
-and drag positions. Restorable protocol/session facts should flow through the
-model so normal play and restore use the same projection path.
+Frontend model adoption is intentionally incremental: existing screens should
+continue to look and behave the same while individual state slices move from
+scattered React state into selector-derived view models. This is an
+implementation refactor, not persistence-format migration. Local React state
+should remain for ephemeral display-only details such as input drafts, copied
+flags, hover state, and drag positions. Restorable protocol/session facts
+should flow through the model so normal play and restore use the same projection
+path.
 
 The motivation is reliability, not architectural ceremony: normal display and
 restore should be two ways of projecting the same session model. If a value needs
@@ -666,8 +851,8 @@ Game-associated entries use the accepted group's stable hand ordinal rather
 than the private protocol game ID. A current game coin disappears when that
 hand settles because the coin has been spent, while a newly created reward coin
 can remain visible. During handshake this list includes the predicted channel
-coin and, once available, the local funding coin whose spend emitted the extra
-conditions. Coin parent IDs are protocol ancestry and are not displayed.
+coin as soon as Rust can derive it. Coin parent IDs are protocol ancestry and
+are not displayed.
 
 During the short interval after the user accepts a session — before
 `GameSession` has reported its first live model, and also while a prior finished
@@ -692,6 +877,10 @@ persists, sends, and replays its complete-close message until the peer ACKs it,
 while Rust reports `session_disposition: AwaitOutboundTerminal` so React keeps
 the controller alive even if the channel snapshot becomes resolved. After the
 ACK, Rust sets `session_disposition: Abandoned` while retaining the actual channel status.
+The live transport envelope binds that command to its exact frame bytes,
+message number, sent state, and ACK state. Reload reuses the bound unacknowledged
+frame or, when the ACK was already persisted, completes the still-pending Rust
+command without allocating or replaying another frame.
 It does not wait for the peer’s on-chain
 publication or confirmation. A shutdown without the flag observes the normal
 cooperative grace period before offering **Go On-Chain**. The same Rust
@@ -720,22 +909,14 @@ immediately even if asynchronous enrichment has not yet derived the game
 coin’s hex ID. A stale resolution preserves its reported channel change
 balances and continues to show any remaining classified hands.
 
-**Pre-game saves and the boot marker:** A durable game session is anything with
-`serializedGameSession` or `pairingToken` (`isResumable`). Those writes set the
-`localStorage` boot marker (`appState_savedSession`) automatically.
-
-Pre-game wallet connection is different: `Shell` calls `markSavedSession()` when
-the wallet finishes connecting, then `saveSession({ blockchainType })`. The
-marker is what forces Resume / Start Over on reload even before a game session exists.
-Preference-only / non-resumable IndexedDB writes must **not** clear that marker —
-otherwise a wallet reconnect would restore `blockchainType` with no dialog.
-`peekSession()` treats marker + `blockchainType` (or leftover WalletConnect
-storage) as resumable pre-game state. `blockchainType` alone, without a marker,
-is not enough (it is preserved across normal `clearSession()`).
-
-Unsupported IndexedDB schema versions are deleted, but the marker is kept so the
-next boot still shows Resume / Start Over instead of silently booting into
-leftover preferences.
+**Pre-game saves and the boot marker:** The aggregate is resumable when it has
+connection preferences, a session phase, wallet obligations, or rejection
+transports. `localStorage`'s `appState_savedSession` is only a boot hint; the
+strict aggregate remains authoritative. Wallet connection writes
+`preferences.blockchainType` through `StorageRepository` and marks the app
+resumable even before a game exists. Normal `clearSession()` preserves valid
+common state and unresolved obligations; hard reset is the destructive path.
+No unsupported app format is decoded or deleted automatically.
 
 #### Boot state machine
 
@@ -744,23 +925,23 @@ fetch the module and binary CLVM presets, then bind the protocol game
 identities calculated by the package build. Handshake uses that already-loaded
 module for BLS identity only.
 
-On page load, `Shell.tsx` runs a boot sequence that determines which dialog
-(if any) to show before the app becomes interactive. The initializer never
-claims the tab lease (that would fence other tabs) and never blocks the dialog
-on IndexedDB:
+On page load, Shell delegates storage/recovery ownership to
+`BootRecoveryBoundary`. It completes a pending owned-storage wipe and visible
+read-only IndexedDB inspection before choosing recovery UI. Hub and wallet
+promises are not part of this local boundary. Resume/takeover use one atomic
+claim-and-read transaction over coordination plus `application-state/current`,
+followed by one strict aggregate rehydrate:
 
 ```
 hasSavedSessionMarker()?
                  │
-                 ├─ yes → show Resume / Start Over (hydrate IndexedDB into the
-                 │         in-memory cache in the background so incidental
-                 │         preference patches cannot clobber a durable cradle)
+                 ├─ yes → inspect IndexedDB → show Resume / Start Over
                  │       │
                  │       ├─ Start Over → hardReset(), reload
                  │       │                (separate "Starting over…" UI state;
                  │       │                 does not share the Resume spinner)
                  │       │
-                 │       └─ Resume → peekSession() / load IndexedDB
+                 │       └─ Resume → claim and read aggregate
                  │           │
                  │           ├─ load failure / unsupported → keep dialog open
                  │           │   with loadError; re-arm the marker
@@ -768,32 +949,51 @@ hasSavedSessionMarker()?
                  │           └─ save loaded → is there a lease conflict?
                  │               │
                  │               ├─ Yes → show Take Over dialog
-                 │               │   ├─ Take Over → claimLease(), restore
+                 │               │   ├─ Take Over → claim + rehydrate, restore
                  │               │   └─ Close Tab → dead
                  │               │
-                 │               └─ No → claimLease(), restore
+                 │               └─ No → claim + rehydrate, restore
                  │
-                 ├─ no marker, lease conflict (another tab is active)
+                 ├─ no marker, ownership conflict (another tab is active)
                  │   → show Take Over dialog (save: null)
                  │
                  └─ no marker, no conflict
-                     → claimLease(), ready (fresh start)
+                     → claim + rehydrate, ready (fresh start)
 ```
 
 **Start over hard reset:** Start over is deliberately not graceful cleanup. It
 is the escape hatch for garbled local state, so it must not deserialize saved
 state, reconnect to services, preserve preferences, or otherwise interpret the
-current session. The handler tears down live hub/wallet sockets (so
-IndexedDB deletes are not blocked), awaits `hardReset()`, and reloads the page.
+current session. The handler tears down live hub/wallet sockets (so IndexedDB
+deletes are not blocked), awaits `hardReset()`, and reloads only after every
+targeted deletion confirms success. A blocked or failed deletion leaves the
+shell on recovery UI with Retry Hard Reset guidance.
+
+All aggregate and reset mutations share one serialized same-tab coordinator.
+IndexedDB v5 keeps strict authority metadata in its coordination store: owner
+tab, monotonic write epoch, and reset epoch/status. Every mutation validates its
+captured authority in the same transaction as the aggregate write; localStorage
+is only an early UX conflict/reset hint. This
+orders `clearSession()` followed by an immediate unawaited save and prevents an
+old tab or retired runtime from committing after takeover. `hardReset()` durably
+advances the reset epoch before invalidating memory and deleting storage;
+pre-reset work cannot recreate the database or cached state afterward.
 `hardReset()`:
 
 1. Signals sibling tabs to stop persisting.
-2. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
+2. Erases every in-memory channel-funding operation and fee attachment, including
+   `retained-for-replay`; reset is intentionally destructive and does not run
+   graceful cancellation.
+3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
-3. Deletes every known app / WalletConnect IndexedDB database, then enumerates
-   and deletes any remaining origin databases. Deletion waits through
-   `onblocked` until `onsuccess`/`onerror`; hardReset does **not** time out and
-   abandon the wipe.
+4. Deletes only the exact owned app / WalletConnect manifest:
+   `chia-gaming-session`, `WALLET_CONNECT_V2_INDEXED_DB`, `walletconnect`, and
+   `walletconnect-v2`. Foreign same-origin databases, including names that merely
+   resemble WalletConnect databases, are preserved. `onsuccess` confirms
+   deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
+   keeps recovery UI open with **Retry Hard Reset**, and leaves a minimal
+   generalized pending-wipe marker for retry or next boot. Reload occurs only
+   after every deletion confirms success.
 
 **Full vs pre-game saves:** The resume/takeover handlers check
 `save.serializedGameSession` to distinguish full game saves from pre-game saves.
@@ -801,30 +1001,52 @@ A full save triggers `performResume` (WASM restore + hub reconnect). A
 pre-game save triggers `handleConnect(save.blockchainType)` to re-establish
 the wallet connection without attempting WASM deserialization.
 
-**Lease claiming:** The lease is never claimed during the boot initializer's
-read phase. It is only claimed inside resume/takeover handlers after the user
-has made a choice. Start over does not claim a lease; it wipes local browser
-state and reloads.
+**Authority claiming:** Read-only inspection never claims storage.
+`StorageRepository.claimAndRead` commits the durable epochs and returns the
+exact raw aggregate read in that transaction; `StorageRepository`,
+`ChannelFundingRuntime`, and `FeeAttachmentRuntime` then decode and attach
+their owner-specific records. Takeover kills the old authority rather than
+transferring callbacks or in-flight obligations. The new owner rehydrates only
+the exact claimed durable root; a late known reservation may be cancelled
+best-effort by its original provider but cannot mutate the new generation.
+`localStorage` is updated afterward as a UX hint. Only pending common
+identity, preference, and history changes survive before claim; phase, terminal,
+clear, rejection, and wallet-ledger mutations reject until authority exists.
+Semantic rejection and preserving-reset transactions remain repository-owned.
+Ordinary I/O failure is durability
+degradation; `StorageAuthorityLostError` retires the obsolete runtime and
+suppresses effects. Start over advances reset authority and wipes only the
+owned manifest.
 
 #### Restore path
 
 When the user chooses to resume a full save, `performResume` fires:
 
-1. Hydrate local UI state (game params, human history, WASM notification
-   history, and diagnostic log) from the save.
-2. Connect to the wallet backend (`beginConnect` + `finalize`).
-3. Connect to the hub. On `connection_status`, reconcile the hub's
+1. Decode the strict IndexedDB record, hydrate local UI state (game params,
+   human history, WASM notification history, and diagnostic log), and restore
+   the serialized WASM cradle.
+2. Publish the locally restored shell/game/dashboard immediately. Action
+   controls that need a wallet, hub, or blockchain remain gated.
+3. Independently connect to the wallet backend (`beginConnect` + `finalize`)
+   and attach blockchain recovery.
+4. Connect to the hub. On `connection_status`, reconcile the hub's
    pairing state against the save (see
    [Reconnect Reconciliation](#reconnect-reconciliation)).
-4. `sessionController.restoreSession` loads WASM and deserializes the cradle
-   via `WasmStateInit.deserializeGame()`, restores WASM/transport counters and
-   logs. `sessionModelFromSave` initializes the machine's game-owned `handState`
-   directly from the decoded save.
 5. Hub `registered` and a matching `peer_available` are the only boundaries
    that re-send un-acked peer messages. Pending chain transactions are re-submitted when
    the restored transaction manager attaches.
 
+Local IndexedDB+WASM presentation and external hub/wallet/blockchain recovery
+are deliberately separate authorities: external outage delays reconciliation
+and actions, not visibility of a valid local restore.
+
 #### Cleanup
+
+React and protocol cleanup are intentionally different. The committed layout
+effect in `useGameSession` activates the runtime, while its cleanup only
+clears the render callback. `SessionController.cleanup()` and
+`cleanupAfterTerminalFlush()` own protocol retirement, including retirement of
+the active runtime and detachment of controller resources.
 
 There are two different reset paths:
 
@@ -833,16 +1055,17 @@ There are two different reset paths:
   UI state.
 - `hardReset()` is destructive app-origin storage reset. It is used by Start
   over and intentionally wipes all local browser state without attempting
-  graceful wallet, hub, or session cleanup. Sync storage is cleared before
-  IndexedDB so markers/prefs cannot outlive the wipe; IndexedDB deletion is
-  awaited to completion (no give-up timeout).
+  graceful wallet, hub, or session cleanup. It erases every reservation,
+  advances the storage generation before deletion, clears sync storage before
+  IndexedDB so markers/prefs cannot outlive the wipe, and awaits IndexedDB
+  deletion to completion (no give-up timeout).
 
 The browser storage involved is split across three APIs:
 
 - `localStorage` holds small preferences, the resumable-session marker, tab
   lease, and reset coordination keys.
 - `sessionStorage` holds per-tab identity such as the tab id.
-- IndexedDB holds the raw binary `SessionSave`; WalletConnect may also maintain
+- IndexedDB holds the raw binary `DurableApplicationState`; WalletConnect may also maintain
   its own IndexedDB state after localStorage has been cleared.
 
 Because tabs and windows for the same origin can share `localStorage`, a hard
@@ -967,12 +1190,12 @@ Connected, keepalive timeout while WS is up → Inactive.
 
 **Peer indicator** (`PeerLiveness`) has four states:
 
-| State       | Meaning                                                                             | Tab mark |
-| ----------- | ----------------------------------------------------------------------------------- | -------- |
-| `connected` | Peer traffic received within the last 30 seconds, or the hub just reported `peer_available` | Link     |
-| `degraded`  | Hub `delivery_failure` / `peer_unavailable`, or no peer traffic for 30+ seconds             | Link (banner rail yellow) |
-| `dead`      | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship | Broken chain |
-| `null`      | No keepalive yet, or no active peer session                                         | Link if a session is live (handshake); broken chain if none/resolved |
+| State       | Meaning                                                                                     | Tab mark                                                             |
+| ----------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `connected` | Peer traffic received within the last 30 seconds, or the hub just reported `peer_available` | Link                                                                 |
+| `degraded`  | Hub `delivery_failure` / `peer_unavailable`, or no peer traffic for 30+ seconds             | Link (banner rail yellow)                                            |
+| `dead`      | Local go-on-chain or session rejection (FOAD) — terminal for this peer relationship         | Broken chain                                                         |
+| `null`      | No keepalive yet, or no active peer session                                                 | Link if a session is live (handshake); broken chain if none/resolved |
 
 `dead` is sticky: incoming messages from that peer are ignored. Only a new session start resets to `null`.
 
@@ -1028,7 +1251,7 @@ The player app is a single-page React application with one real iframe (the
 hub). Game session and game UI are React components within the same
 window, separated by hook boundaries rather than iframe boundaries. The design
 supports future extension to multiple game types and multiple simultaneous games,
-but the MVP is limited to one game at a time.
+but the MVP presents one logical hand at a time.
 
 ### Component Hierarchy
 
@@ -1147,12 +1370,61 @@ Shell manages wallet connections through two abstractions defined in
   endpoints at call time through `getCloudWallet*` getters, so UI-entered config
   takes effect without a rebuild.
 
-  Cloud Wallet's `createSpendWithExtraConditions` path directly creates the
-  message-bound pre-launcher or contribution coin; it does not insert an
-  OFFER_MOD settlement coin. The protocol child has amount
-  `contribution + opening fee` and emits `RESERVE_FEE`, so the mutation does
-  not also declare a native wallet fee. Cloud Wallet implements no separate
-  `createFeeSpend`.
+  Cloud Wallet funding uses persisted `createOffer` requests, matching the
+  WalletConnect funding contract: `offered` contains the requested funding
+  amount, `requested` is empty, and the protocol's conditions are serialized as
+  complete CLVM condition programs. Once the signature request is `SUBMITTED`,
+  the adapter returns both the bech32 offer and its offer ID. Rust decodes and
+  validates the offer; if validation requests another funding attempt, the
+  controller cancels the rejected persisted offer off chain to release its
+  channel-funding reservation. The wallet chooses the offer inputs, so Cloud no longer
+  selects or pins a funding coin in JavaScript.
+
+  `WalletOfferProvider` is a required discriminated capability, not optional
+  methods. Cloud is `recoverable-after-begin`: transport loss before the begin
+  response supplies a `signatureRequest` ID is persisted as
+  `best-effort-uncertain`, because no exact request can yet be reconciled. Once
+  a replacement begin yields that ID, the operation transitions to `creating`,
+  persists it, and immediately uses paired reconciliation; a request already
+  persisted with an ID resumes reconciliation without another begin.
+  `orphanRisk: 'pre-id-response-lost'` survives both paths and any eventual
+  created trade, preserving a typed warning that the unidentified first request
+  may still exist. Approval messages must match origin, popup source, and
+  canonical request ID, with exact cleanup. Deployed
+  WalletConnect is best-effort throughout because it lacks end-to-end create
+  idempotency and response-loss reconciliation. For either pre-ID Cloud
+  uncertainty or WalletConnect uncertainty, `WalletProviderRegistry` readiness
+  epochs launch exactly one automatic new attempt per later reconnect,
+  including after reload. There is no timer or immediate retry loop. A lost
+  successful response may orphan an offer or signature request, so the UI and
+  diagnostics retain an explicit orphan-risk warning even if a later attempt is
+  accepted.
+
+  The simulator mirrors provider-reservation semantics with synthetic trade
+  identities. Each synthetic fee offer reserves the exact input identity
+  selected for that offer. Submission terminalizes only the synthetic trade
+  whose exact bundle identity was acknowledged; another outstanding offer is
+  neither consumed nor released, and reusing an already reserved input is
+  rejected.
+
+  Cloud fee attachment is also offer-based. `createFeeSpend` creates a fee-only
+  offer with empty `offered`/`requested` arrays, the native `fee` field, and one
+  serialized `ASSERT_CONCURRENT_SPEND` targeting Rust's protocol coin. Unlike a
+  WalletConnect settlement offer, this shape already contains the reserve-fee
+  condition and fee deficit, so Rust normalizes it without adding a settlement
+  or nil-puzzle spend. Both shapes then pass through the same Rust checks for
+  target, amount, deficit, input overlap, aggregate signatures, expiry, and
+  combined consensus validity. Rejected or unusable Cloud fee offers are
+  cancelled off chain using their offer IDs. Cancellation is typed and complete
+  only when the Cloud signature request reaches a terminal success status;
+  transport unavailability and wallet rejection remain distinct durable
+  cleanup outcomes.
+
+  Cloud's wallet address, balance, consent, and offer operations remain on the
+  wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
+  Coinset GraphQL proxy and preserve the Coinset request and response shapes:
+  `get_blockchain_state`, `get_coin_record_by_name` /
+  `get_coin_records_by_names`, and `get_puzzle_and_solution`.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
@@ -1164,13 +1436,33 @@ Shell manages wallet connections through two abstractions defined in
   (the Wallet-tab editor in `Shell.tsx` and the Cloud Wallet connect modal's fee
   field) reject a nonzero fee below it. Zero (a free transaction) and
   floor-or-above are allowed. This is a floor below which a fee definitely cannot
-  work, not a guarantee of inclusion. Cloud-vs-Cloud is the pairing that most
-  needs it: neither peer has a wallet-built fee spend, so the entered fee is the
-  whole story, whereas a WalletConnect peer aggregates a real `createFeeSpend`
-  bundle. Both peers push the byte-identical funding bundle, so the node de-dups
-  the second arrival; `isBenignTransactionSubmitError` recognizes that
-  duplicate/`ALREADY_INCLUDING_TRANSACTION` as harmless, and a fee-rate rejection
-  is rewritten by `rewriteFeeRateRejection` into an actionable message.
+  work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
+  `createFeeSpend` makes a persisted signed offer whose wallet spend asserts the
+  Rust-specified target coin is spent concurrently and reserves the fee. Cloud
+  Wallet returns its native-fee offer instead. JavaScript passes
+  either tagged provider result opaquely to one Rust/WASM attachment operation.
+  Rust captures the configured amount, target, and explicit
+  `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,
+  so retries cannot silently change fee policy. Rust completes WalletConnect's
+  OFFER_MOD output into a spent nil-puzzle coin; validates the exact reserve,
+  deficit, target assertion, signatures (including legitimate
+  `AGG_SIG_UNSAFE` pairs), and lack of protocol input overlap for either
+  provider; aggregates the bundles; and consensus-checks the result. If the
+  wallet source cannot be obtained or validated, the same Rust finalization
+  boundary deliberately returns the original fee-free bundle with a warning.
+  The host never chooses that fallback or derives fee policy or target coins
+  from bundle names, puzzle hashes, or spend ordering.
+
+  Wallet adapters make one submission attempt and return a typed outcome.
+  Structured success and a response identifying the exact same transaction as
+  already included are idempotent acknowledgement. An RPC that cannot complete
+  because the wallet connection, relayer, or request transport is unavailable
+  returns `unavailable`; an error response from the wallet returns `rejected`.
+  The WalletConnect RPC layer preserves this provenance, and adapters do not
+  infer retry policy from consensus, mempool, or coin-status text. Local
+  conversion or finalization errors also retain the Rust intent rather than
+  retiring it. No adapter owns a timer retry loop, so an unavailable submission
+  cannot block a later urgent transaction.
 
 **Design principle:** Shell must not branch on `blockchainType` for connection
 logic. All differences between backends live behind the interface. A single
@@ -1195,7 +1487,7 @@ and poll interval; the rest of the flow is generic.
    forced refresh. Network and server errors leave the refresh token in place so
    a retry can resume, rather than demoting a momentary outage into a full popup
    login.
-5. If `setup.skipQr` is set *with* fields (Cloud Wallet, no stored auth), Shell
+5. If `setup.skipQr` is set _with_ fields (Cloud Wallet, no stored auth), Shell
    shows `ConnectionSetupModal` and does **not** call `finalize()` from silent
    `handleConnect` or `performResume`. Auto-finalize would open an OAuth popup
    or fail when no client id is configured; the user must submit the form (or
@@ -1222,14 +1514,13 @@ exception: `beginConnect` returns `skipQr` plus `fields`, so silent reconnect
 and `performResume` keep `ConnectionSetupModal` (with a wallet alert) rather
 than calling `finalize()` with no values.
 
-**Session persistence:** `blockchainType` is written via
-`saveSession({ blockchainType })` as soon as the wallet connection completes,
-together with an explicit `markSavedSession()` so reload shows Resume / Start
-Over even before a WASM game session exists. Preference-only writes must not clear
-that marker. Once the full game session is running, `useGameSession` takes over
-persistence and includes `blockchainType` in every subsequent save alongside the
-WASM and JS state. `clearSession()` preserves `blockchainType` as part of normal
-session lifecycle cleanup; `hardReset()` is the destructive path that wipes it.
+**Session persistence:** Wallet connection updates
+`DurableApplicationState.preferences.blockchainType` through
+`StorageRepository` and marks the app resumable before a WASM session exists.
+Once play begins, the same aggregate checkpoint includes that preference,
+session presentation, reliable transport, opaque WASM cradle, wallet
+obligations, and rejection transports. `clearSession()` preserves common state
+and valid unresolved obligations; `hardReset()` wipes the whole aggregate.
 
 **Intentional deviation:** The simulator returns `ConnectionSetup.fields`
 because there is no external wallet to scan the QR code. This triggers the
@@ -1247,11 +1538,25 @@ host-side coordinator for chain observations. It separates three concerns:
    additions arrive as `watchCoins` deltas from WASM drain results.
    `snapshot_watched_coins()` is only the restore/attach snapshot of the durable
    WASM interest set, not the per-sweep source of truth.
-2. **Scheduling** — `BlockchainPoller` owns one `AsyncJobQueue` per active
-   backend. That queue serializes both background polling and foreground wallet
-   actions exposed through `blockchain.rpc`, applying the backend's requested
-   inter-request gap. `AsyncPollingScheduler` runs the repeating height,
-   balance, and coin-sweep jobs by enqueueing them onto that same lane.
+2. **Scheduling** — `BlockchainPoller` owns two independent serialized
+   `AsyncJobQueue` lanes per active backend: one for reads and background polls,
+   and one for wallet mutations. A hung provider read therefore cannot block a
+   spend, offer, selection, or other mutation. Both lanes pass every adapter
+   request through one global request-start gate, which applies the backend's
+   requested gap between starts without waiting for prior requests to finish.
+   `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
+   work on the read lane. On disconnect, active reads are abandoned and queued
+   mutations are cleared. An active mutation is allowed to finish; if it was an
+   offer-creating call whose result became stale, the poller uses its trade ID
+   to cancel the exact provider reservation before rejecting the old-generation result.
+   A new generation may run immediately even if an unabortable old read never
+   resolves. Each request revalidates its connection epoch after the shared
+   start gate and after adapter completion, so stale work cannot start late or
+   publish a late old-generation result. Read polling fans session delivery out
+   with `allSettled`: one session's callback failure does not block healthy
+   sessions and does not trigger global adapter backoff. Wallet mutations start
+   only after the claimed aggregate is installed; malformed aggregate state
+   rejects them before the provider is called.
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
@@ -1262,6 +1567,22 @@ Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
+Inside Rust, each height or coin-state observation is transactional over a deep
+serialized clone of the durable `TransactionManager` and nested `GameSession`.
+Only a successful callback replaces that durable state; pending events,
+watch/unwatch deltas, cradle output, and other skipped bookkeeping are journaled
+separately and restored on failure or prepended on commit. This boundary covers
+protocol mutations as well as effects, and callback CLVM values that survive it
+own serialized `Program` bytes rather than scratch-allocator pointers. The
+transient journal contains no test state; stale-unroll snapshots are owned by
+the simulator test harness and passed explicitly.
+
+During channel opening, each handshake role registers the predicted channel
+coin as soon as its identity is known. The wallet funding input is validated as
+part of the assembled transaction and retained by the active handshake only for
+dashboard presentation; the setup dashboard surfaces both identities, but only
+the channel coin is registered as a watch. Only observing the channel coin
+itself activates the channel.
 
 When WASM processing registers new watched coins, `SessionController` applies
 the `watchCoins` deltas to `BlockchainPoller`. On restore, the deserialized
@@ -1279,11 +1600,28 @@ its Rust-issued command until the peer ACKs it, then asks Rust to finalize.
 Only `terminal` discards queued protocol work and watch-coin updates and stops
 the `BlockchainPoller` and keepalive timer. Its retained `ChannelStatus`
 presentation event updates the `SessionModel`. Shell then stages one terminal
-snapshot, awaits the controller's pending durability work and the IndexedDB
-write, updates the resume marker, and only then destroys the controller and
-releases the peer relay/hub busy state. If either durability step fails, the
-staged terminal candidate is discarded while the live cache and controller
-remain owned and retryable; teardown is not attempted.
+snapshot only after terminal quiescence repeatedly drains controller events,
+persistence, reliable transport, and end-to-end transaction submission
+promises. Those promises cover persistence-gated launch, ordered wallet
+delivery, Rust acknowledgement or rejection, and fee-offer cleanup. The
+controller takes the terminal presentation from the authoritative runtime model
+and synchronously detaches and retires that runtime in the same continuation,
+so no queued mutation can enter between capture and sealing. The sealed
+controller rejects and retires every incoming runtime until controller cleanup,
+so a renderer remount cannot reclaim protocol ownership during the terminal
+write.
+Terminal capture installs the aggregate in the repository root before attempting IndexedDB. An
+ordinary write failure uses the existing one-per-episode durability warning,
+then still freezes presentation, destroys the controller, and releases the peer
+relay/hub busy state. The in-memory terminal root remains dirty for a later
+aggregate checkpoint without replaying finalization. Storage authority loss or
+missing authority rejects without publishing a marker, result, or teardown;
+both errors mean the old owner dies. A new claimant rehydrates the latest
+flushed durable whole root and independently finalizes, with no snapshot or
+transient work transferred across generations. Unresolved reservation creation
+or identification, funding material still owed to Rust, and other unresolved
+protocol work remain capture blockers. Identified funding or fee cancellation
+residue remains durable and may survive terminal capture.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes
@@ -1373,7 +1711,7 @@ utilities in `front-end/src/util/jsonSafe.ts`:
   literals (via `toString()` directly into the JSON string), avoiding both the
   `JSON.stringify` BigInt crash and the precision loss of `Number()` conversion.
 - `jsonParseLossless` / `jsonStringifyLossless` — JSON-only helpers used where
-  lossless JSON is explicitly required. They are not the `SessionSave`
+  lossless JSON is explicitly required. They are not the application-state
   persistence format.
 
 #### UX BigInt policy
@@ -1391,11 +1729,16 @@ CSS pixel values, `setTimeout` delays, and similar DOM/browser APIs. These
 conversions happen at the call site with an explicit `Number()` cast — the
 `bigint` remains the source of truth.
 
-**Persistence.** `SessionSave` fields including `version`, `messageNumber`,
-`remoteNumber`, `timestamp`, and all game-specific state use `bigint`.
+**Persistence.** Integer fields in `DurableApplicationState`, including
+`version`, `messageNumber`, `remoteNumber`, timestamps, and game-specific state,
+use `bigint`.
 Bencodex represents those integers and raw byte strings directly. IndexedDB
 stores one salt-prefixed, masked `Uint8Array` containing the bencodex record;
 there is no tagged-JSON save envelope and no structured-clone object graph.
+Rust first converts internal `usize` channel state numbers to checked `u64`.
+WASM exposes all three optional channel status fields—current, unrolling, and
+preempting state number—as `bigint`; number-valued decodes are rejected.
+`number` conversion is confined to external APIs that explicitly require it.
 
 **View layer boundary.** React components that render or edit a value receive
 view-safe props: decimal strings for money and CLVM integers, or small `number`s
@@ -1435,11 +1778,14 @@ matches. The player app never reads from or writes to the iframe's DOM.
 
 The `GameSession` component manages one game session (a channel with a series of
 individual hands). `useGameSession` is a thin React interpreter boundary: it
-obtains the `SessionController`, creates one `SessionMachineRuntime`, subscribes
-to host events, dispatches typed machine events, attaches/detaches the
-blockchain poller, and returns selector-derived view data plus dispatch
-callbacks. It does not contain notification policy, command interpretation,
-durable game reduction, or persistence assembly.
+obtains the `SessionController` and constructs one inert
+`SessionMachineRuntime`. Its committed layout effect installs the render
+callback and activates the lease; layout-effect cleanup clears only that
+callback. The hook also subscribes to host events, dispatches typed machine
+events, attaches/detaches the blockchain poller, and returns selector-derived
+view data plus dispatch callbacks. Controller cleanup, not React cleanup, owns
+protocol retirement. The hook does not contain notification policy, command
+interpretation, durable game reduction, or persistence assembly.
 
 When Shell supplies a finalized terminal presentation, `useGameSession`
 atomically projects every model-derived field from that model, replaces the live
@@ -1455,15 +1801,16 @@ The cohesive session modules own those responsibilities:
 - `sessionMachine.ts` is the pure root reducer.
 - `sessionMachineNotifications.ts` reduces normalized WASM notifications.
 - `sessionMachineCommands.ts` maps UI events to typed commands.
-- `sessionMachineEffects.ts` enforces authority → commands/save → React
-  ordering; saves combine WASM cradle bytes with machine-owned `handState`.
+- `sessionMachineRuntime.ts` owns the one dirty/coalesced drain, reaches a fixed
+  point, snapshots and writes once, then projects React state and releases
+  captured effects.
 - `sessionMachineInterpreter.ts` performs controller calls, timers,
   persistence, and async enrichment.
-- `sessionMachinePersist.ts` assembles and writes snapshots at effect time.
+- `sessionMachinePersist.ts` synchronously assembles whole-root snapshots.
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
 - `session/incomingProposal.ts` validates the generic `ProposalMade` bridge,
   retains its exact opaque Bencodex parameters, and assembles
-  `ProposalGroupModel`. Rust alone applies factory semantics.
+  `PendingProposalModel`. Rust alone applies factory semantics.
 
 The controller still waits for its normal macrotask boundary, then drains one
 active FIFO to quiescence so synchronously re-entrant WASM effects enter the
@@ -1567,14 +1914,15 @@ details.
 In-game and between-hand events pushed to the game-scoped FIFO queue
 (`pushGame`). Overlays appear at `z-40` within the game area.
 
-| Kind                | Source                                                                     |
-| ------------------- | -------------------------------------------------------------------------- |
-| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice) |
-| `insufficient-bal`  | `InsufficientBalance` notification                                         |
+| Kind                | Source                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------ |
+| `proposal-rejected` | `ProposalCancelled` with `CancelledByPeer` (peer-side cancellation notice)                 |
+| `insufficient-bal`  | `InsufficientBalance` notification                                                         |
 | `move-rejected`     | `MoveRejected` — recoverable local input rejection (for example Krunk `not_in_dictionary`) |
 
 Settlement banner labels come from `SETTLEMENT_OUTCOME_LABELS` in
-`front-end/src/lib/settlement.ts` (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
+`front-end/src/lib/settlement.ts` (see
+[Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)
 and `CONNECTIVITY.md` "Settlement labels"). Adverse outcomes are flagged via
 `isErrorSettlementOutcome` on `GameTerminalInfo.outcome`; terminal details stay
 in host dashboard/status surfaces rather than creating a second queue entry.
@@ -1584,12 +1932,12 @@ in host dashboard/status surfaces rather than creating a second queue entry.
 These drive game proposal and acceptance flow. They are consumed by
 the notification reducer and never forwarded raw to the game UI:
 
-- `ProposalMade` — one notification per factory group; carries the first ID and
-  always-non-empty ordered `group_ids` (singleton ⇒ `[id]`), and triggers
-  group auto-accept
+- `ProposalMade` — one notification per pending terms record; carries an
+  endpoint-local proposal ID and triggers proposal auto-accept
 - `ProposalAcceptedGroup` — creates one game-owned hand from all ordered
-  `{ id, player_a_contribution, player_b_contribution, our_turn }` members and
-  advances `handKey`
+  `{ id, player_a_contribution, player_b_contribution, our_turn,
+readable_parameters }` members, identifies and consumes the endpoint-local
+  proposal ID, and advances `handKey`
 
 ### Normalized game inputs
 
@@ -1603,6 +1951,9 @@ Raw move and message readables remain serialized bytes through the WASM
 notification and session-event layers. When constructing a package update, the
 host maps the private protocol game ID to its stable factory-ordered
 `memberIndex` and deserializes the readable once into a CLVM `Program`.
+Factory-approved `readable_parameters` follows the same byte-to-`Program`
+boundary and initializes each accepted member; requested proposal parameters
+are not reused as approved economics.
 `hand-ended` contains only that member index and normalized settlement outcome.
 Reward amounts, coin IDs, labels, and abnormal-termination explanations remain
 in the host's keyed instances and status surfaces. The package stores the
@@ -1616,15 +1967,20 @@ shared error UX but cannot roll back already committed canonical game state.
 
 ## Single-Hand Enforcement
 
-The WASM layer supports multiple simultaneous games (games are tracked by
-`GameID`), but the frontend currently enforces **one game at a time**. This is
-a deliberate architectural choice: single-hand enforcement lives almost entirely
-in JavaScript, keeping the WASM/Rust layer multi-hand-ready for future use. The
-game UI component contract does not change — each game instance behaves as if
-it is the only game. When multi-handing is added, the session component gains
-a multiplexer (game ID → component mapping) and the JS-side guards are relaxed.
+The WASM layer supports multiple simultaneous proposals and games, but the
+frontend currently presents **one logical hand at a time**. A hand may already
+contain multiple factory-ordered games—Krunk has two—so this policy must not be
+implemented as a one-`GameID` protocol restriction. Single-hand enforcement
+lives in JavaScript, keeping the WASM/Rust layer multi-hand-ready. When
+multi-handing is added, the session component gains hand selection/multiplexing
+and the JS-side admission and presentation guards are relaxed.
 
 ### JS-side guards
+
+**Proposal admission guard** — the frontend admits at most one uncancelled
+proposal across local and peer origins. Entries already queued for cancellation
+do not occupy the slot. This is intentional product policy; Rust continues to
+support multiple pending proposals (`MAX_PROPOSALS` is 100).
 
 **Send guard** — the command interpreter checks the current machine authority
 and does not call `SessionController.proposeGame` while
@@ -1633,17 +1989,19 @@ new hand while one is in progress without a mirror ref.
 
 **Atomic factory proposals** — the proposal command constructs one request with
 `game_type`, game-specific Bencodex `parameters`, and a shared game timeout.
-`SessionController.proposeGame` sends that single request to WASM and stores all
-returned IDs. The registered deterministic factory decides cardinality:
-Calpoker and Space Poker return one ID; Krunk returns two ordered IDs. On the
-receive side there is exactly one `ProposalMade` for the group, so the frontend
-presents one logical proposal without deduplicating per-member notifications.
-Accepting or cancelling via any member ID expands to the full group in WASM,
-which emits one ordered per-member wire action for acceptance or cancellation.
+`SessionController.proposeGame` sends that request to WASM and stores its
+endpoint-local proposal ID. No game IDs or factory members exist yet. At
+acceptance, both peers run the registered deterministic factory in wire order;
+Calpoker and Space Poker create one game and Krunk creates two ordered games.
+`ProposalAcceptedGroup` correlates the endpoint-local proposal ID with the
+complete generated member list. Accept and cancel commands address the proposal
+ID, while subsequent game commands address generated `GameID`s.
 
-**Receive guard** — When a `ProposalMade` notification arrives while a game is
-active, the notification reducer emits `controller-cancel-proposal` rather than
-caching it.
+**Receive guard** — When `ProposalMade` arrives while any uncancelled local or
+peer proposal exists, the notification reducer emits
+`controller-cancel-proposal` for the new proposal without admitting it. A
+proposal arriving during an active hand is likewise hidden and queued for
+definitive cancellation.
 
 **First-game proposal** — The initiator proposes the first game exactly once,
 triggered by `ChannelStatus { state: Active }` while the machine's
@@ -1657,14 +2015,14 @@ Two proposal constraints live in WASM because they arise from the potato
 protocol's asynchronous nature and cannot be deferred to JS:
 
 1. **`SupersededByIncoming`** — When a batch arrives containing a
-   `ProposeGroup` from the peer, any locally queued `QueuedProposalGroup`
-   actions are removed from the `game_action_queue`. The queued groups were
+   `Propose` from the peer, any locally queued `QueuedProposal`
+   actions are removed from the `game_action_queue`. The queued proposals were
    built against a now-stale state (the incoming batch carries the potato and
    the definitive state). WASM emits one `ProposalCancelled { reason:
-SupersededByIncoming }` for each removed group, keyed by its first ID.
+SupersededByIncoming }` for each removed proposal, keyed by endpoint-local ID.
 
-2. **`PeerProposalPending`** — When JS calls `propose_games` while an
-   unresolved peer proposal exists in `proposed_games`, WASM rejects
+2. **`PeerProposalPending`** — When JS calls `propose` while an
+   unresolved peer proposal exists in the proposal ledger, WASM rejects
    immediately with `ProposalCancelled { reason: PeerProposalPending }`.
    This prevents silently cancelling the peer's proposal as a side effect
    of proposing our own.
@@ -1674,51 +2032,55 @@ proposal intent and the peer's — hitting at different points in the potato
 cycle. In case 1, our proposal was queued but unsent when the peer's batch
 arrived. In case 2, the peer's proposal was already recorded when JS tried to
 propose. The frontend handles both identically: stash the cancelled terms in
-the machine-owned durable `betweenHand.pendingRetryTerms` field and wait for the
+the machine-owned durable `betweenHand.pendingRetryHandProposal` field and wait for the
 incoming peer proposal to surface
 before deciding what to do (see
 [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)).
 
 Everything else in WASM — `MAX_PROPOSALS` (100), nonce parity/monotonicity,
 factory/member consistency, positive shared timeout validation, aggregate
-balance preflight, and all-or-none group acceptance — are validation/safety
+balance preflight, and all-or-none generation of accepted members — are validation/safety
 checks, not single-hand enforcement. They exist to prevent protocol violations,
 not to limit concurrency.
 
 ## Key Files
 
-| File                                             | Purpose                                                                                                                 |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `front-end/src/components/Shell.tsx`             | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs                                        |
-| `front-end/src/components/GameSession.tsx`       | Game session UI: header, coin status, game area, overlays                                                               |
-| `front-end/src/hooks/useGameSession.ts`          | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                  |
-| `front-end/src/lib/session/sessionMachine*.ts`   | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`      | Canonical strict-v21 phase decoder plus primitive, between-hand/proposal, and phase-payload codecs; accepted records always produce a normalized `SessionModel` |
-| `front-end/src/lib/session/sessionSnapshot.ts`   | Canonical `SessionModel` → v21 presentation snapshot encoder                                                            |
-| `front-end/src/lib/gameRegistry.ts`              | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                    |
-| `front-end/src/lib/session/incomingProposal.ts`  | Generic opaque `ProposalMade` bridge validation and proposal-group assembly                                 |
-| `front-end/src/lib/gameMountRegistry.tsx`        | One frozen/live discriminated mount dispatched through the selected package                                               |
-| `games/calpoker/ui/useCalpokerHand.ts`          | Calpoker hook: five-step protocol, card parsing, move submission                                                     |
-| `front-end/src/hooks/SessionController.ts`       | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence   |
-| `front-end/src/hooks/WasmStateInit.ts`           | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                            |
-| `front-end/src/lib/gameIdentities.ts`            | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                  |
-| `front-end/src/hooks/blobSingleton.ts`           | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence |
-| `front-end/src/services/PeerSession.ts`          | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                          |
-| `front-end/src/hooks/save.ts`                    | v21 cache/write and live/terminal lifecycle facade                                                                      |
-| `front-end/src/hooks/saveCoordination.ts`        | Resume markers, active-tab lease, and cross-tab persistence fencing                                                     |
-| `front-end/src/hooks/saveHardReset.ts`           | Hard-reset and WalletConnect browser-storage cleanup                                                                     |
-| `front-end/src/hooks/savePreferences.ts`         | Local preference encoding and decoding                                                                                    |
-| `front-end/src/lib/session/indexedDb.ts`         | IndexedDB session record read/write/delete                                                                              |
-| `front-end/src/lib/session/model.ts`             | Session model + `selectGameDashboardView` / `selectStatusBarBalances`                                                   |
-| `front-end/src/lib/reactPropSafe.ts`             | Prop-safe cloning that preserves typed arrays / dense byte objects                                                      |
-| `front-end/src/hooks/BlockchainPoller.ts`        | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots                            |
-| `front-end/src/lib/AsyncScheduler.ts`            | Generic serialized async queue and repeating polling loop                                                               |
-| `front-end/src/hooks/FakeBlockchainInterface.ts` | Simulator blockchain backend: WebSocket to local sim, auto-reconnect                                                    |
-| `front-end/src/hooks/RealBlockchainInterface.ts` | WalletConnect blockchain backend: RPC via WalletConnect sessions                                                        |
-| `front-end/src/hooks/WalletConnectRpc.ts`        | WalletConnect RPC formatting/normalization helpers                                                                      |
-| `front-end/src/services/HubConnection.ts`        | Game relay WebSocket client (`/ws/game`)                                                                                |
-| `front-end/src/types/ChiaGaming.ts`              | TypeScript types for WASM interface and game data                                                                       |
-| `hub/hub-frontend/src/hub.tsx`                   | Hub UI; reports the chosen alias through the hub's internal WebSocket interface                                         |
-| `hub/hub-frontend/src/useHubSocket.ts`           | Hub channel hook (`useHubSocket`): hub WebSocket join/challenge/alias messaging                                         |
-| `hub/hub-service/src/index.ts`                   | Hub server: hub, challenges, addressed message relay, liveness sweep                                                    |
-| `hub/hub-service/src/hubState.ts`                | Hub state: players, challenges                                                                                          |
+File boundaries follow runtime ownership; decomposition is used where it
+removes competing state owners or duplicate lifecycle mechanisms.
+
+| File                                                 | Purpose                                                                                                                                      |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `front-end/src/components/Shell.tsx`                 | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs                                                             |
+| `front-end/src/components/GameSession.tsx`           | Game session UI: header, coin status, game area, overlays                                                                                    |
+| `front-end/src/hooks/useGameSession.ts`              | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                        |
+| `front-end/src/lib/session/sessionMachine*.ts`       | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
+| `front-end/src/lib/session/persistence*.ts`          | Canonical strict aggregate-v5 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`       |
+| `front-end/src/lib/session/sessionSnapshot.ts`       | Canonical `SessionModel` → aggregate presentation snapshot encoder                                                                           |
+| `front-end/src/lib/gameRegistry.ts`                  | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                               |
+| `front-end/src/lib/session/incomingProposal.ts`      | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                         |
+| `front-end/src/lib/gameMountRegistry.tsx`            | One frozen/live discriminated mount dispatched through the selected package                                                                  |
+| `games/calpoker/ui/useCalpokerHand.ts`               | Calpoker hook: five-step protocol, card parsing, move submission                                                                             |
+| `front-end/src/hooks/SessionController.ts`           | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence                        |
+| `front-end/src/hooks/WasmStateInit.ts`               | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                                                        |
+| `front-end/src/lib/gameIdentities.ts`                | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                                          |
+| `front-end/src/hooks/blobSingleton.ts`               | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                      |
+| `front-end/src/services/PeerSession.ts`              | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                               |
+| `front-end/src/lib/session/storageRepository.ts`     | Aggregate and authority owner: atomic claim/read, generation-fenced root mutation, serialized exact write, and reset                         |
+| `front-end/src/lib/session/channelFundingRuntime.ts` | Channel-funding-only provider orchestration, material delivery, confirmation/timeout retirement, recovery, and exact cleanup                 |
+| `front-end/src/lib/session/feeAttachmentRuntime.ts`  | Fee-attachment-only reservation, replay retention, Rust-retirement handling, recovery, and exact cleanup                                     |
+| `front-end/src/hooks/saveCoordination.ts`            | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                          |
+| `front-end/src/hooks/saveHardReset.ts`               | Hard-reset and WalletConnect browser-storage cleanup                                                                                         |
+| `front-end/src/lib/session/indexedDb.ts`             | IndexedDB v5 coordination and strict aggregate record transactions                                                                           |
+| `front-end/src/lib/session/model.ts`                 | Session model + `selectGameDashboardView` / `selectStatusBarBalances`                                                                        |
+| `front-end/src/lib/reactPropSafe.ts`                 | Prop-safe cloning that preserves typed arrays / dense byte objects                                                                           |
+| `front-end/src/hooks/BlockchainPoller.ts`            | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots                                                 |
+| `front-end/src/lib/AsyncScheduler.ts`                | Generic serialized async queue and repeating polling loop                                                                                    |
+| `front-end/src/hooks/FakeBlockchainInterface.ts`     | Simulator blockchain backend: WebSocket to local sim, auto-reconnect                                                                         |
+| `front-end/src/hooks/RealBlockchainInterface.ts`     | WalletConnect blockchain backend: RPC via WalletConnect sessions                                                                             |
+| `front-end/src/hooks/WalletConnectRpc.ts`            | WalletConnect RPC formatting/normalization helpers                                                                                           |
+| `front-end/src/services/HubConnection.ts`            | Game relay WebSocket client (`/ws/game`)                                                                                                     |
+| `front-end/src/types/ChiaGaming.ts`                  | TypeScript types for WASM interface and game data                                                                                            |
+| `hub/hub-frontend/src/hub.tsx`                       | Hub UI; reports the chosen alias through the hub's internal WebSocket interface                                                              |
+| `hub/hub-frontend/src/useHubSocket.ts`               | Hub channel hook (`useHubSocket`): hub WebSocket join/challenge/alias messaging                                                              |
+| `hub/hub-service/src/index.ts`                       | Hub server: hub, challenges, addressed message relay, liveness sweep                                                                         |
+| `hub/hub-service/src/hubState.ts`                    | Hub state: players, challenges                                                                                                               |

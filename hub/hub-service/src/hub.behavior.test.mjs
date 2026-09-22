@@ -4,7 +4,6 @@ import crypto from 'node:crypto';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createServer } from 'node:net';
 import { test } from 'node:test';
 
 import bencodex from 'chia-gaming-bencodex';
@@ -32,29 +31,16 @@ function playerId(bytes) {
   return `p_${Buffer.from(bytes).toString('hex')}`;
 }
 
-async function getFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : 0;
-      server.close(() => resolve(port));
-    });
-  });
-}
-
 async function startHub(env = {}) {
-  const port = await getFreePort();
   const dir = mkdtempSync(path.join(tmpdir(), 'hub-behavior-'));
   const child = spawn(
     process.execPath,
-    ['dist/index-rollup.cjs', '--self', `http://127.0.0.1:${port}`, '--dir', dir],
+    ['dist/index-rollup.cjs', '--self', 'http://127.0.0.1:0', '--dir', dir],
     {
       cwd: path.resolve(import.meta.dirname, '..'),
       env: {
         ...process.env,
-        PORT: String(port),
+        PORT: '0',
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
         HUB_MAX_PLAYERS: '1000',
@@ -80,15 +66,16 @@ async function startHub(env = {}) {
     },
   );
   let output = '';
-  await new Promise((resolve, reject) => {
+  const port = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`hub did not start:\n${output}`));
     }, 5_000);
     const onData = (chunk) => {
       output += chunk.toString();
-      if (output.includes(`Server running on port ${port}`)) {
+      const match = output.match(/Server running on port ([0-9]+)/);
+      if (match) {
         clearTimeout(timer);
-        resolve(undefined);
+        resolve(Number(match[1]));
       }
     };
     child.stdout.on('data', onData);

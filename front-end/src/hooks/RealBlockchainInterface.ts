@@ -1,11 +1,23 @@
-import { rpc, WC_INTER_REQUEST_MS } from '../hooks/WalletConnectRpc';
+import {
+  rpc,
+  WC_INTER_REQUEST_MS,
+  WalletConnectResponseError,
+  WalletConnectTransportError,
+} from '../hooks/WalletConnectRpc';
 import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletOfferCompletion,
+  WalletOfferProvider,
+  WalletOfferOperation,
+  WalletOfferRequest,
+  WalletOfferCancellationOutcome,
+  WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
+import { isExactDuplicateTransaction } from '../util/walletSubmit';
 
 import { log } from '../services/log';
 import {
@@ -16,19 +28,20 @@ import {
   toHexString,
 } from '../util';
 import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
-import { ChiaMethod } from '../constants/wallet-connect';
+import { ChiaMethod, getChainId } from '../constants/wallet-connect';
 import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
 
-const PUSH_RETRY_DELAY = 30000;
 const PEER_READINESS_POLL_MS = 5000;
 const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
+const ASSERT_CONCURRENT_SPEND = 64n;
 const RESERVE_FEE = 52n;
 const RECEIVE_MESSAGE = 67n;
+const MAX_WALLET_CANCELLATION_ERROR_LENGTH = 512;
 
 function serializeClvmAtomHex(atomHex: string): string {
   const atom = normalizeHexString(atomHex);
@@ -71,16 +84,6 @@ function saveCachedChangeAddress(fingerprint: string, address: string): void {
     localStorage.setItem(changeAddressStorageKey(fingerprint), address);
   } catch {
     // Best-effort cache; a miss only means we ask the wallet again.
-  }
-}
-
-function loadCachedRemoteWalletId(fingerprint: string): bigint | null {
-  try {
-    const raw = localStorage.getItem(remoteWalletStorageKey(fingerprint));
-    if (!raw || !/^\d+$/.test(raw)) return null;
-    return BigInt(raw);
-  } catch {
-    return null;
   }
 }
 
@@ -194,17 +197,131 @@ function collectErrorText(err: unknown): string {
     .join(' ');
 }
 
-function isCoinRecordMiss(err: unknown): boolean {
-  const text = collectErrorText(err).toLowerCase();
+function boundedCancellationError(value: unknown): string {
+  const detail = collectErrorText(value) || 'wallet returned success=false without details';
+  return detail.slice(0, MAX_WALLET_CANCELLATION_ERROR_LENGTH);
+}
+
+const TERMINAL_CANCELLATION_CODES = new Set([
+  'CANCELLED',
+  'CANCELED',
+  'SPENT',
+  'ALREADY_CANCELLED',
+  'ALREADY_CANCELED',
+  'OFFER_ALREADY_CANCELLED',
+  'OFFER_ALREADY_CANCELED',
+  'TRADE_ALREADY_CANCELLED',
+  'TRADE_ALREADY_CANCELED',
+  'ALREADY_SPENT',
+  'OFFER_ALREADY_SPENT',
+  'TRADE_ALREADY_SPENT',
+  'NOT_FOUND',
+  'OFFER_NOT_FOUND',
+  'TRADE_NOT_FOUND',
+  'UNKNOWN_OFFER',
+  'UNKNOWN_TRADE',
+]);
+
+function cancellationCodes(value: unknown): Set<string> {
+  const codes = new Set<string>();
+  const seen = new Set<unknown>();
+  const visit = (candidate: unknown) => {
+    if (candidate == null || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (candidate instanceof Error) {
+      visit((candidate as Error & { cause?: unknown }).cause);
+      return;
+    }
+    if (typeof candidate !== 'object') return;
+    const record = candidate as Record<string, unknown>;
+    for (const key of ['code', 'errorCode', 'error_code', 'status']) {
+      if (typeof record[key] === 'string') codes.add(record[key].toUpperCase());
+    }
+    for (const key of ['error', 'data', 'detail', 'structuredError', 'tradeRecord']) {
+      visit(record[key]);
+    }
+  };
+  visit(value);
+  return codes;
+}
+
+function isStructurallyTerminalCancellation(value: unknown, tradeId: string): boolean {
+  let terminalCode = false;
+  for (const code of cancellationCodes(value)) {
+    if (TERMINAL_CANCELLATION_CODES.has(code)) terminalCode = true;
+  }
+  if (!terminalCode) return false;
+  const identities = new Set<string>();
+  const seen = new Set<unknown>();
+  const visit = (candidate: unknown) => {
+    if (candidate == null || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (candidate instanceof Error) {
+      visit((candidate as Error & { cause?: unknown }).cause);
+      return;
+    }
+    if (typeof candidate !== 'object') return;
+    const record = candidate as Record<string, unknown>;
+    for (const key of ['tradeId', 'trade_id', 'offerId', 'offer_id']) {
+      if (typeof record[key] === 'string') identities.add(record[key]);
+    }
+    for (const key of ['error', 'data', 'detail', 'structuredError', 'tradeRecord']) {
+      visit(record[key]);
+    }
+  };
+  visit(value);
+  return identities.size === 0 || (identities.size === 1 && identities.has(tradeId));
+}
+
+function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const candidate = response as { success?: unknown; offer?: unknown };
   return (
-    text.includes('not found') ||
-    (text.includes('coin id') && text.includes('unknown')) ||
-    (text.includes('internal error') && text.includes('-32603'))
+    candidate.success === true ||
+    (typeof candidate.offer === 'string' && candidate.offer.startsWith('offer'))
   );
 }
 
-function isRetryablePushError(errStr: string): boolean {
-  return errStr.includes('UNKNOWN_UNSPENT') || errStr.includes('NO_TRANSACTIONS_WHILE_SYNCING');
+function walletOfferTradeId(response: unknown): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const tradeRecord = (response as Record<string, unknown>).tradeRecord;
+  if (!tradeRecord || typeof tradeRecord !== 'object') return null;
+  const tradeId = (tradeRecord as Record<string, unknown>).tradeId;
+  return typeof tradeId === 'string' && tradeId ? tradeId : null;
+}
+
+export function classifyWalletConnectSubmitError(err: unknown): WalletSubmitOutcome {
+  const detail = collectErrorText(err);
+  if (err instanceof WalletConnectTransportError) {
+    return { status: 'unavailable', detail };
+  }
+  if (isExactDuplicateTransaction(detail)) {
+    return { status: 'acknowledged', detail };
+  }
+  const fallback =
+    err instanceof WalletConnectResponseError
+      ? 'Wallet rejected pushTransactions'
+      : 'WalletConnect submission failed before returning a valid response';
+  return { status: 'rejected', detail: detail || fallback };
+}
+
+export function classifyWalletConnectSubmitResult(result: unknown): WalletSubmitOutcome {
+  const detail = collectErrorText(result);
+  if (isExactDuplicateTransaction(detail)) {
+    return { status: 'acknowledged', detail };
+  }
+  if (
+    typeof result === 'object' &&
+    result !== null &&
+    'success' in result &&
+    result.success === true
+  ) {
+    return { status: 'acknowledged', detail };
+  }
+  return {
+    status: 'rejected',
+    detail: detail || 'Malformed WalletConnect pushTransactions response',
+  };
 }
 
 function coinAmount(coin: CoinsetCoin): bigint {
@@ -236,10 +353,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult;
 
   private remoteWalletId: bigint | undefined;
+  private walletOfferProvider: WalletOfferProvider | null = null;
   private remoteWalletEnsurePromise: Promise<void> | null = null;
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
+  private coinRecordCache = new Map<string, CoinRecord>();
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
@@ -252,6 +371,25 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   constructor() {
     this.blockchainAddressData = { puzzleHash: '' };
+  }
+
+  getWalletOfferProvider() {
+    const fingerprint = walletConnectState.getAddress();
+    const chainId = walletConnectState.getChainId?.() ?? getChainId();
+    if (!fingerprint) return null;
+    if (
+      this.walletOfferProvider?.scope.provider !== 'walletconnect' ||
+      this.walletOfferProvider.scope.fingerprint !== fingerprint ||
+      this.walletOfferProvider.scope.chainId !== chainId
+    ) {
+      this.walletOfferProvider = {
+        capability: 'best-effort',
+        scope: { provider: 'walletconnect', fingerprint, chainId },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+      };
+    }
+    return this.walletOfferProvider;
   }
 
   async getAddress() {
@@ -359,7 +497,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     changePuzzleHash: string,
     _source?: string,
     fee?: bigint,
-  ): Promise<string> {
+  ): Promise<WalletSubmitOutcome> {
     const seq = ++this.spendSeq;
     const src = _source ?? 'unknown';
     const feeValue = fee || 0n;
@@ -388,29 +526,23 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       log(
         `[wc-blockchain] pushTransactions submitted #${seq} removals=${removals.length} result=${jsonStringify(result)}`,
       );
-      return result as unknown as string;
+      return classifyWalletConnectSubmitResult(result);
     } catch (e: unknown) {
       const errStr = collectErrorText(e);
-      if (isRetryablePushError(errStr)) {
-        return new Promise((resolve, reject) => {
-          setTimeout(() => {
-            this.spend(_blob, spendBundle, changePuzzleHash, `retry-of-#${seq}`, fee)
-              .then(resolve)
-              .catch(reject);
-          }, PUSH_RETRY_DELAY);
-        });
-      }
       log(`[wc-blockchain] pushTransactions error #${seq}: ${errStr}`);
-      throw new Error(`Wallet transaction submit failed from ${src}: ${errStr}`, { cause: e });
+      return classifyWalletConnectSubmitError(e);
     }
   }
 
-  async createFeeOffer(
-    fee: bigint,
-    concurrentSpendCoinId: string,
-    paymentPuzzleHash: string,
-  ): Promise<string | null> {
-    if (fee <= 0n) return null;
+  async beginWalletOffer(
+    _operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
+    if (request.kind === 'funding') {
+      return this.createFundingOffer(request);
+    }
+    const { fee, concurrentSpendCoinId } = request;
+    if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
@@ -419,42 +551,44 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         offer: { '1': -fee },
         driverDict: {},
         // Persist the offer so the wallet reserves its selected fee input
-        // until the aggregate transaction spends it. A validate-only offer can
-        // select the same still-unconfirmed coin for concurrent submissions.
+        // until the aggregate transaction spends it; otherwise concurrent
+        // submissions can select the same still-unconfirmed coin.
         validateOnly: false,
         allowUnsynced: true,
         extraConditions: [
-          {
-            opcode: RECEIVE_MESSAGE,
-            args: {
-              msg: '0x',
-              var_args: [
-                serializeClvmAtomHex(paymentPuzzleHash),
-                serializeClvmAtomHex(encodeU64AsClvmHex(fee)),
-              ],
-              mode_integer: '24',
-              sender: null,
-              receiver: null,
-            },
-          },
+          { opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } },
           { opcode: 52n, args: { amount: fee } },
         ],
       });
       const offer = (response as any)?.offer;
+      const tradeId = walletOfferTradeId(response);
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
+        if (walletOfferMutationMayHaveSucceeded(response)) {
+          return {
+            kind: 'unavailable',
+            reason: 'wallet reported fee offer creation success without reservation identity',
+          };
+        }
         throw new Error('wallet returned no signed offer for the fee');
       }
-      log(
-        `[wc-blockchain] createFeeOffer ok fee=${fee} protocol=${protocolCoinId} payment=${paymentPuzzleHash}`,
-      );
-      return offer;
+      if (typeof tradeId !== 'string' || !tradeId) {
+        return {
+          kind: 'unavailable',
+          reason: 'wallet returned a persisted fee offer without tradeRecord.tradeId',
+        };
+      }
+      log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
+      return { kind: 'created-reserved', material: { kind: 'offer', offer }, tradeId };
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming
       // insufficient balance.
       const text = collectErrorText(e);
-      log(`[wc-blockchain] createFeeOffer failed: ${text}`);
-      throw e instanceof Error ? e : new Error(text);
+      log(`[wc-blockchain] createFeeSpend failed: ${text}`);
+      if (e instanceof WalletConnectTransportError) {
+        return { kind: 'unavailable', reason: text };
+      }
+      return { kind: 'failure', reason: text };
     }
   }
 
@@ -469,18 +603,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    try {
-      const coinBytes = toUint8(coin);
-      const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
-      const coinName = toHexString(new Uint8Array(hashBuf));
-      const resp = await rpc.getPuzzleAndSolution({ coinName });
-      if (!resp?.puzzleReveal || !resp?.solution) return null;
-      return [resp.puzzleReveal, resp.solution];
-    } catch (e) {
-      console.error('[wc-blockchain] getPuzzleAndSolution error', e);
-      log(`[wc-blockchain] getPuzzleAndSolution error: ${String(e)}`);
-      return null;
-    }
+    const coinBytes = toUint8(coin);
+    const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
+    const coinName = toHexString(new Uint8Array(hashBuf));
+    const resp = await rpc.getPuzzleAndSolution({ coinName });
+    if (!resp?.puzzleReveal || !resp?.solution) return null;
+    return [resp.puzzleReveal, resp.solution];
   }
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
@@ -512,14 +640,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return resp.height;
   }
 
-  async createOfferForIds(
-    _uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
-    coinIds?: string[],
-    maxHeight?: bigint,
-    _openingFee?: bigint,
-  ): Promise<any | null> {
+  private async createFundingOffer(
+    request: Extract<WalletOfferRequest, { kind: 'funding' }>,
+  ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
+    const { offer, extraConditions, coinIds, maxHeight } = request;
     try {
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
@@ -604,19 +728,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
-        if (!payload.validateOnly) {
-          const tradeId = (response as any)?.tradeRecord?.tradeId;
-          if (typeof tradeId === 'string' && tradeId) {
-            return { offer: offerStr, tradeId };
-          }
-          log(
-            '[wc-blockchain] persisted createOfferForIds response omitted trade ID; rejected offers cannot be released automatically',
-          );
+        const tradeId = walletOfferTradeId(response);
+        if (typeof tradeId === 'string' && tradeId) {
+          return {
+            kind: 'created-reserved',
+            material: { kind: 'offer', offer: offerStr },
+            tradeId,
+          };
         }
-        return offerStr;
+        return {
+          kind: 'unavailable',
+          reason: 'wallet returned a persisted funding offer without tradeRecord.tradeId',
+        };
       }
-      log(`[wc-blockchain] createOfferForIds returned non-offer payload type=${typeof response}`);
-      return response;
+      if (walletOfferMutationMayHaveSucceeded(response)) {
+        return {
+          kind: 'unavailable',
+          reason: 'wallet reported offer creation success without reservation identity',
+        };
+      }
+      throw new Error(`wallet returned non-offer payload type=${typeof response}`);
     } catch (e) {
       let parsedError: unknown = undefined;
       if (e instanceof Error) {
@@ -647,15 +778,33 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.error ??
         (parsedError as any)?.data?.structuredError?.message ??
         '';
-      throw new Error(errorMsg || errorText || 'createOfferForIds failed', { cause: e });
+      const reason = errorMsg || errorText || 'createOfferForIds failed';
+      return e instanceof WalletConnectTransportError
+        ? { kind: 'unavailable', reason }
+        : { kind: 'failure', reason };
     }
   }
 
-  async cancelOffer(tradeId: string): Promise<void> {
-    const response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
-    if (!response.success) {
-      throw new Error(`wallet failed to cancel rejected offer ${tradeId}`);
+  async beginWalletOfferCancellation(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+    let response: Awaited<ReturnType<typeof rpc.cancelOffer>>;
+    try {
+      response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
+    } catch (error) {
+      const detail = boundedCancellationError(error);
+      if (isStructurallyTerminalCancellation(error, tradeId)) {
+        return { status: 'already-terminal', detail };
+      }
+      return error instanceof WalletConnectTransportError
+        ? { status: 'unavailable', detail }
+        : { status: 'rejected', detail };
     }
+    if (response.success) {
+      return { status: 'cancelled' };
+    }
+    const detail = boundedCancellationError(response);
+    return isStructurallyTerminalCancellation(response, tradeId)
+      ? { status: 'already-terminal', detail }
+      : { status: 'rejected', detail };
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
@@ -669,33 +818,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           allowUnsynced: true,
         });
         if ((resp as any)?.error) {
-          const msg = String((resp as any).error);
-          if (!msg.includes('not found')) {
-            log(
-              `[wc-blockchain] getCoinRecordsByNames daemon error (skipping coin) name=${name}: ${msg}`,
-            );
-          }
+          const cached = this.coinRecordCache.get(name);
+          if (cached) records.push(cached);
           continue;
         }
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
           log(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
+          this.coinRecordCache.set(name, r[0]);
+        } else {
+          this.coinRecordCache.delete(name);
         }
         records.push(...r);
-      } catch (e) {
-        // A single coin lookup must never abort the whole poll. The wallet
-        // raises ValueError("Coin ID's: [...] not found.") for coins that
-        // don't exist on-chain yet, and that message can arrive mangled
-        // through the WalletConnect/IPC bridge so isCoinRecordMiss can't
-        // always recognize it. The poller already treats an absent coin as
-        // "not on chain yet", so skip this coin instead of rethrowing —
-        // rethrowing aborted the poll right after the height was fetched,
-        // stalling the handshake on "waiting for height".
-        if (!isCoinRecordMiss(e)) {
-          log(
-            `[wc-blockchain] getCoinRecordsByNames unexpected error (skipping coin) name=${name}: ${collectErrorText(e)}`,
-          );
-        }
+      } catch {
+        // WalletConnect may collapse the wallet's expected missing-coin result
+        // and unrelated daemon failures into the same opaque "Internal Error".
+        // Preserve a last-known record so a transient failure cannot turn a
+        // previously live coin into an authoritative disappearance. Unknown
+        // names remain absent and polling retries them without noisy logging.
+        const cached = this.coinRecordCache.get(name);
+        if (cached) records.push(cached);
         continue;
       }
     }
@@ -717,12 +859,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     const fp = fingerprint ?? walletConnectState.getAddress();
     if (!fp) {
       log('[wc-blockchain] ensureRemoteWallet skipped: no fingerprint');
-      return;
-    }
-    const cachedRemote = loadCachedRemoteWalletId(fp);
-    if (cachedRemote !== null) {
-      this.remoteWalletId = cachedRemote;
-      log(`[wc-blockchain] remote wallet restored from cache id=${cachedRemote}`);
       return;
     }
     log('[wc-blockchain] ensuring remote wallet exists...');

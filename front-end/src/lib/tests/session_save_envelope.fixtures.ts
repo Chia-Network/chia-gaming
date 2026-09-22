@@ -1,13 +1,17 @@
 import 'fake-indexeddb/auto';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec } from './game_state_helpers';
+import { storageRepository } from '../session/storageRepository';
 import {
-  CURRENT_VERSION,
-  _resetForTests,
+  DURABLE_APPLICATION_STATE_SCHEMA,
+  DURABLE_APPLICATION_STATE_VERSION as CURRENT_VERSION,
+  type PreHandshakeSessionSave,
+  type SessionIdentitySave,
+  type SessionHistorySave,
   type SessionPresentationSave,
-  type SessionSave,
-} from '../../hooks/save';
-import { SESSION_SAVE_SCHEMA } from '../session/saveEnvelope';
-import { deleteSessionRecord } from '../session/indexedDb';
+  type DurableApplicationState,
+} from '../session/saveEnvelope';
+
+import type { WalletProviderScope } from '../../types/ChiaGaming';
 
 export const ACTIVE_INSTANCE = {
   id: 'game-1',
@@ -57,7 +61,17 @@ function setTestGlobal(key: string, value: unknown): void {
 
 type LegacyFields = Record<string, any>;
 
+function walletProviderScope(fields: LegacyFields) {
+  return (
+    fields.walletProviderScope ?? {
+      provider: 'simulator' as const,
+      identity: fields.playerId ?? 'player',
+    }
+  );
+}
+
 const PRESENTATION_KEYS = new Set([
+  'handKey',
   'activeGameIds',
   'currentHandGameIds',
   'currentHandOrigin',
@@ -66,24 +80,21 @@ const PRESENTATION_KEYS = new Set([
   'gameInstances',
   'handState',
   'channelStatus',
-  'myRunningBalance',
-  'channelNotifQueue',
-  'gameNotifQueue',
-  'dismissedChannelStatus',
   'cleanShutdownStarted',
   'betweenHandMode',
   'betweenHandCompose',
   'betweenHandLastHandProposal',
   'betweenHandRejectedOnceHandProposal',
   'betweenHandPendingRetryHandProposal',
-  'proposalGroups',
+  'newHandRequested',
+  'pendingProposals',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
 ]);
 
 function common(fields: LegacyFields) {
   return {
-    schema: SESSION_SAVE_SCHEMA,
+    schema: DURABLE_APPLICATION_STATE_SCHEMA,
     version: CURRENT_VERSION,
     identity: {
       playerId: fields.playerId ?? 'player',
@@ -101,12 +112,18 @@ function common(fields: LegacyFields) {
       walletAlert: fields.walletAlert,
       hubAlert: fields.hubAlert,
       blockchainType: fields.blockchainType,
+      network: fields.network,
     },
     history: {
       humanHistory: fields.humanHistory,
       wasmNotificationHistory: fields.wasmNotificationHistory,
       diagnosticLog: fields.diagnosticLog,
     },
+    session: null,
+    walletContext: null,
+    channelFundingOperations: fields.channelFundingOperations ?? [],
+    feeAttachments: fields.feeAttachments ?? [],
+    rejectionTransports: fields.rejectionTransports ?? [],
   };
 }
 
@@ -118,6 +135,7 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
       ? fields.perGameAmount
       : '20';
   const result: LegacyFields = {
+    handKey: 0n,
     activeGameIds: [],
     currentHandGameIds: [],
     currentHandOrigin: null,
@@ -126,28 +144,22 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
     activeGameType: 'calpoker',
     handState: null,
     channelStatus: null,
-    myRunningBalance: '0',
-    channelNotifQueue: [],
-    gameNotifQueue: [],
-    dismissedChannelStatus: null,
     cleanShutdownStarted: false,
     betweenHandMode: 'decision',
     betweenHandCompose: {
-      selected_game: 'calpoker',
-      game_timeout: '15',
-      proposal_sent: false,
+      selectedGame: 'calpoker',
+      gameTimeout: 15n,
     },
     betweenHandLastHandProposal: {
-      player_a_contribution: perGameAmount,
-      player_b_contribution: perGameAmount,
-      sender_is_player_a: false,
-      game_timeout: '15',
-      game_type: 'calpoker',
-      parameters: null,
+      senderIsPlayerA: false,
+      gameTimeout: 15n,
+      gameType: 'calpoker',
+      parameters: BigInt(perGameAmount),
     },
     betweenHandRejectedOnceHandProposal: null,
     betweenHandPendingRetryHandProposal: null,
-    proposalGroups: [],
+    newHandRequested: false,
+    pendingProposals: [],
     waitingStateEnteredAt: null,
     cleanShutdownGraceStartedAt: null,
   };
@@ -183,7 +195,7 @@ function pairing(fields: LegacyFields) {
   };
 }
 
-export function baseSave(fields: LegacyFields = {}): SessionSave {
+export function baseSave(fields: LegacyFields = {}): DurableApplicationState {
   const shared = common(fields);
   if (
     fields.channelStatus?.state?.startsWith('Resolved') ||
@@ -192,14 +204,17 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
   ) {
     return {
       ...shared,
-      phase: 'terminal',
-      terminal: {
-        iStarted: fields.terminalIStarted ?? false,
-        coinsOfInterest: fields.coinsOfInterest,
-        myAlias: fields.myAlias ?? null,
-        opponentAlias: fields.opponentAlias ?? null,
+      walletContext: walletProviderScope(fields),
+      session: {
+        phase: 'terminal',
+        terminal: {
+          iStarted: fields.terminalIStarted ?? false,
+          coinsOfInterest: fields.coinsOfInterest,
+          myAlias: fields.myAlias ?? null,
+          opponentAlias: fields.opponentAlias ?? null,
+        },
+        presentation: presentation(fields),
       },
-      presentation: presentation(fields),
     };
   }
   if (fields.pairingToken !== undefined) {
@@ -208,26 +223,52 @@ export function baseSave(fields: LegacyFields = {}): SessionSave {
     );
     return {
       ...shared,
-      phase: 'pre-handshake',
-      pairing: pairing(fields),
-      transport: {
-        messageNumber: fields.messageNumber ?? 1n,
-        remoteNumber: fields.remoteNumber ?? 0n,
-        unackedMessages: fields.unackedMessages ?? [],
-        disposition: fields.transportDisposition ?? 'active',
+      walletContext: walletProviderScope(fields),
+      session: {
+        phase: 'pre-handshake',
+        pairing: pairing(fields),
+        transport: {
+          messageNumber: fields.messageNumber ?? 1n,
+          remoteNumber: fields.remoteNumber ?? 0n,
+          unackedMessages: fields.unackedMessages ?? [],
+          disposition: fields.transportDisposition ?? 'active',
+          terminalHandoff: fields.terminalHandoff ?? null,
+        },
+        ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
       },
-      ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
-    } as SessionSave;
+    } as DurableApplicationState;
   }
   const invalidPresentation = [...PRESENTATION_KEYS].some((key) => fields[key] !== undefined);
   return {
     ...shared,
-    phase: 'preferences',
+    session: null,
     ...(invalidPresentation ? { presentation: presentation(fields) } : {}),
-  } as SessionSave;
+  } as DurableApplicationState;
 }
 
-export function activeSave(fields: LegacyFields = {}): SessionSave {
+export function preHandshakeReplacement(fields: LegacyFields): {
+  walletProviderScope: WalletProviderScope;
+  pairing: PreHandshakeSessionSave['pairing'];
+  transport: PreHandshakeSessionSave['transport'];
+  identity?: Partial<SessionIdentitySave>;
+  history?: Partial<SessionHistorySave>;
+} {
+  const save = baseSave(fields);
+  if (save.session?.phase !== 'pre-handshake') {
+    throw new Error('expected pre-handshake fixture');
+  }
+  return {
+    walletProviderScope: save.walletContext!,
+    pairing: save.session.pairing,
+    transport: save.session.transport,
+    identity: Object.fromEntries(
+      Object.entries(save.identity).filter(([, value]) => value !== undefined),
+    ),
+    history: save.history,
+  };
+}
+
+export function activeSave(fields: LegacyFields = {}): DurableApplicationState {
   const merged = {
     serializedGameSession: new Uint8Array([1, 2, 3]),
     gameSessionSchemaVersion: 3n,
@@ -241,44 +282,47 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
     rewardPuzzleHash: '11'.repeat(32),
     unackedMessages: [],
     activeGameIds: ['game-1'],
+    handKey: 1n,
     currentHandGameIds: ['game-1'],
     currentHandOrigin: 'local',
     lastDisplayedGameId: 'game-1',
     activeGameType: 'calpoker',
     gameInstances: { 'game-1': ACTIVE_INSTANCE },
     handState: calpokerStateCodec.encode({
+      perPlayerStake: 20n,
       playerHand: [1n, 2n],
       opponentHand: [3n, 4n],
       moveNumber: 1n,
       isPlayerTurn: true,
       iStarted: true,
-      error: null,
+      settlementOutcome: null,
     }),
     betweenHandLastHandProposal: {
-      player_a_contribution: '20',
-      player_b_contribution: '20',
-      sender_is_player_a: false,
-      game_timeout: '15',
-      game_type: 'calpoker',
-      parameters: null,
+      senderIsPlayerA: false,
+      gameTimeout: 15n,
+      gameType: 'calpoker',
+      parameters: 20n,
     },
     ...fields,
   };
   return {
     ...common(merged),
-    phase: 'live',
-    pairing: pairing(merged),
-    live: {
-      serializedGameSession: merged.serializedGameSession,
-      gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
-      rewardPuzzleHash: merged.rewardPuzzleHash,
-      messageNumber: merged.messageNumber,
-      remoteNumber: merged.remoteNumber,
-      unackedMessages: merged.unackedMessages,
-      disposition: merged.transportDisposition ?? 'active',
-      durabilityWarning: merged.durabilityWarning,
+    walletContext: walletProviderScope(merged),
+    session: {
+      phase: 'live',
+      pairing: pairing(merged),
+      live: {
+        serializedGameSession: merged.serializedGameSession,
+        gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
+        rewardPuzzleHash: merged.rewardPuzzleHash,
+        messageNumber: merged.messageNumber,
+        remoteNumber: merged.remoteNumber,
+        unackedMessages: merged.unackedMessages,
+        disposition: merged.transportDisposition ?? 'active',
+        terminalHandoff: merged.terminalHandoff ?? null,
+      },
+      presentation: presentation(merged),
     },
-    presentation: presentation(merged),
     ...(merged.terminalIStarted !== undefined || merged.coinsOfInterest !== undefined
       ? {
           terminal: {
@@ -287,10 +331,10 @@ export function activeSave(fields: LegacyFields = {}): SessionSave {
           },
         }
       : {}),
-  } as SessionSave;
+  } as DurableApplicationState;
 }
 
-export function liveSave(fields: LegacyFields = {}): SessionSave {
+export function liveSave(fields: LegacyFields = {}): DurableApplicationState {
   const merged = {
     serializedGameSession: new Uint8Array([1, 2, 3]),
     gameSessionSchemaVersion: 3n,
@@ -308,31 +352,43 @@ export function liveSave(fields: LegacyFields = {}): SessionSave {
   };
   return {
     ...common(merged),
-    phase: 'live',
-    pairing: pairing(merged),
-    live: {
-      serializedGameSession: merged.serializedGameSession,
-      gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
-      rewardPuzzleHash: merged.rewardPuzzleHash,
-      messageNumber: merged.messageNumber,
-      remoteNumber: merged.remoteNumber,
-      unackedMessages: merged.unackedMessages,
-      disposition: merged.transportDisposition ?? 'active',
-      durabilityWarning: merged.durabilityWarning,
+    walletContext: walletProviderScope(merged),
+    session: {
+      phase: 'live',
+      pairing: pairing(merged),
+      live: {
+        serializedGameSession: merged.serializedGameSession,
+        gameSessionSchemaVersion: merged.gameSessionSchemaVersion,
+        rewardPuzzleHash: merged.rewardPuzzleHash,
+        messageNumber: merged.messageNumber,
+        remoteNumber: merged.remoteNumber,
+        unackedMessages: merged.unackedMessages,
+        disposition: merged.transportDisposition ?? 'active',
+        terminalHandoff: merged.terminalHandoff ?? null,
+      },
+      presentation: presentation(merged),
     },
-    presentation: presentation(merged),
   };
 }
 
 export function installSessionEnvelopeTestSetup(): void {
   beforeEach(async () => {
-    _resetForTests();
+    storageRepository._resetForTests();
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
-    await deleteSessionRecord();
+    await storageRepository.claimApplicationState();
+    await storageRepository.clearSession();
+    const empty = {
+      ...storageRepository.loadState(),
+      walletContext: null,
+      channelFundingOperations: [],
+      feeAttachments: [],
+    };
+    storageRepository._replaceApplicationStateForTests(empty);
+    await storageRepository.write(storageRepository.patchApplicationState(() => empty));
   });
 
   afterEach(() => {
-    _resetForTests();
+    storageRepository._resetForTests();
   });
 }

@@ -2,43 +2,20 @@ import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import type { ChannelStatus } from '../../types/ChiaGaming';
 import {
   INITIAL_GAME_TERMINAL_MODEL,
-  gameInstanceFromView,
-  gameInstanceView,
   nextGameInstanceAfterLocalTurn,
   projectGameStatus,
 } from './presentation';
 import type {
+  GameModel,
   GameInstanceModel,
-  GameInstanceViewModel,
-  ProposalGroupOrigin,
+  ProposalOrigin,
   GameTerminalModel,
   GameTurnState,
   RegisteredGameType,
 } from './types';
 import type { NonTerminalGameStatusPayload } from './presentation';
 
-export interface GameSlice {
-  handKey: number;
-  activeIds: string[];
-  currentHandIds: string[];
-  currentHandOrigin: ProposalGroupOrigin | null;
-  instances: Record<string, GameInstanceModel>;
-  lastDisplayedId: string | null;
-  activeGameType: RegisteredGameType;
-}
-
-export type GameSliceInstance = GameInstanceModel;
 export type { GameProtocolPresentation } from './types';
-
-export const INITIAL_GAME_SLICE: GameSlice = {
-  handKey: 0,
-  activeIds: [],
-  currentHandIds: [],
-  currentHandOrigin: null,
-  instances: {},
-  lastDisplayedId: null,
-  activeGameType: DEFAULT_CATALOG_GAME_TYPE,
-};
 
 export type GameSliceAction =
   | { type: 'channel-active' }
@@ -46,10 +23,9 @@ export type GameSliceAction =
       type: 'accepted-group';
       groupIds: string[];
       members: readonly { amount: string; startTurn: GameTurnState }[];
-      origin: ProposalGroupOrigin;
-      gameType?: RegisteredGameType;
+      origin: ProposalOrigin;
+      gameType: RegisteredGameType;
     }
-  | { type: 'remove-group'; groupIds: readonly string[] }
   | {
       type: 'status';
       id: string;
@@ -61,13 +37,13 @@ export type GameSliceAction =
   | { type: 'settled'; id: string; terminal: GameTerminalModel }
   | { type: 'abandoned' };
 
-function requireInstance(slice: GameSlice, id: string): GameSliceInstance {
+function requireInstance(slice: GameModel, id: string): GameInstanceModel {
   const instance = slice.instances[id];
   if (!instance) throw new Error(`Game slice invariant broken: missing instance ${id}`);
   return instance;
 }
 
-function newInstance(id: string, amount: string, turnState: GameTurnState): GameSliceInstance {
+function newInstance(id: string, amount: string, turnState: GameTurnState): GameInstanceModel {
   return {
     id,
     amount,
@@ -77,15 +53,7 @@ function newInstance(id: string, amount: string, turnState: GameTurnState): Game
   };
 }
 
-export function gameSliceInstanceFromModel(instance: GameInstanceModel): GameSliceInstance {
-  return instance;
-}
-
-export function gameInstanceModelFromSlice(instance: GameSliceInstance): GameInstanceViewModel {
-  return gameInstanceView(instance);
-}
-
-export function assertCompleteGameSlice(slice: GameSlice): void {
+export function assertCompleteGameSlice(slice: GameModel): void {
   for (const id of new Set([
     ...slice.activeIds,
     ...slice.currentHandIds,
@@ -95,8 +63,8 @@ export function assertCompleteGameSlice(slice: GameSlice): void {
   }
 }
 
-export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): GameSlice {
-  let next: GameSlice;
+export function gameSliceReducer(slice: GameModel, action: GameSliceAction): GameModel {
+  let next: GameModel;
   switch (action.type) {
     case 'channel-active':
       next = slice.handKey === 0 ? { ...slice, handKey: 1 } : slice;
@@ -118,48 +86,27 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
         instances[id] = newInstance(id, member.amount, member.startTurn);
       }
       next = {
+        ...slice,
         handKey: newHand ? slice.handKey + 1 : slice.handKey,
         activeIds: newHand ? [...action.groupIds] : slice.activeIds,
         currentHandIds: newHand ? [...action.groupIds] : slice.currentHandIds,
         currentHandOrigin: newHand ? action.origin : slice.currentHandOrigin,
         instances,
         lastDisplayedId: newHand ? action.groupIds[0]! : slice.lastDisplayedId,
-        activeGameType: newHand ? (action.gameType ?? slice.activeGameType) : slice.activeGameType,
-      };
-      break;
-    }
-    case 'remove-group': {
-      const removed = new Set(action.groupIds);
-      const currentHandIds = slice.currentHandIds.filter((id) => !removed.has(id));
-      next = {
-        ...slice,
-        activeIds: slice.activeIds.filter((id) => !removed.has(id)),
-        currentHandIds,
-        currentHandOrigin: currentHandIds.length === 0 ? null : slice.currentHandOrigin,
-        instances: Object.fromEntries(
-          Object.entries(slice.instances).filter(([id]) => !removed.has(id)),
-        ),
-        lastDisplayedId:
-          slice.lastDisplayedId !== null && removed.has(slice.lastDisplayedId)
-            ? null
-            : slice.lastDisplayedId,
+        activeGameType: newHand ? action.gameType : slice.activeGameType,
       };
       break;
     }
     case 'status': {
       const instance = requireInstance(slice, action.id);
-      const projected = projectGameStatus({
-        previous: gameInstanceModelFromSlice(instance),
-        payload: action.payload,
-        channelState: action.channelState,
-      });
       next = {
         ...slice,
         instances: {
           ...slice.instances,
-          [action.id]: gameInstanceFromView({
-            ...gameInstanceModelFromSlice(instance),
-            ...projected,
+          [action.id]: projectGameStatus({
+            previous: instance,
+            payload: action.payload,
+            channelState: action.channelState,
           }),
         },
       };
@@ -171,12 +118,10 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
         ...slice,
         instances: {
           ...slice.instances,
-          [action.id]: gameInstanceFromView(
-            nextGameInstanceAfterLocalTurn(
-              gameInstanceModelFromSlice(instance),
-              action.isMyTurn,
-              action.channelState,
-            ),
+          [action.id]: nextGameInstanceAfterLocalTurn(
+            instance,
+            action.isMyTurn,
+            action.channelState,
           ),
         },
       };
@@ -216,7 +161,17 @@ export function gameSliceReducer(slice: GameSlice, action: GameSliceAction): Gam
       break;
     }
     case 'abandoned':
-      next = INITIAL_GAME_SLICE;
+      next = {
+        ...slice,
+        handKey: 0,
+        activeIds: [],
+        currentHandIds: [],
+        currentHandOrigin: null,
+        instances: {},
+        lastDisplayedId: null,
+        activeGameType: DEFAULT_CATALOG_GAME_TYPE,
+        handState: null,
+      };
       break;
   }
   assertCompleteGameSlice(next);

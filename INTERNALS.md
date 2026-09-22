@@ -10,6 +10,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Peer Error Escalation](#peer-error-escalation)
 - [Local Action Errors](#local-action-errors)
 - [Batch Rollback Scope](#batch-rollback-scope)
+- [Blockchain Observation Boundary](#blockchain-observation-boundary)
 - [Atomic Proposal Factory Invariants](#atomic-proposal-factory-invariants)
 - [cached_redo_actions and the Redo Mechanism](#cached_redo_actions-and-the-redo-mechanism)
 - [Cheat Support](#cheat-support)
@@ -23,13 +24,11 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 
 There are three distinct timeouts in the system:
 
-
-| Timeout           | Purpose                                                                                                                                                                                    | Typical test value |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The hub accepts values in the 3-30 block range and defaults to 15.                         | 15 blocks          |
-| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The hub accepts values in the 3-30 block range and defaults to 15. | 15 blocks          |
+| Timeout           | Purpose                                                                                                                                                                                                                                                            | Typical test value |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `channel_timeout` | Safety timeout for the watcher to detect channel coin spends. Not an on-chain timelock. The hub accepts values in the 3-30 block range and defaults to 15.                                                                                                         | 15 blocks          |
+| `unroll_timeout`  | On-chain `ASSERT_HEIGHT_RELATIVE` on the unroll coin. Controls how long the opponent has to preempt before the timeout path succeeds. The hub accepts values in the 3-30 block range and defaults to 15.                                                           | 15 blocks          |
 | `game_timeout`    | On-chain `ASSERT_HEIGHT_RELATIVE` on each game coin (referee). Controls how long the current mover has before the opponent can claim a timeout. Stored in `OnChainGameState.game_timeout`. Proposals are restricted to 3-100 blocks; the UX defaults to 15 blocks. | 15 blocks          |
-
 
 **Important:** Game coins are registered with the watcher using their specific
 `game_timeout` (from the referee), not the `channel_timeout`. The
@@ -67,9 +66,9 @@ watch registration to the host as a `watchCoins` polling delta. There are three
 eager-claim sites:
 
 - the unroll-via-timeout claim, built at `WaitForTimeout` registration
-(`build_unroll_timeout_spend`);
+  (`build_unroll_timeout_spend`);
 - the per-game-coin timeout claim, built when game coins are first registered
-(`build_timeout_claim` / `register_initial_game_coins`).
+  (`build_timeout_claim` / `register_initial_game_coins`).
 
 A claim is attached **only when the timeout pays us**; otherwise the field is
 `None` and the manager submits nothing on our behalf.
@@ -99,88 +98,77 @@ manager converts authoritative raw snapshots into ordered `Created`, `Spent`,
 then height observations for `GameSession`. The session never maintains or
 filters a second watch set.
 
-**Retained transaction replay.** When the manager drains a transaction for
+The same ownership applies to submission intent: Rust
+`TransactionManager` is its durable retained owner. `SubmissionPump` owns one
+browser map and ordered promise tail from persistence-gated launch through
+optional fee acquisition, exact broadcast, typed completion, and
+relinquishment. Committed-runtime replacement reschedules only unlaunched work;
+launched work remains queue-owned through terminal quiescence. Duplicate IDs
+must carry the immutable Rust-issued lineage for the same retained intent.
+
+**Retained transaction rebroadcast.** When the manager drains a transaction for
 submission, it keeps a retained copy for reload/reorg recovery and derives the
 output coins that transaction should create from its `CREATE_COIN` conditions.
 Those expected outputs are replay/conflict metadata only. They do not become host
 poll targets unless a protocol handler separately registers the coin as watched.
-After the wallet accepts the transaction, the host acknowledges that retained
-entry and stores the exact wallet-finalized aggregate bundle. A normal fresh-sync
-pass requeues only entries that have not been acknowledged, preventing a
-successful unroll submission from prompting for the same fee again. If an
-expected output later vanishes in a reorg, the manager clears the acknowledgement
-and explicitly requeues that finalized bundle unchanged; it does not ask the
-wallet to construct a new fee spend.
+Fee acquisition and broadcast are separate durable facts. On unavailable or
+rejected fee acquisition, Rust immediately emits the no-fee base under the
+stable ID and keeps seeking after base acknowledgement. Matching readiness or
+an explicit fresh-chain rebroadcast epoch may later install one fee-bearing
+variant; chain terminality stops acquisition. Intent and variant fingerprints
+bind browser delivery. Wallet delivery and chain landing remain independent.
 
-The replay rule is deliberately narrow:
+There are exactly two replay paths:
 
-- If one of the retained transaction's expected outputs is observed on-chain,
-  that transaction is considered to have won. It remains retained so a later
-  reload or reorg can replay it if its output vanishes.
-- If an input coin is observed spent but the retained transaction's expected
-  output does not appear, a conflicting transaction won. The retained local
-  intent is forgotten immediately and must not be replayed after reload or
-  reorg.
+- **Ordinary fresh synchronization.** Restore or reconnect first obtains a
+  complete coin snapshot, then signals `chain_snapshot_ready`. Only unexpired,
+  unlanded entries still awaiting wallet acknowledgement are requeued.
+  Acknowledged entries are not ordinarily rebroadcast, and block reports do not
+  create a per-block retry loop. An unavailable wallet call remains awaiting
+  acknowledgement for a later fresh-sync retry; an explicit rejection retires
+  only that stable submission ID.
+- **Rollback replay.** A lower tip opens a rollback epoch and queues every
+  surviving retained transaction at most once. At an equal or higher restored
+  tip, replay requires causal evidence for one retained transaction: a
+  previously landed watched expected output is explicitly absent while an input
+  from that same atomic bundle is explicitly live again. Only the matching
+  transaction is queued. Opening either replay path invalidates stale landing
+  evidence and sets delivery back to awaiting acknowledgement, so a replay
+  drained but unavailable before another reload remains recoverable.
 
-This prevents stale local intentions from being resurrected after the protocol
-has already accepted a different chain path. For example, if we were trying to
-clean-shutdown but an unroll spend wins the channel coin, the clean-shutdown
-transaction is no longer a replay candidate.
+Every rollback replay reuses the current exact Rust-owned variant; an upgraded
+fee-bearing variant is never rebuilt. `rollback_replayed_ids` survives drain and acknowledgement for the current
+epoch, preventing the height report and its following same-tip snapshot from
+duplicating a replay. Re-observing the expected output closes that transaction's
+epoch so a later independent rollback can replay it once again.
 
-**Reorg strategy: replay, not general conflict resolution.** The manager's job is
-still not to solve every possible reorg/conflict rabbit hole. It handles
-retained transaction replay, output-vanish replay, timeout-claim re-arming, and
-the narrow "conflicting spend won, forget our obsolete local intent" cache
-pruning above. There is not yet a general recovery mechanism for deeper
-**true invalidation** cases where handler state would need to be rebuilt from an
-earlier point or a new chain path needs protocol-specific interpretation beyond
-the observed coin lifecycle. Those paths are future protocol/error-handling work
-rather than part of the current transaction manager replay model.
+Here “replay” means **transaction rebroadcast** of exact retained chain bytes.
+It is unrelated to **reliable peer-frame replay**, where the transport resends
+unacknowledged numbered protocol frames after reconnect or peer availability.
 
-Coverage for this replay model lives in `src/transaction_manager.rs`: creator
-transactions are resubmitted when output coins vanish
-(`reorged_out_output_resubmits_creating_transaction`), timeout claims are
-re-armed when a watched coin's birthday rolls back
-(`eager_timeout_spend_resubmitted_after_birthday_rollback`), conflicting
-retained submissions are pruned when their input is spent by another transaction
-(`conflicting_spend_prunes_retained_submission_immediately`), winning submissions
-remain replayable after their expected output appears
-(`winning_spend_retains_submission_for_replay`), and re-mined coins clear stale
-vanished flags before later genuine spends are forwarded
-(`reorg_remine_in_same_report_clears_vanished_and_allows_later_spend`).
+The host poller makes this evidence explicit. Once all interests are registered
+and a coin-record request succeeds, every queried coin produces a
+`CoinStateRecord`; an omitted provider record becomes null creation and spend
+heights. Registration failures, provider failures, and malformed records suppress
+the snapshot instead of fabricating absence. Retained inputs remain reconciliation
+interests while their transaction is unlanded and, after landing, only while a
+watched expected output remains inside the manager's confirmation-depth recovery
+window. They are then unwatched rather than polled indefinitely.
 
-**Per-block rebroadcast for dropped broadcasts.** Reorg-driven replay (above)
-only re-submits a transaction when one of its outputs is observed and then
-vanishes. That does not cover a broadcast that simply never reached the network
-in the first place — e.g. an unroll *preempt*, which has no relative timelock and
-no other resubmission path, and would otherwise strand the protocol waiting for a
-coin spend that never comes. So on every block `resubmit_pending` rebroadcasts
-each retained submission that is
+Conflict pruning and absolute expiry still apply before either replay. If an
+input is spent and a complete snapshot already covered a watched missing
+expected output, another transaction won and the obsolete local intent is
+forgotten. The first input-spent report cannot prove that when the handler only
+registers the output in reaction to that report, because the host queried the
+older scope.
 
-- flagged `auto_resubmit` — it creates an observable output coin (so we can tell
-  when it lands) **and** carries no relative timelock (so rebroadcasting it at a
-  later height stays valid even after a reorg; `bundle_has_relative_timelock`
-  decides this, treating an unanalyzable bundle as timelocked);
-- not yet observed to land; and
-- still has at least one input coin present (unspent).
-
-The **input-present gate** is what keeps this safe against abandoned intents:
-once a transaction's input is spent — whether because our own spend landed or a
-conflicting spend won — it is never rebroadcast again. Rebroadcasting an
-*identical* bundle is harmless (the mempool de-duplicates by fingerprint), and a
-cross-party conflict (the opponent spending the same coin with a *different*
-bundle) is expected on a real chain and resolves naturally, since only one spend
-of a coin can confirm. On the browser side this harmlessness is enforced by
-`isBenignTransactionSubmitError`, which classifies the node's
-duplicate/`ALREADY_INCLUDING_TRANSACTION` verdict as benign: both peers push the
-byte-identical funding bundle at channel creation, so the second arrival is
-always de-duplicated and must not surface as an error. Eager timeout claims are deliberately excluded from this
-path (they carry a relative timelock) because the ripeness logic above already
-resubmits them in a reorg-aware way. Coverage:
-`auto_resubmits_dropped_output_bearing_spend_until_it_lands`,
-`auto_resubmit_stops_when_input_spent_by_conflict`,
-`auto_resubmit_skips_timelocked_spend`,
-`auto_resubmit_skips_when_input_not_present`.
+Focused coverage lives in `src/transaction_manager.rs`, including
+`height_only_rollback_replay_survives_drain_failure_and_restore`,
+`restored_equal_or_higher_tip_reorg_replays_exact_current_variant_per_epoch`,
+`conflicting_spend_prunes_once_expected_output_is_watched`, and
+`chain_snapshot_ready_discards_expired_transactions`. The browser/simulator restore
+boundary is covered by the offline equal-tip replacement case in
+`front-end/src/lib/tests/load_wasm.unroll_reload.test.ts`.
 
 **Spends first observed as already-spent are still forwarded.** A watched coin
 whose very first observation already carries a spend height (an opponent's coin
@@ -234,14 +222,14 @@ sees the channel coin being spent on the blockchain.
 This is enforced in `GameSessionState`:
 
 - A `peer_disconnected: bool` flag is set to `true` at the start of
-`GameSession::go_on_chain`, before any on-chain logic runs.
+  `GameSession::go_on_chain`, before any on-chain logic runs.
 - The same flag is also set from channel status transitions in
-`emit_channel_status_if_changed` when state becomes `GoingOnChain`,
-`Unrolling`, or (`ResolvedUnrolled`/`ResolvedStale` while already on-chain).
+  `emit_channel_status_if_changed` when state becomes `GoingOnChain`,
+  `Unrolling`, or (`ResolvedUnrolled`/`ResolvedStale` while already on-chain).
 - `PacketSender::send_message` silently drops outbound messages when
-`peer_disconnected` is true.
+  `peer_disconnected` is true.
 - `GameSession::deliver_message` silently drops inbound messages when
-`peer_disconnected` is true.
+  `peer_disconnected` is true.
 
 After disconnection, all state updates come from coin-watching events. The
 disconnected peer's own unroll transaction is detected via the same
@@ -304,26 +292,42 @@ indicate programming bugs — the queue was populated by our own UI/logic.
 
 The cradle catches `flush_pending_actions` errors and emits them as
 `ActionFailed` notifications shown to the user with the full error string.
-Every `drain_queue_into_batch` call has its own transaction boundary: a failure
-restores the channel and queue snapshots before returning diagnostic context.
-The caller removes only the failed action. A post-receive drain retries the
-remaining queue immediately; an ordinary pending-action flush reports
-`ActionFailed` and leaves earlier valid actions queued for a later retry. This
-preserves accepted peer state without retaining an unsent partial local
-mutation. The JS-side game action methods (`proposeGame`, `acceptProposal`,
-`cancel_proposal`, `makeMove`, `acceptSettlement`, `cheat`) also catch WASM
-throws and surface them through the UI error dialog.
+`drain_queue_into_batch` uses a narrow local `BatchPlan`: it packages actions
+against a cloned channel while staging queue disposition and effects, then
+commits those together only after cached-unroll finalization succeeds. If one
+trusted action fails while packaging, only that action is removed and
+attributed through `ActionFailed`; every other queued action remains in its
+original order. If finalization fails, the full original queue remains. This is
+atomic batch packaging, not general rollback or retry. `OffChainPhase` owns both
+halves of the boundary: planning mutates only `BatchPlan`; commit installs its
+channel, queue disposition, and effects together. The plan owns and mutates
+only durable protocol and queue working state. Transient, nonserialized caches
+remain outside it and are not transactionally cloned.
+
+A valid received batch commits before a post-receive drain reconciles known
+stale local actions and emits `ActionFailed`; any remaining unexpected drain
+failure is an internal error and stays fail-fast. The JS-side game action
+methods (`proposeGame`, `acceptProposal`, `cancel_proposal`, `makeMove`,
+`acceptSettlement`, `cheat`) also catch WASM throws and surface them through
+the UI error dialog.
 
 ---
 
 ## Batch Rollback Scope
 
-When a `PeerMessage::Batch` is received, `pass_on_channel_state_message`
-snapshots both `channel_state` and `game_action_queue` before calling
-`process_received_batch` and restores them on error. This makes the peer's batch
-actions atomic across the state that matters for later dispute recovery: if any
-action in the batch fails validation or signature verification fails, channel
-state and queued local actions both revert to the pre-batch state.
+Untrusted `PeerMessage::Batch` processing takes an explicit cloneable
+`OffChainWorkingState` rollback snapshot. It contains channel state, queued
+local and incoming messages, potato state, peer-potato intent, clean-shutdown
+correlation, latest spend commitment, and height. If a peer action or signature
+check fails, the snapshot is restored and no effects or replacement phase are
+published. Received `CleanShutdown` has its own narrow snapshot because it
+cancels proposals before the peer signature is validated; trusted local entry
+points do not use a blanket transaction wrapper.
+
+This Rust rollback boundary is independent of browser persistence. Once valid
+peer processing commits, a later IndexedDB checkpoint failure cannot restore
+the pre-message `OffChainWorkingState` or suppress/replay the captured reliable
+ACKs and external effects.
 
 The queue snapshot matters even though the peer cannot directly enqueue local
 actions. A valid prefix of a malicious peer batch can make our pre-existing
@@ -332,26 +336,312 @@ that stale queue leaked into `go_on_chain`, the on-chain handler could attempt
 local responses that were only stale because the failed peer batch partially ran.
 The invariant is therefore:
 
-- **Peer batch failure is atomic.** No `ChannelState` mutations and no
-  peer-induced `game_action_queue` changes survive a failed received batch.
+- **Peer batch failure is atomic.** No proposal, game, balance, signature,
+  potato, shutdown, message, or queue mutation survives a failed received
+  batch.
 - **Bad peer data escalates.** Ordinary `OffChainPhase::received_message` errors
   call `go_on_chain(..., true)` after rollback. That is the protocol response to
   invalid peer data.
 - **Local queue drain errors are internal/local problems.**
   `drain_queue_into_batch` processes user/UI actions queued through local APIs.
-  Those errors are not a normal peer-message recovery path. Every failed drain
-  restores its own channel and queue snapshots before the caller removes the
-  attributed failed action. A post-receive failure therefore does not reject a
-  valid peer batch, while an ordinary flush cannot retain an unsent prefix.
+  Those errors are not a normal peer-message recovery path. A valid peer batch
+  commits before explicit reconciliation removes known stale game actions and
+  emits `ActionFailed`; the remaining queue drains once. Unexpected local
+  failures stay fail-fast. Its local `BatchPlan` protects only package
+  construction: cloned durable channel state, queue disposition, and staged
+  effects commit after cached-unroll finalization, with no nested retry loop.
+  Transient caches are not members of that transactional clone.
 
-Fields updated after successful signature verification, such as `have_potato`
-and `last_channel_coin_spend_info`, are outside the rollback problem because
-they are only advanced after the received batch is valid.
+Do not generalize this rollback mechanism. Its purpose is to quarantine
+partially applied, untrusted peer input. Local UI calls, block-height and coin
+`go_on_chain`, and ordinary local drains must not acquire nested snapshots or
+retry loops. Blockchain observations are also externally controlled and get
+their own narrow ingestion boundary; that does not make rollback a general
+runtime error-handling mechanism. If a new peer or chain message mutates state
+before all of its externally controlled data is validated, give that entry
+point the narrowest complete boundary that covers those mutations.
 
-**Key code:** `src/session_phases/mod.rs` — `pass_on_channel_state_message`
-(snapshot/restore), `process_received_batch`, `update_channel_coin_after_receive`,
-`drain_queue_into_batch`; regression:
-`failed_final_move_bad_signature_does_not_queue_accept_settlement`
+**Key code:** `src/session_phases/mod.rs` — `OffChainWorkingState`,
+`process_received_batch`, `commit_received_batch_state`,
+`drain_local_actions_after_receive`,
+`assert_invalid_clean_shutdown_rollback_for_testing`, and
+`drain_queue_into_batch`; regressions:
+`test_peer_smoke` and
+`failed_final_move_bad_signature_does_not_queue_accept_settlement`.
+Test-only off-chain operations are exposed through the concrete
+`OffChainPhase` accessor seam on `GameSession`; they are not part of the
+production lifecycle trait contract and are not stubbed across unrelated
+phases.
+
+### Transaction Submission Drain Isolation
+
+WASM runs the drain on a serialized canonical working copy and constructs the
+JavaScript result before committing, so conversion failure leaves the original
+manager exact.
+
+`TransactionManager::drain_submissions` is availability-first only where it can
+prove isolation. Each queued candidate is planned on a working copy and commits
+independently. If `B` fails in an `A/B/C` queue, `A` and `C` commit, `B` is
+consumed, and one typed failure records its candidate index, optional stable ID,
+intent fingerprint, stage, bounded message, and Rust context. A later drain
+does not report `B` again. Rust abandonment emits retirement IDs before removing
+retained submissions, allowing the wallet ledger to cancel only the exact
+provider reservations Rust no longer needs.
+
+The host persists one bounded diagnostic incident with a JavaScript stack and
+the Rust context. Diagnostic history retains the newest complete entries within
+256 KiB of total UTF-8 text, drops an individually oversized entry, and keeps
+the 2,000-entry cap as a secondary defense; Rust and JavaScript per-field bounds
+still apply. The host emits one recoverable-internal-error notification and shows
+one dismissible nonfatal modal while the game and dashboard remain active. It
+must not also emit an ordinary session error or a global uncaught-error report.
+This continuation is legal only because the per-item working copy proves the
+remaining manager/session state intact. Unknown global integrity remains fatal.
+The recovered boundary follows the live failed-checkpoint policy: attempt the
+checkpoint, release safe work once even if it fails, and retain dirty in-memory
+state for a later checkpoint.
+
+---
+
+## Blockchain Observation Boundary
+
+Each height, coin-snapshot, or puzzle/solution callback runs against a fresh
+`TransactionManager<GameSession>` working copy created by a Bencodex
+serialize/deserialize round trip. This cost is intentional: the durable
+transaction scope includes both the manager and the complete nested
+`GameSession`, so a late handler, encoding, decoding, or application failure
+cannot commit a partial chain interpretation. Rolling back effects alone would
+be insufficient because observation callbacks also mutate protocol state.
+
+Transient output is excluded from that durable copy and held in one observation
+journal: pending manager events, watch and unwatch deltas, detached cradle
+output, and timeout-claim reconciliation state. Failure restores that journal
+unchanged. Success prepends the old journal to new output, preserving FIFO
+order, and commits the working copy. Test-only stale-unroll snapshots belong to
+the simulator harness and are passed explicitly; they are not production
+`GameSession` or observation-journal state.
+
+Callbacks execute with a fresh scratch `AllocEncoder`, not the caller's
+allocator. A failed callback therefore leaves no CLVM allocations behind in
+the caller. Any state or effect that survives the observation owns its CLVM
+data as serialized `Program` bytes; allocator-local `NodePtr` values must not
+cross the boundary. Requested puzzle/solution coin IDs are durable manager
+state. Explicit restore reissues each still-live request once; retire-aware
+controller deliveries prevent a callback owned by an obsolete runtime from
+committing into its replacement. Puzzle and solution bytes remain protocol
+evidence even when a trusted wallet RPC returned successfully. Malformed bytes
+make the Rust callback fail transactionally and terminally block that request;
+ordinary wallet-readiness or height changes do not retry deterministic invalid
+data.
+
+**Key code:** `src/transaction_manager.rs` — `ObservationTransients`,
+`apply_observation_transaction`, `report_height`, and `report_coin_states`.
+
+---
+
+## Browser Commit Boundary
+
+This section applies the canonical
+[Persistence transactionality](OVERVIEW.md#persistence-transactionality)
+policy. Durability follows fixed-point durable residue and a named restore
+consumer; rehydrating the latest successful boundary supplies implicit crash
+rollback. Importance alone does not admit a field to the aggregate.
+
+`SessionMachineRuntime` construction is inert. The committed React layout
+effect installs its render callback and calls `activate()`; only then does it
+become the controller's exclusive committed runtime. Layout-effect cleanup calls
+only `clearRender()`. It does not retire the runtime or protocol. Replacement of
+the committed runtime and `SessionController` cleanup—including terminal
+cleanup—own retirement. The controller retains the committed runtime while no
+renderer is mounted; a later renderer reads and reattaches that same runtime
+without changing protocol ownership during render.
+
+Local restore and external recovery are separate. A valid IndexedDB envelope
+and WASM cradle may project the restored shell/game/dashboard immediately,
+without a live hub, wallet, or blockchain. Controls that require those services
+stay gated until their independent reconciliation completes.
+
+For an active or rehydrated browser session, the activated runtime is the only
+commit owner. One stimulus is not finished merely because its first reducer or
+WASM call returned. The runtime must continue through reducer effects,
+controller/WASM callbacks, generated events, UX-model changes, and reliable
+transport changes until the whole event graph is quiescent.
+
+The required normal order is:
+
+1. Drain all internal and UX-model work to a fixed point.
+2. Synchronously freeze the final JS model, serialized WASM cradle, and reliable
+   transport generation.
+3. Attempt exactly one awaited persistence operation.
+4. Publish the captured model to React.
+5. Release captured peer messages, acknowledgements, wallet/chain work, and
+   completion callbacks exactly once.
+
+React rendering is a projection after the persistence attempt, not another
+participant in the event drain. Intermediate models remain unpublished; this
+is both the commit-boundary mechanism and the general flicker-avoidance
+mechanism. Work arriving during the write belongs to the next commit and cannot
+change the captured payload.
+
+A live-checkpoint failure is serious but must not stop a game for money for an
+internal storage reason. Log it and report at most one transient, dismissible
+durability warning for that degradation episode; publish and release the
+captured gameplay/network boundary once—including cleanup, transaction
+submission, and peer frame/ACK work—retain the latest in-memory state as dirty,
+and retry only after later activity. Persisted and released generations are
+distinct: a later successful full checkpoint captures every still-unresolved
+durable intent, clears any still-visible warning, re-arms reporting for a later
+episode, and does not resend effects already released in degraded mode. There
+is no durability-required effect gate. This availability choice admits a crash
+window in which external effects are newer than the last durable local
+checkpoint.
+
+Do not add active-session save timers, direct reducer/effect persistence,
+mid-drain React updates, or eager peer sends. Every new event source must feed
+the same coordinator. Pre-runtime negotiation may use the standalone reliable
+transport flush, but it follows the same attempt-persistence-before-release
+ordering and degraded failure policy. A wallet pre-provider checkpoint protects
+a newly installed external obligation, and repository-owned preference/history
+mutations use a coalesced repository drain. Those distinct owners retain the
+last complete session capture and never serialize a partial runtime drain.
+
+`SessionMachineRuntime` directly provides the peer transport's narrow
+`ReliableCommitCoordinator` facet and `snapshotModel()` returns its
+authoritative model. Replacing a committed runtime or cleaning up its controller
+retires the old runtime, discards queued
+events and fire-and-forget controller work, and rejects queued result promises
+and persistence-gated effects. Completion callbacks from an in-flight write
+also become inert after retirement. Final controller cleanup settles unlaunched
+submission deliveries and queued jobs and removes tracked effects from
+quiescence. A wallet RPC that returns afterward can only register/cancel its
+trade through the wallet-level ledger; it cannot mutate the dropped cradle.
+
+`ChannelFundingRuntime` holds one stable funding inbox per attached session.
+A restored request cannot launch while that owner still has a blocking funding
+operation for the same stable identity.
+Rust creates the canonical request, the external wallet constructs the funding
+offer from it, and Rust validates the returned offer. Rejection ends the
+handshake; it never creates controller-owned successor or predecessor requests.
+
+The current app-owned contracts are `DurableApplicationState` v5, opaque
+Rust/WASM cradle schema 23, and app IndexedDB v5. Internally, that means a
+non-current version is an unsupported root, not an alternate restore path; see
+the canonical
+[unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
+Rust snapshots convert `usize` state numbers through checked `u64`; WASM and
+all internal/persisted JavaScript channel state-number fields are `bigint`.
+Conversion to `number` is restricted to external APIs that require it, and
+number-valued persistence or event decodes are rejected.
+
+Persisted provider reservations enter two strict aggregate slices with two
+explicit owners: `ChannelFundingRuntime` owns `channelFundingOperations`, while
+`SubmissionPump` and `FeeAttachmentRuntime` own `feeAttachments`. There is no
+generic wallet-operation, settlement, or session cancellation layer. Entries
+preserve the exact provider trade
+ID and exact `(installationPlayerId, peerSessionId, provider/account scope,
+purpose kind, operationId)` owner, so multiple trades for one operation remain independent.
+Provider adapters own external offer lifecycle; the controller and Rust own
+protocol intent. Wallet mutations wait for the claimed aggregate to be
+installed. Any malformed nested field rejects the whole root and is shown at
+Resume / Start Over; a connected wallet under a different scope reports a
+visible recovery mismatch. The durable post-creation stages are `reserved`,
+`retained-for-replay`, and `cancel-required`; `creating` embeds the canonical
+request plus exact recovery ID and active/cancel-on-create disposition, while
+`cancelling` preserves the exact trade and
+cancellation recovery ID. Funding unavailability remains pending. Controller
+retirement promotes only `reserved` entries and preserves
+`retained-for-replay`.
+Funding survives material delivery until Rust emits a typed chain outcome:
+`ChannelCoinConfirmed` forgets the reservation without cancellation, while
+`ChannelCreationTimedOut` cancels the exact `providerReservationId`. An
+unidentified pre-ID timeout cannot synthesize a cancellation ID and instead
+retains cancel-on-create orphan evidence. An attached fee stays retained while
+Rust owns exact-byte replay; wallet acknowledgement does not retire it, and
+Rust submission retirement cancels the exact `providerReservationId`. Cloud
+cancellation is complete only after its signature request reaches terminal
+success. Cloud is recoverable only after begin returns a
+`signatureRequest` recovery ID: pre-ID response loss persists
+`best-effort-uncertain`, while post-ID `creating` and `cancelling` entries
+reconcile the exact request without another begin call. If a replacement begin
+after pre-ID uncertainty supplies an ID, the entry transitions to `creating`
+and exact reconciliation takes over. The aggregate preserves the typed
+`orphanRisk: 'pre-id-response-lost'` provenance through that transition and any
+eventual created trade, so the unidentified first request remains visibly
+risky after success. Popup source/origin/request correlation and exact
+listener/popup cleanup remain adapter responsibilities. Deployed WalletConnect
+lacks end-to-end create-offer idempotency and response-loss reconciliation; it
+is best-effort throughout and uses the same provenance for a lost response.
+Both WalletConnect uncertainty and pre-ID Cloud uncertainty persist across
+reload and automatically get exactly one new attempt on each later
+`WalletProviderRegistry` readiness epoch, with no timer or immediate loop.
+
+`BootRecoveryBoundary` owns pending wipe, read-only inspection, atomic
+claim-and-read, one strict rehydrate, takeover, malformed evidence, reset
+retry, and authority loss. The winning claim returns the exact aggregate;
+pending common identity, preference, and history changes are folded into that
+root before one whole-root checkpoint. Other mutations reject until authority
+is claimed. Corruption never invokes semantic clear or pruning. IndexedDB v5
+contains coordination and aggregate stores; strict validation rejects unknown
+or missing fields, duplicate trade IDs, invalid discriminants, and non-current
+versions. Duplicate identified `providerReservationId` values are forbidden
+within either slice and across both slices; owner scope must match the aggregate
+wallet context. One generation-fenced mutation coordinator validates authority
+atomically with each aggregate write; localStorage is only a UX hint. Old tabs
+and retired runtimes cannot
+overwrite a winning generation, and a clear immediately followed by an
+unawaited save leaves the save. Hard reset advances the durable reset epoch
+before deletion and intentionally erases every reservation, including replay
+retention; pre-reset writes cannot recreate the database or cached state after
+the wipe. Reload occurs only after confirmed deletion success. Blocked or
+failed deletion stays on recovery UI with Retry and records a minimal
+pending-wipe fallback for the next boot.
+Ordinary IndexedDB I/O degradation keeps the in-memory aggregate pending and
+available; `StorageAuthorityLostError` and `StorageAuthorityRequiredError` mean
+the old owner is dead, retire its controller, and suppress pending
+writes/effects. A new claimant restores only the latest flushed durable whole
+root rather than receiving a terminal snapshot or transient work from the old
+generation. The reset manifest deletes exact owned names and enumerated
+owned prefixes while preserving foreign same-origin databases.
+Aggregate persistence does not gate wallet use, transaction release, or
+`cancelOffer`; a failed write is retried by a later full checkpoint. Failed
+cancellation stays durable and retries only on restore or matching wallet
+reconnect/readiness—never by a timer, immediate loop, or generic terminal sweep.
+Identified cancellation cleanup is nonblocking for terminal capture; only work
+that must still deliver funding material to Rust blocks finalization. Going
+offline detaches the provider RPC without losing cleanup; retirement records
+the required transitions, and matching restore/reconnect attachment drains
+them.
+
+Transaction submission promises span persistence-gated launch, ordered wallet
+delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal
+finalization drains those promises, controller events, persistence, and reliable
+transport repeatedly to quiescence, then takes the terminal snapshot from that
+post-quiescence authoritative runtime model. Terminal capture installs that
+record in the repository root before its write. An ordinary write failure
+reports degraded durability but still retires protocol ownership; a later
+aggregate checkpoint can persist the pending terminal root without replaying
+finalization. Once sealed, every incoming runtime is immediately retired until
+controller cleanup. Either authority error kills the obsolete owner without a
+terminal result, marker, or teardown; a new claimant rehydrates the latest
+flushed durable live root and independently finalizes. Unresolved reservation
+creation or identification, funding material still owed to Rust, and other
+protocol obligations block capture. Identified funding or fee cancellation
+residue stays durable and may survive capture.
+
+The live transport checkpoint includes the cooperative terminal handoff's Rust
+command identity, exact reliable frame bytes and message number, sent state, and
+ACK state. Restore strictly reconciles that binding with both Rust and the
+unacknowledged frame journal. An ACKed binding completes Rust without
+retransmission; an unacknowledged binding reuses the same frame. The receive
+reorder queue is not persisted: retransmission from the sender's durable
+unacknowledged journal reconstructs the gap. Outstanding puzzle/solution host
+requests are different: Rust persists their coin IDs independently of drained
+events and reissues each once during explicit runtime restore.
+
+These browser ownership and persistence rules require no peer wire schema
+change. Transaction rebroadcast remains the exact-chain-byte behavior described
+above; reliable peer-frame replay remains the separate numbered-frame transport
+behavior.
 
 ---
 
@@ -375,23 +665,34 @@ This avoids peer-specific factory runs or proposal parsers while ensuring both
 peers commit to the same ordered records. Calpoker and Space Poker factories
 return one record; Krunk returns two.
 
+Rust supports multiple pending proposals. The browser intentionally admits only
+one uncancelled proposal at a time across local and peer origins as a product
+policy; a second incoming proposal is definitively cancelled without frontend
+admission, while cancelling an existing entry releases the slot. This is a
+temporary single-hand UX constraint. Future multi-hand work should replace the
+frontend admission and presentation policy, not narrow Rust's ledger or wire
+protocol.
+
 Atomicity is enforced at three boundaries:
 
-1. **Propose:** Derive cardinality, IDs, economics, roles, and wire commitments
-   from one factory run. Proposals may exceed current balances; funding is
-   checked when the receiver chooses to accept.
-2. **Receive:** Re-run the factory and require `ProposeGroup`'s ordered retained
-   member commitments and cardinality to match exactly; raw state, handlers,
-   validator registry, derived amount, and a separate group ID are not sent.
-3. **Accept/cancel:** Expand any member ID to the complete group. Acceptance
-   repeats the aggregate balance preflight before queueing one
-   `AcceptProposalGroup` with the canonical first-member ID. The receiver
-   validates that ID and applies every member in factory insertion order.
-   Cancellation similarly queues one `CancelProposalGroup`.
+1. **Propose:** Store and send only the proposal ID, game type, opaque
+   parameters, timeout, and player orientation. Factory execution, economics,
+   member cardinality, and game IDs remain deferred.
+2. **Accept:** When a queued acceptance executes, run the factory with the
+   proposer and accepter reserves remaining after all earlier batch actions.
+   Validate and build all temporary games and economics first, then commit them
+   once inside the batch's already cloned channel. Allocate ordered `GameID`s
+   and continue to the next action. A cancellation addresses the proposal ID
+   and creates no games.
+3. **Receive:** Replay acceptances in wire order with the same reserve
+   orientation and calculations. The enclosing untrusted peer-batch rollback
+   withholds every mutation and effect until all actions and signatures
+   validate.
 
-These checks compose with batch rollback: if group hydration, member validation,
-or canonical group validation fails, none of the received batch's proposal
-mutations survive.
+Do not move factory execution or game-ID allocation back to proposal time, and
+do not add frontend group/member proposal identities. The accepted notification
+is the correlation point between one endpoint-local proposal ID and its ordered
+generated games.
 
 ---
 
@@ -420,20 +721,20 @@ on-chain.
 
 There are three kinds of cached entries:
 
-- `**CachedSendMove`** — a move we sent but the opponent hasn't acknowledged.
-Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
-and the post-move puzzle hash (`saved_post_move_last_ph`).
-- `**CachedAcceptSettlement`** — a game acceptance we sent. Stores the game ID, puzzle
-hash, live game state, and reward amounts. When the potato returns
-(acknowledgment), `drain_cached_accept_settlements` emits `GameSettled` with
-`outcome: accept_settlement` for each cached accept.
+- `**CachedSendMove`\*\* — a move we sent but the opponent hasn't acknowledged.
+  Stores the move data, the puzzle hash it operates on (`match_puzzle_hash`),
+  and the post-move puzzle hash (`saved_post_move_last_ph`).
+- `**CachedAcceptSettlement`\*\* — a game acceptance we sent. Stores the game ID, puzzle
+  hash, live game state, and reward amounts. When the potato returns
+  (acknowledgment), `drain_cached_accept_settlements` emits `GameSettled` with
+  `outcome: accept_settlement` for each cached accept.
 - `**ProposalAccepted**` — an internal per-ID protocol replay marker for a
-proposal acceptance we sent. Stores one game ID and is repeated for members of
-an atomic group. This exact `CachedRedoActions::ProposalAccepted` Rust name is
-not the UI notification; UI acceptance is one ordered
-`GameNotification::ProposalAcceptedGroup`. The marker is used during stale
-unroll handling to distinguish in-flight proposal accepts (which get
-`EndedCancelled`) from fully established games (which get `GameError`).
+  proposal acceptance we sent. Stores one game ID and is repeated for members of
+  an atomic group. This exact `CachedRedoActions::ProposalAccepted` Rust name is
+  not the UI notification; UI acceptance is one ordered
+  `GameNotification::ProposalAcceptedGroup`. The marker is used during stale
+  unroll handling to distinguish in-flight proposal accepts (which get
+  `EndedCancelled`) from fully established games (which get `GameError`).
 
 **Set** in `send_move_no_finalize` (moves) and
 `send_accept_settlement_no_finalize` (accept settlements).
@@ -441,11 +742,11 @@ unroll handling to distinguish in-flight proposal accepts (which get
 **Cleared** (selectively) when we receive the potato back:
 
 - `CachedSendMove` entries are cleared in `verify_received_batch_signatures`
-and `received_empty_potato` (the opponent's response acknowledges our moves).
+  and `received_empty_potato` (the opponent's response acknowledges our moves).
 - `ProposalAccepted` entries are also cleared on potato receive.
 - `CachedAcceptSettlement` entries are **retained** across those clears and only drained
-later by `drain_cached_accept_settlements` during `update_channel_coin_after_receive` or
-clean shutdown, when `GameSettled` notifications are emitted.
+  later by `drain_cached_accept_settlements` during `commit_received_batch_state` or clean
+  shutdown, when `GameSettled` notifications are emitted.
 
 ### How Redo Works
 
@@ -465,7 +766,7 @@ curried referee puzzle hash of the **pre-move** state (computed from
 `self.spend_this_coin()` before updating the referee). This value is stored as
 `match_puzzle_hash` in `cached_redo_actions`. It corresponds to the puzzle
 hash the unroll coin would create for this game coin if the unroll resolved
-at the state *before* our move — which is exactly the puzzle hash that
+at the state _before_ our move — which is exactly the puzzle hash that
 appears on-chain in both the non-stale redo case and in a stale unroll at
 that state.
 
@@ -483,20 +784,20 @@ materialized on-chain, the game is cancelled (`EndedCancelled`).
 A redo is triggered when:
 
 - We sent a move that wasn't acknowledged before going on-chain
-- The unroll/preemption resolved to the state *before* that move
+- The unroll/preemption resolved to the state _before_ that move
 
 A redo is NOT needed when:
 
 - The preemption or timeout resolved to the latest state (our move was already
-included in the unroll data)
-- We were the *receiver* of the last move (nothing to replay)
+  included in the unroll data)
+- We were the _receiver_ of the last move (nothing to replay)
 
 ### Stale Cache After Peer Disconnect
 
 When `go_on_chain` is called, all incoming peer messages are black-holed (see
 [Peer Disconnect Invariant](#peer-disconnect-invariant)). If we sent actions
 (adding to `cached_redo_actions`) but the peer's response — which would normally
-clear the entries — arrives *after* the disconnect, the entries remain.
+clear the entries — arrives _after_ the disconnect, the entries remain.
 This is expected and correct: the stale cache causes `set_state_for_coins` to
 detect that redos or cancellations are needed, replaying our unacknowledged
 moves and timeout claims on-chain.
@@ -506,12 +807,12 @@ moves and timeout claims on-chain.
 There are two sources of on-chain actions after `go_on_chain`:
 
 - **Redo actions** (from `cached_redo_actions`): moves or accept settlements we
-already sent with the last potato but that weren't acknowledged before going
-on-chain. These apply to games where **it was our turn and we acted**.
+  already sent with the last potato but that weren't acknowledged before going
+  on-chain. These apply to games where **it was our turn and we acted**.
 - **User-queued actions** (from `game_action_queue`): moves the user queued
-(via `make_move`) while waiting for the potato or after going on-chain. These
-apply to games where **it was the opponent's turn** (so we couldn't have sent
-anything yet), or actions queued after the transition.
+  (via `make_move`) while waiting for the potato or after going on-chain. These
+  apply to games where **it was the opponent's turn** (so we couldn't have sent
+  anything yet), or actions queued after the transition.
 
 Because moves alternate, a single game cannot have entries in both lists — you
 can't have an unacknowledged move you sent (it was your turn) and a queued move
@@ -540,25 +841,25 @@ When `cheat()` is called on a `GameSession`:
 
 1. A `GameAction::Cheat(game_id, mover_share, entropy)` is queued internally.
 2. Like a normal `Move`, the `Cheat` action is deferred until it is the
-  player's turn.
+   player's turn.
 3. When processed (off-chain in `drain_queue_into_batch` or on-chain in
-  `do_on_chain_action`), the handler atomically:
-  - Enables cheating on the `ChannelState`'s referee for that game,
+   `do_on_chain_action`), the handler atomically:
+
+- Enables cheating on the `ChannelState`'s referee for that game,
   substituting `0x80` (nil) as the move bytes and the given `mover_share`
   (which becomes the victim's share on timeout).
-  - Executes the move through the normal referee path. The referee bypasses
+- Executes the move through the normal referee path. The referee bypasses
   validation and produces a game-move with the fake data.
+
 4. The resulting move is sent to the opponent, who detects the invalid data and
-  can slash on-chain.
+   can slash on-chain.
 
 ### Outcomes
 
-
-| Scenario                        | Notification (cheater)                                       | Notification (victim)                                         |
-| ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
-| Opponent detects and slashes    | `GameSettled { outcome: opponent_slashed_us, … }`             | `GameSettled { outcome: slashed_opponent, … }`                |
-| Opponent fails to slash in time | `GameSettled { outcome: opponent_timed_out, … }`             | `GameSettled { outcome: opponent_cheated, … }`                |
-
+| Scenario                        | Notification (cheater)                            | Notification (victim)                          |
+| ------------------------------- | ------------------------------------------------- | ---------------------------------------------- |
+| Opponent detects and slashes    | `GameSettled { outcome: opponent_slashed_us, … }` | `GameSettled { outcome: slashed_opponent, … }` |
+| Opponent fails to slash in time | `GameSettled { outcome: opponent_timed_out, … }`  | `GameSettled { outcome: opponent_cheated, … }` |
 
 **Key code:**
 
@@ -581,35 +882,37 @@ instead of panicking. The point of strict-mode panics is that in a correct
 implementation none of these conditions should ever occur — hitting one means
 there is a bug.
 
+The simulator service's `replace_chain` operation validates rollback and target
+height bounds before calling `reorg` or mutating its coin adapter and simulation
+record. An invalid replacement request therefore leaves runner state unchanged.
+
 **Strict-mode panics** (non-strict mode returns rejection codes instead):
 
-
-| Check                           | What it catches                                                                                                                |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Puzzle hash mismatch**        | Computed puzzle hash differs from the coin record's puzzle hash. Indicates incorrect puzzle reconstruction.                    |
-| **Premature timelock**          | `ASSERT_HEIGHT_RELATIVE` not yet satisfied at submission time. The real chain silently drops these.                            |
-| **Conflicting mempool spends**  | Two different transactions spending the same coin. The real chain picks one.                                                   |
-| **CLVM execution error**        | Puzzle/solution fails to run. Means the code submitted a malformed transaction.                                                |
-| **Aggregate signature failure** | Spend bundle's aggregate signature does not verify. Means signing logic has a bug.                                             |
-| **Implicit fee mismatch**       | Implicit fee differs from declared `RESERVE_FEE`. In strict mode this now panics to enforce explicit fee accounting.             |
-| **Coin not found**              | Spending a coin that doesn't exist. Means stale state or a logic error in coin tracking.                                       |
-| **Already spent**               | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                                  |
-| **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                       |
-| **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                                  |
-| **Missing validated spend**     | `validated.spends` has no entry for an input spend index. Accepting would skip CREATE_COIN / relative-lock bookkeeping.        |
-
+| Check                           | What it catches                                                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Puzzle hash mismatch**        | Computed puzzle hash differs from the coin record's puzzle hash. Indicates incorrect puzzle reconstruction.             |
+| **Premature timelock**          | `ASSERT_HEIGHT_RELATIVE` not yet satisfied at submission time. The real chain silently drops these.                     |
+| **Conflicting mempool spends**  | Two different transactions spending the same coin. The real chain picks one.                                            |
+| **CLVM execution error**        | Puzzle/solution fails to run. Means the code submitted a malformed transaction.                                         |
+| **Aggregate signature failure** | Spend bundle's aggregate signature does not verify. Means signing logic has a bug.                                      |
+| **Implicit fee mismatch**       | Implicit fee differs from declared `RESERVE_FEE`. In strict mode this now panics to enforce explicit fee accounting.    |
+| **Coin not found**              | Spending a coin that doesn't exist. Means stale state or a logic error in coin tracking.                                |
+| **Already spent**               | Spending a coin that was spent in a prior block. Means stale timeout or duplicate submission.                           |
+| **Minting**                     | Outputs exceed inputs (creating value from nothing). Means incorrect amount calculation.                                |
+| **RESERVE_FEE not satisfied**   | Declared fee exceeds available implicit fee. Means the fee arithmetic is wrong.                                         |
+| **Missing validated spend**     | `validated.spends` has no entry for an input spend index. Accepting would skip CREATE_COIN / relative-lock bookkeeping. |
 
 **Conflicting mempool spends are the one exception to "this can only be a bug."**
-Two *different* transactions spending the same coin is perfectly normal on a real
+Two _different_ transactions spending the same coin is perfectly normal on a real
 chain: it happens whenever both parties go on chain at once, a peer misbehaves, or
 the two sides are temporarily disconnected, and the chain resolves it for free
 (only one spend of a coin can confirm). Strict mode still fails fast on it because
-an *unexpected* conflict is usually a symptom worth investigating, and failing at
+an _unexpected_ conflict is usually a symptom worth investigating, and failing at
 the point of conflict is far easier to debug than a divergent outcome many blocks
-later. (Resubmitting an *identical* bundle is not a conflict — the mempool
+later. (Resubmitting an _identical_ bundle is not a conflict — the mempool
 de-duplicates by fingerprint.) The genuine bug this guards against is a single
 party putting two different competing transactions on chain itself (e.g. holding a
-good clean-shutdown and *also* unrolling). When a test legitimately drives both
+good clean-shutdown and _also_ unrolling). When a test legitimately drives both
 sides to spend the same coin, it must designate a winner by nerfing the loser; see
 [Strict Mode](SIMULATOR_TESTING.md#strict-mode-why-double-submission-fails-tests)
 in the simulator testing reference.
@@ -659,10 +962,10 @@ The `game_assert!` and `game_assert_eq!` macros (defined in
 `src/common/types/macros.rs`) bridge these two needs:
 
 - **Debug / test builds:** the macro panics immediately (via `debug_assert!`),
-making invariant violations impossible to miss during development.
+  making invariant violations impossible to miss during development.
 - **Release builds:** the macro returns `Err(Error::StrErr(...))`, allowing the
-caller to handle the failure gracefully (typically by emitting a `GameError`
-notification and continuing).
+  caller to handle the failure gracefully (typically by emitting a `GameError`
+  notification and continuing).
 
 ### Usage
 
@@ -676,7 +979,6 @@ this because the macro contains a `return Err(...)`.
 
 ### When to use each pattern
 
-
 | Situation                                     | Pattern                                           |
 | --------------------------------------------- | ------------------------------------------------- |
 | Internal invariant (own logic)                | `game_assert!` / `game_assert_eq!`                |
@@ -684,7 +986,6 @@ this because the macro contains a `return Err(...)`.
 | Deserialization of wire data                  | `map_err(serde::de::Error::custom)?`              |
 | Infallible conversions (e.g. `0.to_bigint()`) | `.unwrap()` is acceptable                         |
 | Test-only code                                | Standard `assert!` / `assert_eq!`                 |
-
 
 ### Rationale
 

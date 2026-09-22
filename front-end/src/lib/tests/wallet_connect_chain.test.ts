@@ -7,7 +7,7 @@ import {
   ChiaMethod,
 } from '../../constants/wallet-connect';
 import { MAINNET_GENESIS_CHALLENGE, TESTNET_GENESIS_CHALLENGE } from '../../constants/env';
-import { setNetwork, saveSession, _resetForTests } from '../../hooks/save';
+import { storageRepository } from '../session/storageRepository';
 
 function makeStorage(): Storage {
   const store = new Map<string, string>();
@@ -32,14 +32,18 @@ function setGlobal(key: string, value: unknown) {
 }
 
 describe('WalletConnect chain id follows the network preference', () => {
-  beforeEach(() => {
-    _resetForTests();
+  beforeEach(async () => {
+    storageRepository._resetForTests();
     setGlobal('localStorage', makeStorage());
     setGlobal('sessionStorage', makeStorage());
+    await storageRepository.claimApplicationState();
+    await storageRepository.updateCommon({
+      preferences: { network: 'mainnet', blockchainType: undefined },
+    });
   });
 
   afterEach(() => {
-    _resetForTests();
+    storageRepository._resetForTests();
     Reflect.deleteProperty(globalThis, 'localStorage');
     Reflect.deleteProperty(globalThis, 'sessionStorage');
   });
@@ -50,15 +54,15 @@ describe('WalletConnect chain id follows the network preference', () => {
   });
 
   it('uses the testnet chain id when the preference is testnet', () => {
-    setNetwork('testnet');
+    storageRepository.updatePreference({ key: 'network', value: 'testnet' });
     expect(getChainId()).toBe('chia:testnet');
     expect(getRequiredNamespaces().chia.chains).toEqual(['chia:testnet']);
   });
 
   it('switches back to mainnet when the preference changes', () => {
-    setNetwork('testnet');
+    storageRepository.updatePreference({ key: 'network', value: 'testnet' });
     expect(getChainId()).toBe('chia:testnet');
-    setNetwork('mainnet');
+    storageRepository.updatePreference({ key: 'network', value: 'mainnet' });
     expect(getChainId()).toBe('chia:mainnet');
   });
 
@@ -75,14 +79,18 @@ describe('WalletConnect chain id follows the network preference', () => {
 });
 
 describe('genesis challenge follows the network preference', () => {
-  beforeEach(() => {
-    _resetForTests();
+  beforeEach(async () => {
+    storageRepository._resetForTests();
     setGlobal('localStorage', makeStorage());
     setGlobal('sessionStorage', makeStorage());
+    await storageRepository.claimApplicationState();
+    await storageRepository.updateCommon({
+      preferences: { network: 'mainnet', blockchainType: undefined },
+    });
   });
 
   afterEach(() => {
-    _resetForTests();
+    storageRepository._resetForTests();
     Reflect.deleteProperty(globalThis, 'localStorage');
     Reflect.deleteProperty(globalThis, 'sessionStorage');
   });
@@ -92,26 +100,30 @@ describe('genesis challenge follows the network preference', () => {
   });
 
   it('uses the testnet11 genesis challenge when the preference is testnet', () => {
-    setNetwork('testnet');
+    storageRepository.updatePreference({ key: 'network', value: 'testnet' });
     expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
   });
 
   it('switches back to mainnet when the preference changes', () => {
-    setNetwork('testnet');
+    storageRepository.updatePreference({ key: 'network', value: 'testnet' });
     expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
-    setNetwork('mainnet');
+    storageRepository.updatePreference({ key: 'network', value: 'mainnet' });
     expect(getGenesisChallenge()).toBe(MAINNET_GENESIS_CHALLENGE);
   });
 
   it('uses the mainnet challenge for the simulator even when testnet is selected', async () => {
-    setNetwork('testnet');
-    await saveSession({ scope: 'common', preferences: { blockchainType: 'simulator' } });
+    storageRepository.updatePreference({ key: 'network', value: 'testnet' });
+    await storageRepository.updateCommon({
+      preferences: { blockchainType: 'simulator' },
+    });
     expect(getGenesisChallenge()).toBe(MAINNET_GENESIS_CHALLENGE);
   });
 
   it('still uses the testnet challenge for WalletConnect when testnet is selected', async () => {
-    setNetwork('testnet');
-    await saveSession({ scope: 'common', preferences: { blockchainType: 'walletconnect' } });
+    storageRepository.updatePreference({ key: 'network', value: 'testnet' });
+    await storageRepository.updateCommon({
+      preferences: { blockchainType: 'walletconnect' },
+    });
     expect(getGenesisChallenge()).toBe(TESTNET_GENESIS_CHALLENGE);
   });
 });

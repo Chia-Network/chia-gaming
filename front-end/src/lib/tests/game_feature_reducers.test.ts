@@ -4,23 +4,21 @@ import {
   reduceSpacepokerSettlementState,
 } from '@games/spacepoker/ui/handProposal';
 import { reduceCalpokerFeatureState } from '@games/calpoker/ui/handProposal';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { reduceKrunkFeatureState } from '@games/krunk/ui/handProposal';
 import {
   createKrunkHand,
   initialKrunkGameState,
   KrunkHandler,
-  krunkStateCodec,
   restoreKrunkHand,
   type KrunkHandState,
 } from '@games/krunk/ui/serialize';
 import {
   createSpacepokerHand,
   restoreSpacepokerHand,
-  spacepokerStateCodec,
   type SpacepokerHandState,
 } from '@games/spacepoker/ui/serialize';
 import { restoreCalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import type { GameHandInitialization, GameUpdate } from '@games/host';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -47,8 +45,14 @@ function assertCodecValid(state: SpacepokerHandState | null): SpacepokerHandStat
 }
 
 const spacepokerInit = (): GameHandInitialization => ({
-  parameters: 10n,
-  members: [{ playerAContribution: 1_000n, playerBContribution: 1_000n, ourTurn: true }],
+  members: [
+    {
+      playerAContribution: 1_000n,
+      playerBContribution: 1_000n,
+      ourTurn: true,
+      readableParameters: readable(Program.fromBigInt(100n), Program.fromBigInt(10n)),
+    },
+  ],
 });
 
 function freshSpacepokerState(): SpacepokerHandState {
@@ -125,10 +129,19 @@ describe('canonical feature gameplay reducers', () => {
       'Unsupported Space Poker game message readable tag: null',
     );
     const krunk = freshKrunkHand({
-      parameters: null,
       members: [
-        { playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n),
+        },
+        {
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n),
+        },
       ],
     });
     expect(() => advanceKrunkHand(krunk, status(readable(Program.fromBigInt(1n)), 0n))).toThrow(
@@ -141,11 +154,11 @@ describe('canonical feature gameplay reducers', () => {
     [[false, true], 'bob', 'alice'],
   ] as const)('assigns ordered Krunk roles from approved turns', (turns, first, second) => {
     const state = freshKrunkHand({
-      parameters: null,
       members: turns.map((ourTurn, index) => ({
         playerAContribution: index === 0 ? 100n : 0n,
         playerBContribution: index === 0 ? 0n : 100n,
         ourTurn,
+        readableParameters: Program.fromBigInt(100n),
       })),
     });
 
@@ -769,10 +782,19 @@ describe('canonical feature gameplay reducers', () => {
 
   it('restores a replacement Krunk hand directly from complete local state', () => {
     const init: GameHandInitialization = {
-      parameters: null,
       members: [
-        { playerAContribution: 100n, playerBContribution: 0n, ourTurn: true },
-        { playerAContribution: 0n, playerBContribution: 100n, ourTurn: false },
+        {
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n),
+        },
+        {
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n),
+        },
       ],
     };
 

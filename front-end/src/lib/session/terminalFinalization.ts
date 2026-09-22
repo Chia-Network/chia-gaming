@@ -1,17 +1,12 @@
 import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
 import type { SessionController } from '../../hooks/SessionController';
-import {
-  discardStagedTerminalSession,
-  flushSessionSave,
-  markSavedSession,
-  stageTerminalSession,
-  type SessionPresentationSave,
-  type TerminalSessionSave,
-} from '../../hooks/save';
+import { markSavedSession } from '../../hooks/saveCoordination';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
-import { channelStatusPayloadFromModel } from './normalization';
-import { snapshotFromSessionModel } from './sessionSnapshot';
+import { selectDashboardCoins } from './selectors';
 import type { SessionModel } from './types';
+import { buildDurableApplicationState, type TerminalCapture } from './sessionMachinePersist';
+import { storageRepository } from './storageRepository';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
 
 export interface TerminalSessionIdentity {
   myName: string;
@@ -20,20 +15,15 @@ export interface TerminalSessionIdentity {
 }
 
 export interface TerminalFinalizationDependencies {
-  stageTerminal: (fields: {
-    terminal: TerminalSessionSave['terminal'];
-    presentation: SessionPresentationSave;
-  }) => Promise<void>;
-  flushSave: () => Promise<void>;
-  discardTerminal: () => void;
+  persistTerminal(capture: TerminalCapture): Promise<void>;
   updateMarker: () => void;
   teardown: (controller: SessionController) => void;
 }
 
 const defaultDependencies: TerminalFinalizationDependencies = {
-  stageTerminal: stageTerminalSession,
-  flushSave: flushSessionSave,
-  discardTerminal: discardStagedTerminalSession,
+  persistTerminal: async (capture) => {
+    await storageRepository.write(buildDurableApplicationState(capture)!);
+  },
   updateMarker: markSavedSession,
   teardown: destroyFlushedTerminalSessionController,
 };
@@ -49,9 +39,7 @@ export interface TerminalFinalizationResult {
 export function finalizeTerminalSession(
   args: {
     controller: SessionController;
-    model: SessionModel;
     identity: TerminalSessionIdentity;
-    coins: CoinOfInterestEntry[];
   },
   dependencies: TerminalFinalizationDependencies = defaultDependencies,
 ): Promise<TerminalFinalizationResult> {
@@ -59,34 +47,32 @@ export function finalizeTerminalSession(
   if (existing) return existing;
 
   const identity = { ...args.identity };
-  const coins = args.coins.map((coin) => ({ ...coin }));
 
   const finalization = (async () => {
-    await args.controller.flushPendingSave();
-    const handState = structuredClone(args.model.game.handState);
-    const model: SessionModel = {
-      ...args.model,
-      game: { ...args.model.game, handState },
-    };
-    const terminalFields = structuredClone({
-      terminal: {
+    const snapshot = await args.controller.quiesceAndSealForTerminalFinalization();
+    const model = structuredClone(snapshot.model);
+    const coins = selectDashboardCoins(model, snapshot.coinsOfInterest);
+    const capture: TerminalCapture = {
+      kind: 'terminal',
+      controller: args.controller,
+      model,
+      identity: {
         iStarted: identity.iStarted,
-        coinsOfInterest: coins,
         myAlias: identity.myName,
         opponentAlias: identity.opponentName ?? null,
       },
-      presentation: snapshotFromSessionModel(model, {
-        channelStatus: channelStatusPayloadFromModel(model.channel.status),
-        waitingStateEnteredAt: null,
-        cleanShutdownGraceStartedAt: null,
-      }),
-    });
-    await dependencies.stageTerminal(terminalFields);
+      coinsOfInterest: coins,
+    };
     try {
-      await dependencies.flushSave();
+      await dependencies.persistTerminal(capture);
     } catch (error) {
-      dependencies.discardTerminal();
-      throw error;
+      if (
+        error instanceof StorageAuthorityLostError ||
+        error instanceof StorageAuthorityRequiredError
+      ) {
+        throw error;
+      }
+      args.controller.reportDurabilityError(error);
     }
     dependencies.updateMarker();
     dependencies.teardown(args.controller);

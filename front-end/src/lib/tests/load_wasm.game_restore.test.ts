@@ -1,12 +1,8 @@
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
-import {
-  _resetForTests as resetSaveState,
-  flushSessionSave,
-  peekSession,
-  saveSession,
-} from '../../hooks/save';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { storageRepository } from '../session/storageRepository';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SESSION_DB_NAME } from '../session/indexedDb';
@@ -14,16 +10,16 @@ import {
   channelStatusModelFromPayload,
   createSessionModel,
   INITIAL_GAME_TERMINAL_MODEL,
-  sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
-import { krunkStateCodec } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import type { HandProposal } from '../session/types';
 import {
   createActivePair,
   exchangeUntilIdle,
   fetchPreset,
   flushWrapperDrain,
+  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   postMoveHandState,
   startSimulator,
@@ -37,33 +33,27 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     {
       handProposal: {
         gameType: 'calpoker',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 100n,
       },
       expectedMembers: 1,
     },
     {
       handProposal: {
         gameType: 'spacepoker',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: false,
         gameTimeout: 15n,
-        parameters: 10n,
+        parameters: [10n, 10n],
       },
       expectedMembers: 1,
     },
     {
       handProposal: {
         gameType: 'krunk',
-        playerAContribution: 100n,
-        playerBContribution: 100n,
         senderIsPlayerA: true,
         gameTimeout: 15n,
-        parameters: null,
+        parameters: 100n,
       },
       expectedMembers: 2,
     },
@@ -73,25 +63,43 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const cradles = await createActivePair(poller, index);
     const proposer = cradles[0].blob!;
     const mover = cradles[1].blob!;
-    const ids = proposer.proposeGame({
+    let proposerActiveIds: string[] = [];
+    let moverActiveIds: string[] = [];
+    const proposerSubscription = proposer.getObservable().subscribe((event) => {
+      if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
+        proposerActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
+          String(member.id),
+        );
+      }
+    });
+    const moverSubscription = mover.getObservable().subscribe((event) => {
+      if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
+        moverActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
+          String(member.id),
+        );
+      }
+    });
+    const proposalIds = proposer.proposeGame({
       game_type: protocolIdForCatalog(testCase.handProposal.gameType),
       timeout: testCase.handProposal.gameTimeout,
-      player_a_contribution: testCase.handProposal.playerAContribution,
-      player_b_contribution: testCase.handProposal.playerBContribution,
       sender_is_player_a: testCase.handProposal.senderIsPlayerA,
       parameters: testCase.handProposal.parameters,
     });
+    assert.equal(proposalIds.length, 1);
+    await exchangeUntilIdle(cradles);
+    mover.acceptProposal(proposalIds[0]);
+    await exchangeUntilIdle(cradles);
+    const ids = moverActiveIds;
     assert.equal(ids.length, testCase.expectedMembers);
-    await exchangeUntilIdle(cradles);
-    mover.acceptProposal(ids[0]);
-    await exchangeUntilIdle(cradles);
-    assert.deepEqual(mover.activeGameIds, ids);
+    assert.deepEqual(proposerActiveIds, ids);
 
+    const actionIsProposer = testCase.handProposal.gameType !== 'krunk';
+    const actionController = actionIsProposer ? proposer : mover;
     const postMove = postMoveHandState(testCase.handProposal, ids);
-    const beforeMove = Uint8Array.from(mover.getWasmFields()!.serializedGameSession);
-    mover.makeMove(postMove.moverId, postMove.move);
-    await flushWrapperDrain([cradles[1]]);
-    const afterMove = mover.getWasmFields()!;
+    const beforeMove = Uint8Array.from(actionController.getWasmFields()!.serializedGameSession);
+    actionController.makeMove(postMove.moverId, postMove.move);
+    await flushWrapperDrain([cradles[actionIsProposer ? 0 : 1]]);
+    const afterMove = actionController.getWasmFields()!;
     assert.notDeepEqual(
       afterMove.serializedGameSession,
       beforeMove,
@@ -108,7 +116,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
         handKey: 1,
         activeIds: ids,
         currentHandIds: ids,
-        currentHandOrigin: 'local',
+        currentHandOrigin: actionIsProposer ? 'local' : 'peer',
         lastDisplayedId: postMove.moverId,
         activeGameType: testCase.handProposal.gameType,
         handState: postMove.handState,
@@ -132,27 +140,22 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       pairingToken: `real-restore-${testCase.handProposal.gameType}`,
       ...snapshotFromSessionModel(model),
     });
-    assert.equal(save.phase, 'live');
-    if (save.phase !== 'live') throw new Error('expected live save');
-    await saveSession({
-      scope: 'live',
-      pairing: save.pairing,
-      live: save.live,
-      presentation: save.presentation,
-      history: save.history,
-    });
-    await flushSessionSave();
+    assert.equal(save.session?.phase, 'live');
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
 
-    resetSaveState();
-    const reloaded = await peekSession();
+    await flushWrapperDrain(cradles);
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+    const reloaded = await storageRepository.readCurrentState();
     assert.ok(
       reloaded,
       `${testCase.handProposal.gameType}: IndexedDB peek must return saved session`,
     );
-    assert.equal(reloaded.phase, 'live');
-    if (reloaded.phase !== 'live') throw new Error('expected live reload');
-    assert.deepEqual(reloaded.presentation.currentHandGameIds, ids);
-    assert.deepEqual(reloaded.presentation.activeGameIds, ids);
+    assert.equal(reloaded.session?.phase, 'live');
+    if (reloaded.session?.phase !== 'live') throw new Error('expected live reload');
+    assert.deepEqual(reloaded.session.presentation.currentHandGameIds, ids);
+    assert.deepEqual(reloaded.session.presentation.activeGameIds, ids);
 
     const restored = new SessionController(poller, `feed000${index}`, 100n, 100n, {
       reliableState: makeTestReliableState(),
@@ -163,17 +166,17 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       close: () => {},
     });
     try {
+      const bootstrap = rehydrateDurableApplicationState(reloaded);
       await restored.beginRestore(
-        restoreSession(restored, reloaded, new WasmStateInit(fetchPreset)),
+        restoreSession(restored, bootstrap, new WasmStateInit(fetchPreset)),
       );
       assert.equal(restored.getRestoreStatus(), 'restored');
-      assert.deepEqual(restored.activeGameIds, ids);
       assert.deepEqual(
         restored.getWasmFields()!.serializedGameSession,
-        reloaded.live.serializedGameSession,
+        reloaded.session.live.serializedGameSession,
       );
 
-      const restoredModel = sessionModelFromSave(reloaded);
+      const restoredModel = bootstrap.model;
       assert.deepEqual(restoredModel.game.currentHandIds, ids);
       assert.deepEqual(restoredModel.game.handState, postMove.handState);
       assert.ok(decodePersistedGameState(restoredModel.game.handState));
@@ -185,16 +188,22 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       }
     } finally {
       restored.cleanup();
+      await restored.flushPendingWork();
+      proposerSubscription.unsubscribe();
+      moverSubscription.unsubscribe();
     }
 
-    cradles.forEach((cradle) => cradle.shutdown());
-    resetSaveState();
-    await new Promise<void>((resolve) => {
+    await Promise.all(cradles.map((cradle) => cradle.shutdown()));
+    await storageRepository.checkpointDomainMutations();
+    storageRepository._resetForTests();
+    await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
       request.onsuccess = () => resolve();
-      request.onerror = () => resolve();
-      request.onblocked = () => resolve();
+      request.onerror = () =>
+        reject(request.error ?? new Error('Failed to delete session database'));
+      request.onblocked = () => reject(new Error('Session database deletion was blocked'));
     });
+    await storageRepository.claimApplicationState();
   }
 }
 
@@ -216,5 +225,5 @@ it(
       throw new Error(`[load_wasm game restore failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

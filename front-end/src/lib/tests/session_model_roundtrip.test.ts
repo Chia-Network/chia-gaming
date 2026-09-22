@@ -1,293 +1,60 @@
-import type { SessionSave } from '../../hooks/save';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   INITIAL_GAME_TERMINAL_MODEL,
-  selectDisplayedGameInstance,
-  selectGameSessionView,
-  sessionModelFromSave,
   snapshotFromSessionModel,
 } from '../session/model';
 import { liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave(fields as unknown as Record<string, unknown>);
 }
 
 const CAL_TERMS = {
   gameType: 'calpoker' as const,
-  playerAContribution: 100n,
-  playerBContribution: 100n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 100n,
 };
-const CAL_HAND_STATE = calpokerStateCodec.encode({
-  playerHand: [],
-  opponentHand: [],
-  moveNumber: 0n,
-  isPlayerTurn: true,
-  iStarted: true,
-  error: null,
-});
-
-describe('session model round trips', () => {
-  it('normalizes restored notification ids to bigint', () => {
-    const save = liveEnvelope({
-      activeGameIds: [],
-      channelNotifQueue: [{ id: 7, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-      gameNotifQueue: [{ id: '8', kind: 'proposal-rejected', title: 'Game', message: 'Done' }],
-    } as unknown as Partial<SessionSave>);
-
-    const restored = sessionModelFromSave(save);
-
-    expect(restored.channel.queue[0].id).toBe(7n);
-    expect(restored.game.queue[0].id).toBe(8n);
-  });
-
-  it('round-trips keyed hand status without aggregate snapshot fields', () => {
-    const model = createSessionModel({
-      game: {
-        activeIds: ['7'],
-        currentHandIds: ['7'],
-        currentHandOrigin: 'peer',
-        lastDisplayedId: '7',
-        instances: {
-          '7': {
-            id: '7',
-            amount: '100',
-            handStatus: 'playing-move',
-            coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-            terminal: INITIAL_GAME_TERMINAL_MODEL,
-          },
-        },
-      },
-      betweenHand: { lastHandProposal: CAL_TERMS },
-    });
-
-    const snapshot = snapshotFromSessionModel(model);
-    expect(snapshot).not.toHaveProperty('gameHandStatus');
-    expect(snapshot).not.toHaveProperty('gameCoinHex');
-    expect(snapshot).not.toHaveProperty('gameTurnState');
-    expect(snapshot).not.toHaveProperty('gameOnChain');
-    expect(snapshot).not.toHaveProperty('gameTerminalType');
-
-    const restored = sessionModelFromSave(
-      liveEnvelope({
-        activeGameIds: snapshot.activeGameIds ?? [],
-        currentHandGameIds: snapshot.currentHandGameIds,
-        currentHandOrigin: snapshot.currentHandOrigin,
-        lastDisplayedGameId: snapshot.lastDisplayedGameId,
-        gameInstances: snapshot.gameInstances,
-        activeGameType: snapshot.activeGameType,
-        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
-        handState: CAL_HAND_STATE,
-      }),
-    );
-    expect(restored.game.instances['7'].presentation).toBe('playing-move');
-    expect(restored.game.currentHandOrigin).toBe('peer');
-    expect(snapshot).not.toHaveProperty('iProposedHand');
-    expect(selectDisplayedGameInstance(restored)?.coin.turnState).toBe('playing-on-chain');
-  });
-
-  it('round-trips per-game on-chain markers through session snapshots', () => {
-    const model = createSessionModel({
-      game: {
-        activeIds: ['7'],
-        currentHandIds: ['7'],
-        currentHandOrigin: 'local',
-        instances: {
-          '7': {
-            id: '7',
-            amount: '100',
-            coin: { coinHex: null, turnState: 'their-turn', onChain: true },
-            handStatus: 'their-turn',
-            terminal: INITIAL_GAME_TERMINAL_MODEL,
-          },
-        },
-      },
-      betweenHand: { lastHandProposal: CAL_TERMS },
-    });
-
-    const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
-      liveEnvelope({
-        activeGameIds: snapshot.activeGameIds ?? [],
-        currentHandGameIds: snapshot.currentHandGameIds,
-        currentHandOrigin: snapshot.currentHandOrigin,
-        lastDisplayedGameId: snapshot.lastDisplayedGameId,
-        gameInstances: snapshot.gameInstances,
-        activeGameType: snapshot.activeGameType,
-        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
-        handState: CAL_HAND_STATE,
-      }),
-    );
-
-    expect(restored.game.instances['7'].presentation).toBe('on-chain-their-turn');
-  });
-
-  it('round-trips current-hand game instances through session snapshots', () => {
-    const model = createSessionModel({
-      game: {
-        activeGameType: 'krunk',
-        currentHandIds: ['7', '9'],
-        currentHandOrigin: 'peer',
-        instances: {
-          '7': {
-            id: '7',
-            amount: '100',
-            coin: { coinHex: 'aaaa', turnState: 'my-turn', onChain: true },
-            handStatus: 'our-turn',
-            terminal: INITIAL_GAME_TERMINAL_MODEL,
-          },
-          '9': {
-            id: '9',
-            amount: '100',
-            coin: { coinHex: null, turnState: 'ended' },
-            handStatus: 'ended',
-            terminal: {
-              type: 'settled',
-              outcome: 'settled_cleanly',
-              label: 'Settled cleanly',
-              myReward: '80',
-              rewardCoinHex: null,
-            },
-          },
-        },
-      },
-      betweenHand: {
-        lastHandProposal: {
-          gameType: 'krunk',
-          playerAContribution: 100n,
-          playerBContribution: 100n,
-          senderIsPlayerA: true,
-          gameTimeout: 15n,
-          parameters: null,
-        },
-      },
-    });
-
-    const snapshot = snapshotFromSessionModel(model);
-    const restored = sessionModelFromSave(
-      liveEnvelope({
-        activeGameIds: snapshot.activeGameIds ?? [],
-        currentHandGameIds: snapshot.currentHandGameIds,
-        currentHandOrigin: snapshot.currentHandOrigin,
-        gameInstances: snapshot.gameInstances,
-        activeGameType: snapshot.activeGameType,
-        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
-        handState: krunkStateCodec.encode({
-          perPlayerStake: 100n,
-          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
-        }),
-      }),
-    );
-
-    expect(restored.game.currentHandIds).toEqual(['7', '9']);
-    expect(restored.game.currentHandOrigin).toBe('peer');
-    expect(restored.game.instances).toEqual(model.game.instances);
-  });
-
-  it('rejects an incomplete keyed save', () => {
+describe('session persistence boundaries', () => {
+  it('rejects the removed aggregate version without migration', () => {
     expect(() =>
-      sessionModelFromSave(
-        liveEnvelope({
-          activeGameIds: ['7'],
-          currentHandGameIds: ['7'],
-          activeGameType: 'calpoker',
-        }),
-      ),
-    ).toThrow('game 7 is missing its keyed instance');
+      decodeDurableApplicationState({
+        ...liveSave(),
+        version: 1n,
+      } as unknown as DurableApplicationState),
+    ).toThrow('Garbled application state: unsupported version 1');
   });
 
-  it('rejects malformed persisted game discriminants instead of casting them', () => {
-    expect(() =>
-      sessionModelFromSave(
-        liveEnvelope({
-          activeGameIds: ['7'],
-          currentHandGameIds: ['7'],
-          gameInstances: {
-            '7': {
-              id: '7',
-              amount: '20',
-              coinHex: null,
-              presentation: 'bogus-presentation' as never,
-              terminal: {
-                type: 'none',
-                label: null,
-                myReward: null,
-                rewardCoinHex: null,
-              },
-            },
-          },
-          activeGameType: 'calpoker',
-        }),
-      ),
-    ).toThrow('invalid gameInstances.7.presentation');
-  });
-
-  it('round-trips active and terminal display instances from the full keyed union', () => {
-    const active = {
-      id: 'active',
-      amount: '20',
-      coin: { coinHex: 'active-coin', turnState: 'my-turn' as const },
-      handStatus: 'active' as const,
-      terminal: INITIAL_GAME_TERMINAL_MODEL,
-    };
-    const terminal = {
-      id: 'terminal',
-      amount: '20',
-      coin: { coinHex: null, turnState: 'ended' as const },
-      handStatus: 'ended' as const,
-      terminal: {
-        type: 'settled' as const,
-        outcome: 'settled_cleanly' as const,
-        label: 'Settled cleanly',
-        myReward: '20',
-        rewardCoinHex: null,
-      },
-    };
+  it('does not serialize notification residue and restores runtime defaults', () => {
     const model = createSessionModel({
-      game: {
-        activeIds: ['active'],
-        currentHandIds: ['active'],
-        currentHandOrigin: 'local',
-        instances: { active, terminal },
-        lastDisplayedId: 'terminal',
+      channel: {
+        dismissedChannelStatus: 'Active',
+        queue: [
+          {
+            id: 1n,
+            kind: 'durability-error',
+            title: 'Session Storage Error',
+            message: 'disk unavailable',
+          },
+          { id: 2n, kind: 'infra-error', title: 'Error', message: 'keep me' },
+        ],
       },
-      betweenHand: { lastHandProposal: CAL_TERMS },
+      game: {
+        queue: [{ id: 3n, kind: 'proposal-rejected', title: 'Game', message: 'dismiss me' }],
+      },
     });
 
     const snapshot = snapshotFromSessionModel(model);
-    expect(Object.keys(snapshot.gameInstances ?? {})).toEqual(['active', 'terminal']);
-    expect(snapshot.lastDisplayedGameId).toBe('terminal');
-    expect(snapshot).not.toHaveProperty('gameCoinHex');
-    expect(snapshot).not.toHaveProperty('gameTerminalType');
+    expect(snapshot).not.toHaveProperty('channelNotifQueue');
+    expect(snapshot).not.toHaveProperty('gameNotifQueue');
+    expect(snapshot).not.toHaveProperty('dismissedChannelStatus');
 
-    const restored = sessionModelFromSave(
-      liveEnvelope({
-        activeGameIds: snapshot.activeGameIds,
-        currentHandGameIds: snapshot.currentHandGameIds,
-        currentHandOrigin: snapshot.currentHandOrigin,
-        lastDisplayedGameId: snapshot.lastDisplayedGameId,
-        gameInstances: snapshot.gameInstances,
-        activeGameType: snapshot.activeGameType,
-        betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
-        handState: CAL_HAND_STATE,
-      }),
-    );
-    expect(restored.game.lastDisplayedId).toBe('terminal');
-    expect(restored.game.instances).toEqual(model.game.instances);
-    expect(selectGameSessionView(restored).displayGameId).toBe('active');
-
-    const completed = createSessionModel({
-      game: { ...restored.game, activeIds: [] },
-    });
-    expect(selectGameSessionView(completed)).toMatchObject({
-      displayGameId: 'terminal',
-      gameTerminal: { type: 'settled', label: 'Settled cleanly' },
-    });
+    const restored = decodeDurableApplicationState(liveSave(snapshot)).model;
+    expect(restored.channel.queue).toEqual([]);
+    expect(restored.game.queue).toEqual([]);
+    expect(restored.channel.dismissedChannelStatus).toBeNull();
   });
 
   it('rejects an invalid saved display id instead of selecting unrelated state', () => {
@@ -301,15 +68,15 @@ describe('session model round trips', () => {
             '9': {
               id: '9',
               amount: '20',
-              coin: { coinHex: null, turnState: 'their-turn' },
-              handStatus: 'active',
+              coinHex: null,
+              presentation: 'off-chain-their-turn',
               terminal: INITIAL_GAME_TERMINAL_MODEL,
             },
             '7': {
               id: '7',
               amount: '20',
-              coin: { coinHex: null, turnState: 'my-turn' },
-              handStatus: 'active',
+              coinHex: null,
+              presentation: 'off-chain-my-turn',
               terminal: INITIAL_GAME_TERMINAL_MODEL,
             },
           },
@@ -319,7 +86,7 @@ describe('session model round trips', () => {
       }),
     );
     expect(() =>
-      sessionModelFromSave(
+      decodeDurableApplicationState(
         liveEnvelope({
           activeGameIds: snapshot.activeGameIds,
           currentHandGameIds: snapshot.currentHandGameIds,

@@ -6,7 +6,6 @@ import type {
   SessionPhase,
 } from '../../types/ChiaGaming';
 import type { PersistedGameState } from '@games/host';
-import { proposalContributionForOrigin } from './proposalOrigin';
 import {
   DEFAULT_GAME_COIN_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -26,13 +25,14 @@ import type {
   GameTerminalModel,
   GameTurnState,
   HandStatus,
-  ProposalGroupDisposition,
-  ProposalGroupModel,
+  PendingProposalModel,
+  PendingProposalLifecycle,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
   StatusBarBalanceSegment,
 } from './types';
+import { proposalOrigin } from './sessionMachineProposals';
 
 /** Shared empty dashboard fields; setupPending / no-session override labels + action. */
 export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
@@ -46,28 +46,28 @@ export const EMPTY_DASHBOARD_VIEW_BASE: Omit<
   lifecycleRows: [],
 };
 
-export function selectProposalGroupByMemberId(
+export function selectPendingProposal(
   model: SessionModel,
-  memberId: string,
-): ProposalGroupModel | null {
+  id: string,
+): PendingProposalModel | null {
+  return model.betweenHand.pendingProposals.find((proposal) => proposal.id === id) ?? null;
+}
+
+export function selectProposalByLifecycle(
+  model: SessionModel,
+  lifecycle: PendingProposalLifecycle,
+): PendingProposalModel | null {
   return (
-    model.betweenHand.proposalGroups.find((group) => group.memberIds.includes(memberId)) ?? null
+    model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === lifecycle) ?? null
   );
 }
 
-export function selectProposalGroupByDisposition(
-  model: SessionModel,
-  disposition: ProposalGroupDisposition,
-): ProposalGroupModel | null {
+export function selectIncomingProposal(model: SessionModel): PendingProposalModel | null {
   return (
-    model.betweenHand.proposalGroups.find((group) => group.disposition === disposition) ?? null
-  );
-}
-
-export function selectIncomingProposalGroup(model: SessionModel): ProposalGroupModel | null {
-  return (
-    selectProposalGroupByDisposition(model, 'incoming-review') ??
-    selectProposalGroupByDisposition(model, 'incoming-cached')
+    selectProposalByLifecycle(model, 'peer-review') ??
+    selectProposalByLifecycle(model, 'peer-cached') ??
+    selectProposalByLifecycle(model, 'peer-accept-queued') ??
+    null
   );
 }
 
@@ -79,11 +79,12 @@ export function selectIProposedHand(model: SessionModel): boolean {
     throw new Error('Game model invariant broken: current hand is missing its origin');
   }
   const proposal =
-    selectProposalGroupByDisposition(model, 'accepted') ??
-    selectProposalGroupByDisposition(model, 'incoming-review') ??
-    selectProposalGroupByDisposition(model, 'incoming-cached') ??
-    selectProposalGroupByDisposition(model, 'outgoing');
-  return proposal?.origin === 'local';
+    selectProposalByLifecycle(model, 'peer-review') ??
+    selectProposalByLifecycle(model, 'peer-cached') ??
+    selectProposalByLifecycle(model, 'peer-accept-queued') ??
+    selectProposalByLifecycle(model, 'local-outgoing') ??
+    selectProposalByLifecycle(model, 'local-cancel-queued');
+  return proposal ? proposalOrigin(proposal) === 'local' : false;
 }
 
 /**
@@ -194,9 +195,7 @@ export function selectSessionPhase(
 }
 
 export function selectRestoreBlocked(model: SessionModel): boolean {
-  return (
-    model.restore.restoring && (model.restore.status !== 'restored' || !model.restore.hubReconciled)
-  );
+  return model.restore.restoring && model.restore.status !== 'restored';
 }
 
 export function selectShouldAdvertiseAvailable(model: SessionModel, phase: SessionPhase): boolean {
@@ -696,22 +695,16 @@ export interface GameSessionViewModel {
   betweenHands: boolean;
   channelQueue: QueuedNotificationModel[];
   gameQueue: QueuedNotificationModel[];
-  incomingProposalGroup: ProposalGroupModel | null;
+  incomingProposal: PendingProposalModel | null;
 }
 
 export function selectGameSessionView(model: SessionModel): GameSessionViewModel {
   const displayed = selectDisplayedGameInstance(model);
-  const lastProposal = model.betweenHand.lastHandProposal;
   return {
     channelStatus: model.channel.status,
     gameCoin: displayed?.coin ?? DEFAULT_GAME_COIN_MODEL,
     gameTerminal: displayed?.terminal ?? INITIAL_GAME_TERMINAL_MODEL,
-    currentHandAmount:
-      lastProposal === null
-        ? 0n
-        : model.game.currentHandOrigin
-          ? proposalContributionForOrigin(lastProposal, model.game.currentHandOrigin)
-          : lastProposal.playerAContribution,
+    currentHandAmount: displayed ? BigInt(displayed.amount) : 0n,
     activeGameId: model.game.activeIds[0] ?? null,
     activeGameIds: model.game.activeIds,
     activeGameType: model.game.activeGameType,
@@ -719,7 +712,7 @@ export function selectGameSessionView(model: SessionModel): GameSessionViewModel
     betweenHands: selectBetweenHands(model),
     channelQueue: model.channel.queue,
     gameQueue: model.game.queue,
-    incomingProposalGroup: selectIncomingProposalGroup(model),
+    incomingProposal: selectIncomingProposal(model),
   };
 }
 

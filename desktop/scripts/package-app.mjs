@@ -23,6 +23,7 @@ const INSTALLER_EXTENSIONS = ['.dmg', '.zip', '.exe', '.AppImage', '.deb'];
 const WINDOWS_SIGNING = process.platform === 'win32' && process.env.HAS_SIGNING_SECRET === 'true';
 
 rmSync(BUILD_DIR, { recursive: true, force: true });
+rmSync(RELEASE_DIR, { recursive: true, force: true });
 mkdirSync(BUILD_DIR, { recursive: true });
 
 function run(command, args) {
@@ -112,7 +113,25 @@ async function requestAzureFederatedToken() {
   process.env.AZURE_FEDERATED_TOKEN_FILE = tokenFile;
 }
 
-const builderArgs = process.argv.slice(2);
+const builderArgs = [];
+let releaseVersion = '';
+for (const arg of process.argv.slice(2)) {
+  if (arg.startsWith('--release-version=')) {
+    releaseVersion = arg.slice('--release-version='.length);
+  } else {
+    builderArgs.push(arg);
+  }
+}
+if (
+  releaseVersion &&
+  !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(releaseVersion)
+) {
+  throw new Error(`Invalid release version: ${releaseVersion}`);
+}
+if (releaseVersion) {
+  builderArgs.push(`-c.extraMetadata.version=${releaseVersion}`);
+}
+
 if (WINDOWS_SIGNING) {
   electronBuilder([...builderArgs, '--dir']);
   const unpackedDirectory = join(BUILD_DIR, 'win-unpacked');
@@ -135,16 +154,15 @@ mkdirSync(RELEASE_DIR, { recursive: true });
 const installers = readdirSync(BUILD_DIR).filter((name) =>
   INSTALLER_EXTENSIONS.some((extension) => name.endsWith(extension)),
 );
+if (installers.length === 0) {
+  throw new Error(`electron-builder produced no installer artifacts in ${BUILD_DIR}`);
+}
 for (const name of installers) {
   copyFileSync(join(BUILD_DIR, name), join(RELEASE_DIR, name));
 }
 
 console.log(`\nbuild dir (not synced): ${BUILD_DIR}`);
-if (installers.length === 0) {
-  console.log(`no installer artifacts found in ${BUILD_DIR}`);
-} else {
-  console.log(`installers copied to:   ${RELEASE_DIR}`);
-  for (const name of installers) {
-    console.log(`  ${name}`);
-  }
+console.log(`installers copied to:   ${RELEASE_DIR}`);
+for (const name of installers) {
+  console.log(`  ${name}`);
 }

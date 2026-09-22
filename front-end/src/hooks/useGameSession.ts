@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   createComposeDraftState,
   createSessionModel,
@@ -9,11 +9,9 @@ import {
   selectGameSpecificView,
   selectIProposedHand,
   selectSessionPhase,
-  sessionModelFromSave,
   type HandProposal,
 } from '../lib/session/model';
 import type { GameIntent } from '@games/host';
-import { dispatchWasmNotification } from '../lib/session/gameSessionEvents';
 import { createSessionMachineState } from '../lib/session/sessionMachine';
 import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
 import {
@@ -30,13 +28,12 @@ import type { RegisteredGameType } from '../lib/session/types';
 import { DEFAULT_CATALOG_GAME_TYPE } from '../lib/gameRegistry';
 import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
 import type { GameHandSource } from '../lib/gameHandSource';
-import { log } from '../services/log';
-import type { GameSessionParams, PeerConnectionResult, WasmEvent } from '../types/ChiaGaming';
+import type { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
 import type { BlockchainPoller } from './BlockchainPoller';
 import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
 import type { SessionController } from './SessionController';
-import type { SessionSave } from './save';
-import { getDefaultFee, getPlayerId } from './save';
+import type { RehydratedDurableApplicationState } from '../lib/session/persistence';
+import { storageRepository } from '../lib/session/storageRepository';
 
 export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
 export type { UseGameSessionResult } from '../lib/session/sessionResult';
@@ -65,7 +62,7 @@ export function useSessionControllerAfterCommit(
     keepaliveHandler: () => void,
     failureHandler: (reason: string) => void,
   ) => void,
-  sessionSave?: SessionSave,
+  sessionBootstrap?: RehydratedDurableApplicationState,
   blockchain: BlockchainPoller | null = null,
   terminalMode = false,
 ): SessionController | null {
@@ -76,14 +73,14 @@ export function useSessionControllerAfterCommit(
       blockchain,
       peerConn,
       registerMessageHandler,
-      getPlayerId(),
+      storageRepository.getPlayerId(),
       params.myContribution,
       params.theirContribution,
       params.iStarted,
-      sessionSave,
+      sessionBootstrap,
       params.pairingToken,
       params.perGameAmount,
-      getDefaultFee,
+      () => storageRepository.query('defaultFee'),
       Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
       Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
     ).sessionController;
@@ -103,7 +100,7 @@ export function useSessionControllerAfterCommit(
     params.unrollTimeout,
     peerConn,
     registerMessageHandler,
-    sessionSave,
+    sessionBootstrap,
     terminalMode,
   ]);
   return controller;
@@ -113,7 +110,7 @@ export function useGameSession(
   params: GameSessionParams,
   controller: SessionController,
   appendGameLog: (line: string) => void,
-  sessionSave?: SessionSave,
+  sessionBootstrap?: RehydratedDurableApplicationState,
   blockchain: BlockchainPoller | null = null,
   terminalPresentation?: TerminalSessionPresentation | null,
 ): UseGameSessionResult {
@@ -122,17 +119,15 @@ export function useGameSession(
   const terminalMode = terminalState.presentation != null;
 
   const restoredModel = useMemo(
-    () => (sessionSave ? sessionModelFromSave(sessionSave) : null),
-    [sessionSave],
+    () => (sessionBootstrap ? structuredClone(sessionBootstrap.model) : null),
+    [sessionBootstrap],
   );
   const initialState = useMemo(() => {
     const handProposal: HandProposal = {
       gameType: DEFAULT_CATALOG_GAME_TYPE,
-      playerAContribution: perGameAmount,
-      playerBContribution: perGameAmount,
       senderIsPlayerA: !iStarted,
       gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
-      parameters: null,
+      parameters: perGameAmount,
     };
     return createSessionMachineState(
       restoredModel ??
@@ -145,23 +140,36 @@ export function useGameSession(
         }),
       {
         firstGameAccepted:
-          sessionSave?.phase === 'live' &&
-          sessionSave.presentation.channelStatus?.state === 'Active',
+          sessionBootstrap?.state.session?.phase === 'live' &&
+          sessionBootstrap.state.session.presentation.channelStatus?.state === 'Active',
       },
     );
-  }, [controller, iStarted, perGameAmount, restoredModel, sessionSave]);
-  const runtimeRef = useRef<SessionMachineRuntime | null>(null);
-  if (!runtimeRef.current) {
-    runtimeRef.current = new SessionMachineRuntime(initialState, {
+  }, [controller, iStarted, perGameAmount, restoredModel, sessionBootstrap]);
+  const runtimeRef = useRef<{
+    controller: SessionController;
+    runtime: SessionMachineRuntime;
+  } | null>(null);
+  const committedRuntime = controller.getCommittedSessionRuntime();
+  if (
+    runtimeRef.current?.controller !== controller ||
+    (committedRuntime !== null && runtimeRef.current.runtime !== committedRuntime)
+  ) {
+    runtimeRef.current = {
       controller,
-      iStarted,
-      restoring: params.restoring ?? false,
-      getRestoreStatus: () => controller.getRestoreStatus(),
-      getRestoreError: () => controller.getRestoreError(),
-      onError: (error) => controller.reportRuntimeError(error),
-    });
+      runtime:
+        committedRuntime ??
+        new SessionMachineRuntime(initialState, {
+          controller,
+          iStarted,
+          restoring: params.restoring ?? false,
+          getRestoreStatus: () => controller.getRestoreStatus(),
+          getRestoreError: () => controller.getRestoreError(),
+          onError: (error) => controller.reportRuntimeError(error),
+          bindControllerEvents: true,
+        }),
+    };
   }
-  const runtime = runtimeRef.current;
+  const runtime = runtimeRef.current.runtime;
   const [machineState, setMachineState] = useState(runtime.getState());
   const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
   const liveGamePort = useMemo(
@@ -208,80 +216,17 @@ export function useGameSession(
     hand: runtime.getGameHand(),
     port: liveGamePort,
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     runtime.setRender(setMachineState);
-    return () => runtime.setRender(() => {});
-  }, [runtime]);
-  const dispatchHostProjection = useCallback(() => {
-    const status = controller.getRestoreStatus();
-    dispatch({
-      type: 'host-projection',
-      restore: {
-        restoring: params.restoring ?? false,
-        status,
-        error: controller.getRestoreError(),
-        hubReconciled: status === 'restored',
-      },
-      wasmNotificationHistory: controller.wasmNotificationHistory,
-      diagnosticLog: controller.diagnosticLog,
-    });
-  }, [controller, dispatch, params.restoring]);
-
-  useEffect(() => {
-    if (terminalMode) return;
-    return controller.onRestoreStatusChange(() => {
-      dispatchHostProjection();
-    });
-  }, [controller, dispatchHostProjection, terminalMode]);
-
-  useEffect(() => {
-    if (terminalMode) return;
-    controller.onSaveNeeded = () => runtime.persist();
-    return () => {
-      controller.onSaveNeeded = null;
-    };
-  }, [controller, runtime, terminalMode]);
-
-  useEffect(() => {
-    if (terminalMode) return;
-    const subscription = controller.getObservable().subscribe({
-      next: (event: WasmEvent) => {
-        switch (event.type) {
-          case 'notification':
-            dispatchWasmNotification(
-              event.data,
-              (notification) => dispatch({ type: 'wasm-notification', notification, iStarted }),
-              (error) =>
-                dispatch({ type: 'enqueue-error', kind: 'infra-error', message: String(error) }),
-            );
-            dispatchHostProjection();
-            break;
-          case 'error':
-            dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
-            break;
-          case 'game-action-error':
-            dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
-            break;
-          case 'durability-error':
-            dispatch({ type: 'enqueue-error', kind: 'durability-error', message: event.error });
-            break;
-          case 'log':
-            log(`[wasm] ${event.message}`);
-            dispatchHostProjection();
-            break;
-          case 'address':
-            break;
-        }
-      },
-    });
+    runtime.activate();
     if (!initStarted) setInitStarted(true);
-    return () => subscription.unsubscribe();
-  }, [controller, dispatch, dispatchHostProjection, iStarted, terminalMode]);
-
-  useEffect(() => {
+    return () => {
+      runtime.clearRender();
+    };
+  }, [runtime]);
+  useLayoutEffect(() => {
     if (!blockchain || terminalMode) return;
     controller.attachBlockchain(blockchain);
-    return () => controller.detachBlockchain(blockchain);
   }, [blockchain, controller, terminalMode]);
 
   const setComposeGameTimeout = useCallback(
@@ -303,7 +248,6 @@ export function useGameSession(
     gameConnectionState: model.channel.connection,
     perGameAmount,
     currentHandAmount: view.currentHandAmount,
-    myRunningBalance: model.myRunningBalance,
     iStarted,
     playerNumber: iStarted ? 1 : 2,
     channelStatus: view.channelStatus,
@@ -319,7 +263,7 @@ export function useGameSession(
     handSource: liveHandSource,
     appendGameLog,
     betweenHandMode: model.betweenHand.mode,
-    incomingProposalGroup: view.incomingProposalGroup,
+    incomingProposal: view.incomingProposal,
     lastHandProposal: model.betweenHand.lastHandProposal,
     composeDraftState: compose,
     chooseNewHandSameTerms: () => dispatch({ type: 'choose-same-terms' }),
@@ -330,7 +274,7 @@ export function useGameSession(
     composeProposalSent: compose.proposalSent,
     newHandRequested: model.betweenHand.newHandRequested,
     submitComposedProposal: (handProposal) => dispatch({ type: 'submit-compose', handProposal }),
-    acceptReviewedProposal: (primaryId) => dispatch({ type: 'accept-review', primaryId }),
+    acceptReviewedProposal: (id) => dispatch({ type: 'accept-review', id }),
     rejectReviewedProposal: () => dispatch({ type: 'reject-review' }),
     startCleanShutdown: () => dispatch({ type: 'start-clean-shutdown' }),
     cleanShutdownStarted: model.channel.cleanShutdownStarted,

@@ -39,7 +39,6 @@ describe('shellSessionReducer', () => {
       sessionError: false,
       restoreStatus: 'idle',
       restoreError: null,
-      restoreHubReconciled: false,
       transition: { kind: 'idle' },
     });
   });
@@ -109,7 +108,7 @@ describe('shellSessionReducer', () => {
       remoteNumber: 5n,
       unackedMessages: [{ msgno: 6n, msg: new Uint8Array([1, 2, 3]) }],
     });
-    if (save.phase !== 'live') throw new Error('expected live save fixture');
+    if (save.session?.phase !== 'live') throw new Error('expected live save fixture');
     const idleConnection = {
       sendMessage: () => false,
       sendAck: () => false,
@@ -118,7 +117,7 @@ describe('shellSessionReducer', () => {
       close: () => {},
     };
 
-    const connection = peerConnectionForSavedSession(idleConnection, save);
+    const connection = peerConnectionForSavedSession(idleConnection, save.session);
 
     expect(connection.reliableState).toEqual({
       sessionId: 'ab'.repeat(16),
@@ -127,7 +126,7 @@ describe('shellSessionReducer', () => {
       unackedMessages: [{ msgno: 6n, msg: new Uint8Array([1, 2, 3]) }],
       disposition: 'active',
     });
-    expect(connection.reliableState?.unackedMessages).not.toBe(save.live.unackedMessages);
+    expect(connection.reliableState?.unackedMessages).not.toBe(save.session.live.unackedMessages);
   });
 
   it('enters and leaves a transition', () => {

@@ -1,19 +1,16 @@
 import {
   createSessionModel,
-  sessionModelFromSave,
+  decodeDurableApplicationState,
   snapshotFromSessionModel,
 } from '../session/model';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
-import {
-  gameInstanceModelFromSlice,
-  gameSliceReducer,
-  INITIAL_GAME_SLICE,
-} from '../session/gameSlice';
+import { initialKrunkGameState } from '@games/krunk/ui/serialize';
+import { gameSliceReducer } from '../session/gameSlice';
+import { krunkStateCodec } from './game_state_helpers';
 import { liveSave } from './session_save_envelope.fixtures';
 
 describe('game slice reducer', () => {
   it('atomically seeds every accepted group member and is immediately restorable', () => {
-    const slice = gameSliceReducer(INITIAL_GAME_SLICE, {
+    const slice = gameSliceReducer(createSessionModel().game, {
       type: 'accepted-group',
       groupIds: ['11', '12'],
       members: [
@@ -31,30 +28,18 @@ describe('game slice reducer', () => {
 
     const snapshot = snapshotFromSessionModel(
       createSessionModel({
-        game: {
-          ...slice,
-          instances: Object.fromEntries(
-            Object.entries(slice.instances).map(([id, instance]) => [
-              id,
-              gameInstanceModelFromSlice(instance),
-            ]),
-          ),
-          handState: null,
-          queue: [],
-        },
+        game: slice,
         betweenHand: {
           lastHandProposal: {
             gameType: 'krunk',
-            playerAContribution: 100n,
-            playerBContribution: 100n,
             senderIsPlayerA: true,
             gameTimeout: 15n,
-            parameters: null,
+            parameters: 100n,
           },
         },
       }),
     );
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveSave({
         version: 22n,
         playerId: 'player',
@@ -75,7 +60,7 @@ describe('game slice reducer', () => {
           members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
         }),
       }),
-    );
+    ).model;
     expect(restored.game.activeIds).toEqual(['11', '12']);
     expect(Object.keys(restored.game.instances)).toEqual(['11', '12']);
   });

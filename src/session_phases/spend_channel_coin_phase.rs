@@ -10,14 +10,14 @@ use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove
 use crate::channel_state::ChannelState;
 use crate::common::types::{
     chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
-    MAX_BLOCK_COST_CLVM,
+    IntoErr, LocalProposalId, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend,
+    SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
-    format_coin, CancelReason, ChannelSemanticPhase, ChannelStatus, ChannelStatusSnapshot,
-    CoinOfInterest, Effect, FailedGameAction, GameNotification, GameStatusKind, SettlementOutcome,
-    TimeoutClaimSemantic, UnrollInitiator,
+    format_coin, snapshot_state_number, CancelReason, ChannelSemanticPhase, ChannelStatus,
+    ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction, GameNotification,
+    GameStatusKind, SettlementOutcome, TimeoutClaimSemantic, UnrollInitiator,
 };
 use crate::session_phases::handler_base::{
     build_channel_to_unroll_bundle, classify_unroll, ChannelStateBase, UnrollOutcome,
@@ -88,16 +88,13 @@ pub struct SpendChannelCoinPhase {
     advisory: Option<String>,
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
-    #[serde(default)]
     unroll_initiator: Option<UnrollInitiator>,
-    #[serde(default)]
     timeout_finish_submitted: bool,
 
     expected_clean_shutdown_solution: Option<ProgramRef>,
 
     last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
 
-    #[serde(skip)]
     replacement: Option<Box<OnChainPhase>>,
 }
 
@@ -349,7 +346,13 @@ impl SpendChannelCoinPhase {
         let ch = self.base.channel_state()?;
         let bundle =
             build_channel_to_unroll_bundle(env, ch, &channel_coin, &saved, "impatience unroll")?;
-        Ok(vec![Effect::SpendTransaction(bundle, None)])
+        Ok(vec![Effect::SpendTransaction(
+            crate::session_phases::effects::TransactionSubmission::attach_to(
+                bundle,
+                None,
+                &channel_coin,
+            ),
+        )])
     }
 
     #[cfg(test)]
@@ -445,7 +448,7 @@ impl SpendChannelCoinPhase {
         Ok(None)
     }
 
-    pub fn coin_puzzle_and_solution(
+    pub(crate) fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
@@ -692,11 +695,10 @@ impl SpendChannelCoinPhase {
 
         {
             let ch = self.base.channel_state_mut()?;
-            let cancelled_groups = ch.cancel_all_proposals();
-            for group_ids in cancelled_groups {
+            let cancelled = ch.cancel_all_proposals();
+            for id in cancelled {
                 effects.push(Effect::Notify(GameNotification::ProposalCancelled {
-                    id: group_ids[0],
-                    group_ids,
+                    id,
                     reason: CancelReason::WentOnChain,
                 }));
             }
@@ -754,7 +756,13 @@ impl SpendChannelCoinPhase {
                     .channel_state()
                     .ok()
                     .and_then(|ch| ch.preempting_state_number_for(on_chain_state));
-                effects.push(Effect::SpendTransaction(bundle, None));
+                effects.push(Effect::SpendTransaction(
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        bundle,
+                        None,
+                        unroll_coin,
+                    ),
+                ));
                 effects.push(Effect::Log(format!(
                     "[unroll-preempt] state={on_chain_state} preempting={preempting_state_number:?}"
                 )));
@@ -788,7 +796,13 @@ impl SpendChannelCoinPhase {
                             coin: unroll_coin.clone(),
                             timeout: self.base.unroll_timeout.clone(),
                             name: Some("unroll"),
-                            spend: Some(spend),
+                            spend: Some(
+                                crate::session_phases::effects::TransactionSubmission::attach_to(
+                                    spend,
+                                    None,
+                                    unroll_coin,
+                                ),
+                            ),
                             semantic: Some(TimeoutClaimSemantic::ChannelTimeoutFinish),
                         });
                     }
@@ -1078,14 +1092,17 @@ impl SpendChannelCoinPhase {
                 );
 
                 effects.push(Effect::SpendTransaction(
-                    SpendBundle {
-                        name: Some("on chain redo move".to_string()),
-                        spends: vec![CoinSpend {
-                            coin: coin.clone(),
-                            bundle: transaction,
-                        }],
-                    },
-                    None,
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        SpendBundle {
+                            name: Some("on chain redo move".to_string()),
+                            spends: vec![CoinSpend {
+                                coin: coin.clone(),
+                                bundle: transaction,
+                            }],
+                        },
+                        None,
+                        &coin,
+                    ),
                 ));
             }
         }
@@ -1158,7 +1175,12 @@ impl SpendWalletReceiver for SpendChannelCoinPhase {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinPhase::coin_puzzle_and_solution_in_place(
+            self,
+            env,
+            coin_id,
+            puzzle_and_solution,
+        )
     }
 }
 
@@ -1200,13 +1222,18 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
     ) -> Result<Option<Vec<Effect>>, Error> {
         SpendChannelCoinPhase::coin_created(self, env, coin_id)
     }
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        SpendChannelCoinPhase::coin_puzzle_and_solution(self, env, coin_id, puzzle_and_solution)
+        SpendChannelCoinPhase::coin_puzzle_and_solution_in_place(
+            self,
+            env,
+            coin_id,
+            puzzle_and_solution,
+        )
     }
     fn make_move(
         &mut self,
@@ -1232,17 +1259,6 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         entropy: Hash,
     ) -> Result<Vec<Effect>, Error> {
         SpendChannelCoinPhase::cheat_game(self, env, game_id, mover_share, entropy)
-    }
-    #[cfg(test)]
-    fn self_accept_proposal(
-        &mut self,
-        _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
-    ) -> Result<Vec<Effect>, Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "self_accept_proposal",
-        ))
     }
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>> {
         SpendChannelCoinPhase::take_next_phase(self).map(|oc| oc as Box<dyn PeerLifecyclePhase>)
@@ -1287,24 +1303,24 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             "provide_coin_spend_bundle",
         ))
     }
-    fn propose_games(
+    fn propose(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error> {
-        Err(phase_operation_error(self.phase_name(), "propose_games"))
+        _proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error> {
+        Err(phase_operation_error(self.phase_name(), "propose"))
     }
     fn accept_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "accept_proposal"))
     }
     fn cancel_proposal(
         &mut self,
         _env: &mut ChannelEnv<'_>,
-        _game_id: &GameID,
+        _proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error> {
         Err(phase_operation_error(self.phase_name(), "cancel_proposal"))
     }
@@ -1329,8 +1345,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             state: ChannelStatus,
             coin: Option<CoinString>,
             semantic_phase: Option<ChannelSemanticPhase>,
-            unrolling_state_number: Option<usize>,
-            preempting_state_number: Option<usize>,
+            unrolling_state_number: Option<u64>,
+            preempting_state_number: Option<u64>,
         }
         let view = match &self.state {
             SpendChannelCoinState::ChannelSpend { channel_coin } => {
@@ -1341,6 +1357,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                             .channel_state
                             .as_ref()
                             .and_then(|ch| ch.unroll_target_state_number())
+                            .map(snapshot_state_number)
                     })
                     .flatten();
                 SpendSnapshotView {
@@ -1367,7 +1384,7 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 semantic_phase: Some(
                     self.finishing_unroll_semantic_phase(self.timeout_finish_submitted),
                 ),
-                unrolling_state_number: Some(*state_number),
+                unrolling_state_number: Some(snapshot_state_number(*state_number)),
                 preempting_state_number: None,
             },
             SpendChannelCoinState::UnrollSpend {
@@ -1379,8 +1396,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 state: ChannelStatus::Unrolling,
                 coin: Some(unroll_coin.clone()),
                 semantic_phase: Some(ChannelSemanticPhase::Preempting),
-                unrolling_state_number: Some(*state_number),
-                preempting_state_number: *preempting_state_number,
+                unrolling_state_number: Some(snapshot_state_number(*state_number)),
+                preempting_state_number: preempting_state_number.map(snapshot_state_number),
             },
             SpendChannelCoinState::UnrollConditions {
                 unroll_coin,
@@ -1395,8 +1412,8 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
                 } else {
                     self.finishing_unroll_semantic_phase(true)
                 }),
-                unrolling_state_number: Some(*state_number),
-                preempting_state_number: *preempting_state_number,
+                unrolling_state_number: Some(snapshot_state_number(*state_number)),
+                preempting_state_number: preempting_state_number.map(snapshot_state_number),
             },
         };
         let (our_balance, their_balance, game_allocated) =
@@ -1424,7 +1441,11 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
             zero_payout,
             unroll_initiator: self.unroll_initiator,
             semantic_phase: view.semantic_phase,
-            state_number: self.base.channel_state.as_ref().map(|ch| ch.state_number()),
+            state_number: self
+                .base
+                .channel_state
+                .as_ref()
+                .map(|ch| snapshot_state_number(ch.state_number())),
             unrolling_state_number: view.unrolling_state_number,
             preempting_state_number: view.preempting_state_number,
             ..ChannelStatusSnapshot::new(view.state)
@@ -1475,39 +1496,6 @@ impl PeerLifecyclePhase for SpendChannelCoinPhase {
         }
         Ok(None)
     }
-    #[cfg(test)]
-    fn corrupt_state_for_testing(&mut self, _new_sn: usize) -> Result<(), Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "corrupt_state_for_testing",
-        ))
-    }
-    #[cfg(test)]
-    fn force_unroll_spend_for_testing(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<SpendBundle, Error> {
-        SpendChannelCoinPhase::force_unroll_spend(self, env)
-    }
-    #[cfg(test)]
-    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo> {
-        self.last_channel_coin_spend_info.clone()
-    }
-    #[cfg(test)]
-    fn force_stale_unroll_spend_for_testing(
-        &self,
-        _env: &mut ChannelEnv<'_>,
-        _saved: &ChannelCoinSpendInfo,
-    ) -> Result<SpendBundle, Error> {
-        Err(phase_operation_error(
-            self.phase_name(),
-            "force_stale_unroll_spend_for_testing",
-        ))
-    }
-    #[cfg(test)]
-    fn take_off_chain_phase_for_testing(&mut self) -> Option<crate::session_phases::OffChainPhase> {
-        None
-    }
     fn get_game_coin(&self, _game_id: &GameID) -> Option<CoinString> {
         None
     }
@@ -1542,7 +1530,7 @@ mod tests {
         );
     }
 
-    fn legacy_base() -> ChannelStateBase {
+    fn test_base() -> ChannelStateBase {
         ChannelStateBase::new(
             None,
             VecDeque::new(),
@@ -1550,45 +1538,6 @@ mod tests {
             Timeout::new(10),
             Timeout::new(5),
         )
-    }
-
-    #[derive(Serialize)]
-    struct LegacyInFlightSpendChannelCoinPhase {
-        state: SpendChannelCoinState,
-        base: ChannelStateBase,
-        advisory: Option<String>,
-        was_stale: bool,
-        terminal_reward_coin: Option<CoinString>,
-        expected_clean_shutdown_solution: Option<ProgramRef>,
-        last_channel_coin_spend_info: Option<ChannelCoinSpendInfo>,
-    }
-
-    #[test]
-    fn legacy_in_flight_on_chain_phase_restores_progress_defaults() {
-        let legacy = LegacyInFlightSpendChannelCoinPhase {
-            state: SpendChannelCoinState::UnrollTimeoutOrSpend {
-                unroll_coin: test_coin(),
-                state_number: 1,
-            },
-            base: legacy_base(),
-            advisory: None,
-            was_stale: false,
-            terminal_reward_coin: None,
-            expected_clean_shutdown_solution: None,
-            last_channel_coin_spend_info: None,
-        };
-
-        let bytes = bencodex::to_vec(&legacy).expect("serialize legacy in-flight phase");
-        let restored: SpendChannelCoinPhase =
-            bencodex::from_slice(&bytes).expect("restore legacy in-flight phase");
-        let snapshot = restored.channel_status_snapshot().expect("snapshot");
-        assert_eq!(snapshot.unroll_initiator, None);
-        assert_eq!(
-            snapshot.semantic_phase,
-            Some(ChannelSemanticPhase::FinishingWaitingTimeout)
-        );
-        assert_eq!(snapshot.unrolling_state_number, Some(1));
-        assert_eq!(snapshot.preempting_state_number, None);
     }
 
     #[test]
@@ -1697,7 +1646,7 @@ mod tests {
                 unroll_coin: test_coin(),
                 state_number: 1,
             },
-            base: legacy_base(),
+            base: test_base(),
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
@@ -1743,7 +1692,7 @@ mod tests {
                 preempting: true,
                 preempting_state_number: Some(5),
             },
-            base: legacy_base(),
+            base: test_base(),
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,

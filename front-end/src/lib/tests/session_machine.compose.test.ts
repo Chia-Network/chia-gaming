@@ -1,9 +1,9 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec } from './game_state_helpers';
 import { applyHandProposalToComposeDraft } from '../session/composeDraft';
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   INITIAL_GAME_TERMINAL_MODEL,
-  sessionModelFromSave,
 } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { CALPOKER_TERMS, send } from './session_machine.harness';
@@ -40,7 +40,7 @@ describe('session machine behavior sequences', () => {
   });
 
   it('uses the restored model directly as the machine projection', () => {
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveSave({
         version: 22n,
 
@@ -92,17 +92,16 @@ describe('session machine behavior sequences', () => {
         betweenHandMode: 'compose-proposal',
 
         betweenHandLastHandProposal: {
-          player_a_contribution: '20',
-          player_b_contribution: '20',
-          sender_is_player_a: false,
+          senderIsPlayerA: false,
 
-          game_timeout: '15',
+          gameTimeout: 15n,
 
-          game_type: 'calpoker',
+          gameType: 'calpoker',
           parameters: null,
         },
 
         handState: calpokerStateCodec.encode({
+          perPlayerStake: 20n,
           playerHand: [],
 
           opponentHand: [],
@@ -111,27 +110,23 @@ describe('session machine behavior sequences', () => {
 
           isPlayerTurn: false,
           iStarted: true,
-          error: null,
+          settlementOutcome: null,
         }),
 
-        proposalGroups: [
+        pendingProposals: [
           {
-            primary_id: '11',
-            member_ids: ['11'],
-            origin: 'local',
-            disposition: 'outgoing',
-            hand_proposal: {
-              player_a_contribution: '10',
-              player_b_contribution: '10',
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
+            id: '11',
+            lifecycle: 'local-outgoing',
+            handProposal: {
+              senderIsPlayerA: false,
+              gameTimeout: 15n,
+              gameType: 'calpoker',
               parameters: null,
             },
           },
         ],
       }),
-    );
+    ).model;
 
     const state = createSessionMachineState(restored);
 
@@ -139,7 +134,7 @@ describe('session machine behavior sequences', () => {
 
     expect(state.model.game.activeIds).toEqual(['7']);
 
-    expect(state.model.betweenHand.proposalGroups[0]?.memberIds).toEqual(['11']);
+    expect(state.model.betweenHand.pendingProposals[0]?.id).toBe('11');
 
     expect(state.model.game.currentHandOrigin).toBe('local');
   });

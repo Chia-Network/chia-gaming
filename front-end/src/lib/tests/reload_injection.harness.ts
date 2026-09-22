@@ -2,16 +2,13 @@ import type { Subscription } from 'rxjs';
 import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { SessionController } from '../../hooks/SessionController';
 import { restoreSession } from '../../hooks/blobSingleton';
-import {
-  _resetForTests as resetSaveState,
-  flushSessionSave,
-  peekSession,
-  type LiveSessionSave,
-} from '../../hooks/save';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { type DurableApplicationState, type LiveSessionSave } from '../session/saveEnvelope';
+import { storageRepository } from '../session/storageRepository';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
-import { sessionModelFromSave } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
+import { buildDurableApplicationState } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import {
@@ -27,16 +24,6 @@ export interface ReloadableSessionLane {
   subscription: Subscription;
 }
 
-let reloadBarrier: Promise<void> | null = null;
-let reloadController: SessionController | null = null;
-
-function persistOutsideReload<T>(
-  controller: SessionController,
-  persist: () => Promise<T>,
-): Promise<T> {
-  return reloadBarrier && reloadController !== controller ? reloadBarrier.then(persist) : persist();
-}
-
 function bindRuntime(
   adapter: SessionControllerAdapter,
   controller: SessionController,
@@ -44,7 +31,7 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
-  const persist = () => persistOutsideReload(controller, () => runtime.persist());
+  adapter.retireRuntime();
   const runtime = new SessionMachineRuntime(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',
@@ -56,9 +43,10 @@ function bindRuntime(
       getRestoreStatus: () => controller.getRestoreStatus(),
       getRestoreError: () => controller.getRestoreError(),
       onError: (error) => controller.reportRuntimeError(error),
-      persist,
     },
   );
+  runtime.activate();
+  adapter.bindRuntime(runtime);
   const dispatchHostProjection = () => {
     const status = controller.getRestoreStatus();
     runtime.dispatch({
@@ -67,14 +55,12 @@ function bindRuntime(
         restoring,
         status,
         error: controller.getRestoreError(),
-        hubReconciled: status === 'restored',
       },
       wasmNotificationHistory: controller.wasmNotificationHistory,
       diagnosticLog: controller.diagnosticLog,
     });
   };
   dispatchHostProjection();
-  controller.onSaveNeeded = persist;
   const subscription = addActiveSubscription(
     controller.getObservable().subscribe((event) => {
       switch (event.type) {
@@ -128,56 +114,68 @@ export async function injectSessionReload(
   lane: ReloadableSessionLane,
   poller: BlockchainPoller,
   wasmStateInit = new WasmStateInit(fetchPreset),
-): Promise<{ lane: ReloadableSessionLane; save: LiveSessionSave }> {
+  whileReloaded?: () => Promise<void>,
+): Promise<{
+  lane: ReloadableSessionLane;
+  save: DurableApplicationState & { session: LiveSessionSave };
+}> {
+  await lane.runtime.persist();
   await lane.controller.flushPendingWork();
-  if (reloadBarrier) await reloadBarrier;
-  let releaseReload!: () => void;
-  reloadBarrier = new Promise<void>((resolve) => {
-    releaseReload = resolve;
+  await lane.runtime.persist();
+  await lane.runtime.persist();
+  const snapshot = buildDurableApplicationState({
+    kind: 'live',
+    controller: lane.controller,
+    state: lane.runtime.getState(),
+    restoring: lane.controller.getRestoreStatus() !== 'idle',
+    getRestoreStatus: () => lane.controller.getRestoreStatus(),
+    getRestoreError: () => lane.controller.getRestoreError(),
   });
-  reloadController = lane.controller;
-  let save: Awaited<ReturnType<typeof peekSession>>;
-  try {
-    await lane.runtime.persist();
-    await flushSessionSave();
-    resetSaveState();
-    save = await peekSession();
-  } finally {
-    reloadController = null;
-    reloadBarrier = null;
-    releaseReload();
-  }
-  if (save?.phase !== 'live') {
-    throw new Error(`reload injection expected a live session save, got ${save?.phase ?? 'none'}`);
-  }
-
-  const uniqueId = lane.controller.uniqueId;
+  if (snapshot) await storageRepository.write(snapshot);
+  await storageRepository.checkpointDomainMutations();
   lane.subscription.unsubscribe();
   lane.runtime.setRender(() => {});
-  lane.controller.onSaveNeeded = null;
   lane.controller.cleanup();
+  await lane.controller.flushPendingWork();
+  storageRepository._resetForTests();
+  await storageRepository.claimApplicationState();
+  const save = await storageRepository.readCurrentState();
+  if (save?.session?.phase !== 'live') {
+    throw new Error(
+      `reload injection expected a live session save, got ${save?.session?.phase ?? 'none'}`,
+    );
+  }
+  const live = save.session;
+
+  const uniqueId = lane.controller.uniqueId;
+  await whileReloaded?.();
 
   const controller = new SessionController(
     poller,
     uniqueId,
-    BigInt(save.pairing.myContribution),
-    BigInt(save.pairing.theirContribution),
+    BigInt(live.pairing.myContribution),
+    BigInt(live.pairing.theirContribution),
     lane.adapter.peerConnection,
+    undefined,
+    save.walletContext ?? undefined,
   );
-  controller.perGameAmount = BigInt(save.pairing.perGameAmount);
+  controller.perGameAmount = BigInt(live.pairing.perGameAmount);
   controller.setPeerKeepalive(() => lane.adapter.peerConnection.sendKeepalive());
-  lane.adapter.set_blob(controller);
+  lane.adapter.setRuntimeBlob(controller);
+  const bootstrap = rehydrateDurableApplicationState(save);
+  const restoredLane = bindRuntime(
+    lane.adapter,
+    controller,
+    bootstrap.model,
+    live.pairing.iStarted,
+    true,
+  );
   controller.attachBlockchain(poller);
-  await controller.beginRestore(restoreSession(controller, save, wasmStateInit));
+  controller.kickSystem(2);
+  await controller.beginRestore(restoreSession(controller, bootstrap, wasmStateInit));
 
   return {
-    lane: bindRuntime(
-      lane.adapter,
-      controller,
-      sessionModelFromSave(save),
-      save.pairing.iStarted,
-      true,
-    ),
+    lane: restoredLane,
     save,
   };
 }

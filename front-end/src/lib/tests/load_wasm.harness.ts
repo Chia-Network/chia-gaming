@@ -2,19 +2,22 @@ import { Program } from 'clvm-lib';
 import { Subscription } from 'rxjs';
 import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import { PeerConnectionResult, WasmEvent } from '../../types/ChiaGaming';
+import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { _resetForTests as resetSaveState } from '../../hooks/save';
+import { storageRepository } from '../session/storageRepository';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { configSessionController } from '../../hooks/blobSingleton';
 import { SessionController } from '../../hooks/SessionController';
+import { clearSavedSessionMarker } from '../../hooks/saveCoordination';
 import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
+import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { initialKrunkGameState, KrunkHandler } from '@games/krunk/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import type { HandProposal, PersistedGameState } from '../session/types';
+import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import { pollOnce } from './blockchain_poller.driver';
 import 'fake-indexeddb/auto';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
@@ -22,6 +25,20 @@ import * as fs from 'fs';
 import { resolve } from 'path';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+
+export const LONG_WASM_TEST_TIMEOUT = 10 * 60 * 1000;
+
+export function assertWasmStateNumbersAreBigInt(status: Record<string, unknown>): void {
+  for (const field of [
+    'state_number',
+    'unrolling_state_number',
+    'preempting_state_number',
+  ] as const) {
+    if (status[field] !== undefined && status[field] !== null) {
+      assert.equal(typeof status[field], 'bigint', `${field} must cross WASM as bigint`);
+    }
+  }
+}
 
 function rooted(name: string) {
   // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
@@ -73,16 +90,22 @@ beforeAll(() => {
   setTestGlobal('localStorage', makeStorage());
 });
 
-beforeEach(async () => {
-  resetSaveState();
-  _resetWasmLoadForTests();
-  storeInitArgs(async () => {}, WholeWasmObject);
-  await new Promise<void>((resolve) => {
+async function deleteSessionDatabase(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
     const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
     request.onsuccess = () => resolve();
-    request.onerror = () => resolve();
-    request.onblocked = () => resolve();
+    request.onerror = () => reject(request.error ?? new Error('Failed to delete session database'));
+    request.onblocked = () => reject(new Error('Session database deletion was blocked'));
   });
+}
+
+beforeEach(async () => {
+  clearSavedSessionMarker();
+  storageRepository._resetForTests();
+  _resetWasmLoadForTests();
+  storeInitArgs(async () => {}, WholeWasmObject);
+  await deleteSessionDatabase();
+  await storageRepository.claimApplicationState();
 });
 
 afterAll(async () => {
@@ -108,22 +131,18 @@ async function cleanupActiveResources() {
     activeSubscriptions.pop()?.unsubscribe();
   }
   while (activeCradles.length > 0) {
-    activeCradles.pop()?.shutdown();
+    await activeCradles.pop()?.shutdown();
   }
   testPoller?.stop();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
+  await storageRepository.checkpointDomainMutations();
 }
 
 afterEach(async () => {
   try {
     await cleanupActiveResources();
-    resetSaveState();
-    // Drain microtask queue to catch late async errors.  Widened from 50ms to
-    // give in-flight teardown async (poller RPCs rejecting on disconnect, the
-    // submit queue, reconnect loop) time to settle inside the test boundary so
-    // it fails here with a real message instead of escaping past afterAll.
-    await new Promise<void>((r) => setTimeout(r, 300));
+    storageRepository._resetForTests();
   } catch (e) {
     throw new Error(`[load_wasm cleanup failed]\n${String(e)}`, { cause: e });
   }
@@ -141,6 +160,7 @@ export function makeTestReliableState(): NonNullable<PeerConnectionResult['relia
 
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
+  runtime: SessionMachineRuntime | undefined;
   waiting_messages: Array<SimpleMessage>;
   readonly peerConnection: PeerConnectionResult;
 
@@ -168,7 +188,25 @@ export class SessionControllerAdapter {
 
   set_blob(blob: SessionController) {
     this.blob = blob;
+    this.runtime?.retire();
+    this.runtime = createCoordinatorOnlySessionMachineRuntime(blob);
     this.blob.kickSystem(2);
+  }
+
+  setRuntimeBlob(blob: SessionController) {
+    this.retireRuntime();
+    this.blob = blob;
+  }
+
+  retireRuntime() {
+    this.runtime?.retire();
+    this.runtime = undefined;
+  }
+
+  bindRuntime(runtime: SessionMachineRuntime) {
+    if (this.runtime !== runtime) this.retireRuntime();
+    runtime.activate();
+    this.runtime = runtime;
   }
 
   deliver_message(msgno: number, msg: Uint8Array) {
@@ -193,8 +231,15 @@ export class SessionControllerAdapter {
     this.waiting_messages.push({ msgno, msg });
   }
 
-  shutdown() {
-    this.blob?.cleanup();
+  async shutdown(): Promise<void> {
+    await this.runtime?.persist();
+    await this.blob?.flushPendingWork();
+    await this.runtime?.persist();
+    this.retireRuntime();
+    const blob = this.blob;
+    this.blob = undefined;
+    blob?.cleanup();
+    await blob?.flushPendingWork();
   }
 }
 
@@ -216,13 +261,18 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
     `outbound=${cradle.waiting_messages.length}`,
     `system=${blob.systemState?.()}`,
     `queue=${blob.eventQueue?.length}`,
-    `drain=${blob.drainScheduled}`,
     `launcher=${blob.launcherProvided}`,
   ].join('/');
 }
 
 export async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
-  await Promise.all(cradles.map((cradle) => cradle.blob?.flushPendingWork() ?? Promise.resolve()));
+  await Promise.all(
+    cradles.map(async (cradle) => {
+      await cradle.runtime?.persist();
+      await cradle.blob?.flushPendingWork();
+      await cradle.runtime?.persist();
+    }),
+  );
 }
 
 export function assertCradleRoundTrip(stage: string, controller: SessionController): Uint8Array {
@@ -262,9 +312,7 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
   return serialized;
 }
 
-export async function pollOnce(poller: BlockchainPoller): Promise<void> {
-  await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-}
+export { pollOnce };
 
 export async function action_with_messages(
   poller: BlockchainPoller,
@@ -289,6 +337,7 @@ export async function action_with_messages(
               const tag = typeof evt.data === 'object' ? Object.keys(evt.data)[0] : null;
               if (tag === 'ChannelStatus') {
                 const cs = (evt.data as Record<string, Record<string, unknown>>).ChannelStatus;
+                assertWasmStateNumbersAreBigInt(cs);
                 if (cs?.state === 'Active') {
                   evt_results[index] = true;
                 }
@@ -403,8 +452,6 @@ export async function createActivePair(
   second.pairingToken = `restore-games-${index}-second`;
   first.perGameAmount = 100n;
   second.perGameAmount = 100n;
-  first.onSaveNeeded = () => Promise.resolve();
-  second.onSaveNeeded = () => Promise.resolve();
   cradles[0].set_blob(first);
   cradles[1].set_blob(second);
   await action_with_messages(poller, cradles[0], cradles[1]);
@@ -415,14 +462,21 @@ export function postMoveHandState(
   handProposal: HandProposal,
   ids: string[],
 ): { handState: PersistedGameState; moverId: string; move: Program | null } {
+  const stake =
+    handProposal.gameType === 'spacepoker'
+      ? (handProposal.parameters as readonly bigint[])[0]! *
+        (handProposal.parameters as readonly bigint[])[1]!
+      : (handProposal.parameters as bigint);
+  const readableParameters =
+    handProposal.gameType === 'spacepoker'
+      ? Program.fromList((handProposal.parameters as readonly bigint[]).map(Program.fromBigInt))
+      : Program.fromBigInt(stake);
   const hand = createRegisteredGameHand(handProposal.gameType, {
-    parameters: handProposal.parameters,
     members: ids.map((_, index) => ({
-      playerAContribution:
-        handProposal.gameType === 'krunk' && index !== 0 ? 0n : handProposal.playerAContribution,
-      playerBContribution:
-        handProposal.gameType === 'krunk' && index === 0 ? 0n : handProposal.playerBContribution,
+      playerAContribution: handProposal.gameType === 'krunk' && index !== 0 ? 0n : stake,
+      playerBContribution: handProposal.gameType === 'krunk' && index === 0 ? 0n : stake,
       ourTurn: handProposal.gameType === 'krunk' ? index === 1 : true,
+      readableParameters,
     })),
   });
   const accepted = snapshotRegisteredGameHand(handProposal.gameType, hand);
@@ -476,6 +530,18 @@ export interface SimulatorControllerBehavior {
   registerUser(uniqueId: string, balance?: bigint): Promise<string>;
 }
 
+const aggregateWalletProviderScopes = new WeakMap<BlockchainPoller, WalletProviderScope>();
+
+function aggregateWalletProviderScope(
+  blockchain: BlockchainPoller,
+): WalletProviderScope | undefined {
+  const existing = aggregateWalletProviderScopes.get(blockchain);
+  if (existing) return existing;
+  const scope = blockchain.rpc.getWalletOfferProvider()?.scope;
+  if (scope) aggregateWalletProviderScopes.set(blockchain, scope);
+  return scope;
+}
+
 export async function initSessionController(
   blockchain: BlockchainPoller,
   uniqueId: string,
@@ -485,6 +551,7 @@ export async function initSessionController(
   myContribution = 100n,
   theirContribution = 100n,
   simulator: SimulatorControllerBehavior = fakeBlockchainInfo,
+  walletProviderScope: WalletProviderScope | undefined = aggregateWalletProviderScope(blockchain),
 ) {
   const rewardPuzzleHash = await simulator.registerUser(uniqueId);
   const gameObject = new SessionController(
@@ -493,6 +560,8 @@ export async function initSessionController(
     myContribution,
     theirContribution,
     peer_conn,
+    undefined,
+    walletProviderScope,
   );
 
   await configSessionController(

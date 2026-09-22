@@ -1,16 +1,13 @@
 use std::collections::VecDeque;
 
 use crate::channel_state::types::ReadableMove;
-use crate::channel_state::types::StateUpdateSignatures;
 use crate::common::types::{
-    Aggsig, Amount, CoinID, CoinString, GameID, GameType, PuzzleHash, SpendBundle, Timeout,
+    Aggsig, Amount, CoinID, CoinString, GameID, GameType, LocalProposalId, Program, PuzzleHash,
+    SpendBundle, Timeout,
 };
-use crate::session_phases::handshake::{
-    CoinSpendRequest, HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadC,
-    HandshakePayloadD,
-};
+use crate::session_phases::handshake::CoinSpendRequest;
 use crate::session_phases::proposal::ProposalParameters;
-use crate::session_phases::types::{BatchAction, PeerMessage};
+use crate::session_phases::types::PeerMessage;
 
 pub fn format_coin(coin: &CoinString) -> String {
     match coin.to_parts() {
@@ -52,7 +49,6 @@ pub enum SessionDisposition {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChannelStatusSnapshot {
     pub state: ChannelStatus,
-    #[serde(default)]
     pub session_disposition: Option<SessionDisposition>,
     pub advisory: Option<String>,
     pub coin: Option<CoinString>,
@@ -60,7 +56,6 @@ pub struct ChannelStatusSnapshot {
     pub their_balance: Option<Amount>,
     pub game_allocated: Option<Amount>,
     pub have_potato: Option<bool>,
-    #[serde(default)]
     pub zero_payout: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unroll_initiator: Option<UnrollInitiator>,
@@ -68,14 +63,18 @@ pub struct ChannelStatusSnapshot {
     pub semantic_phase: Option<ChannelSemanticPhase>,
     /// Most recent channel state number this side is aware of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state_number: Option<usize>,
+    pub state_number: Option<u64>,
     /// State number of the unroll we are publishing, or of the unroll coin
     /// that landed on-chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub unrolling_state_number: Option<usize>,
+    pub unrolling_state_number: Option<u64>,
     /// State number we are (or were) preempting the landed unroll with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preempting_state_number: Option<usize>,
+    pub preempting_state_number: Option<u64>,
+}
+
+pub(crate) fn snapshot_state_number(state_number: usize) -> u64 {
+    u64::try_from(state_number).expect("channel state number exceeds u64")
 }
 
 impl ChannelStatusSnapshot {
@@ -146,7 +145,7 @@ pub enum GameStatusKind {
     EndedError,
 }
 
-/// How a game settled. See `NAMING_AUDIT.md` § Settlement glossary (UX).
+/// How a game settled. See `UX_NOTIFICATIONS.md` § Game outcome notifications (terminal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SettlementOutcome {
@@ -234,6 +233,8 @@ pub struct AcceptedGameMember {
     pub player_a_contribution: Amount,
     pub player_b_contribution: Amount,
     pub our_turn: bool,
+    /// Factory-approved game-readable initialization value.
+    pub readable_parameters: Program,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -256,29 +257,25 @@ pub enum GameNotification {
     },
 
     ProposalMade {
-        id: GameID,
-        /// Full ordered member list; always non-empty (singleton ⇒ `[id]`).
-        group_ids: Vec<GameID>,
-        player_a_contribution: Amount,
-        player_b_contribution: Amount,
+        /// Endpoint-local proposal handle. Wire IDs are never exposed to the host.
+        id: LocalProposalId,
         sender_is_player_a: bool,
         timeout: Timeout,
         game_type: GameType,
         parameters: ProposalParameters,
     },
     ProposalAcceptedGroup {
-        /// Members in the exact factory/wire order. The first member is canonical.
+        /// Endpoint-local ID of the consumed pending proposal.
+        id: LocalProposalId,
+        /// Generated games in exact factory order.
         members: Vec<AcceptedGameMember>,
     },
     ProposalCancelled {
-        /// Canonical first member of the cancelled proposal group.
-        id: GameID,
-        /// Members in exact factory order (singleton => `[id]`).
-        group_ids: Vec<GameID>,
+        id: LocalProposalId,
         reason: CancelReason,
     },
     InsufficientBalance {
-        id: GameID,
+        id: LocalProposalId,
         our_balance_short: bool,
         their_balance_short: bool,
     },
@@ -355,28 +352,98 @@ impl GameNotification {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FeePolicy {
+    AlreadyPaid,
+    AttachTo(CoinID),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentFailurePolicy {
+    SubmitWithoutFee,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+pub struct FeeConfiguration {
+    pub amount: Amount,
+    pub attachment_failure_policy: AttachmentFailurePolicy,
+}
+
+impl Default for FeeConfiguration {
+    fn default() -> Self {
+        Self {
+            amount: Amount::new(0),
+            attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SubmissionFeeIntent {
+    AlreadyPaid,
+    NoFeeConfigured,
+    Attach {
+        target: CoinID,
+        amount: Amount,
+        attachment_failure_policy: AttachmentFailurePolicy,
+    },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
+pub struct TransactionSubmission {
+    pub bundle: SpendBundle,
+    pub expiry: Option<u64>,
+    pub fee_policy: FeePolicy,
+}
+
+impl TransactionSubmission {
+    pub fn already_paid(bundle: SpendBundle, expiry: Option<u64>) -> Self {
+        Self {
+            bundle,
+            expiry,
+            fee_policy: FeePolicy::AlreadyPaid,
+        }
+    }
+
+    pub fn attach_to(bundle: SpendBundle, expiry: Option<u64>, coin: &CoinString) -> Self {
+        Self {
+            bundle,
+            expiry,
+            fee_policy: FeePolicy::AttachTo(coin.to_coin_id()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub enum GameSessionEvent {
     OutboundMessage(Vec<u8>),
     /// The sole message required before a local terminal transition. The
     /// transaction manager owns its durable handoff and finalization.
     OutboundTerminalMessage(Vec<u8>),
-    /// A spend bundle to submit, with the optional absolute height at/after
-    /// which it can no longer be included (from an `ASSERT_BEFORE_HEIGHT_ABSOLUTE`
-    /// the handler threads explicitly rather than parsing back out of the bundle).
-    OutboundTransaction(SpendBundle, Option<u64>),
+    /// A typed transaction submission. Fee policy and optional absolute expiry
+    /// are selected by the Rust producer and remain opaque protocol facts to
+    /// the hosting layer.
+    OutboundTransaction(TransactionSubmission),
     Notification(GameNotification),
     Log(String),
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
+    /// Rust-authoritative fact that the watched channel coin was first observed.
+    ChannelCoinConfirmed,
+    /// Rust-authoritative fact that channel creation reached its absolute deadline.
+    ChannelCreationTimedOut,
     WatchCoin {
         coin_name: CoinID,
         coin_string: CoinString,
         timeout: Timeout,
         /// Eagerly-built spend to submit once this coin reaches its relative
         /// timeout age.  `None` for coins with no timeout claim.
-        spend: Option<SpendBundle>,
+        spend: Option<TransactionSubmission>,
         /// Optional UI context emitted only when the manager submits `spend`.
         semantic: Option<TimeoutClaimSemantic>,
     },
@@ -390,23 +457,10 @@ pub enum Effect {
     // ToLocalUI
     Notify(GameNotification),
 
-    // PacketSender — one variant per peer message type
-    PeerHandshakeA(Box<HandshakePayloadB>),
-    PeerHandshakeB(Box<HandshakePayloadBWithGenesis>),
-    PeerHandshakeC(HandshakePayloadC),
-    PeerHandshakeD(HandshakePayloadD),
+    // PacketSender
+    SendPeer(PeerMessage),
 
     NeedCoinSpend(CoinSpendRequest),
-    PeerBatch {
-        actions: Vec<BatchAction>,
-        signatures: StateUpdateSignatures,
-    },
-    PeerCleanShutdown {
-        channel_half_sig: Aggsig,
-    },
-    PeerCleanShutdownComplete {
-        channel_half_sig: Aggsig,
-    },
     /// A durable host-owned clean-shutdown handoff. This is intercepted by
     /// `GameSession`; it must never flow through ordinary packet delivery.
     QueueTerminalHandoff(Aggsig),
@@ -416,14 +470,10 @@ pub enum Effect {
     /// Escalate a peer protocol failure through `GameSession`, which owns the
     /// zero-payout abandonment policy.
     GoOnChainAfterPeerError,
-    PeerRequestPotato,
-    PeerGameMessage(GameID, Vec<u8>),
 
     // WalletSpendInterface
-    /// Submit a spend bundle.  The optional `u64` is the absolute expiry height
-    /// (`ASSERT_BEFORE_HEIGHT_ABSOLUTE`) threaded explicitly from the handler so
-    /// the transaction manager can track it without running the transaction.
-    SpendTransaction(SpendBundle, Option<u64>),
+    /// Submit a transaction with Rust-owned expiry and fee policy.
+    SpendTransaction(TransactionSubmission),
     RegisterCoin {
         coin: CoinString,
         timeout: Timeout,
@@ -431,7 +481,7 @@ pub enum Effect {
         /// Eagerly-built spend the transaction manager should submit once this
         /// coin reaches its relative timeout age.  `None` when there is no
         /// timeout claim to make for this coin.
-        spend: Option<SpendBundle>,
+        spend: Option<TransactionSubmission>,
         semantic: Option<TimeoutClaimSemantic>,
     },
     RequestPuzzleAndSolution(CoinString),
@@ -458,35 +508,11 @@ pub fn apply_effects(
             Effect::Notify(n) => {
                 system.notification(&n)?;
             }
-            Effect::PeerHandshakeA(msg) => {
-                system.send_message(&PeerMessage::HandshakeA(msg))?;
-            }
-            Effect::PeerHandshakeB(msg) => {
-                system.send_message(&PeerMessage::HandshakeB(msg))?;
-            }
-            Effect::PeerHandshakeC(msg) => {
-                system.send_message(&PeerMessage::HandshakeC(msg))?;
-            }
-            Effect::PeerHandshakeD(msg) => {
-                system.send_message(&PeerMessage::HandshakeD(msg))?;
+            Effect::SendPeer(message) => {
+                system.send_message(&message)?;
             }
             Effect::NeedCoinSpend(_) => {
                 // Handled by the cradle/WASM layer, not by the trait system.
-            }
-            Effect::PeerBatch {
-                actions,
-                signatures,
-            } => {
-                system.send_message(&PeerMessage::Batch {
-                    actions,
-                    signatures,
-                })?;
-            }
-            Effect::PeerCleanShutdown { channel_half_sig } => {
-                system.send_message(&PeerMessage::CleanShutdown { channel_half_sig })?;
-            }
-            Effect::PeerCleanShutdownComplete { channel_half_sig } => {
-                system.send_message(&PeerMessage::CleanShutdownComplete { channel_half_sig })?;
             }
             Effect::QueueTerminalHandoff(_) => {
                 return Err(crate::common::types::Error::StrErr(
@@ -499,14 +525,8 @@ pub fn apply_effects(
                     "peer-error escalation must be intercepted by GameSession".to_string(),
                 ));
             }
-            Effect::PeerRequestPotato => {
-                system.send_message(&PeerMessage::RequestPotato(()))?;
-            }
-            Effect::PeerGameMessage(id, bytes) => {
-                system.send_message(&PeerMessage::Message(id, bytes))?;
-            }
-            Effect::SpendTransaction(bundle, expiry) => {
-                system.spend_transaction_and_add_fee(&bundle, expiry)?;
+            Effect::SpendTransaction(submission) => {
+                system.spend_transaction(&submission)?;
             }
             Effect::RegisterCoin {
                 coin,
@@ -538,44 +558,8 @@ pub fn apply_effects(
 mod tests {
     use super::*;
 
-    #[derive(serde::Serialize)]
-    struct LegacyChannelStatusSnapshot {
-        state: ChannelStatus,
-        advisory: Option<String>,
-        coin: Option<CoinString>,
-        our_balance: Option<Amount>,
-        their_balance: Option<Amount>,
-        game_allocated: Option<Amount>,
-        have_potato: Option<bool>,
-    }
-
-    #[test]
-    fn legacy_channel_status_restores_new_progress_fields_as_unknown() {
-        let legacy = LegacyChannelStatusSnapshot {
-            state: ChannelStatus::Active,
-            advisory: None,
-            coin: None,
-            our_balance: None,
-            their_balance: None,
-            game_allocated: None,
-            have_potato: None,
-        };
-
-        let encoded = bencodex::to_vec(&legacy).expect("serialize legacy snapshot");
-        let restored: ChannelStatusSnapshot =
-            bencodex::from_slice(&encoded).expect("restore legacy snapshot");
-
-        assert_eq!(restored.zero_payout, None);
-        assert_eq!(restored.unroll_initiator, None);
-        assert_eq!(restored.semantic_phase, None);
-        assert_eq!(restored.state_number, None);
-        assert_eq!(restored.unrolling_state_number, None);
-        assert_eq!(restored.preempting_state_number, None);
-    }
-
     #[test]
     fn coin_of_interest_labels_describe_coin_provenance() {
-        assert_eq!(CoinOfInterest::Funding.label(), "Funding coin");
         assert_eq!(CoinOfInterest::UnrollChange.label(), "Unroll change coin");
         assert_eq!(
             CoinOfInterest::CurrentGame(GameID(7)).label(),

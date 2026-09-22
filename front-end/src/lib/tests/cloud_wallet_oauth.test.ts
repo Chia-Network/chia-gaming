@@ -52,9 +52,11 @@ setTestGlobal('window', globalThis);
 
 import {
   buildAuthorizeUrl,
+  CloudWalletAuthError,
   createPkceChallenge,
   encodeRelayGlobalId,
   fetchFirstConsentedWalletId,
+  graphqlRequest,
   handleOAuthCallbackPage,
   normalizeHex,
   oauthRedirectUri,
@@ -64,6 +66,7 @@ import {
   with0x,
   GAMING_CONSENT_MESSAGE_TYPE,
   OAUTH_MESSAGE_TYPE,
+  type TokenProvider,
 } from '../../hooks/cloudWalletOAuth';
 import {
   clearCloudWalletAuth,
@@ -79,12 +82,7 @@ import {
   saveCloudWalletConfig,
 } from '../../hooks/cloudWalletConfig';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
-import {
-  coinSpendsFromSignatureRequest,
-  conditionsForGraphql,
-  jsonSafeVariables,
-  selectCoinStringForAmount,
-} from '../../hooks/cloudWalletHelpers';
+import { conditionsForGraphql, jsonSafeVariables } from '../../hooks/cloudWalletHelpers';
 import { encodeU64AsClvmHex } from '../../util';
 
 describe('cloudWalletOAuth helpers', () => {
@@ -222,6 +220,83 @@ describe('cloudWalletOAuth helpers', () => {
   });
 });
 
+describe('graphqlRequest authentication retry', () => {
+  afterEach(() => {
+    setTestGlobal('fetch', undefined);
+  });
+
+  it('force-refreshes once and retries a GraphQL UNAUTHENTICATED response', async () => {
+    const tokenProvider: TokenProvider = {
+      getAccessToken: jest
+        .fn()
+        .mockResolvedValueOnce('stale-token')
+        .mockResolvedValueOnce('fresh-token'),
+    };
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            errors: [
+              {
+                message: 'Unauthenticated',
+                extensions: { code: 'UNAUTHENTICATED' },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { wallet: { id: 'Wallet_1' } } }), {
+          status: 200,
+        }),
+      );
+    setTestGlobal('fetch', fetchMock);
+
+    await expect(
+      graphqlRequest<{ wallet: { id: string } }>(
+        'query { wallet { id } }',
+        undefined,
+        tokenProvider,
+        'https://api.example',
+      ),
+    ).resolves.toEqual({ wallet: { id: 'Wallet_1' } });
+    expect(tokenProvider.getAccessToken).toHaveBeenNthCalledWith(1);
+    expect(tokenProvider.getAccessToken).toHaveBeenNthCalledWith(2, { forceRefresh: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]?.headers.Authorization).toBe('Bearer stale-token');
+    expect(fetchMock.mock.calls[1]?.[1]?.headers.Authorization).toBe('Bearer fresh-token');
+  });
+
+  it('throws an auth error when the refreshed token is still UNAUTHENTICATED', async () => {
+    const tokenProvider: TokenProvider = {
+      getAccessToken: jest
+        .fn()
+        .mockResolvedValueOnce('stale-token')
+        .mockResolvedValueOnce('fresh-token'),
+    };
+    const unauthenticated = () =>
+      new Response(
+        JSON.stringify({
+          errors: [
+            {
+              message: 'Unauthenticated',
+              extensions: { code: 'UNAUTHENTICATED' },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    setTestGlobal('fetch', jest.fn().mockImplementation(unauthenticated));
+
+    await expect(
+      graphqlRequest('query { wallet { id } }', undefined, tokenProvider, 'https://api.example'),
+    ).rejects.toBeInstanceOf(CloudWalletAuthError);
+    expect(tokenProvider.getAccessToken).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('cloudWalletConfig', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
@@ -229,9 +304,9 @@ describe('cloudWalletConfig', () => {
   });
 
   it('falls back to env defaults when nothing is stored', () => {
-    expect(getCloudWalletApiUrl()).toBe('http://127.0.0.1:3001');
-    expect(getCloudWalletUiUrl()).toBe('http://127.0.0.1:3000');
-    expect(getCloudWalletClientId()).toBe('');
+    expect(getCloudWalletApiUrl()).toBe('https://api-dev-testnet11.cw.chia.net');
+    expect(getCloudWalletUiUrl()).toBe('https://dev-testnet11.cw.chia.net');
+    expect(getCloudWalletClientId()).toBe('w70zx0oc40vkue0gdp0xcfv3');
   });
 
   it('persisted values take precedence and are normalized', () => {
@@ -259,14 +334,29 @@ describe('CloudBlockchainInterface beginConnect', () => {
     clearCloudWalletAuth();
   });
 
-  it('fresh connect exposes skipQr setup fields so Shell prompts instead of silent-finalize', async () => {
+  it('fresh connect requests the Cloud Wallet OAuth configuration', async () => {
     const iface = new CloudBlockchainInterface();
     const setup = await iface.beginConnect('uid', true);
     expect(setup.skipQr).toBe(true);
     expect(setup.title).toBe('Cloud Wallet');
-    expect(setup.fields?.clientId?.type).toBe('string');
-    expect(setup.fields?.apiUrl?.type).toBe('string');
-    expect(setup.fields?.uiUrl?.type).toBe('string');
+    expect(setup.fields).toEqual({
+      clientId: {
+        type: 'string',
+        label: 'OAuth client ID',
+        default: 'w70zx0oc40vkue0gdp0xcfv3',
+      },
+      apiUrl: {
+        type: 'string',
+        label: 'Cloud Wallet API URL',
+        default: 'https://api-dev-testnet11.cw.chia.net',
+      },
+      uiUrl: {
+        type: 'string',
+        label: 'Cloud Wallet UI URL',
+        default: 'https://dev-testnet11.cw.chia.net',
+      },
+    });
+    expect(loadCloudWalletConfig()).toBeNull();
   });
 
   it('stored auth skips setup fields so silent reconnect can finalize', async () => {
@@ -282,31 +372,22 @@ describe('CloudBlockchainInterface beginConnect', () => {
     expect(setup.fields).toBeUndefined();
   });
 
-  it('finalize persists config before attempting OAuth', async () => {
+  it('finalize persists the submitted OAuth values', async () => {
     const iface = new CloudBlockchainInterface();
     const setup = await iface.beginConnect('uid', true);
-    // OAuth cannot complete in the test environment (no popup), so finalize
-    // rejects -- but only after the config has been saved.
+    // OAuth cannot complete in the test environment because there is no popup.
     await expect(
       setup.finalize({
-        clientId: 'client-xyz',
+        clientId: 'client-1',
         apiUrl: 'http://api.local/',
         uiUrl: 'http://ui.local/',
       }),
     ).rejects.toBeTruthy();
     expect(loadCloudWalletConfig()).toEqual({
-      clientId: 'client-xyz',
+      clientId: 'client-1',
       apiUrl: 'http://api.local',
       uiUrl: 'http://ui.local',
     });
-  });
-
-  it('finalize rejects when no client id is available', async () => {
-    const iface = new CloudBlockchainInterface();
-    const setup = await iface.beginConnect('uid', true);
-    await expect(setup.finalize({ clientId: '', apiUrl: '', uiUrl: '' })).rejects.toThrow(
-      /client id/i,
-    );
   });
 });
 
@@ -475,7 +556,7 @@ describe('waitForGamingConsentWalletId grace period', () => {
     setTestGlobal('window', globalThis);
   });
 
-  const consentEvent = (walletId: string, origin = 'http://127.0.0.1:3000') => ({
+  const consentEvent = (walletId: string, origin = 'https://dev-testnet11.cw.chia.net') => ({
     origin,
     data: { type: GAMING_CONSENT_MESSAGE_TYPE, walletId },
   });
@@ -649,58 +730,12 @@ describe('fetchFirstConsentedWalletId', () => {
 });
 
 describe('CloudBlockchainInterface helpers', () => {
-  it('conditionsForGraphql maps opcodes and maxHeight as decimal integers', () => {
+  it('conditionsForGraphql serializes complete CLVM conditions', () => {
     const conditions = conditionsForGraphql(
-      [{ opcode: 51n, args: ['ph', encodeU64AsClvmHex(100n)] }],
+      [{ opcode: 51n, args: ['ab'.repeat(32), encodeU64AsClvmHex(100n)] }],
       4671865n,
     );
-    expect(conditions[0]).toEqual({ opcode: '51', args: ['ph', '100'] });
-    expect(conditions[1]).toEqual({
-      opcode: '87',
-      args: ['4671865'],
-    });
-  });
-
-  it('coinSpendsFromSignatureRequest uses signedSpendBundle for a vault (inner p2 + custody)', () => {
-    const innerP2 = { solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' };
-    const custody = { solution: 'ffff42ff17ffa0' + '22'.repeat(32) + '80' };
-    expect(
-      coinSpendsFromSignatureRequest({
-        signedSpendBundle: { coinSpends: [innerP2, custody] },
-        coinSpends: [innerP2],
-      }),
-    ).toEqual([innerP2, custody]);
-  });
-
-  it('coinSpendsFromSignatureRequest uses a one-spend signedSpendBundle', () => {
-    const p2 = { solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' };
-    expect(
-      coinSpendsFromSignatureRequest({
-        signedSpendBundle: { coinSpends: [p2] },
-        coinSpends: [p2],
-      }),
-    ).toEqual([p2]);
-  });
-
-  it('coinSpendsFromSignatureRequest refuses coinSpends when signedSpendBundle is missing', () => {
-    expect(() =>
-      coinSpendsFromSignatureRequest({
-        coinSpends: [{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }],
-      }),
-    ).toThrow(/vault custody spend missing/);
-  });
-
-  it('coinSpendsFromSignatureRequest refuses an empty signedSpendBundle', () => {
-    expect(() =>
-      coinSpendsFromSignatureRequest({
-        signedSpendBundle: { coinSpends: [] },
-        coinSpends: [{ solution: 'ffff33ffa0' + '11'.repeat(32) + 'ff6480' }],
-      }),
-    ).toThrow(/vault custody spend missing/);
-  });
-
-  it('coinSpendsFromSignatureRequest throws when neither bundle has spends', () => {
-    expect(() => coinSpendsFromSignatureRequest({})).toThrow(/returned no coinSpends/);
+    expect(conditions).toEqual([`ff33ffa0${'ab'.repeat(32)}ff6480`, 'ff57ff8347497980']);
   });
 
   it('jsonSafeVariables converts bigint recursively', () => {
@@ -709,79 +744,6 @@ describe('CloudBlockchainInterface helpers', () => {
       nested: { fee: '0' },
       list: ['1'],
     });
-  });
-
-  it('selectCoinStringForAmount picks smallest sufficient coin', () => {
-    const coin = selectCoinStringForAmount(
-      [
-        {
-          parentCoinInfo: '11'.repeat(32),
-          puzzleHash: '22'.repeat(32),
-          amount: 50n,
-        },
-        {
-          parentCoinInfo: '33'.repeat(32),
-          puzzleHash: '44'.repeat(32),
-          amount: 200n,
-        },
-        {
-          parentCoinInfo: '55'.repeat(32),
-          puzzleHash: '66'.repeat(32),
-          amount: 100n,
-        },
-      ],
-      80n,
-    );
-    expect(coin).not.toBeNull();
-    expect(coin!.startsWith('55'.repeat(32) + '66'.repeat(32))).toBe(true);
-  });
-
-  it('selectCoinStringForAmount returns null when none suffice', () => {
-    expect(
-      selectCoinStringForAmount(
-        [
-          {
-            parentCoinInfo: '11'.repeat(32),
-            puzzleHash: '22'.repeat(32),
-            amount: 10n,
-          },
-        ],
-        100n,
-      ),
-    ).toBeNull();
-  });
-
-  it('selectCoinStringForAmount returns null when the sufficient coin has no parent', () => {
-    expect(
-      selectCoinStringForAmount(
-        [
-          {
-            puzzleHash: '22'.repeat(32),
-            amount: 100n,
-          },
-        ],
-        50n,
-      ),
-    ).toBeNull();
-  });
-
-  it('selectCoinStringForAmount skips an incomplete coin and picks the next valid one', () => {
-    const coin = selectCoinStringForAmount(
-      [
-        {
-          puzzleHash: '22'.repeat(32),
-          amount: 80n,
-        },
-        {
-          parentCoinInfo: '33'.repeat(32),
-          puzzleHash: '44'.repeat(32),
-          amount: 100n,
-        },
-      ],
-      50n,
-    );
-    expect(coin).not.toBeNull();
-    expect(coin!.startsWith('33'.repeat(32) + '44'.repeat(32))).toBe(true);
   });
 });
 
@@ -815,58 +777,30 @@ describe('CloudBlockchainInterface coin records', () => {
     return fetchMock;
   }
 
-  it('getCoinRecordsByNames omits records missing parentCoinName instead of inventing a parent', async () => {
+  it('getCoinRecordsByNames rejects an incomplete identity instead of reporting a partial batch', async () => {
     mockGraphql(() => ({
-      coinRecordsByNames: [
-        {
-          name: 'aa'.repeat(32),
-          amount: '100',
-          puzzleHash: 'bb'.repeat(32),
+      coinset: {
+        response: {
+          success: true,
+          coin_records: [
+            {
+              coin: {
+                amount: '100',
+                puzzle_hash: 'bb'.repeat(32),
+              },
+              confirmed_block_index: 1,
+              spent_block_index: 0,
+              spent: false,
+              coinbase: false,
+              timestamp: 0,
+            },
+          ],
         },
-        {
-          name: 'cc'.repeat(32),
-          amount: '200',
-          puzzleHash: 'dd'.repeat(32),
-          parentCoinName: 'ee'.repeat(32),
-        },
-      ],
+      },
     }));
     const iface = new CloudBlockchainInterface();
-    const records = await iface.getCoinRecordsByNames(['aa'.repeat(32), 'cc'.repeat(32)]);
-    expect(records).toHaveLength(1);
-    expect(records[0].coin.parentCoinInfo).toBe('ee'.repeat(32));
-    expect(records[0].coin.puzzleHash).toBe('dd'.repeat(32));
-    expect(records[0].coin.amount).toBe(200n);
-  });
-
-  it('selectCoins returns null when coin records have no parent identity', async () => {
-    mockGraphql((query) => {
-      if (query.includes('coinRecordsByNames')) {
-        return {
-          coinRecordsByNames: [
-            {
-              name: 'aa'.repeat(32),
-              amount: '100',
-              puzzleHash: 'bb'.repeat(32),
-            },
-          ],
-        };
-      }
-      return {
-        coins: {
-          edges: [
-            {
-              node: {
-                name: 'aa'.repeat(32),
-                amount: '100',
-                puzzleHash: 'bb'.repeat(32),
-              },
-            },
-          ],
-        },
-      };
-    });
-    const iface = new CloudBlockchainInterface();
-    await expect(iface.selectCoins('uid', 50n)).resolves.toBeNull();
+    await expect(iface.getCoinRecordsByNames(['aa'.repeat(32), 'cc'.repeat(32)])).rejects.toThrow(
+      /incomplete coin record/i,
+    );
   });
 });

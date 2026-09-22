@@ -85,6 +85,12 @@ function requireGameSessionEvent(event: unknown): void {
         throw new Error('cradle returned an invalid NeedCoinSpend event');
       }
       return;
+    case 'ChannelCoinConfirmed':
+    case 'ChannelCreationTimedOut':
+      if (payload !== null) {
+        throw new Error(`cradle returned an invalid ${key} event`);
+      }
+      return;
     default:
       throw new Error(`cradle returned an unknown GameSessionEvent: ${key}`);
   }
@@ -137,8 +143,6 @@ export interface ProposeGameParams {
   /** First generated member's initial validation puzzle hash (32-byte hex). */
   game_type: ProtocolGameId;
   timeout: bigint;
-  player_a_contribution: bigint;
-  player_b_contribution: bigint;
   sender_is_player_a: boolean;
   parameters: ProposalParameterValue;
 }
@@ -199,6 +203,11 @@ export type WasmEvent =
       error: string;
     }
   | { type: 'durability-error'; error: string }
+  | {
+      type: 'recoverable-internal-error';
+      error: string;
+      failure: SubmissionDrainFailure;
+    }
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string };
 
@@ -211,6 +220,87 @@ export interface CoinOfInterestEntry {
   game_id?: string;
   game_coin_kind?: 'current' | 'reward';
 }
+
+export type TransactionSubmission = WasmContract.TransactionSubmission;
+export type SubmissionDrainFailureStage = WasmContract.SubmissionDrainFailureStage;
+export type SubmissionDrainFailure = WasmContract.SubmissionDrainFailure;
+export type SubmissionDrain = WasmContract.SubmissionDrain;
+
+export interface FinalizedSubmission {
+  protocol_bundle: SpendBundle;
+  bundle: unknown;
+  applied_fee: string;
+  warning?: string | null;
+  fee_source_disposition: 'attached' | 'unused' | 'not-requested';
+  variant_fingerprint: string;
+  should_broadcast: boolean;
+}
+
+export type SubmissionAttemptStatus = 'applied' | 'stale';
+export type SubmissionFinalizationResult = FinalizedSubmission | { status: 'stale' };
+
+export type WalletSubmitOutcome =
+  | { status: 'acknowledged'; detail?: string }
+  | { status: 'unavailable'; detail: string }
+  | { status: 'rejected'; detail: string };
+
+export type WalletOfferOperation = {
+  owner: {
+    installationPlayerId: string;
+    peerSessionId: string;
+    providerScope: WalletProviderScope;
+  };
+  purpose: { kind: 'funding'; operationId: string } | { kind: 'fee'; operationId: string };
+};
+
+export type WalletProviderScope =
+  | { provider: 'cloud'; walletId: string }
+  | { provider: 'walletconnect'; fingerprint: string; chainId: string }
+  | { provider: 'simulator'; identity: string };
+
+export type WalletOfferRequest =
+  | {
+      kind: 'funding';
+      uniqueId: string;
+      offer: { [walletId: string]: bigint };
+      extraConditions?: Array<{ opcode: bigint; args: string[] }>;
+      coinIds?: string[];
+      maxHeight?: bigint;
+      openingFee?: bigint;
+    }
+  | {
+      kind: 'fee';
+      uniqueId: string;
+      fee: bigint;
+      concurrentSpendCoinId: string;
+    };
+
+export type WalletOfferMaterial =
+  | { kind: 'offer'; offer: string }
+  | { kind: 'bundle'; bundle: unknown };
+
+export type WalletOfferReservedCompletion = {
+  kind: 'created-reserved';
+  material: WalletOfferMaterial;
+  tradeId: string;
+  warning?: string;
+};
+
+export type WalletOfferEphemeralCompletion = {
+  kind: 'created-ephemeral';
+  material: WalletOfferMaterial;
+  warning?: string;
+};
+
+export type WalletOfferCompletion =
+  | WalletOfferReservedCompletion
+  | WalletOfferEphemeralCompletion
+  | { kind: 'failure'; reason: string }
+  | { kind: 'unavailable'; reason: string };
+
+export type WalletOfferBeginOutcome =
+  | WalletOfferCompletion
+  | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
   // System
@@ -231,19 +321,22 @@ export interface WasmConnection {
   report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult;
   report_height: (cid: number, height: bigint) => WasmResult;
   snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
-  drain_submissions: (cid: number) => SpendBundle[];
-  acknowledge_submission: (cid: number, spend: string, finalizedBundleJson: string) => void;
-  submission_is_finalized: (cid: number, spend: string) => boolean;
-  resubmit_submitted: (cid: number) => void;
+  snapshot_pending_coin_solution_requests: (cid: number) => string[];
+  drain_submissions: (cid: number) => SubmissionDrain;
+  configure_submission_fee: (cid: number, amount: string) => void;
+  finalize_submission_attempt: (
+    cid: number,
+    attempt_token: string,
+    fee_source_json?: string,
+  ) => SubmissionFinalizationResult;
+  acknowledge_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  reject_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  submission_attempt_unavailable: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  relinquish_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
+  chain_snapshot_ready: (cid: number) => void;
+  request_fee_upgrades: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
-  aggregate_coinset_spend_bundles: (bundles_json: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
-  fee_payment_puzzle_hash_for_coin: (protocol_coin_id: string) => string;
-  complete_fee_offer_to_coinset_org: (
-    offer: string,
-    fee: string,
-    protocol_coin_id: string,
-  ) => unknown;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -252,9 +345,8 @@ export interface WasmConnection {
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
 
   // Game
-  propose_games: (cid: number, games: ProposeGameParams[]) => WasmResult;
+  propose: (cid: number, proposal: ProposeGameParams) => WasmResult;
   accept_proposal: (cid: number, game_id: string) => WasmResult;
-  accept_proposal_and_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
   cancel_proposal: (cid: number, game_id: string) => WasmResult;
   make_move_with_entropy_for_testing: (
     cid: number,
@@ -298,16 +390,12 @@ export class ChiaGame {
     this.session = sessionId;
   }
 
-  propose_games(games: ProposeGameParams[]): WasmResult {
-    return this.wasm.propose_games(this.session, games);
+  propose(proposal: ProposeGameParams): WasmResult {
+    return this.wasm.propose(this.session, proposal);
   }
 
   accept_proposal(game_id: string): WasmResult {
     return this.wasm.accept_proposal(this.session, game_id);
-  }
-
-  accept_proposal_and_move(game_id: string, readable: Uint8Array): WasmResult {
-    return this.wasm.accept_proposal_and_move(this.session, game_id, readable);
   }
 
   cancel_proposal(game_id: string): WasmResult {
@@ -321,6 +409,10 @@ export class ChiaGame {
 
   coins_of_interest(): CoinOfInterestEntry[] {
     return this.wasm.coins_of_interest(this.session);
+  }
+
+  snapshot_pending_coin_solution_requests(): string[] {
+    return this.wasm.snapshot_pending_coin_solution_requests(this.session);
   }
 
   serialize(): Uint8Array {
@@ -418,24 +510,44 @@ export class ChiaGame {
     return this.wasm.snapshot_watched_coins(this.session);
   }
 
-  /** Spend bundles the manager captured and the host should submit. */
-  drain_submissions(): SpendBundle[] {
+  /** Typed submissions the manager captured and the host should submit. */
+  drain_submissions(): SubmissionDrain {
     return this.wasm.drain_submissions(this.session);
   }
 
-  /** Record that the wallet accepted a drained submission. */
-  acknowledge_submission(spend: string, finalizedBundleJson: string): void {
-    this.wasm.acknowledge_submission(this.session, spend, finalizedBundleJson);
+  configure_submission_fee(amount: string): void {
+    this.wasm.configure_submission_fee(this.session, amount);
   }
 
-  /** Whether this bundle must be replayed without another wallet fee spend. */
-  submission_is_finalized(spend: string): boolean {
-    return this.wasm.submission_is_finalized(this.session, spend);
+  finalize_submission_attempt(
+    attemptToken: string,
+    feeSourceJson?: string,
+  ): SubmissionFinalizationResult {
+    return this.wasm.finalize_submission_attempt(this.session, attemptToken, feeSourceJson);
   }
 
-  /** Re-queue all retained submissions for resubmission (call after reload). */
-  resubmit_submitted(): void {
-    this.wasm.resubmit_submitted(this.session);
+  acknowledge_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.acknowledge_submission_attempt(this.session, attemptToken);
+  }
+
+  reject_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.reject_submission_attempt(this.session, attemptToken);
+  }
+
+  submission_attempt_unavailable(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.submission_attempt_unavailable(this.session, attemptToken);
+  }
+
+  relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
+    return this.wasm.relinquish_submission_attempt(this.session, attemptToken);
+  }
+
+  chain_snapshot_ready(): void {
+    this.wasm.chain_snapshot_ready(this.session);
+  }
+
+  request_fee_upgrades(): void {
+    this.wasm.request_fee_upgrades(this.session);
   }
 }
 
@@ -511,9 +623,91 @@ export interface ConnectionSetup {
   finalize(values?: ConnectionFieldValues): Promise<void>;
 }
 
+export type WalletOfferCancellationOutcome =
+  | { status: 'cancelled'; detail?: string }
+  | { status: 'already-terminal'; detail: string }
+  | { status: 'unavailable'; detail: string }
+  | { status: 'rejected'; detail: string };
+
+export type WalletOfferCancellationBeginOutcome =
+  | WalletOfferCancellationOutcome
+  | { status: 'pending'; recoveryId: string };
+
+interface WalletOfferProviderBase {
+  readonly scope: WalletProviderScope;
+}
+
+export interface BestEffortWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'best-effort';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
+  cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
+}
+
+export interface TerminalWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'terminal';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferCompletion>;
+  cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
+}
+
+export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'recoverable';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<Exclude<WalletOfferBeginOutcome, WalletOfferEphemeralCompletion>>;
+  reconcileCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+    recoveryId: string,
+  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
+  beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
+  reconcileCancellation(
+    tradeId: string,
+    recoveryId: string,
+  ): Promise<WalletOfferCancellationOutcome>;
+}
+
+/**
+ * Provider whose mutation is exactly recoverable only after its begin response
+ * supplies a provider recovery id. Transport loss before that response remains
+ * best-effort uncertainty.
+ */
+export interface RecoverableAfterBeginWalletOfferProvider extends WalletOfferProviderBase {
+  readonly capability: 'recoverable-after-begin';
+  beginCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<Exclude<WalletOfferBeginOutcome, WalletOfferEphemeralCompletion>>;
+  reconcileCreation(
+    operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+    recoveryId: string,
+  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
+  beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
+  reconcileCancellation(
+    tradeId: string,
+    recoveryId: string,
+  ): Promise<WalletOfferCancellationOutcome>;
+}
+
+export type WalletOfferProvider =
+  | BestEffortWalletOfferProvider
+  | TerminalWalletOfferProvider
+  | RecoverableWalletOfferProvider
+  | RecoverableAfterBeginWalletOfferProvider;
+
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
-  fundingMode?: 'offer-settlement' | 'direct';
+  fundingMode?: 'offer-settlement';
+  getWalletOfferProvider(
+    owner?: Pick<WalletOfferOperation['owner'], 'installationPlayerId' | 'peerSessionId'>,
+  ): WalletOfferProvider | null;
   getRegistrationScopeKey?(): string | undefined;
   spend(
     blob: string,
@@ -521,31 +715,12 @@ export interface InternalBlockchainInterface {
     changePuzzleHash: string,
     source?: string,
     fee?: bigint,
-  ): Promise<string>;
-  // Build a signed, validate-only XCH offer whose settlement output is exactly
-  // the fee and whose maker spend reserves that fee and asserts concurrent
-  // spends of the protocol coin and predicted nil burn coin. The host completes
-  // the offer output into that burn chain before aggregation. Undefined on
-  // backends that do not support fees.
-  createFeeOffer?(
-    fee: bigint,
-    concurrentSpendCoinId: string,
-    paymentPuzzleHash: string,
-  ): Promise<string | null>;
+  ): Promise<WalletSubmitOutcome>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
   getBalance(): Promise<bigint>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
   selectCoins(uniqueId: string, amount: bigint): Promise<string | null>;
   getHeightInfo(): Promise<bigint>;
-  createOfferForIds(
-    uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
-    coinIds?: string[],
-    maxHeight?: bigint,
-    openingFee?: bigint,
-  ): Promise<any | null>;
-  cancelOffer?(tradeId: string): Promise<void>;
   getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]>;
   registerCoins(names: string[]): Promise<void>;
   startMonitoring(): Promise<void>;

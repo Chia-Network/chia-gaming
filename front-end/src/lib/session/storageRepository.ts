@@ -1,0 +1,660 @@
+import {
+  type ClaimedStorageSnapshot,
+  type DurableStorageAuthority,
+  inspectApplicationState,
+  indexedDbStoragePort,
+  InvalidApplicationStateError,
+  StorageAuthorityLostError,
+  StorageAuthorityRequiredError,
+} from './indexedDb';
+import {
+  DURABLE_APPLICATION_STATE_SCHEMA,
+  DURABLE_APPLICATION_STATE_VERSION,
+  MAX_DURABLE_REJECTION_TRANSPORTS,
+  type DurableApplicationState,
+  type DurableRejectionTransport,
+  type SessionTransportSave,
+} from './saveEnvelope';
+import { decodeDurableApplicationState } from './persistence';
+import * as sessionPreferences from './sessionPreferences';
+import * as sessionState from './sessionStateTransitions';
+import type { HardResetResult } from '../../hooks/saveHardReset';
+import {
+  markLeaseClaimed,
+  clearSavedSessionMarker,
+  getStorageTabId,
+  hasWalletConnectStorage,
+  installStorageCoordination,
+  type StorageAuthorityLossReason,
+  markSavedSession,
+  randomHex,
+  resetStorageCoordinationForTests,
+} from '../../hooks/saveCoordination';
+import type { ChannelFundingEntry } from './channelFundingStore';
+import type { FeeAttachment } from './feeAttachmentStore';
+import { diagStack } from '../../services/log';
+import { providerScopeKey } from './providerKeys';
+
+type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
+interface ActivePersistenceRuntime {
+  requestCommit(): void;
+  flush(): Promise<void>;
+}
+
+function newApplicationState(): DurableApplicationState {
+  return {
+    schema: DURABLE_APPLICATION_STATE_SCHEMA,
+    version: DURABLE_APPLICATION_STATE_VERSION,
+    identity: { playerId: randomHex() },
+    preferences: {},
+    history: {},
+    session: null,
+    walletContext: null,
+    channelFundingOperations: [],
+    feeAttachments: [],
+    rejectionTransports: [],
+  };
+}
+
+class StorageRepository {
+  private authority: DurableStorageAuthority | null = null;
+  private generation = 0;
+  private lifecycle = 0;
+  private claimSequence = 0;
+  private fenced = false;
+  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly authorityLostListeners = new Set<(reason: StorageAuthorityLossReason) => void>();
+  private readonly lifecycleListeners = new Set<
+    (generation: number, event: StorageLifecycleEvent) => void
+  >();
+  private pendingMutationBarrierForTests: Promise<void> | null = null;
+  private pendingCheckpointHoldForTests: {
+    barrier: Promise<void>;
+    committed: () => void;
+  } | null = null;
+  private pendingClaimHoldForTests: {
+    barrier: Promise<void>;
+    claimed: () => void;
+  } | null = null;
+  private activeRuntime: ActivePersistenceRuntime | null = null;
+
+  get lifecycleGeneration(): number {
+    return this.generation;
+  }
+  isGenerationCurrent(generation: number): boolean {
+    return generation === this.generation && this.hasAuthority();
+  }
+  onLifecycle(listener: (generation: number, event: StorageLifecycleEvent) => void): () => void {
+    this.lifecycleListeners.add(listener);
+    return () => this.lifecycleListeners.delete(listener);
+  }
+
+  hasAuthority(): boolean {
+    return this.authority !== null && !this.fenced;
+  }
+
+  onAuthorityLost(listener: (reason: StorageAuthorityLossReason) => void): () => void {
+    this.authorityLostListeners.add(listener);
+    return () => this.authorityLostListeners.delete(listener);
+  }
+
+  loseAuthority(reason: StorageAuthorityLossReason): void {
+    if (this.fenced) return;
+    this.fenced = true;
+    this.generation += 1;
+    this.notifyLifecycle('authority-lost');
+    this.notifyAuthorityLost(reason);
+  }
+
+  private notifyLifecycle(event: StorageLifecycleEvent): void {
+    for (const listener of this.lifecycleListeners) {
+      try {
+        listener(this.generation, event);
+      } catch {
+        // Lifecycle notification must reach the remaining listeners.
+      }
+    }
+  }
+
+  private notifyAuthorityLost(reason: StorageAuthorityLossReason): void {
+    for (const listener of this.authorityLostListeners) {
+      try {
+        listener(reason);
+      } catch {}
+    }
+  }
+
+  async claimAndRead(ownerTabId: string): Promise<ClaimedStorageSnapshot> {
+    const lifecycle = this.lifecycle;
+    const generation = this.generation;
+    const claimSequence = ++this.claimSequence;
+    const snapshot = await indexedDbStoragePort.claimAndRead(ownerTabId);
+    if (
+      lifecycle !== this.lifecycle ||
+      generation !== this.generation ||
+      claimSequence !== this.claimSequence
+    ) {
+      throw new StorageAuthorityLostError();
+    }
+    this.authority = snapshot.authority;
+    this.generation += 1;
+    this.fenced = false;
+    const claimedGeneration = this.generation;
+    const hold = this.pendingClaimHoldForTests;
+    this.pendingClaimHoldForTests = null;
+    if (hold) {
+      hold.claimed();
+      await hold.barrier;
+    }
+    if (
+      lifecycle !== this.lifecycle ||
+      claimSequence !== this.claimSequence ||
+      claimedGeneration !== this.generation ||
+      this.fenced ||
+      !this.authority ||
+      this.authority.ownerTabId !== snapshot.authority.ownerTabId ||
+      this.authority.writeEpoch !== snapshot.authority.writeEpoch ||
+      this.authority.resetEpoch !== snapshot.authority.resetEpoch
+    ) {
+      throw new StorageAuthorityLostError();
+    }
+    return snapshot;
+  }
+
+  async inspect(): Promise<{
+    applicationState: DurableApplicationState | null;
+    applicationStateError?: InvalidApplicationStateError;
+  }> {
+    await this.mutationTail;
+    return inspectApplicationState();
+  }
+
+  async beginHardReset(ownerTabId: string): Promise<DurableStorageAuthority> {
+    const authority = await indexedDbStoragePort.beginHardReset(ownerTabId);
+    this.authority = authority;
+    this.generation += 1;
+    this.fenced = true;
+    this.notifyLifecycle('hard-reset');
+    return authority;
+  }
+
+  hardResetMutation(authority: DurableStorageAuthority, reset: () => Promise<void>): Promise<void> {
+    return this.enqueue(
+      authority,
+      this.generation,
+      async () => {
+        await indexedDbStoragePort.validatePendingHardReset(authority);
+        await reset();
+      },
+      true,
+    );
+  }
+
+  async write(snapshot: DurableApplicationState): Promise<void> {
+    await this.runAuthorizedMutation(async (authority) => {
+      await indexedDbStoragePort.writeApplicationState(snapshot, authority);
+      const hold = this.pendingCheckpointHoldForTests;
+      this.pendingCheckpointHoldForTests = null;
+      if (hold) {
+        hold.committed();
+        await hold.barrier;
+      }
+    }).catch((error) => {
+      if (
+        !(error instanceof StorageAuthorityLostError) &&
+        !(error instanceof StorageAuthorityRequiredError)
+      ) {
+        diagStack('aggregate checkpoint failed', error);
+      }
+      throw error;
+    });
+    if (snapshot.session !== null) markSavedSession();
+  }
+
+  patchApplicationState(
+    transform: (current: DurableApplicationState) => DurableApplicationState,
+  ): DurableApplicationState {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    const next = sessionState.capSessionHistories(transform(structuredClone(this.root)));
+    decodeDurableApplicationState(next);
+    this.root = next;
+    return structuredClone(next);
+  }
+
+  attachRuntime(runtime: ActivePersistenceRuntime): () => void {
+    this.activeRuntime = runtime;
+    return () => {
+      if (this.activeRuntime === runtime) this.activeRuntime = null;
+    };
+  }
+
+  private persistDomainMutation(): Promise<void> {
+    if (this.activeRuntime) {
+      this.activeRuntime.requestCommit();
+      return Promise.resolve();
+    }
+    const write = this.write(structuredClone(this.root));
+    void write.catch(() => {});
+    return write;
+  }
+
+  checkpointDomainMutations(): Promise<void> {
+    return this.activeRuntime ? this.activeRuntime.flush() : this.write(structuredClone(this.root));
+  }
+
+  holdNextMutationForTests(barrier: Promise<void>): void {
+    this.pendingMutationBarrierForTests = barrier;
+  }
+
+  holdNextCheckpointAfterCommitForTests(barrier: Promise<void>, committed: () => void): void {
+    this.pendingCheckpointHoldForTests = { barrier, committed };
+  }
+
+  holdNextClaimAfterCommitForTests(barrier: Promise<void>, claimed: () => void): void {
+    this.pendingClaimHoldForTests = { barrier, claimed };
+  }
+
+  private authorityMutationError(): StorageAuthorityRequiredError | StorageAuthorityLostError {
+    return this.fenced ? new StorageAuthorityLostError() : new StorageAuthorityRequiredError();
+  }
+
+  private runAuthorizedMutation(
+    write: (authority: DurableStorageAuthority) => Promise<void>,
+  ): Promise<void> {
+    if (!this.authority || this.fenced) {
+      return Promise.reject(this.authorityMutationError());
+    }
+    const authority = { ...this.authority };
+    return this.enqueue(authority, this.generation, () => write(authority));
+  }
+
+  private enqueue(
+    authority: DurableStorageAuthority,
+    generation: number,
+    run: () => Promise<void>,
+    allowFenced = false,
+  ): Promise<void> {
+    const lifecycle = this.lifecycle;
+    const execution = this.mutationTail.then(async () => {
+      const barrier = this.pendingMutationBarrierForTests;
+      this.pendingMutationBarrierForTests = null;
+      if (barrier) await barrier;
+      await run();
+      if (lifecycle !== this.lifecycle) return;
+      if (
+        (!allowFenced && this.fenced) ||
+        generation !== this.generation ||
+        !this.authority ||
+        this.authority.ownerTabId !== authority.ownerTabId ||
+        this.authority.writeEpoch !== authority.writeEpoch ||
+        this.authority.resetEpoch !== authority.resetEpoch
+      ) {
+        throw new StorageAuthorityLostError();
+      }
+    });
+    this.mutationTail = execution.then(
+      () => {},
+      () => {},
+    );
+    return execution.catch((error: unknown) => {
+      this.handleMutationFailure(lifecycle, authority, error);
+      throw error;
+    });
+  }
+
+  private handleMutationFailure(
+    lifecycle: number,
+    authority: DurableStorageAuthority,
+    error: unknown,
+  ): void {
+    if (lifecycle !== this.lifecycle || !(error instanceof StorageAuthorityLostError)) return;
+    if (
+      this.authority?.ownerTabId === authority.ownerTabId &&
+      this.authority.writeEpoch === authority.writeEpoch &&
+      this.authority.resetEpoch === authority.resetEpoch
+    ) {
+      this.loseAuthority('durable-authority-lost');
+    }
+  }
+
+  private stopPersistenceForHardReset(): void {
+    this.root = newApplicationState();
+    if (!this.fenced) this.loseAuthority('durable-authority-lost');
+    this.activeRuntime = null;
+  }
+
+  private root = newApplicationState();
+
+  shouldOfferResumeOrStartOver(state: DurableApplicationState = this.root): boolean {
+    return (
+      !!(state.preferences.blockchainType || state.preferences.hubUrl) ||
+      hasWalletConnectStorage() ||
+      state.session !== null ||
+      state.channelFundingOperations.length > 0 ||
+      state.feeAttachments.length > 0 ||
+      state.rejectionTransports.length > 0
+    );
+  }
+
+  constructor() {
+    installStorageCoordination(
+      (reason) => this.loseAuthority(reason),
+      () => this.stopPersistenceForHardReset(),
+    );
+  }
+
+  private preAuthorityCommonPatch: sessionState.CommonSessionPatch = {};
+
+  _resetForTests(): void {
+    this.lifecycle += 1;
+    this.authority = null;
+    this.generation += 1;
+    this.claimSequence += 1;
+    this.fenced = false;
+    this.mutationTail = Promise.resolve();
+    this.authorityLostListeners.clear();
+    this.lifecycleListeners.clear();
+    this.pendingMutationBarrierForTests = null;
+    this.pendingCheckpointHoldForTests = null;
+    this.pendingClaimHoldForTests = null;
+    this.activeRuntime = null;
+    this.root = newApplicationState();
+    this.preAuthorityCommonPatch = {};
+    resetStorageCoordinationForTests();
+  }
+
+  loadState(): DurableApplicationState {
+    return this.root;
+  }
+
+  channelFundingOperations(): ChannelFundingEntry[] {
+    return structuredClone(this.root.channelFundingOperations);
+  }
+
+  feeAttachments(): FeeAttachment[] {
+    return structuredClone(this.root.feeAttachments);
+  }
+
+  ensureWalletContext(context: NonNullable<DurableApplicationState['walletContext']>): void {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    if (this.root.walletContext) {
+      if (providerScopeKey(this.root.walletContext) !== providerScopeKey(context)) {
+        throw new Error('Internal wallet consistency error: walletContext cannot change');
+      }
+      return;
+    }
+    this.root = { ...this.root, walletContext: structuredClone(context) };
+    void this.persistDomainMutation().catch(() => {});
+  }
+
+  _replaceApplicationStateForTests(state: DurableApplicationState): void {
+    decodeDurableApplicationState(state);
+    this.root = structuredClone(state);
+  }
+
+  replaceChannelFunding(entries: readonly ChannelFundingEntry[]): void {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    if (!this.root.walletContext && entries.length) {
+      throw new Error('Internal wallet consistency error: operations require walletContext');
+    }
+    this.root = { ...this.root, channelFundingOperations: structuredClone([...entries]) };
+    void this.persistDomainMutation().catch(() => {});
+  }
+
+  replaceFeeAttachments(entries: readonly FeeAttachment[]): void {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    if (!this.root.walletContext && entries.length) {
+      throw new Error('Internal wallet consistency error: fee attachments require walletContext');
+    }
+    this.root = { ...this.root, feeAttachments: structuredClone([...entries]) };
+    void this.persistDomainMutation().catch(() => {});
+  }
+
+  private async installClaimedApplicationState(
+    snapshot: ClaimedStorageSnapshot,
+  ): Promise<DurableApplicationState> {
+    if (snapshot.applicationStateError) throw snapshot.applicationStateError;
+    const record = snapshot.applicationState;
+    const patch = this.preAuthorityCommonPatch;
+    this.preAuthorityCommonPatch = {};
+    this.root = sessionState.mergeClaimedSession(record, this.root, patch);
+    const restoredFees = this.root.feeAttachments.map((entry) =>
+      entry.stage === 'reserved'
+        ? {
+            ...entry,
+            stage: 'cancel-required' as const,
+            reason: 'orphaned-fee-reservation-restored',
+          }
+        : entry,
+    );
+    const feesChanged = restoredFees.some(
+      (entry, index) => entry !== this.root.feeAttachments[index],
+    );
+    this.root = {
+      ...this.root,
+      feeAttachments: restoredFees,
+    };
+
+    const hasPatch = Object.keys(patch).length > 0 || feesChanged;
+    if (hasPatch) {
+      try {
+        await this.write(structuredClone(this.root));
+      } catch (error) {
+        if (error instanceof StorageAuthorityLostError) throw error;
+      }
+    }
+    if (this.shouldOfferResumeOrStartOver(this.root)) markSavedSession();
+    else clearSavedSessionMarker();
+    this.notifyLifecycle('claim');
+    return structuredClone(this.root);
+  }
+
+  async claimApplicationState(): Promise<DurableApplicationState> {
+    const snapshot = await this.claimAndRead(getStorageTabId());
+    markLeaseClaimed();
+    return this.installClaimedApplicationState(snapshot);
+  }
+
+  private mutateCommon(
+    fn: (state: DurableApplicationState) => DurableApplicationState,
+  ): Promise<void> {
+    if (!this.hasAuthority()) {
+      const state = this.loadState();
+      const before = structuredClone(state);
+      this.root = fn(state);
+      const patch = sessionState.commonPatch(before, this.root);
+      this.preAuthorityCommonPatch = {
+        identity: { ...this.preAuthorityCommonPatch.identity, ...patch.identity },
+        preferences: { ...this.preAuthorityCommonPatch.preferences, ...patch.preferences },
+        history: { ...this.preAuthorityCommonPatch.history, ...patch.history },
+      };
+      return Promise.resolve();
+    }
+    return this.mutateSession(fn);
+  }
+
+  private mutateSession(
+    fn: (state: DurableApplicationState) => DurableApplicationState,
+  ): Promise<void> {
+    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
+    this.root = fn(this.root);
+    return this.persistDomainMutation();
+  }
+
+  getPlayerId(): string {
+    const state = this.loadState();
+    if (!this.hasAuthority()) {
+      this.preAuthorityCommonPatch.identity = {
+        ...this.preAuthorityCommonPatch.identity,
+        playerId: state.identity.playerId,
+      };
+    }
+    return state.identity.playerId;
+  }
+
+  async ensureHubIdentity(): Promise<string> {
+    if (!this.hasAuthority()) {
+      throw new Error('Hub identity cannot be minted before durable storage authority is claimed');
+    }
+    return this.getSessionId();
+  }
+
+  query<K extends keyof sessionPreferences.SessionPreferenceQueries>(
+    key: K,
+  ): sessionPreferences.SessionPreferenceQueries[K] {
+    return sessionPreferences.selectSessionPreference(this.loadState(), key);
+  }
+
+  updatePreference(update: sessionPreferences.SessionPreferenceUpdate): Promise<void> {
+    const persisted = this.mutateCommon((state) =>
+      sessionPreferences.applySessionPreferenceUpdate(state, update),
+    );
+    if (update.key === 'hubUrl' && update.value) markSavedSession();
+    return persisted;
+  }
+
+  getSessionId(): string {
+    const state = this.loadState();
+    if (state.identity.sessionId) return state.identity.sessionId;
+    if (!this.hasAuthority()) {
+      throw new Error(
+        'getSessionId called before ensureHubIdentity and durable storage authority was claimed',
+      );
+    }
+    const sessionId = randomHex();
+    this.root = {
+      ...state,
+      identity: { ...state.identity, sessionId },
+    };
+    void this.persistDomainMutation().catch(() => {});
+    return sessionId;
+  }
+
+  regenerateSessionId(): string {
+    const state = this.loadState();
+    const sessionId = randomHex();
+    this.root = {
+      ...state,
+      identity: { ...state.identity, sessionId, myHubPlayerId: undefined },
+    };
+    if (this.hasAuthority()) {
+      void this.persistDomainMutation().catch(() => {});
+    } else {
+      this.preAuthorityCommonPatch.identity = {
+        ...this.preAuthorityCommonPatch.identity,
+        sessionId,
+        myHubPlayerId: undefined,
+      };
+    }
+    return sessionId;
+  }
+
+  clearHubIdentity(): void {
+    void this.mutateCommon((state) => ({
+      ...state,
+      identity: { ...state.identity, sessionId: undefined, myHubPlayerId: undefined },
+    }));
+  }
+
+  updateCommon(patch: sessionState.CommonSessionPatch): Promise<void> {
+    return this.mutateCommon((state) => sessionState.applyCommonPatch(state, patch));
+  }
+
+  patchPreHandshakeTransport(transport: SessionTransportSave): Promise<void> {
+    return this.mutateSession((state) => sessionState.patchSessionTransport(state, transport));
+  }
+
+  persistRejectionTransport(tombstone: DurableRejectionTransport): Promise<void> {
+    const snapshot = this.patchApplicationState((state) => {
+      const session = state.session;
+      const matchesRejectedSession =
+        (session?.phase === 'live' || session?.phase === 'pre-handshake') &&
+        session.pairing.peerId === tombstone.peerId &&
+        session.pairing.gameSessionId === tombstone.sessionId;
+      const next = matchesRejectedSession ? sessionState.freshSessionState(state) : state;
+      return {
+        ...next,
+        rejectionTransports: [
+          ...next.rejectionTransports.filter(
+            (record) =>
+              record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
+          ),
+          structuredClone(tombstone),
+        ]
+          .sort((a, b) => a.createdAt - b.createdAt)
+          .slice(-MAX_DURABLE_REJECTION_TRANSPORTS),
+      };
+    });
+    return this.write(snapshot);
+  }
+
+  clearSessionPairing(): Promise<void> {
+    return this.mutateSession(sessionState.clearSessionPeer);
+  }
+
+  async readCurrentState(): Promise<DurableApplicationState | null> {
+    if (!this.hasAuthority()) {
+      const { applicationState, applicationStateError } = await this.inspect();
+      if (applicationStateError) throw applicationStateError;
+      if (applicationState && this.shouldOfferResumeOrStartOver(applicationState)) {
+        markSavedSession();
+        return structuredClone(applicationState);
+      }
+      clearSavedSessionMarker();
+      return null;
+    }
+    if (this.shouldOfferResumeOrStartOver(this.root)) {
+      markSavedSession();
+      return structuredClone(this.root);
+    }
+    clearSavedSessionMarker();
+    return null;
+  }
+
+  clearSession(): Promise<void> {
+    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
+    this.root = sessionState.freshSessionState(this.root);
+    const deletePromise = this.write(structuredClone(this.root)).then(() => {
+      if (
+        this.root.preferences.blockchainType ||
+        this.root.preferences.hubUrl ||
+        this.root.channelFundingOperations.length > 0 ||
+        this.root.feeAttachments.length > 0
+      ) {
+        markSavedSession();
+      } else {
+        clearSavedSessionMarker();
+      }
+    });
+    return deletePromise;
+  }
+
+  async hardReset(): Promise<HardResetResult> {
+    const authority = await this.beginHardReset(getStorageTabId());
+    const { hardResetStorage } = await import('../../hooks/saveHardReset');
+    this.stopPersistenceForHardReset();
+    return hardResetStorage(authority, (owned, reset) => this.hardResetMutation(owned, reset));
+  }
+
+  getOrCreateAlias(): string {
+    const state = this.loadState();
+    const existing = sessionPreferences.selectSessionPreference(state, 'alias');
+    if (existing) return existing;
+    const generated = `Player_${randomHex().substring(0, 8)}`;
+    if (this.hasAuthority()) {
+      void this.updatePreference({ key: 'alias', value: generated });
+    } else {
+      this.root = sessionPreferences.applySessionPreferenceUpdate(state, {
+        key: 'alias',
+        value: generated,
+      });
+      this.preAuthorityCommonPatch.preferences = {
+        ...this.preAuthorityCommonPatch.preferences,
+        alias: generated,
+      };
+    }
+    return generated;
+  }
+}
+
+export const storageRepository = new StorageRepository();

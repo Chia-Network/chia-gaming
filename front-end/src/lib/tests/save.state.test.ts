@@ -1,33 +1,11 @@
-import {
-  saveSession,
-  patchLiveSessionPresentation,
-  saveTerminalSession,
-  peekSession,
-  clearSession,
-  clearSessionPairing,
-  clearGameSessionPreservingHistory,
-  getPlayerId,
-  getSessionId,
-  ensureHubIdentity,
-  getMyHubPlayerId,
-  clearSessionId,
-  regenerateSessionId,
-  getBlockchainType,
-  getDefaultFee,
-  loadState,
-  setAlias,
-  flushSessionSave,
-  hasSavedSessionMarker,
-  shouldOfferResumeOrStartOver,
-  markSavedSession,
-  replaceSession,
-  CURRENT_VERSION,
-  _resetForTests,
-} from '../../hooks/save';
-import { readSessionRecord, SESSION_DB_NAME, writeSessionRecord } from '../session/indexedDb';
-import { decodeSessionSaveEnvelope, sessionAmountsFromSave } from '../session/model';
-import { baseSave } from './session_save_envelope.fixtures';
-import { channelStatus } from './message_protocol.harness';
+import { DURABLE_APPLICATION_STATE_VERSION as CURRENT_VERSION } from '../session/saveEnvelope';
+import { storageRepository } from '../session/storageRepository';
+import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
+import { readApplicationState, SESSION_DB_NAME } from '../session/indexedDb';
+import { decodeDurableApplicationState } from '../session/model';
+import { preHandshakeReplacement } from './session_save_envelope.fixtures';
+import { applyFreshStartCheckpoint } from '../session/acceptLifecycle';
+import { clearGameSessionState } from '../session/sessionStateTransitions';
 import {
   makeStorage,
   requireLive,
@@ -37,70 +15,43 @@ import {
   savePreferences,
   setTestGlobal,
 } from './save.harness';
+import { storageRepository } from '../session/storageRepository';
+
+async function capturePreHandshake(
+  checkpoint: ReturnType<typeof preHandshakeReplacement>,
+): Promise<void> {
+  const snapshot = storageRepository.patchApplicationState((state) =>
+    applyFreshStartCheckpoint(state, checkpoint),
+  );
+  await storageRepository.write(snapshot);
+}
+
+function clearGameSession(): Promise<void> {
+  return storageRepository.write(storageRepository.patchApplicationState(clearGameSessionState));
+}
 
 describe('flat state', () => {
   it('defaults the transaction fee to the effective nonzero floor', () => {
-    expect(getDefaultFee()).toBe(100_000_000n);
+    expect(storageRepository.query('defaultFee')).toBe(100_000_000n);
   });
 
   it('getPlayerId generates and persists a player ID', () => {
-    const id = getPlayerId();
+    const id = storageRepository.getPlayerId();
     expect(id).toBeTruthy();
-    expect(getPlayerId()).toBe(id);
+    expect(storageRepository.getPlayerId()).toBe(id);
   });
 
   it('getSessionId generates and persists a session ID', () => {
-    const id = getSessionId();
+    const id = storageRepository.getSessionId();
     expect(id).toBeTruthy();
-    expect(getSessionId()).toBe(id);
+    expect(storageRepository.getSessionId()).toBe(id);
   });
 
-  it('peekSession keeps preference sessionId when the IndexedDB record omits it', async () => {
-    const sid = getSessionId();
+  it('ensureHubIdentity restores sessionId from the claimed aggregate', async () => {
+    const sid = storageRepository.getSessionId();
     markSavedSession();
-    // Durable resumable fields without sessionId (simulates older/partial IDB writes).
-    await replaceSession(
-      baseSave({
-        pairingToken: 'tok-keep-sid',
-        iStarted: true,
-        myContribution: '100',
-        theirContribution: '100',
-        perGameAmount: '10',
-        blockchainType: 'simulator',
-      }),
-    );
-    await flushSessionSave();
-
-    // Drop sessionId from the IDB record only; preferences still hold sid.
-    const rawRecord = await readSessionRecord();
-    if (!rawRecord) throw new Error('Expected a persisted session record');
-    const record = decodeSessionSaveEnvelope(rawRecord).save;
-    delete record.identity.sessionId;
-    await writeSessionRecord(record);
-
-    _resetForTests();
-    setTestGlobal('localStorage', makeStorage());
-    // Re-seed preferences with the original sid (reset cleared module cache;
-    // localStorage mock is fresh — write prefs as boot would see them).
-    localStorage.setItem(
-      'appPreferences',
-      JSON.stringify({
-        playerId: 'player-keep-sid',
-        sessionId: sid,
-      }),
-    );
-    localStorage.setItem('appState_savedSession', '1');
-
-    const loaded = requirePreHandshake(await peekSession());
-    expect(loaded.pairing.token).toBe('tok-keep-sid');
-    expect(getSessionId()).toBe(sid);
-  });
-
-  it('ensureHubIdentity restores sessionId from IndexedDB when preferences omit it', async () => {
-    const sid = getSessionId();
-    markSavedSession();
-    await replaceSession(
-      baseSave({
+    await capturePreHandshake(
+      preHandshakeReplacement({
         pairingToken: 'tok-idb-sid',
         iStarted: true,
         sessionId: sid,
@@ -110,30 +61,20 @@ describe('flat state', () => {
         blockchainType: 'simulator',
       }),
     );
-    await flushSessionSave();
+    await storageRepository.checkpointDomainMutations();
 
-    _resetForTests();
-    setTestGlobal('localStorage', makeStorage());
-    // Prefs have no sessionId — the remint-before-hydrate bug would mint here.
-    localStorage.setItem(
-      'appPreferences',
-      JSON.stringify({
-        playerId: 'player-idb-sid',
-      }),
-    );
-    localStorage.setItem('appState_savedSession', '1');
-
-    expect(() => getSessionId()).toThrow(/before ensureHubIdentity/);
-    const restored = await ensureHubIdentity();
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+    const restored = await storageRepository.ensureHubIdentity();
     expect(restored).toBe(sid);
-    expect(getSessionId()).toBe(sid);
+    expect(storageRepository.getSessionId()).toBe(sid);
   });
 
-  it('keeps a regenerated sessionId over a stale IndexedDB identity after reload', async () => {
-    const staleSessionId = getSessionId();
+  it('applies a preauthority regenerated identity once to the claimed root', async () => {
+    const staleSessionId = storageRepository.getSessionId();
     markSavedSession();
-    await replaceSession(
-      baseSave({
+    await capturePreHandshake(
+      preHandshakeReplacement({
         pairingToken: 'tok-regenerated-sid',
         iStarted: true,
         sessionId: staleSessionId,
@@ -143,23 +84,21 @@ describe('flat state', () => {
         blockchainType: 'simulator',
       }),
     );
-    await flushSessionSave();
+    await storageRepository.checkpointDomainMutations();
 
-    const regeneratedSessionId = regenerateSessionId();
+    storageRepository._resetForTests();
+    const regeneratedSessionId = storageRepository.regenerateSessionId();
     expect(regeneratedSessionId).not.toBe(staleSessionId);
-
-    // Simulate the trust-grant reload before the debounced IndexedDB write.
-    _resetForTests();
-
-    expect(await ensureHubIdentity()).toBe(regeneratedSessionId);
-    expect(getSessionId()).toBe(regeneratedSessionId);
+    await storageRepository.claimApplicationState();
+    expect(await storageRepository.ensureHubIdentity()).toBe(regeneratedSessionId);
+    expect(storageRepository.getSessionId()).toBe(regeneratedSessionId);
   });
 
-  it('persists myHubPlayerId in preferences and restores it across reload', async () => {
-    const sid = getSessionId();
+  it('persists myHubPlayerId in the aggregate and restores it across reload', async () => {
+    const sid = storageRepository.getSessionId();
     markSavedSession();
-    await replaceSession(
-      baseSave({
+    await capturePreHandshake(
+      preHandshakeReplacement({
         pairingToken: 'tok-pid',
         iStarted: true,
         sessionId: sid,
@@ -170,56 +109,43 @@ describe('flat state', () => {
         blockchainType: 'simulator',
       }),
     );
-    await flushSessionSave();
+    await storageRepository.checkpointDomainMutations();
 
-    const prefs = JSON.parse(localStorage.getItem('appPreferences')!);
-    expect(prefs.myHubPlayerId).toBe('p_stable_abc');
-
-    _resetForTests();
-    setTestGlobal('localStorage', makeStorage());
-    localStorage.setItem(
-      'appPreferences',
-      JSON.stringify({
-        playerId: 'player-local',
-        sessionId: sid,
-        myHubPlayerId: 'p_stable_abc',
-      }),
-    );
-    localStorage.setItem('appState_savedSession', '1');
-
-    await ensureHubIdentity();
-    expect(getMyHubPlayerId()).toBe('p_stable_abc');
-    expect(getSessionId()).toBe(sid);
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+    await storageRepository.ensureHubIdentity();
+    expect(storageRepository.query('myHubPlayerId')).toBe('p_stable_abc');
+    expect(storageRepository.getSessionId()).toBe(sid);
   });
 
   it('clearSessionId wipes only the hub session ID', () => {
-    const id = getSessionId();
-    setAlias('MyName');
-    saveSession({ scope: 'common', identity: { myHubPlayerId: 'p_to_clear' } });
+    const id = storageRepository.getSessionId();
+    storageRepository.updatePreference({ key: 'alias', value: 'MyName' });
+    storageRepository.updateCommon({ identity: { myHubPlayerId: 'p_to_clear' } });
 
-    clearSessionId();
+    storageRepository.clearHubIdentity();
 
-    expect(loadState().identity.sessionId).toBeUndefined();
-    expect(loadState().identity.myHubPlayerId).toBeUndefined();
-    expect(loadState().preferences.alias).toBe('MyName');
-    expect(getSessionId()).toBeTruthy();
-    expect(getSessionId()).not.toBe(id);
+    expect(storageRepository.loadState().identity.sessionId).toBeUndefined();
+    expect(storageRepository.loadState().identity.myHubPlayerId).toBeUndefined();
+    expect(storageRepository.loadState().preferences.alias).toBe('MyName');
+    expect(storageRepository.getSessionId()).toBeTruthy();
+    expect(storageRepository.getSessionId()).not.toBe(id);
   });
 
   it('clearSession preserves playerId', () => {
-    const oldId = getPlayerId();
-    clearSession();
-    const newId = getPlayerId();
+    const oldId = storageRepository.getPlayerId();
+    storageRepository.clearSession();
+    const newId = storageRepository.getPlayerId();
     expect(newId).toBeTruthy();
     expect(newId).toBe(oldId);
   });
 
   it('clears pairing identifiers only from phases that own pairing state', async () => {
-    await expect(clearSessionPairing()).resolves.toBeUndefined();
-    expect(loadState().phase).toBe('preferences');
+    await expect(storageRepository.clearSessionPairing()).resolves.toBeUndefined();
+    expect(storageRepository.loadState().session).toBeNull();
 
-    await replaceSession(
-      baseSave({
+    await capturePreHandshake(
+      preHandshakeReplacement({
         pairingToken: 'pending-token',
         sessionPeerId: 'pending-peer',
         gameSessionId: '11'.repeat(16),
@@ -229,8 +155,8 @@ describe('flat state', () => {
         perGameAmount: '10',
       }),
     );
-    await clearSessionPairing();
-    const pending = requirePreHandshake(loadState());
+    await storageRepository.clearSessionPairing();
+    const pending = requirePreHandshake(storageRepository.loadState());
     expect(pending.pairing.peerId).toBeUndefined();
     expect(pending.pairing.gameSessionId).toBe('11'.repeat(16));
 
@@ -239,82 +165,57 @@ describe('flat state', () => {
       sessionPeerId: 'live-peer',
       gameSessionId: '22'.repeat(16),
     });
-    await clearSessionPairing();
-    const live = requireLive(loadState());
+    await storageRepository.clearSessionPairing();
+    const live = requireLive(storageRepository.loadState());
     expect(live.pairing.peerId).toBeUndefined();
     expect(live.pairing.gameSessionId).toBe('22'.repeat(16));
   });
 
-  it('ignores late live-presentation cleanup after terminal replacement', async () => {
-    await saveLiveFields(sampleSession);
-    const presentation = {
-      ...requireLive(loadState()).presentation,
-      channelStatus: channelStatus({ state: 'ResolvedClean' }),
-      waitingStateEnteredAt: 42n,
-    };
-    await saveTerminalSession({
-      terminal: {
-        iStarted: true,
-        coinsOfInterest: [],
-        myAlias: null,
-        opponentAlias: null,
-      },
-      presentation,
-    });
-
-    await expect(
-      patchLiveSessionPresentation({ waitingStateEnteredAt: null }),
-    ).resolves.toBeUndefined();
-    const terminal = loadState();
-    if (terminal.phase !== 'terminal') throw new Error('expected terminal session');
-    expect(terminal.presentation.waitingStateEnteredAt).toBe(42n);
-  });
-
   it('clearSession wipes game state but preserves identity, preferences, blockchainType, and boot marker', async () => {
-    const sid = getSessionId();
+    const sid = storageRepository.getSessionId();
     markSavedSession();
     saveLiveFields({ ...sampleSession, blockchainType: 'simulator' });
-    setAlias('MyName');
-    await flushSessionSave();
+    storageRepository.updatePreference({ key: 'alias', value: 'MyName' });
+    await storageRepository.checkpointDomainMutations();
 
-    await clearSession();
+    await storageRepository.clearSession();
 
-    expect(loadState().identity.sessionId).toBe(sid);
-    expect(getBlockchainType()).toBe('simulator');
+    expect(storageRepository.loadState().identity.sessionId).toBe(sid);
+    expect(storageRepository.query('blockchainType')).toBe('simulator');
     expect(hasSavedSessionMarker()).toBe(true);
-    const remaining = await peekSession();
+    const remaining = await storageRepository.readCurrentState();
     expect(remaining).not.toBeNull();
     expect(remaining?.preferences.blockchainType).toBe('simulator');
     expect(remaining).not.toHaveProperty('pairing');
-    expect(loadState().preferences.alias).toBe('MyName');
+    expect(storageRepository.loadState().preferences.alias).toBe('MyName');
   });
 
   it('clearSession drops the boot marker when no blockchainType or hubUrl remains', async () => {
     markSavedSession();
     saveLiveFields();
-    await flushSessionSave();
-    expect(getBlockchainType()).toBeUndefined();
+    await storageRepository.checkpointDomainMutations();
+    expect(storageRepository.query('blockchainType')).toBeUndefined();
 
-    await clearSession();
+    await storageRepository.clearSession();
 
     expect(hasSavedSessionMarker()).toBe(false);
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.readCurrentState()).toBeNull();
   });
 
   it('clearSession keeps the boot marker when only hubUrl remains', async () => {
     markSavedSession();
     savePreferences({ hubUrl: 'http://localhost:3003' });
-    await flushSessionSave();
+    await storageRepository.checkpointDomainMutations();
 
-    await clearSession();
+    await storageRepository.clearSession();
 
     expect(hasSavedSessionMarker()).toBe(true);
-    expect(await peekSession()).toMatchObject({
+    expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { hubUrl: 'http://localhost:3003' },
     });
   });
 
-  it('clearGameSessionPreservingHistory keeps logs, connection prefs, and pre-cradle handshake', async () => {
+  it('aggregate clear keeps logs, connection prefs, and pre-cradle handshake', async () => {
     markSavedSession();
     saveLiveFields({
       ...sampleSession,
@@ -328,33 +229,62 @@ describe('flat state', () => {
       unrollTimeout: '50',
       opponentAlias: 'Opponent',
     });
-    await flushSessionSave();
+    await storageRepository.checkpointDomainMutations();
 
-    await clearGameSessionPreservingHistory();
+    await clearGameSession();
 
     expect(hasSavedSessionMarker()).toBe(true);
-    const remaining = requirePreHandshake(await peekSession());
-    expect(remaining.preferences.blockchainType).toBe('simulator');
-    expect(remaining.preferences.hubUrl).toBe('http://localhost:3003');
-    expect(remaining.history.humanHistory).toEqual(['keep-me']);
-    expect(remaining.history.diagnosticLog).toEqual(['diag-keep']);
-    expect(remaining).not.toHaveProperty('live');
+    const remaining = await storageRepository.readCurrentState();
+    const session = requirePreHandshake(remaining);
+    expect(remaining?.preferences.blockchainType).toBe('simulator');
+    expect(remaining?.preferences.hubUrl).toBe('http://localhost:3003');
+    expect(remaining?.history.humanHistory).toEqual(['keep-me']);
+    expect(remaining?.history.diagnosticLog).toEqual(['diag-keep']);
+    expect(session).not.toHaveProperty('live');
     // Handshake checkpoint survives so a reload mid-hex-load can Resume.
-    expect(remaining.pairing.token).toBe('tok-123');
-    expect(remaining.pairing.peerId).toBe('peer-abc');
-    expect(remaining.pairing.gameSessionId).toBe('33'.repeat(16));
-    expect(remaining.pairing.iStarted).toBe(true);
-    expect(remaining.pairing.myContribution).toBe('60');
-    expect(remaining.pairing.theirContribution).toBe('40');
-    expect(remaining.pairing.perGameAmount).toBe('10');
-    expect(remaining.pairing.channelTimeout).toBe('100');
-    expect(remaining.pairing.unrollTimeout).toBe('50');
-    expect(remaining.pairing.opponentAlias).toBe('Opponent');
+    expect(session.pairing.token).toBe('tok-123');
+    expect(session.pairing.peerId).toBe('peer-abc');
+    expect(session.pairing.gameSessionId).toBe('33'.repeat(16));
+    expect(session.pairing.iStarted).toBe(true);
+    expect(session.pairing.myContribution).toBe('60');
+    expect(session.pairing.theirContribution).toBe('40');
+    expect(session.pairing.perGameAmount).toBe('10');
+    expect(session.pairing.channelTimeout).toBe('100');
+    expect(session.pairing.unrollTimeout).toBe('50');
+    expect(session.pairing.opponentAlias).toBe('Opponent');
+  });
+
+  it('never exposes an empty record while preserving a resumable reset', async () => {
+    saveLiveFields({
+      ...sampleSession,
+      blockchainType: 'simulator',
+      humanHistory: ['preserved'],
+    });
+    await storageRepository.checkpointDomainMutations();
+    let release!: () => void;
+    let committed!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reachedCommit = new Promise<void>((resolve) => {
+      committed = resolve;
+    });
+    storageRepository.holdNextCheckpointAfterCommitForTests(barrier, committed);
+
+    const reset = clearGameSession();
+    await reachedCommit;
+    const duringReset = await readApplicationState();
+    expect(duringReset).toMatchObject({
+      session: { phase: 'pre-handshake' },
+      history: { humanHistory: ['preserved'] },
+    });
+    release();
+    await reset;
   });
 
   it('pairingToken-only pending handshake is resumable without a cradle', async () => {
-    await replaceSession(
-      baseSave({
+    await capturePreHandshake(
+      preHandshakeReplacement({
         blockchainType: 'simulator',
         hubUrl: 'http://localhost:3003',
         pairingToken: 'peer_x_1',
@@ -369,60 +299,67 @@ describe('flat state', () => {
         humanHistory: ['accepted proposal'],
       }),
     );
-    await flushSessionSave();
+    await storageRepository.checkpointDomainMutations();
 
-    expect(shouldOfferResumeOrStartOver()).toBe(true);
-    const loaded = requirePreHandshake(await peekSession());
-    expect(loaded).not.toHaveProperty('live');
-    expect(loaded.pairing.token).toBe('peer_x_1');
-    expect(loaded.pairing.myContribution).toBe('100');
-    expect(loaded.pairing.peerId).toBe('peer-x');
-    expect(sessionAmountsFromSave(loaded)).toEqual({
-      myContribution: 100n,
-      theirContribution: 100n,
-      perGameAmount: 10n,
-    });
+    expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
+    const loaded = await storageRepository.readCurrentState();
+    const session = requirePreHandshake(loaded);
+    expect(session).not.toHaveProperty('live');
+    expect(session.pairing.token).toBe('peer_x_1');
+    expect(session.pairing.myContribution).toBe('100');
+    expect(session.pairing.peerId).toBe('peer-x');
   });
 
   it('getBlockchainType reads from preferences', () => {
-    expect(getBlockchainType()).toBeUndefined();
+    expect(storageRepository.query('blockchainType')).toBeUndefined();
     savePreferences({ blockchainType: 'walletconnect' });
-    expect(getBlockchainType()).toBe('walletconnect');
+    expect(storageRepository.query('blockchainType')).toBe('walletconnect');
   });
 
   it('getBlockchainType accepts cloud', async () => {
-    _resetForTests();
+    storageRepository._resetForTests();
     setTestGlobal('localStorage', makeStorage());
-    expect(getBlockchainType()).toBeUndefined();
+    await storageRepository.claimApplicationState();
+    expect(storageRepository.query('blockchainType')).toBeUndefined();
     await savePreferences({ blockchainType: 'cloud' });
-    expect(getBlockchainType()).toBe('cloud');
-    await flushSessionSave();
-    expect(decodeSessionSaveEnvelope(loadState()).save.preferences.blockchainType).toBe('cloud');
+    expect(storageRepository.query('blockchainType')).toBe('cloud');
+    await storageRepository.checkpointDomainMutations();
+    expect(
+      decodeDurableApplicationState(storageRepository.loadState()).save.preferences.blockchainType,
+    ).toBe('cloud');
   });
 
-  it('saveSession replaces the live phase payload', () => {
+  it('aggregate capture replaces the live phase payload', () => {
     saveLiveFields();
-    const state = loadState();
-    expect(state.phase).toBe('live');
-    expect(state.phase === 'live' && state.live.serializedGameSession).toEqual(
+    const state = storageRepository.loadState();
+    expect(state.session?.phase).toBe('live');
+    expect(state.session?.phase === 'live' && state.session.live.serializedGameSession).toEqual(
       sampleSession.serializedGameSession,
     );
-    expect(state.phase === 'live' && state.pairing.token).toBe(sampleSession.pairingToken);
+    expect(state.session?.phase === 'live' && state.session.pairing.token).toBe(
+      sampleSession.pairingToken,
+    );
   });
 
   it('version field is set on fresh state', () => {
-    const state = loadState();
+    const state = storageRepository.loadState();
     expect(state.version).toBe(CURRENT_VERSION);
   });
 
   it('clears a saved-session marker when no matching record exists', async () => {
     localStorage.setItem('appState_savedSession', '1');
 
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.readCurrentState()).toBeNull();
     expect(localStorage.getItem('appState_savedSession')).toBeNull();
   });
 
   it('deletes an incompatible IndexedDB schema instead of migrating it', async () => {
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    });
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME, 2);
       request.onupgradeneeded = () => request.result.createObjectStore('stale');
@@ -433,8 +370,8 @@ describe('flat state', () => {
       request.onerror = () => reject(request.error);
     });
 
-    expect(await peekSession()).toBeNull();
-    expect(await peekSession()).toBeNull();
+    expect(await storageRepository.readCurrentState()).toBeNull();
+    expect(await storageRepository.readCurrentState()).toBeNull();
   });
 
   it('round-trips large bigint values through persisted state without precision loss', async () => {
@@ -464,6 +401,7 @@ describe('flat state', () => {
       handState: {
         gameType: 'spacepoker',
         state: {
+          perPlayerStake: 20n,
           gameState: { handler: 2n, myTurn: true, N: 4n },
           playerHoleCards: [1n, 2n],
           playerBoost: false,
@@ -479,26 +417,24 @@ describe('flat state', () => {
           coinTossIOpen: null,
           unitSizeMojos: 10n,
           displayMode: 'mojos',
-          error: null,
+          settlementOutcome: null,
         },
       },
       activeGameType: 'spacepoker',
       betweenHandLastHandProposal: {
-        player_a_contribution: '10',
-        player_b_contribution: '10',
-        sender_is_player_a: false,
-        game_timeout: '15',
-        game_type: 'spacepoker',
+        senderIsPlayerA: false,
+        gameTimeout: 15n,
+        gameType: 'spacepoker',
         parameters: 10n,
       },
     });
-    await flushSessionSave();
-    _resetForTests();
+    await storageRepository.checkpointDomainMutations();
+    storageRepository._resetForTests();
 
-    const state = requireLive(await peekSession());
-    const handState = state.presentation.handState?.state as any;
+    const state = await storageRepository.readCurrentState();
+    const handState = requireLive(state).presentation.handState?.state as any;
 
-    expect(state.preferences.defaultFee).toBe(huge);
+    expect(state?.preferences.defaultFee).toBe(huge);
     expect(handState.gameState.N).toBe(4n);
     expect(handState.playerHoleCards[1]).toBe(2n);
     expect(handState.halfPot).toBe(huge + 2n);
@@ -529,13 +465,14 @@ describe('flat state', () => {
       handState: {
         gameType: 'calpoker',
         state: {
+          perPlayerStake: 20n,
           playerHand: [8n, 7n, 6n, 5n],
           opponentHand: [4n, 3n, 2n, 1n],
           moveNumber: 1n,
           isPlayerTurn: true,
           iStarted: false,
           cardSelections: [8n, 7n],
-          error: null,
+          settlementOutcome: null,
           displaySnapshot: {
             gameState: 'selecting',
             winner: null,
@@ -550,10 +487,11 @@ describe('flat state', () => {
       },
       activeGameType: 'calpoker',
     });
-    await flushSessionSave();
-    _resetForTests();
+    await storageRepository.checkpointDomainMutations();
+    storageRepository._resetForTests();
 
-    const handState = requireLive(await peekSession()).presentation.handState?.state as any;
+    const handState = requireLive(await storageRepository.readCurrentState()).presentation.handState
+      ?.state as any;
 
     expect(handState.playerHand).toEqual([8n, 7n, 6n, 5n]);
     expect(handState.opponentHand).toEqual([4n, 3n, 2n, 1n]);

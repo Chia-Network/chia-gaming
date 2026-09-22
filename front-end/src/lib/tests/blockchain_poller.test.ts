@@ -1,14 +1,49 @@
+import 'fake-indexeddb/auto';
+
 import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoller';
-import { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { activate, deactivate } from '../../hooks/activeBlockchain';
+import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
+import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
+import { ChannelFundingRuntime, channelFundingRuntime } from '../session/channelFundingRuntime';
+import { entriesForOwner, recoveryReadiness } from '../session/channelFundingSelectors';
+import { storageRepository } from '../session/storageRepository';
+import { providerScopeKey } from '../session/providerKeys';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
+
+const fundingOperation = {
+  owner: {
+    installationPlayerId: 'installation',
+    peerSessionId: 'peer-session',
+    providerScope: { provider: 'simulator' as const, identity: 'installation' },
+  },
+  purpose: { kind: 'funding' as const, operationId: 'funding-operation' },
+};
+const walletRequest = {
+  kind: 'funding' as const,
+  uniqueId: 'wallet',
+  offer: { '1': -1n },
+};
 
 function makeRpc(heights: bigint[]): InternalBlockchainInterface {
+  let lastHeight = heights[0] ?? 0n;
   return new Proxy(
     {
-      getHeightInfo: () => Promise.resolve(heights.shift() ?? 0n),
+      getHeightInfo: () => {
+        lastHeight = heights.shift() ?? lastHeight;
+        return Promise.resolve(lastHeight);
+      },
       registerCoins: () => Promise.resolve(),
       getCoinRecordsByNames: () => Promise.resolve([]),
+      getWalletOfferProvider(this: Record<string, any>) {
+        return {
+          capability: 'best-effort' as const,
+          scope: fundingOperation.owner.providerScope,
+          beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+          cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+        };
+      },
     } as unknown as InternalBlockchainInterface,
     {
       get: (target, prop) =>
@@ -51,10 +86,18 @@ function makeCoinRecord(index: number): CoinRecord {
 }
 
 describe('BlockchainPoller', () => {
+  beforeAll(async () => {
+    await storageRepository.claimApplicationState();
+  });
+
+  afterAll(() => {
+    storageRepository._resetForTests();
+  });
+
   it('reports a decreased height to the cradle (reorg signal not clamped)', async () => {
     // Height goes up then drops: a reorg.  The poller must forward the lower
     // height so the transaction manager can detect the rollback.
-    const rpc = makeRpc([100n, 90n]);
+    const rpc = makeRpc([100n, 100n, 90n, 90n]);
     const reportedPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
@@ -68,11 +111,40 @@ describe('BlockchainPoller', () => {
     poller.attachGameSession(cradle);
 
     // Drive the poll loop directly, twice, without the setTimeout backoff.
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     expect(reportedPeaks).toEqual([100n, 90n]);
     expect(poller.getPeak()).toEqual(90n);
+  });
+
+  it('isolates a failing session from healthy height and snapshot delivery', async () => {
+    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const failing: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'bad', coin_string: 'bad-coin' }],
+      reportNewBlock: () => Promise.reject(new Error('session-owned height failure')),
+      reportCoinStates: () => Promise.reject(new Error('session-owned snapshot failure')),
+    };
+    const healthyHeights: bigint[] = [];
+    const healthySnapshots: bigint[] = [];
+    const healthy: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'good', coin_string: 'good-coin' }],
+      reportNewBlock: (height) => {
+        healthyHeights.push(height);
+      },
+      reportCoinStates: (height) => {
+        healthySnapshots.push(height);
+      },
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(failing);
+    poller.attachGameSession(healthy);
+
+    await pollOnce(poller);
+    await pollOnce(poller);
+
+    expect(healthyHeights).toEqual([100n, 101n]);
+    expect(healthySnapshots).toEqual([100n, 101n]);
   });
 
   it('skips reporting a cradle until all of its coins are registered', async () => {
@@ -94,6 +166,7 @@ describe('BlockchainPoller', () => {
     );
     const reportedPeaks: bigint[] = [];
     const heightOnlyPeaks: bigint[] = [];
+    const readyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
       reportCoinStates: (peak) => {
@@ -102,39 +175,342 @@ describe('BlockchainPoller', () => {
       reportNewBlock: (peak) => {
         heightOnlyPeaks.push(peak);
       },
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
     };
 
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
     // Registration fails: no report (a partial snapshot would be misread).
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(reportedPeaks).toEqual([]);
     expect(heightOnlyPeaks).toEqual([100n]);
+    expect(readyPeaks).toEqual([]);
 
     // Registration succeeds on the retry: the cradle is reported.
     registerOk = true;
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(reportedPeaks).toEqual([100n]);
     expect(heightOnlyPeaks).toEqual([100n, 100n]);
+    expect(readyPeaks).toEqual([100n]);
+  });
+
+  it('does not report an authoritative snapshot when the wallet batch fails', async () => {
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.reject(new Error('wallet unavailable')),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reportCoinStates = jest.fn();
+    const reportNewBlock = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'restored', coin_string: 'restored-coin' }],
+      reportCoinStates,
+      reportNewBlock,
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+
+    expect(reportCoinStates).not.toHaveBeenCalled();
+    expect(reportNewBlock).toHaveBeenCalledWith(100n);
+  });
+
+  it('retries when the chain advances between the coin and closing-peak reads', async () => {
+    const record = makeCoinRecord(3);
+    record.confirmedBlockIndex = 101n;
+    const name = await coinRecordToName(record);
+    if (!name) {
+      throw new Error('coinRecordToName returned undefined');
+    }
+    const getCoinRecordsByNames = jest.fn().mockResolvedValue([record]);
+    const rpc = new Proxy(
+      {
+        getHeightInfo: jest.fn().mockResolvedValueOnce(100n).mockResolvedValue(101n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames,
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reportCoinStates = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-advanced' }],
+      reportCoinStates,
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(2);
+    expect(reportCoinStates).toHaveBeenCalledWith(101n, [
+      { coin: 'coin-advanced', created_height: 101n, spent_height: null },
+    ]);
+    expect(poller.getPeak()).toBe(101n);
+  });
+
+  it('never reports a record whose confirmed or spent height exceeds the snapshot peak', async () => {
+    const record = makeCoinRecord(4);
+    record.confirmedBlockIndex = 101n;
+    record.spentBlockIndex = 102n;
+    record.spent = true;
+    const name = await coinRecordToName(record);
+    if (!name) {
+      throw new Error('coinRecordToName returned undefined');
+    }
+    const getCoinRecordsByNames = jest.fn().mockResolvedValue([record]);
+    const rpc = new Proxy(
+      {
+        getHeightInfo: jest.fn().mockResolvedValue(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames,
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reportCoinStates = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-future' }],
+      reportCoinStates,
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(3);
+    expect(reportCoinStates).not.toHaveBeenCalled();
+  });
+
+  it('does not report records when the closing peak request fails', async () => {
+    const record = makeCoinRecord(5);
+    const name = await coinRecordToName(record);
+    if (!name) {
+      throw new Error('coinRecordToName returned undefined');
+    }
+    const getHeightInfo = jest
+      .fn()
+      .mockResolvedValueOnce(100n)
+      .mockRejectedValueOnce(new Error('peak unavailable'));
+    const rpc = new Proxy(
+      {
+        getHeightInfo,
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.resolve([record]),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reportCoinStates = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-provider-failure' }],
+      reportCoinStates,
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+
+    expect(getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(reportCoinStates).not.toHaveBeenCalled();
+  });
+
+  it('reports coherent lower and equal-tip replacement snapshots without clamping', async () => {
+    const initial = makeCoinRecord(6);
+    const replacement = { ...initial, confirmedBlockIndex: 20n };
+    const name = await coinRecordToName(initial);
+    if (!name) {
+      throw new Error('coinRecordToName returned undefined');
+    }
+    const responses: CoinRecord[][] = [[initial], [replacement], []];
+    const rpc = new Proxy(
+      {
+        getHeightInfo: jest
+          .fn()
+          .mockResolvedValueOnce(100n)
+          .mockResolvedValueOnce(100n)
+          .mockResolvedValueOnce(90n)
+          .mockResolvedValueOnce(90n)
+          .mockResolvedValue(90n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => Promise.resolve(responses.shift() ?? []),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reports: Array<{ peak: bigint; records: CoinStateRecord[] }> = [];
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'coin-replaced' }],
+      reportCoinStates: (peak, records) => reports.push({ peak, records }),
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+    await pollOnce(poller);
+    await pollOnce(poller);
+
+    expect(reports).toEqual([
+      {
+        peak: 100n,
+        records: [{ coin: 'coin-replaced', created_height: 10n, spent_height: null }],
+      },
+      {
+        peak: 90n,
+        records: [{ coin: 'coin-replaced', created_height: 20n, spent_height: null }],
+      },
+      {
+        peak: 90n,
+        records: [{ coin: 'coin-replaced', created_height: null, spent_height: null }],
+      },
+    ]);
+  });
+
+  it('does not report an in-flight coin snapshot to a detached session', async () => {
+    const record = makeCoinRecord(7);
+    const name = await coinRecordToName(record);
+    if (!name) {
+      throw new Error('coinRecordToName returned undefined');
+    }
+    const recordsRequested = deferred<void>();
+    const records = deferred<CoinRecord[]>();
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => Promise.resolve(100n),
+        registerCoins: () => Promise.resolve(),
+        getCoinRecordsByNames: () => {
+          recordsRequested.resolve();
+          return records.promise;
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const reportCoinStates = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'detached-coin' }],
+      reportCoinStates,
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
+
+    const poll = pollOnce(poller);
+    await recordsRequested.promise;
+    poller.detachGameSession(cradle);
+    records.resolve([record]);
+    await poll;
+
+    expect(reportCoinStates).not.toHaveBeenCalled();
   });
 
   it('advances a session with no watched coins through height-only observations', async () => {
     const rpc = makeRpc([100n]);
     const heightOnlyPeaks: bigint[] = [];
+    const readyPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [],
       reportNewBlock: (peak) => {
         heightOnlyPeaks.push(peak);
       },
       reportCoinStates: () => {},
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
     };
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(heightOnlyPeaks).toEqual([100n]);
+    expect(readyPeaks).toEqual([100n]);
+  });
+
+  it('does not mark a stale snapshot ready when reporting adds a watch', async () => {
+    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const readyPeaks: bigint[] = [];
+    let addWatch = () => {};
+    let reports = 0;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock: () => {},
+      reportCoinStates: () => {
+        reports += 1;
+        if (reports === 1) addWatch();
+      },
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    addWatch = () =>
+      poller.watchCoin(cradle, {
+        coin_name: 'bb',
+        coin_string: 'coin-b',
+      });
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([]);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([101n]);
+  });
+
+  it('does not clear a newer pending generation when reporting removes a watch', async () => {
+    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const readyPeaks: bigint[] = [];
+    let removeWatch = () => {};
+    let reports = 0;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock: () => {},
+      reportCoinStates: () => {
+        reports += 1;
+        if (reports === 1) removeWatch();
+      },
+      reportChainSnapshotReady: (peak) => {
+        readyPeaks.push(peak);
+      },
+    };
+    const poller = new BlockchainPoller(rpc, 1000);
+    removeWatch = () =>
+      poller.unwatchCoin(cradle, {
+        coin_name: 'aa',
+        coin_string: 'coin-a',
+      });
+    poller.attachGameSession(cradle);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([]);
+
+    await pollOnce(poller);
+    expect(readyPeaks).toEqual([101n]);
   });
 
   it('uses attach-time snapshots and runtime watch deltas instead of resampling every sweep', async () => {
@@ -168,19 +544,43 @@ describe('BlockchainPoller', () => {
     poller.attachGameSession(cradle);
     expect(snapshotCalls).toBe(1);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     interests = [{ coin_name: 'bb', coin_string: 'coin-b' }];
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(snapshotCalls).toBe(1);
     expect(queriedNames).toEqual([['aa'], ['aa']]);
 
     poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
     expect(snapshotCalls).toBe(1);
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     expect(queriedNames).toEqual([['aa'], ['aa'], ['aa', 'bb']]);
   });
 
-  it('serializes public RPC calls through the coordinator lane', async () => {
+  it('preserves prior interests when an authoritative resnapshot fails', () => {
+    let fail = false;
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => {
+        if (fail) throw new Error('WASM watch query failed');
+        return [{ coin_name: 'aa', coin_string: 'coin-a' }];
+      },
+      reportCoinStates: () => {},
+      reportNewBlock: () => {},
+    };
+    const poller = new BlockchainPoller(makeRpc([100n]), 1000);
+    poller.attachGameSession(cradle);
+
+    fail = true;
+    expect(() => poller.snapshotGameSessionCoinInterest(cradle)).toThrow('WASM watch query failed');
+    expect(
+      (
+        poller as unknown as {
+          sessionCoins: Map<PollingGameSession, Array<{ coin_name: string; coin_string: string }>>;
+        }
+      ).sessionCoins.get(cradle),
+    ).toEqual([{ coin_name: 'aa', coin_string: 'coin-a' }]);
+  });
+
+  it('serializes public read RPC calls through the read lane', async () => {
     jest.useFakeTimers();
     const first = deferred<bigint>();
     const second = deferred<bigint>();
@@ -222,12 +622,89 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
-  it('prioritizes foreground wallet actions ahead of queued background RPCs', async () => {
+  it('serializes explicit polls behind active read work', async () => {
+    jest.useFakeTimers();
+    const activeRead = deferred<bigint>();
+    const calls: string[] = [];
+    let heightCalls = 0;
+    const rpc = new Proxy(
+      {
+        getHeightInfo: () => {
+          calls.push('height');
+          heightCalls += 1;
+          return heightCalls === 1 ? activeRead.promise : Promise.resolve(7n);
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+
+    const read = poller.rpc.getHeightInfo();
+    await advanceLane();
+    const explicitPoll = pollOnce(poller);
+    await advanceLane();
+    expect(calls).toEqual(['height']);
+
+    activeRead.resolve(6n);
+    await expect(read).resolves.toBe(6n);
+    await expect(explicitPoll).resolves.toBeUndefined();
+    expect(calls).toEqual(['height', 'height', 'height']);
+    jest.useRealTimers();
+  });
+
+  it('spaces starts across lanes without waiting for read completion', async () => {
+    jest.useFakeTimers();
+    const read = deferred<bigint>();
+    const mutation = deferred<string | null>();
+    const starts: Array<{ label: string; at: number }> = [];
+    const rpc = new Proxy(
+      {
+        requestGapMs: 50,
+        getHeightInfo: () => {
+          starts.push({ label: 'read', at: performance.now() });
+          return read.promise;
+        },
+        selectCoins: () => {
+          starts.push({ label: 'mutation', at: performance.now() });
+          return mutation.promise;
+        },
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+
+    const readResult = poller.rpc.getHeightInfo();
+    await advanceLane(0);
+    expect(starts).toEqual([{ label: 'read', at: 0 }]);
+
+    const mutationResult = poller.rpc.selectCoins('wallet', 1n);
+    await advanceLane(49);
+    expect(starts).toHaveLength(1);
+    await advanceLane(1);
+    expect(starts).toEqual([
+      { label: 'read', at: 0 },
+      { label: 'mutation', at: 50 },
+    ]);
+
+    read.resolve(7n);
+    mutation.resolve(null);
+    await expect(readResult).resolves.toBe(7n);
+    await expect(mutationResult).resolves.toBeNull();
+    jest.useRealTimers();
+  });
+
+  it('runs serialized wallet mutations independently of queued reads', async () => {
     jest.useFakeTimers();
     const first = deferred<bigint>();
     const createOffer = deferred<unknown>();
     const selectCoins = deferred<string | null>();
-    const spend = deferred<string>();
+    const spend = deferred<WalletSubmitOutcome>();
     const balance = deferred<bigint>();
     const calls: string[] = [];
     const rpc = new Proxy(
@@ -241,9 +718,20 @@ describe('BlockchainPoller', () => {
           calls.push('balance');
           return balance.promise;
         },
-        createOfferForIds: () => {
-          calls.push('createOfferForIds');
+        beginWalletOffer: () => {
+          calls.push('beginWalletOffer');
           return createOffer.promise;
+        },
+        getWalletOfferProvider() {
+          return {
+            capability: 'best-effort' as const,
+            scope: fundingOperation.owner.providerScope,
+            beginCreation: () => {
+              calls.push('beginWalletOffer');
+              return createOffer.promise as any;
+            },
+            cancel: jest.fn(),
+          };
         },
         selectCoins: () => {
           calls.push('selectCoins');
@@ -264,29 +752,84 @@ describe('BlockchainPoller', () => {
     const p1 = poller.rpc.getHeightInfo();
     await advanceLane();
     const p2 = poller.rpc.getBalance();
-    const p3 = poller.rpc.createOfferForIds('u', {});
+    const p3 = poller.rpc
+      .getWalletOfferProvider(fundingOperation.owner)!
+      .beginCreation(fundingOperation, walletRequest);
     const p4 = poller.rpc.selectCoins('u', 1n);
     const p5 = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
-    first.resolve(7n);
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds']);
+    expect(calls).toEqual(['height', 'beginWalletOffer']);
     createOffer.resolve({});
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins']);
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins']);
     selectCoins.resolve(null);
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend']);
-    spend.resolve('');
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins', 'spend']);
+    spend.resolve({ status: 'acknowledged' });
     await advanceLane();
-    expect(calls).toEqual(['height', 'createOfferForIds', 'selectCoins', 'spend', 'balance']);
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins', 'spend']);
 
+    first.resolve(7n);
+    await advanceLane();
+    expect(calls).toEqual(['height', 'beginWalletOffer', 'selectCoins', 'spend', 'balance']);
     balance.resolve(11n);
     await expect(p1).resolves.toBe(7n);
     await expect(p2).resolves.toBe(11n);
     await expect(p3).resolves.toEqual({});
     await expect(p4).resolves.toBeNull();
-    await expect(p5).resolves.toBe('');
+    await expect(p5).resolves.toEqual({ status: 'acknowledged' });
+    jest.useRealTimers();
+  });
+
+  it('revalidates the connection epoch after waiting at the shared gate', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const selected = deferred<string | null>();
+    const selectCoins = jest.fn(() => selected.promise);
+    const getHeightInfo = jest.fn().mockResolvedValue(100n);
+    const rpc = {
+      requestGapMs: 50,
+      selectCoins,
+      getHeightInfo,
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => {
+          onConnectionChange = undefined;
+        };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000);
+    ensureConnectionListener(poller);
+
+    const mutation = poller.rpc.selectCoins('wallet', 1n);
+    const mutationRejection = expect(mutation).rejects.toThrow(
+      'RPC request discarded during disconnect: selectCoins',
+    );
+    await advanceLane(0);
+    expect(selectCoins).toHaveBeenCalledTimes(1);
+
+    const staleRead = poller.rpc.getHeightInfo();
+    const staleReadRejection = expect(staleRead).rejects.toThrow(
+      'RPC request discarded during disconnect: getHeightInfo',
+    );
+    await advanceLane(25);
+    connected = false;
+    onConnectionChange?.(false);
+    await staleReadRejection;
+
+    connected = true;
+    onConnectionChange?.(true);
+    const freshRead = poller.rpc.getHeightInfo();
+    await advanceLane(75);
+    await expect(freshRead).resolves.toBe(100n);
+    expect(getHeightInfo).toHaveBeenCalledTimes(1);
+
+    selected.resolve(null);
+    await mutationRejection;
+    expect(selectCoins).toHaveBeenCalledTimes(1);
     jest.useRealTimers();
   });
 
@@ -369,7 +912,7 @@ describe('BlockchainPoller', () => {
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
     await jest.advanceTimersByTimeAsync(0);
-    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(1);
     expect(rpc.getBalance).toHaveBeenCalledTimes(1);
@@ -377,7 +920,7 @@ describe('BlockchainPoller', () => {
     connected = false;
     onConnectionChange?.(false);
     await jest.advanceTimersByTimeAsync(5000);
-    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(1);
     expect(rpc.getBalance).toHaveBeenCalledTimes(1);
@@ -385,14 +928,14 @@ describe('BlockchainPoller', () => {
     connected = true;
     onConnectionChange?.(true);
     await jest.advanceTimersByTimeAsync(0);
-    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(4);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(2);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(2);
     expect(rpc.getBalance).toHaveBeenCalledTimes(2);
     jest.useRealTimers();
   });
 
-  it('restarts a poll that was in flight during reconnect', async () => {
+  it('runs fresh polling and urgent spend after reconnect while the old RPC remains hung', async () => {
     jest.useFakeTimers();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
@@ -400,9 +943,15 @@ describe('BlockchainPoller', () => {
     const getHeightInfo = jest
       .fn()
       .mockReturnValueOnce(firstHeight.promise)
-      .mockResolvedValueOnce(101n);
+      .mockResolvedValue(101n);
+    const registerCoins = jest.fn().mockResolvedValue(undefined);
+    const getCoinRecordsByNames = jest.fn().mockResolvedValue([]);
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const rpc = {
       getHeightInfo,
+      registerCoins,
+      getCoinRecordsByNames,
+      spend,
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -411,7 +960,15 @@ describe('BlockchainPoller', () => {
         };
       },
     } as unknown as InternalBlockchainInterface;
+    const reportNewBlock = jest.fn();
+    const reportCoinStates = jest.fn();
+    const cradle: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock,
+      reportCoinStates,
+    };
     const poller = new BlockchainPoller(rpc, 1000);
+    poller.attachGameSession(cradle);
     poller.start();
 
     await advanceLane(0);
@@ -421,11 +978,334 @@ describe('BlockchainPoller', () => {
     onConnectionChange?.(false);
     connected = true;
     onConnectionChange?.(true);
-    firstHeight.resolve(100n);
+    const spendResult = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
     await advanceLane(0);
-    expect(getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(getHeightInfo).toHaveBeenCalledTimes(3);
+    expect(registerCoins).toHaveBeenCalledTimes(1);
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(spend).toHaveBeenCalledTimes(1);
+    expect(reportNewBlock).toHaveBeenCalledWith(101n);
+    expect(reportCoinStates).toHaveBeenCalledWith(101n, [
+      { coin: 'coin-a', created_height: null, spent_height: null },
+    ]);
+    await expect(spendResult).resolves.toEqual({ status: 'acknowledged' });
     jest.useRealTimers();
+  });
+
+  it('does not overlap an active wallet mutation with its reconnect replacement', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const firstSpend = deferred<WalletSubmitOutcome>();
+    let activeSpends = 0;
+    let maxActiveSpends = 0;
+    const spend = jest
+      .fn()
+      .mockImplementationOnce(async () => {
+        activeSpends++;
+        maxActiveSpends = Math.max(maxActiveSpends, activeSpends);
+        try {
+          return await firstSpend.promise;
+        } finally {
+          activeSpends--;
+        }
+      })
+      .mockImplementationOnce(async () => {
+        activeSpends++;
+        maxActiveSpends = Math.max(maxActiveSpends, activeSpends);
+        activeSpends--;
+        return { status: 'acknowledged' };
+      });
+    const rpc = {
+      spend,
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => {
+          onConnectionChange = undefined;
+        };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.startBalanceInterest(1000, { onBalance: () => {} });
+
+    const stale = poller.rpc.spend('first', {}, '11'.repeat(32));
+    await advanceLane(0);
+    expect(spend).toHaveBeenCalledTimes(1);
+
+    connected = false;
+    onConnectionChange?.(false);
+    await expect(stale).resolves.toMatchObject({ status: 'unavailable' });
+    connected = true;
+    onConnectionChange?.(true);
+    const replacement = poller.rpc.spend('second', {}, '22'.repeat(32));
+    await advanceLane(0);
+    expect(spend).toHaveBeenCalledTimes(1);
+
+    firstSpend.resolve({ status: 'acknowledged' });
+    await advanceLane(0);
+    expect(spend).toHaveBeenCalledTimes(2);
+    await expect(replacement).resolves.toEqual({ status: 'acknowledged' });
+    expect(maxActiveSpends).toBe(1);
+    jest.useRealTimers();
+  });
+
+  it('returns a stale successful wallet offer to durable lifecycle ownership', async () => {
+    const fundingRuntime = new ChannelFundingRuntime();
+    let connected = true;
+    let onConnectionChange: ((next: boolean) => void) | undefined;
+    const firstOffer = deferred<{
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }>();
+    const beginWalletOffer = jest
+      .fn()
+      .mockReturnValueOnce(firstOffer.promise)
+      .mockResolvedValueOnce({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer-new' },
+        tradeId: 'trade-new',
+      });
+    const beginWalletOfferCancellation = jest
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', detail: 'wallet offline' });
+    const rpc = {
+      getWalletOfferProvider: () => ({
+        capability: 'best-effort' as const,
+        scope: fundingOperation.owner.providerScope,
+        beginCreation: beginWalletOffer,
+        cancel: beginWalletOfferCancellation,
+      }),
+      isConnected: () => connected,
+      onConnectionChange: (callback: (next: boolean) => void) => {
+        onConnectionChange = callback;
+        return () => {
+          onConnectionChange = undefined;
+        };
+      },
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000, undefined, fundingRuntime);
+    fundingRuntime.attachProvider(poller.rpc.getWalletOfferProvider()!);
+    poller.startBalanceInterest(1000, { onBalance: () => {} });
+
+    const stale = fundingRuntime.createOffer(
+      fundingOperation.owner,
+      fundingOperation.purpose,
+      { ...walletRequest, uniqueId: 'old' },
+      {
+        kind: 'funding',
+        canonical: { amount: '1', fee: '0', conditions: [] },
+      },
+    );
+    for (let attempt = 0; attempt < 30 && beginWalletOffer.mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    connected = false;
+    onConnectionChange?.(false);
+    connected = true;
+    onConnectionChange?.(true);
+
+    firstOffer.resolve({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-old' },
+      tradeId: 'trade-old',
+    });
+    await Promise.resolve();
+    await expect(stale).resolves.toEqual({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-old' },
+      tradeId: 'trade-old',
+    });
+    fundingRuntime.channelCreationTimedOut(
+      fundingOperation.owner.installationPlayerId,
+      fundingOperation.owner.peerSessionId,
+    );
+    for (
+      let attempt = 0;
+      attempt < 30 && beginWalletOfferCancellation.mock.calls.length === 0;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-old');
+    expect(
+      entriesForOwner(storageRepository.channelFundingOperations(), fundingOperation.owner),
+    ).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-old',
+        stage: 'cancel-required',
+      }),
+    ]);
+    await Promise.resolve();
+    expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
+    poller.stop();
+    poller.stopBalanceInterest();
+    fundingRuntime.resetForTests();
+  });
+
+  it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
+    channelFundingRuntime.resetForTests();
+    const activeRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const inactiveRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const activeRpc = {
+      getWalletOfferProvider: () => ({
+        capability: 'best-effort' as const,
+        scope: {
+          provider: 'simulator' as const,
+          identity: 'installation',
+        },
+        beginCreation: jest.fn(),
+        cancel: activeRelease,
+      }),
+      onConnectionChange: () => () => {},
+    } as unknown as InternalBlockchainInterface;
+    channelFundingRuntime.attachProvider(activeRpc.getWalletOfferProvider()!);
+    new BlockchainPoller(
+      {
+        ...makeRpc([1n]),
+        beginWalletOfferCancellation: inactiveRelease,
+      },
+      1000,
+    );
+    const owner = {
+      installationPlayerId: 'installation',
+      peerSessionId: 'peer-session',
+      providerScope: { provider: 'simulator' as const, identity: 'installation' },
+    };
+    const purpose = { kind: 'funding' as const, operationId: 'funding' };
+
+    installAwaitingChannelFunding('trade-active-owner', owner, purpose);
+    channelFundingRuntime.channelCreationTimedOut(owner.installationPlayerId, owner.peerSessionId);
+    await channelFundingRuntime.flush();
+
+    expect(activeRelease).toHaveBeenCalledWith('trade-active-owner');
+    expect(inactiveRelease).not.toHaveBeenCalled();
+    channelFundingRuntime.resetForTests();
+  });
+
+  it('resolves alternating canonical owners without re-dirtying a fixed-point drain', () => {
+    const fundingRuntime = new ChannelFundingRuntime();
+    const rpc = {
+      getWalletOfferProvider: (
+        owner?: Pick<typeof fundingOperation.owner, 'installationPlayerId' | 'peerSessionId'>,
+      ) => ({
+        capability: 'best-effort' as const,
+        scope: {
+          provider: 'simulator' as const,
+          identity: owner?.installationPlayerId ?? 'connected-wallet',
+        },
+        beginCreation: jest.fn(),
+        cancel: jest.fn(),
+      }),
+    } as unknown as InternalBlockchainInterface;
+    const poller = new BlockchainPoller(rpc, 1000, undefined, fundingRuntime);
+    poller.refreshProviderReadiness();
+
+    let dirty = true;
+    let drainPasses = 0;
+    const unsubscribe = fundingRuntime.subscribe(() => {
+      dirty = true;
+    });
+    while (dirty) {
+      dirty = false;
+      drainPasses += 1;
+      if (drainPasses > 3) throw new Error('owner resolution did not reach a fixed point');
+      expect(
+        poller.resolveProviderOwner({
+          installationPlayerId: 'player-a',
+          peerSessionId: 'session-a',
+        })?.providerScope,
+      ).toEqual({ provider: 'simulator', identity: 'player-a' });
+      expect(
+        poller.resolveProviderOwner({
+          installationPlayerId: 'player-b',
+          peerSessionId: 'session-b',
+        })?.providerScope,
+      ).toEqual({ provider: 'simulator', identity: 'player-b' });
+    }
+
+    expect(drainPasses).toBe(1);
+    expect(fundingRuntime.providerScopeKeys()).toEqual(
+      new Set([providerScopeKey({ provider: 'simulator', identity: 'connected-wallet' })]),
+    );
+
+    dirty = false;
+    poller.notifyProviderReadiness({
+      installationPlayerId: 'player-a',
+      peerSessionId: 'session-a',
+    });
+    expect(dirty).toBe(true);
+    expect(fundingRuntime.providerScopeKeys()).toEqual(
+      new Set([
+        providerScopeKey({ provider: 'simulator', identity: 'connected-wallet' }),
+        providerScopeKey({ provider: 'simulator', identity: 'player-a' }),
+      ]),
+    );
+
+    unsubscribe();
+    fundingRuntime.resetForTests();
+  });
+
+  it('detaches wallet recovery readiness while the active provider is disconnected', () => {
+    jest.useFakeTimers();
+    channelFundingRuntime.resetForTests();
+    let connected = true;
+    const connectionListeners = new Set<(next: boolean) => void>();
+    const sourceProvider = {
+      capability: 'best-effort' as const,
+      scope: fundingOperation.owner.providerScope,
+      beginCreation: jest.fn(),
+      cancel: jest.fn(),
+    };
+    const rpc = makeRpc([1n]);
+    rpc.getWalletOfferProvider = () => sourceProvider;
+    rpc.isConnected = () => connected;
+    rpc.onConnectionChange = (listener) => {
+      connectionListeners.add(listener);
+      return () => {
+        connectionListeners.delete(listener);
+      };
+    };
+    installAwaitingChannelFunding(
+      'trade-provider-readiness',
+      fundingOperation.owner,
+      fundingOperation.purpose,
+    );
+
+    try {
+      activate(rpc, 60_000);
+      expect(
+        recoveryReadiness(
+          storageRepository.channelFundingOperations(),
+          channelFundingRuntime.providerScopeKeys(),
+        ),
+      ).toBe('ready');
+
+      connected = false;
+      for (const listener of connectionListeners) listener(false);
+      expect(
+        recoveryReadiness(
+          storageRepository.channelFundingOperations(),
+          channelFundingRuntime.providerScopeKeys(),
+        ),
+      ).toBe('wallet-unavailable');
+
+      connected = true;
+      for (const listener of connectionListeners) listener(true);
+      expect(
+        recoveryReadiness(
+          storageRepository.channelFundingOperations(),
+          channelFundingRuntime.providerScopeKeys(),
+        ),
+      ).toBe('ready');
+    } finally {
+      deactivate();
+      channelFundingRuntime.resetForTests();
+      jest.useRealTimers();
+    }
   });
 
   it('discards a stale coin registration before reconnect polling resumes', async () => {
@@ -514,11 +1394,17 @@ describe('BlockchainPoller', () => {
     jest.useFakeTimers();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
-    const height = deferred<bigint>();
-    const selectCoins = jest.fn();
+    const selected = deferred<string | null>();
+    const selectCoins = jest.fn(() => selected.promise);
+    const beginWalletOffer = jest.fn();
     const rpc = {
-      getHeightInfo: () => height.promise,
       selectCoins,
+      getWalletOfferProvider: () => ({
+        capability: 'best-effort' as const,
+        scope: fundingOperation.owner.providerScope,
+        beginCreation: beginWalletOffer,
+        cancel: jest.fn(),
+      }),
       isConnected: () => connected,
       onConnectionChange: (callback: (next: boolean) => void) => {
         onConnectionChange = callback;
@@ -528,10 +1414,19 @@ describe('BlockchainPoller', () => {
       },
     } as unknown as InternalBlockchainInterface;
     const poller = new BlockchainPoller(rpc, 1000);
-    poller.start();
-
-    await advanceLane(0);
+    poller.startBalanceInterest(1000, { onBalance: () => {} });
     const walletRequest = poller.rpc.selectCoins('wallet', 1n);
+    const feeRequest = poller.rpc.getWalletOfferProvider(fundingOperation.owner)!.beginCreation(
+      { ...fundingOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+      {
+        kind: 'fee',
+        uniqueId: 'wallet',
+        fee: 1n,
+        concurrentSpendCoinId: 'fee-target',
+      },
+    );
+    await advanceLane(0);
+    expect(selectCoins).toHaveBeenCalledTimes(1);
 
     connected = false;
     onConnectionChange?.(false);
@@ -541,9 +1436,17 @@ describe('BlockchainPoller', () => {
     await expect(poller.rpc.selectCoins('wallet', 1n)).rejects.toThrow(
       'RPC request discarded during disconnect: selectCoins',
     );
-    expect(selectCoins).not.toHaveBeenCalled();
+    await expect(poller.rpc.spend('blob', {}, '11'.repeat(32))).resolves.toEqual({
+      status: 'unavailable',
+      detail: 'RPC request discarded during disconnect: spend',
+    });
+    await expect(feeRequest).rejects.toThrow(
+      'RPC request discarded during disconnect: beginWalletOffer',
+    );
+    expect(selectCoins).toHaveBeenCalledTimes(1);
+    expect(beginWalletOffer).not.toHaveBeenCalled();
 
-    height.resolve(100n);
+    selected.resolve(null);
     await advanceLane(0);
     jest.useRealTimers();
   });
@@ -574,9 +1477,9 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
     scope = '100';
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(registered).toEqual([['aa'], ['aa']]);
   });
@@ -621,8 +1524,8 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     expect(reports).toEqual([
       {
@@ -638,7 +1541,7 @@ describe('BlockchainPoller', () => {
     expect(queriedNames).toEqual([[name], [name]]);
   });
 
-  it('skips transient partial snapshots for coins that were previously observed', async () => {
+  it('reports explicit absence for every omitted coin in a successful batch', async () => {
     const recordA = makeCoinRecord(1);
     const recordB = makeCoinRecord(2);
     const nameA = await coinRecordToName(recordA);
@@ -682,8 +1585,8 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
+    await pollOnce(poller);
 
     const expectedReports = [
       {
@@ -691,6 +1594,13 @@ describe('BlockchainPoller', () => {
         records: [
           { coin: 'coin-a', created_height: 10n, spent_height: null },
           { coin: 'coin-b', created_height: 10n, spent_height: null },
+        ],
+      },
+      {
+        peak: 100n,
+        records: [
+          { coin: 'coin-a', created_height: 10n, spent_height: null },
+          { coin: 'coin-b', created_height: null, spent_height: null },
         ],
       },
     ];
@@ -738,7 +1648,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(reports).toEqual([]);
   });
@@ -782,7 +1692,7 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.attachGameSession(cradle);
 
-    await (poller as unknown as { pollOnce: () => Promise<void> }).pollOnce();
+    await pollOnce(poller);
 
     expect(reports).toEqual([
       {

@@ -4,13 +4,8 @@ import { PeerConnectionResult } from '../../types/ChiaGaming';
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
-import {
-  flushSessionSave,
-  hasSavedSessionMarker,
-  peekSession,
-  saveSession,
-  _resetForTests as resetSaveState,
-} from '../../hooks/save';
+import { storageRepository } from '../session/storageRepository';
+import { hasSavedSessionMarker } from '../../hooks/saveCoordination';
 import {
   SessionControllerAdapter,
   action_with_messages,
@@ -19,6 +14,7 @@ import {
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
+  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   pollOnce,
   startSimulator,
@@ -27,14 +23,8 @@ import { liveSave } from './session_save_envelope.fixtures';
 
 function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
-  if (save.phase !== 'live') throw new Error('expected live save');
-  return saveSession({
-    scope: 'live',
-    pairing: save.pairing,
-    live: save.live,
-    presentation: save.presentation,
-    history: save.history,
-  });
+  if (save.session?.phase !== 'live') throw new Error('expected live save');
+  return storageRepository.write(storageRepository.patchApplicationState(() => save));
 }
 
 it(
@@ -67,18 +57,6 @@ it(
         wasm_init1,
       );
       wasm_blob1.getFee = () => 10n;
-      wasm_blob1.onSaveNeeded = () => {
-        const fields = wasm_blob1.getWasmFields();
-        if (!fields) {
-          return Promise.reject(
-            new Error('Cannot persist session: WASM cradle serialization failed'),
-          );
-        }
-        return saveLiveFields({
-          ...fields,
-          pairingToken: 'reload-regression-p1',
-        });
-      };
       cradle1.set_blob(wasm_blob1);
 
       const peer_conn2: PeerConnectionResult = {
@@ -100,18 +78,6 @@ it(
         peer_conn2,
         wasm_init2,
       );
-      wasm_blob2.onSaveNeeded = () => {
-        const fields = wasm_blob2.getWasmFields();
-        if (!fields) {
-          return Promise.reject(
-            new Error('Cannot persist session: WASM cradle serialization failed'),
-          );
-        }
-        return saveLiveFields({
-          ...fields,
-          pairingToken: 'reload-regression-p2',
-        });
-      };
       cradle2.set_blob(wasm_blob2);
 
       await flushWrapperDrain([cradle1, cradle2]);
@@ -130,10 +96,15 @@ it(
       wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
+      const receiverCoins = wasm_blob2.getCoinsOfInterest();
       assert.deepEqual(
-        wasm_blob2.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin', 'Funding coin'],
+        receiverCoins.map((coin) => coin.label),
+        ['Funding coin', 'Channel coin'],
       );
+      const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
+      assert.equal(receiverChannelWatch.length, 1);
+      assert.notEqual(receiverChannelWatch[0].coin_name, receiverCoins[0].id);
+      assert.equal(receiverChannelWatch[0].coin_name, receiverCoins[1].id);
       const sentB = cradle2.outbound_messages();
       assert.equal(sentB.length, 1, 'receiver should have one HandshakeB message');
 
@@ -144,10 +115,15 @@ it(
       wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
+      const initiatorCoins = wasm_blob1.getCoinsOfInterest();
       assert.deepEqual(
-        wasm_blob1.getCoinsOfInterest().map((coin) => coin.label),
-        ['Channel coin', 'Funding coin'],
+        initiatorCoins.map((coin) => coin.label),
+        ['Funding coin', 'Channel coin'],
       );
+      const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
+      assert.equal(initiatorChannelWatch.length, 1);
+      assert.notEqual(initiatorChannelWatch[0].coin_name, initiatorCoins[0].id);
+      assert.equal(initiatorChannelWatch[0].coin_name, initiatorCoins[1].id);
       const sentC = cradle1.outbound_messages();
       assert.equal(sentC.length, 1, 'initiator should have one HandshakeC message');
 
@@ -173,10 +149,6 @@ it(
       await pollOnce(poller);
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('initiator-observed-channel', wasm_blob1);
-      // Stop live durability saves before the explicit snapshot so a late
-      // onSaveNeeded cannot overwrite the cradle under test.
-      wasm_blob1.onSaveNeeded = () => Promise.resolve();
-      wasm_blob2.onSaveNeeded = () => Promise.resolve();
       const receiverFields = wasm_blob2.getWasmFields();
       assert.ok(receiverFields);
       void saveLiveFields({
@@ -185,42 +157,74 @@ it(
         gameSessionSchemaVersion: BigInt(WholeWasmObject.game_session_serialization_schema()),
         pairingToken: 'reload-regression',
       });
-      await flushSessionSave();
+      await storageRepository.checkpointDomainMutations();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
-      resetSaveState();
+      await flushWrapperDrain([cradle1, cradle2]);
+      storageRepository._resetForTests();
+      await storageRepository.claimApplicationState();
       assert.ok(hasSavedSessionMarker());
-      void saveSession({
-        scope: 'common',
+      void storageRepository.updateCommon({
         history: { diagnosticLog: ['boot-before-resume'] },
       });
-      await flushSessionSave();
+      await storageRepository.checkpointDomainMutations();
 
-      resetSaveState();
-      const reloaded = await peekSession();
-      assert.equal(reloaded?.phase, 'live');
-      if (reloaded?.phase !== 'live') throw new Error('expected live reload');
-      assert.ok(reloaded.live.serializedGameSession instanceof Uint8Array);
+      storageRepository._resetForTests();
+      await storageRepository.claimApplicationState();
+      const reloaded = await storageRepository.readCurrentState();
+      assert.equal(reloaded?.session?.phase, 'live');
+      if (reloaded?.session?.phase !== 'live') throw new Error('expected live reload');
+      assert.ok(reloaded.session.live.serializedGameSession instanceof Uint8Array);
       assert.equal(
-        reloaded.live.serializedGameSession.byteLength,
+        reloaded.session.live.serializedGameSession.byteLength,
         makingOfferAcceptanceBytes.byteLength,
       );
-      assert.deepEqual(reloaded.live.serializedGameSession, makingOfferAcceptanceBytes);
+      assert.deepEqual(reloaded.session.live.serializedGameSession, makingOfferAcceptanceBytes);
       assert.ok(
         reloaded.history.diagnosticLog?.includes('boot-before-resume'),
         'preference patch during marker-only boot must be retained',
       );
       const restoredId = WholeWasmObject.restore_session(
-        reloaded.live.serializedGameSession,
+        reloaded.session.live.serializedGameSession,
         'reload-regression-seed',
       );
       assert.equal(typeof restoredId, 'number');
+      const restoredWatches = WholeWasmObject.snapshot_watched_coins(restoredId) as Array<{
+        coin_name: string;
+        coin_string: string;
+      }>;
+      const restoredCoins = WholeWasmObject.coins_of_interest(restoredId) as Array<{
+        label: string;
+        id: string;
+      }>;
+      assert.deepEqual(
+        restoredCoins.map((coin) => coin.label),
+        ['Funding coin', 'Channel coin'],
+        'reload before channel creation must preserve both displayed setup coins',
+      );
+      // This fixture's funding bundle has seven creating inputs. They remain
+      // bounded reconciliation interests until its watched channel output lands.
+      assert.ok(
+        restoredWatches.length <= 8,
+        `restored handshake poll interests must stay bounded, got ${restoredWatches.length}`,
+      );
+      assert.equal(
+        restoredWatches.filter((watch) => watch.coin_name === receiverChannelWatch[0].coin_name)
+          .length,
+        1,
+        'reload before channel creation must preserve the channel watch',
+      );
 
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('receiver-finished-four-message-handshake', wasm_blob2);
 
       await action_with_messages(poller, cradle1, cradle2);
       for (const blob of [wasm_blob1, wasm_blob2]) {
+        assert.equal(
+          typeof blob.lastChannelStatus?.state_number,
+          'bigint',
+          'active real-WASM status must expose state_number as bigint',
+        );
         const coins = blob.getCoinsOfInterest();
         assert.equal(coins.length, 1);
         const [channelCoin] = coins;
@@ -231,5 +235,5 @@ it(
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
   },
-  120 * 1000,
+  LONG_WASM_TEST_TIMEOUT,
 );

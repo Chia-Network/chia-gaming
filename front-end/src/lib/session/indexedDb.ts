@@ -1,14 +1,29 @@
-import type { SessionSave } from './saveEnvelope';
+import type { DurableApplicationState } from './saveEnvelope';
+import { decodeDurableApplicationState } from './persistence';
 import { decode, encode, type BencodexValue } from 'chia-gaming-bencodex';
 
 export const SESSION_DB_NAME = 'chia-gaming-session';
-const SESSION_DB_VERSION = 2;
-const SESSION_STORE_NAME = 'session';
-const SESSION_RECORD_KEY = 'current';
-const REJECTION_STORE_NAME = 'rejections';
-export const MAX_DURABLE_REJECTION_TOMBSTONES = 8;
-export const REJECTION_TOMBSTONE_TTL_MS = 7 * 24 * 60 * 60 * 1_000;
-let rejectionWriteQueue: Promise<void> = Promise.resolve();
+const SESSION_DB_VERSION = 5;
+const APPLICATION_STATE_STORE_NAME = 'application-state';
+const APPLICATION_STATE_RECORD_KEY = 'current';
+const COORDINATION_STORE_NAME = 'coordination';
+const COORDINATION_RECORD_KEY = 'authority';
+const COORDINATION_SCHEMA = 'chia-gaming-storage-authority';
+const COORDINATION_VERSION = 1;
+
+export interface DurableStorageAuthority {
+  ownerTabId: string;
+  writeEpoch: bigint;
+  resetEpoch: bigint;
+}
+
+interface CoordinationRecord extends DurableStorageAuthority {
+  schema: typeof COORDINATION_SCHEMA;
+  version: typeof COORDINATION_VERSION;
+  resetStatus: 'active' | 'pending';
+}
+
+let afterNextAuthorityCheckForTests: (() => void) | null = null;
 const OBFUSCATION_KEY = new Uint8Array([
   0x4a, 0x7f, 0x2c, 0x91, 0xd3, 0x56, 0xe8, 0x1b, 0xa0, 0x63, 0xf5, 0x38, 0xc4, 0x87, 0x0e, 0x6d,
 ]);
@@ -16,11 +31,35 @@ const SALT_LEN = 16;
 const ARRAY_BUFFER_TAG = '\0arrayBuffer';
 const NUMBER_TAG = '\0number';
 
-export class InvalidSessionRecordError extends Error {
+export class InvalidApplicationStateError extends Error {
   constructor(cause: unknown) {
-    super('Stored session record is malformed', { cause });
-    this.name = 'InvalidSessionRecordError';
+    super('Stored application state is malformed', { cause });
+    this.name = 'InvalidApplicationStateError';
   }
+}
+
+export class StorageAuthorityLostError extends Error {
+  readonly code = 'STORAGE_AUTHORITY_LOST';
+
+  constructor() {
+    super('Durable storage authority was lost to another owner or epoch');
+    this.name = 'StorageAuthorityLostError';
+  }
+}
+
+export class StorageAuthorityRequiredError extends Error {
+  readonly code = 'STORAGE_AUTHORITY_REQUIRED';
+
+  constructor() {
+    super('Durable storage authority must be claimed before this mutation');
+    this.name = 'StorageAuthorityRequiredError';
+  }
+}
+
+export interface ClaimedStorageSnapshot {
+  authority: DurableStorageAuthority;
+  applicationState: DurableApplicationState | null;
+  applicationStateError?: InvalidApplicationStateError;
 }
 
 function rc4Keystream(key: Uint8Array, length: number): Uint8Array {
@@ -118,7 +157,12 @@ function obfuscateRecord(record: unknown): Uint8Array {
   return masked;
 }
 
-function deobfuscateSessionRecord(masked: Uint8Array): unknown {
+/** @internal test-only: encode malformed nested aggregate fixtures without validating them. */
+export function _encodeRawApplicationStateForTests(record: unknown): Uint8Array {
+  return obfuscateRecord(record);
+}
+
+function deobfuscateRecord(masked: Uint8Array): unknown {
   if (masked.length < SALT_LEN) {
     throw new Error('Obfuscated session record is missing its salt');
   }
@@ -132,16 +176,30 @@ function deobfuscateSessionRecord(masked: Uint8Array): unknown {
   for (let i = 0; i < ciphertext.length; i++) {
     plaintext[i] = ciphertext[i] ^ stream[i];
   }
-  const record = fromBencodexValue(decode(plaintext));
-  if (
-    !record ||
-    typeof record !== 'object' ||
-    Array.isArray(record) ||
-    record instanceof Uint8Array
-  ) {
-    throw new Error('Obfuscated session record did not decode to an object');
+  return fromBencodexValue(decode(plaintext));
+}
+
+function decodeRawApplicationState(record: unknown): DurableApplicationState | null {
+  if (record == null) return null;
+  if (!(record instanceof Uint8Array)) {
+    throw new InvalidApplicationStateError(
+      new Error('Application state is not an obfuscated binary envelope'),
+    );
   }
-  return record;
+  try {
+    const decoded = deobfuscateRecord(record);
+    if (
+      !decoded ||
+      typeof decoded !== 'object' ||
+      Array.isArray(decoded) ||
+      decoded instanceof Uint8Array
+    ) {
+      throw new Error('Obfuscated application state did not decode to an object');
+    }
+    return decodeDurableApplicationState(decoded).save;
+  } catch (error) {
+    throw new InvalidApplicationStateError(error);
+  }
 }
 
 function openDatabase(): Promise<IDBDatabase> {
@@ -149,11 +207,14 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(SESSION_DB_NAME, SESSION_DB_VERSION);
     request.onupgradeneeded = () => {
       const db = request.result;
-      if (!db.objectStoreNames.contains(SESSION_STORE_NAME)) {
-        db.createObjectStore(SESSION_STORE_NAME);
+      if (!db.objectStoreNames.contains(COORDINATION_STORE_NAME)) {
+        db.createObjectStore(COORDINATION_STORE_NAME);
       }
-      if (!db.objectStoreNames.contains(REJECTION_STORE_NAME)) {
-        db.createObjectStore(REJECTION_STORE_NAME);
+      for (const obsolete of ['session', 'wallet-reservations', 'rejections']) {
+        if (db.objectStoreNames.contains(obsolete)) db.deleteObjectStore(obsolete);
+      }
+      if (!db.objectStoreNames.contains(APPLICATION_STATE_STORE_NAME)) {
+        db.createObjectStore(APPLICATION_STATE_STORE_NAME);
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -172,211 +233,256 @@ function transactionComplete(transaction: IDBTransaction): Promise<void> {
   });
 }
 
-function deleteDatabase(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.deleteDatabase(SESSION_DB_NAME);
-    request.onsuccess = () => resolve();
-    request.onerror = () =>
-      reject(request.error ?? new Error('Failed to delete stale session database'));
-    request.onblocked = () => reject(new Error('Stale session database deletion was blocked'));
+function initialCoordinationRecord(): CoordinationRecord {
+  return {
+    schema: COORDINATION_SCHEMA,
+    version: COORDINATION_VERSION,
+    ownerTabId: '',
+    writeEpoch: 0n,
+    resetEpoch: 0n,
+    resetStatus: 'active',
+  };
+}
+
+function decodeCoordinationRecord(value: unknown): CoordinationRecord {
+  if (value === undefined) return initialCoordinationRecord();
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).length !== 6
+  ) {
+    throw new Error('Stored coordination authority is malformed');
+  }
+  const record = value as Partial<CoordinationRecord>;
+  if (
+    record.schema !== COORDINATION_SCHEMA ||
+    record.version !== COORDINATION_VERSION ||
+    typeof record.ownerTabId !== 'string' ||
+    typeof record.writeEpoch !== 'bigint' ||
+    record.writeEpoch < 0n ||
+    typeof record.resetEpoch !== 'bigint' ||
+    record.resetEpoch < 0n ||
+    (record.resetStatus !== 'active' && record.resetStatus !== 'pending')
+  ) {
+    throw new Error('Stored coordination authority is malformed');
+  }
+  return record as CoordinationRecord;
+}
+
+function requestResult<T>(request: IDBRequest<T>, failure: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error(failure));
   });
 }
 
-export async function readSessionRecord(): Promise<unknown | null> {
-  if (typeof indexedDB === 'undefined') return null;
-  let db: IDBDatabase;
-  try {
-    db = await openDatabase();
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'VersionError') {
-      await deleteDatabase();
-      return null;
-    }
-    throw error;
-  }
-  try {
-    const transaction = db.transaction(SESSION_STORE_NAME, 'readonly');
-    const request = transaction.objectStore(SESSION_STORE_NAME).get(SESSION_RECORD_KEY);
-    const record = await new Promise<unknown>((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error('Failed to read session record'));
-    });
-    await transactionComplete(transaction);
-    if (record == null) return null;
-    if (!(record instanceof Uint8Array)) {
-      throw new InvalidSessionRecordError(
-        new Error('Session record is not an obfuscated binary envelope'),
-      );
-    }
+async function readCoordinationRecord(transaction: IDBTransaction): Promise<CoordinationRecord> {
+  return decodeCoordinationRecord(
+    await requestResult(
+      transaction.objectStore(COORDINATION_STORE_NAME).get(COORDINATION_RECORD_KEY),
+      'Failed to read storage coordination authority',
+    ),
+  );
+}
+
+function putCoordinationRecord(transaction: IDBTransaction, record: CoordinationRecord): void {
+  transaction.objectStore(COORDINATION_STORE_NAME).put(record, COORDINATION_RECORD_KEY);
+}
+
+function authorityMatches(
+  record: CoordinationRecord,
+  authority: DurableStorageAuthority,
+  resetStatus: CoordinationRecord['resetStatus'] = 'active',
+): boolean {
+  return (
+    record.ownerTabId === authority.ownerTabId &&
+    record.writeEpoch === authority.writeEpoch &&
+    record.resetEpoch === authority.resetEpoch &&
+    record.resetStatus === resetStatus
+  );
+}
+
+async function openValidatedMutation(
+  db: IDBDatabase,
+  stores: string | string[],
+  authority: DurableStorageAuthority,
+): Promise<IDBTransaction> {
+  const names = typeof stores === 'string' ? [stores] : stores;
+  const transaction = db.transaction(
+    [...new Set([...names, COORDINATION_STORE_NAME])],
+    'readwrite',
+  );
+  const record = await readCoordinationRecord(transaction);
+  if (!authorityMatches(record, authority)) {
+    transaction.abort();
     try {
-      return deobfuscateSessionRecord(record);
-    } catch (error) {
-      throw new InvalidSessionRecordError(error);
+      await transactionComplete(transaction);
+    } catch {
+      // The abort is intentional: stale authority must not mutate any store.
     }
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'NotFoundError') {
-      db.close();
-      await deleteDatabase();
-      return null;
-    }
-    throw error;
-  } finally {
-    db.close();
+    throw new StorageAuthorityLostError();
   }
+  const afterAuthorityCheck = afterNextAuthorityCheckForTests;
+  afterNextAuthorityCheckForTests = null;
+  afterAuthorityCheck?.();
+  return transaction;
 }
 
-export async function writeSessionRecord(record: SessionSave): Promise<void> {
+async function claimAndReadDurableStorageRaw(ownerTabId: string): Promise<ClaimedStorageSnapshot> {
   if (typeof indexedDB === 'undefined') {
-    throw new Error('IndexedDB is unavailable; refusing to send without durable session storage');
+    throw new Error('IndexedDB is unavailable; durable storage authority cannot be claimed');
   }
-  const db = await openDatabase();
-  try {
-    const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
-    transaction.objectStore(SESSION_STORE_NAME).put(obfuscateRecord(record), SESSION_RECORD_KEY);
-    await transactionComplete(transaction);
-  } finally {
-    db.close();
-  }
-}
-
-export async function deleteSessionRecord(): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
-  const db = await openDatabase();
-  try {
-    const transaction = db.transaction(SESSION_STORE_NAME, 'readwrite');
-    transaction.objectStore(SESSION_STORE_NAME).delete(SESSION_RECORD_KEY);
-    await transactionComplete(transaction);
-  } finally {
-    db.close();
-  }
-}
-
-export interface DurableRejectionTombstone {
-  kind: 'outbound-reject' | 'inbound-receipt';
-  peerId: string;
-  sessionId: string;
-  messageNumber: bigint;
-  remoteNumber: bigint;
-  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
-  createdAt: number;
-}
-
-export function rejectionTombstoneKey(peerId: string, sessionId: string): string {
-  return JSON.stringify([peerId, sessionId]);
-}
-
-function parseRejectionTombstone(value: unknown): DurableRejectionTombstone | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const candidate = value as Partial<DurableRejectionTombstone>;
-  if (
-    typeof candidate.peerId !== 'string' ||
-    (candidate.kind !== 'outbound-reject' && candidate.kind !== 'inbound-receipt') ||
-    typeof candidate.sessionId !== 'string' ||
-    !/^[0-9a-f]{32}$/.test(candidate.sessionId) ||
-    typeof candidate.messageNumber !== 'bigint' ||
-    typeof candidate.remoteNumber !== 'bigint' ||
-    typeof candidate.createdAt !== 'number' ||
-    !Array.isArray(candidate.unackedMessages) ||
-    candidate.unackedMessages.some(
-      (message) =>
-        !message || typeof message.msgno !== 'bigint' || !(message.msg instanceof Uint8Array),
-    )
-  ) {
-    return null;
-  }
-  return candidate as DurableRejectionTombstone;
-}
-
-export async function readRejectionTombstones(): Promise<DurableRejectionTombstone[]> {
-  if (typeof indexedDB === 'undefined') return [];
-  const db = await openDatabase();
-  try {
-    const transaction = db.transaction(REJECTION_STORE_NAME, 'readonly');
-    const request = transaction.objectStore(REJECTION_STORE_NAME).getAll();
-    const records = await new Promise<unknown[]>((resolve, reject) => {
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () =>
-        reject(request.error ?? new Error('Failed to read rejection records'));
-    });
-    await transactionComplete(transaction);
-    const parsed = records.flatMap((record) => {
-      if (!(record instanceof Uint8Array)) return [];
-      const parsed = parseRejectionTombstone(deobfuscateSessionRecord(record));
-      return parsed ? [parsed] : [];
-    });
-    const cutoff = Date.now() - REJECTION_TOMBSTONE_TTL_MS;
-    const expired = parsed.filter((record) => record.createdAt < cutoff);
-    await Promise.all(
-      expired.map((record) => deleteRejectionTombstone(record.peerId, record.sessionId)),
-    );
-    return parsed
-      .filter((record) => record.createdAt >= cutoff)
-      .sort((a, b) => a.createdAt - b.createdAt)
-      .slice(-MAX_DURABLE_REJECTION_TOMBSTONES);
-  } finally {
-    db.close();
-  }
-}
-
-async function performWriteRejectionTombstone(
-  tombstone: DurableRejectionTombstone,
-  clearSession: boolean,
-): Promise<void> {
-  if (typeof indexedDB === 'undefined') {
-    throw new Error('IndexedDB is unavailable; refusing to reject without durable storage');
-  }
-  const existing = await readRejectionTombstones();
   const db = await openDatabase();
   try {
     const transaction = db.transaction(
-      clearSession ? [REJECTION_STORE_NAME, SESSION_STORE_NAME] : REJECTION_STORE_NAME,
+      [COORDINATION_STORE_NAME, APPLICATION_STATE_STORE_NAME],
       'readwrite',
     );
-    const store = transaction.objectStore(REJECTION_STORE_NAME);
-    const retained = existing
-      .filter(
-        (record) => record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
-      )
-      .sort((a, b) => a.createdAt - b.createdAt);
-    while (retained.length >= MAX_DURABLE_REJECTION_TOMBSTONES) {
-      const evicted = retained.shift()!;
-      store.delete(rejectionTombstoneKey(evicted.peerId, evicted.sessionId));
+    const current = await readCoordinationRecord(transaction);
+    if (current.resetStatus === 'pending') {
+      transaction.abort();
+      throw new Error('A durable hard reset is pending');
     }
-    store.put(
-      obfuscateRecord(tombstone),
-      rejectionTombstoneKey(tombstone.peerId, tombstone.sessionId),
+    const claimed: CoordinationRecord = {
+      ...current,
+      ownerTabId,
+      writeEpoch: current.writeEpoch + 1n,
+      resetStatus: 'active',
+    };
+    const applicationStateRaw = await requestResult(
+      transaction.objectStore(APPLICATION_STATE_STORE_NAME).get(APPLICATION_STATE_RECORD_KEY),
+      'Failed to read application state while claiming storage authority',
     );
-    if (clearSession) {
-      transaction.objectStore(SESSION_STORE_NAME).delete(SESSION_RECORD_KEY);
-    }
+    putCoordinationRecord(transaction, claimed);
     await transactionComplete(transaction);
+    const authority = {
+      ownerTabId,
+      writeEpoch: claimed.writeEpoch,
+      resetEpoch: claimed.resetEpoch,
+    };
+    let applicationState: DurableApplicationState | null = null;
+    let applicationStateError: InvalidApplicationStateError | undefined;
+    try {
+      applicationState = decodeRawApplicationState(applicationStateRaw);
+    } catch (error) {
+      if (!(error instanceof InvalidApplicationStateError)) throw error;
+      applicationStateError = error;
+    }
+    return {
+      authority,
+      applicationState,
+      ...(applicationStateError ? { applicationStateError } : {}),
+    };
   } finally {
     db.close();
   }
 }
 
-export function writeRejectionTombstone(tombstone: DurableRejectionTombstone): Promise<void> {
-  const write = rejectionWriteQueue.then(() => performWriteRejectionTombstone(tombstone, false));
-  rejectionWriteQueue = write.catch(() => {});
-  return write;
-}
-
-export function replaceSessionWithRejectionTombstone(
-  tombstone: DurableRejectionTombstone,
-): Promise<void> {
-  const write = rejectionWriteQueue.then(() => performWriteRejectionTombstone(tombstone, true));
-  rejectionWriteQueue = write.catch(() => {});
-  return write;
-}
-
-export async function deleteRejectionTombstone(peerId: string, sessionId: string): Promise<void> {
-  if (typeof indexedDB === 'undefined') return;
+async function beginDurableHardResetRaw(ownerTabId: string): Promise<DurableStorageAuthority> {
+  if (typeof indexedDB === 'undefined') {
+    throw new Error('IndexedDB is unavailable; hard reset cannot be durably fenced');
+  }
   const db = await openDatabase();
   try {
-    const transaction = db.transaction(REJECTION_STORE_NAME, 'readwrite');
-    transaction.objectStore(REJECTION_STORE_NAME).delete(rejectionTombstoneKey(peerId, sessionId));
+    const transaction = db.transaction(COORDINATION_STORE_NAME, 'readwrite');
+    const current = await readCoordinationRecord(transaction);
+    const reset: CoordinationRecord = {
+      ...current,
+      ownerTabId,
+      writeEpoch: current.writeEpoch + 1n,
+      resetEpoch: current.resetEpoch + 1n,
+      resetStatus: 'pending',
+    };
+    putCoordinationRecord(transaction, reset);
+    await transactionComplete(transaction);
+    return {
+      ownerTabId,
+      writeEpoch: reset.writeEpoch,
+      resetEpoch: reset.resetEpoch,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+async function validatePendingHardResetAuthority(
+  authority: DurableStorageAuthority,
+): Promise<void> {
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(COORDINATION_STORE_NAME, 'readonly');
+    const record = await readCoordinationRecord(transaction);
+    await transactionComplete(transaction);
+    if (!authorityMatches(record, authority, 'pending')) {
+      throw new StorageAuthorityLostError();
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/** @internal test-only: run once after authority validation, before mutation commit. */
+export function _afterNextStorageAuthorityCheckForTests(callback: () => void): void {
+  afterNextAuthorityCheckForTests = callback;
+}
+
+export async function readApplicationState(): Promise<DurableApplicationState | null> {
+  if (typeof indexedDB === 'undefined') return null;
+  const db = await openDatabase();
+  try {
+    const transaction = db.transaction(APPLICATION_STATE_STORE_NAME, 'readonly');
+    const request = transaction
+      .objectStore(APPLICATION_STATE_STORE_NAME)
+      .get(APPLICATION_STATE_RECORD_KEY);
+    const record = await new Promise<unknown>((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error ?? new Error('Failed to read application state'));
+    });
+    await transactionComplete(transaction);
+    return decodeRawApplicationState(record);
+  } finally {
+    db.close();
+  }
+}
+
+export async function inspectApplicationState(): Promise<{
+  applicationState: DurableApplicationState | null;
+  applicationStateError?: InvalidApplicationStateError;
+}> {
+  try {
+    return { applicationState: await readApplicationState() };
+  } catch (error) {
+    if (!(error instanceof InvalidApplicationStateError)) throw error;
+    return { applicationState: null, applicationStateError: error };
+  }
+}
+
+async function writeApplicationStateRaw(
+  record: DurableApplicationState,
+  authority: DurableStorageAuthority,
+): Promise<void> {
+  if (typeof indexedDB === 'undefined') {
+    throw new Error('IndexedDB is unavailable; application state remains dirty');
+  }
+  const snapshot = decodeDurableApplicationState(structuredClone(record)).save;
+  const db = await openDatabase();
+  try {
+    const transaction = await openValidatedMutation(db, APPLICATION_STATE_STORE_NAME, authority);
+    transaction
+      .objectStore(APPLICATION_STATE_STORE_NAME)
+      .put(obfuscateRecord(snapshot), APPLICATION_STATE_RECORD_KEY);
     await transactionComplete(transaction);
   } finally {
     db.close();
   }
 }
+
+/** Stateless transaction port consumed only by StorageRepository. */
+export const indexedDbStoragePort = {
+  claimAndRead: claimAndReadDurableStorageRaw,
+  beginHardReset: beginDurableHardResetRaw,
+  validatePendingHardReset: validatePendingHardResetAuthority,
+  writeApplicationState: writeApplicationStateRaw,
+};

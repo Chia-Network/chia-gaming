@@ -15,7 +15,6 @@ export type BetweenHandEvent = Extract<
   | { type: 'select-compose-game' }
   | { type: 'set-compose-timeout' }
   | { type: 'set-compose-proposal-sent' }
-  | { type: 'set-same-terms-requested' }
   | { type: 'set-first-game-accepted' }
   | { type: 'set-last-outcome' }
 >;
@@ -108,12 +107,6 @@ export function reduceBetweenHandEvent(
         },
       };
       break;
-    case 'set-same-terms-requested':
-      next = {
-        ...state,
-        coordination: { ...state.coordination, sameTermsRequested: event.requested },
-      };
-      break;
     case 'set-first-game-accepted':
       next = {
         ...state,
@@ -124,10 +117,8 @@ export function reduceBetweenHandEvent(
       return assertNever(event);
   }
 
-  const shouldPersist =
-    event.type === 'select-compose-game' || event.type === 'set-compose-timeout';
   return {
     state: next,
-    effects: shouldPersist && next !== state ? [{ type: 'persist-session' }] : [],
+    effects: [],
   };
 }

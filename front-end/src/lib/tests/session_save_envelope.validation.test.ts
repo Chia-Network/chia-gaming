@@ -1,654 +1,393 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { type SessionPresentationSave, type SessionSave } from '../../hooks/save';
-import {
-  decodeSessionSaveEnvelope,
-  sessionModelFromSave,
-  validateSessionSaveEnvelope,
-} from '../session/model';
-import {
-  ACTIVE_INSTANCE,
-  TERMINAL_INSTANCE,
-  activeSave,
-  baseSave,
-  installSessionEnvelopeTestSetup,
-  liveSave,
-} from './session_save_envelope.fixtures';
+import { decodeDurableApplicationState } from '../session/persistence';
+import type { DurableApplicationState } from '../session/saveEnvelope';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
+import type { FeeAttachment } from '../session/feeAttachmentStore';
+import { activeSave, baseSave, TERMINAL_INSTANCE } from './session_save_envelope.fixtures';
 
-installSessionEnvelopeTestSetup();
+const scope = {
+  provider: 'walletconnect' as const,
+  fingerprint: '123',
+  chainId: 'chia:testnet11',
+};
 
-describe('validateSessionSaveEnvelope', () => {
-  it('accepts empty preferences and a complete pre-handshake checkpoint', () => {
-    expect(() => validateSessionSaveEnvelope(baseSave())).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(
-        baseSave({
-          blockchainType: 'simulator',
-          pairingToken: 'pair',
-          iStarted: true,
-          myContribution: '20',
-          theirContribution: '20',
-          perGameAmount: '2',
-        }),
-      ),
-    ).not.toThrow();
-  });
+const obligation: ChannelFundingEntry = {
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'peer-session',
+    providerScope: scope,
+  },
+  purpose: { kind: 'funding', operationId: 'funding-1' },
+  stage: 'awaiting-channel',
+  providerReservationId: 'trade-1',
+  request: {
+    kind: 'funding',
+    canonical: { amount: '100', fee: '0', conditions: [] },
+  },
+  reason: '',
+};
 
-  it('accepts a live resolved-unroll checkpoint while a game coin remains active', () => {
-    const save = activeSave({ channelStatus: { state: 'ResolvedUnrolled' } });
+const creatingFee: FeeAttachment = {
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'peer-session',
+    providerScope: scope,
+  },
+  submissionId: 'fee-creating',
+  stage: 'creating',
+  disposition: 'active',
+  recoveryId: 'recovery-1',
+  request: {
+    kind: 'fee',
+    uniqueId: 'submission-1',
+    fee: 10n,
+    concurrentSpendCoinId: '01'.repeat(32),
+  },
+  reason: '',
+};
 
-    expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
-    expect(sessionModelFromSave(save).game.activeIds).toEqual(['game-1']);
-  });
+const uncertainCancellation: FeeAttachment = {
+  owner: {
+    installationPlayerId: 'player',
+    peerSessionId: 'peer-session',
+    providerScope: scope,
+  },
+  submissionId: 'fee-cancelling',
+  stage: 'best-effort-cancellation-uncertain',
+  providerReservationId: 'trade-cancelling',
+  lastAttemptEpoch: 3n,
+  reason: 'response-lost',
+};
 
-  it('preserves game coin metadata needed for hand labels through terminal reload', () => {
-    const save = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [
-        {
-          label: 'Game 7 reward coin',
-          id: 'coin-7',
-          game_id: '7',
-          game_coin_kind: 'reward',
-        },
-      ],
-    });
+const fundingRequest = {
+  kind: 'funding' as const,
+  canonical: { amount: '100', fee: '0', conditions: [] },
+};
 
-    const decoded = decodeSessionSaveEnvelope(save).save;
-    expect(decoded.phase === 'terminal' && decoded.terminal.coinsOfInterest).toEqual([
+const walletStageFixtures: Array<{
+  slice: 'channelFundingOperations' | 'feeAttachments';
+  entry: ChannelFundingEntry | FeeAttachment;
+}> = [
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-creating' },
+      stage: 'creating',
+      disposition: 'active',
+      recoveryId: 'funding-recovery',
+      request: fundingRequest,
+      reason: '',
+    },
+  },
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-uncertain' },
+      stage: 'best-effort-uncertain',
+      disposition: 'active',
+      request: fundingRequest,
+      lastAttemptEpoch: 2n,
+      reason: '',
+    },
+  },
+  { slice: 'feeAttachments', entry: creatingFee },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-uncertain',
+      stage: 'best-effort-uncertain',
+      disposition: 'active',
+      request: creatingFee.request,
+      lastAttemptEpoch: 2n,
+      reason: 'response-lost',
+    },
+  },
+  { slice: 'channelFundingOperations', entry: obligation },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-reserved',
+      stage: 'reserved',
+      providerReservationId: 'trade-reserved',
+      reason: '',
+    },
+  },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-replay',
+      stage: 'retained-for-replay',
+      providerReservationId: 'trade-replay',
+      reason: '',
+    },
+  },
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-cancel' },
+      stage: 'cancel-required',
+      providerReservationId: 'trade-cancel',
+      reason: obligation.reason,
+    },
+  },
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-cancellation-uncertain' },
+      stage: 'best-effort-cancellation-uncertain',
+      providerReservationId: 'trade-funding-cancellation-uncertain',
+      lastAttemptEpoch: 3n,
+      reason: '',
+    },
+  },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-cancel-required',
+      stage: 'cancel-required',
+      providerReservationId: 'trade-fee-cancel-required',
+      reason: '',
+    },
+  },
+  { slice: 'feeAttachments', entry: uncertainCancellation },
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-cancelling' },
+      stage: 'cancelling',
+      providerReservationId: 'trade-cancelling-exact',
+      recoveryId: 'recovery-cancelling',
+      reason: obligation.reason,
+    },
+  },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-cancelling-exact',
+      stage: 'cancelling',
+      providerReservationId: 'trade-fee-cancelling-exact',
+      recoveryId: 'recovery-fee-cancelling',
+      reason: '',
+    },
+  },
+];
+
+function completeAggregate(): DurableApplicationState {
+  return activeSave({
+    walletProviderScope: scope,
+    channelFundingOperations: [obligation],
+    feeAttachments: [creatingFee, uncertainCancellation],
+    rejectionTransports: [
       {
-        label: 'Game 7 reward coin',
-        id: 'coin-7',
-        game_id: '7',
-        game_coin_kind: 'reward',
+        kind: 'outbound-reject',
+        peerId: 'peer',
+        sessionId: 'ab'.repeat(16),
+        messageNumber: 2n,
+        remoteNumber: 1n,
+        unackedMessages: [{ msgno: 2n, msg: new Uint8Array([1, 2]) }],
+        createdAt: 1,
       },
-    ]);
+    ],
+  });
+}
+
+function expectWholeRootRejection(
+  mutate: (state: any) => void,
+  source: DurableApplicationState = completeAggregate(),
+): void {
+  const state: any = structuredClone(source);
+  mutate(state);
+  expect(() => decodeDurableApplicationState(state)).toThrow();
+}
+
+describe('DurableApplicationState strict validation', () => {
+  it('round-trips no-session state as the same aggregate root', () => {
+    const state = baseSave();
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
+  });
+
+  it('round-trips session, split channel funding operations, and rejection transports exactly', () => {
+    const state = completeAggregate();
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
+  });
+
+  it.each([
+    ['root version', (state: any) => (state.version = 0n)],
+    ['common identity', (state: any) => (state.identity.playerId = 7)],
+    ['session payload', (state: any) => (state.session.live.messageNumber = -1n)],
+    ['funding operation', (state: any) => (state.channelFundingOperations[0].stage = 'unknown')],
+    ['rejection transport', (state: any) => (state.rejectionTransports[0].sessionId = 'bad')],
+  ])('rejects corruption in %s as whole-root corruption', (_label, corrupt) => {
+    expectWholeRootRejection(corrupt);
   });
 
   it.each([
     [
-      'preferences',
-      baseSave({
-        activeGameIds: ['game-1'],
-        currentHandGameIds: ['game-1'],
-        lastDisplayedGameId: 'game-1',
-        activeGameType: 'calpoker',
-        gameInstances: { 'game-1': ACTIVE_INSTANCE },
-        handState: calpokerStateCodec.encode({
-          playerHand: [1n, 2n],
-          opponentHand: [3n, 4n],
-          moveNumber: 1n,
-          isPlayerTurn: true,
-          iStarted: true,
-          error: null,
-        }),
-        betweenHandLastHandProposal: {
-          player_a_contribution: '20',
-          player_b_contribution: '20',
-          sender_is_player_a: false,
-          game_timeout: '15',
-          game_type: 'calpoker',
-          parameters: null,
-        },
-      }),
+      'membership outside the current hand',
+      (state: any) => (state.session.presentation.currentHandGameIds = []),
+      /active game game-1 is not in currentHandGameIds/,
     ],
     [
-      'pre-handshake',
-      baseSave({
-        pairingToken: 'pair',
-        iStarted: true,
-        myContribution: '20',
-        theirContribution: '20',
-        perGameAmount: '20',
-        activeGameIds: ['game-1'],
-        currentHandGameIds: ['game-1'],
-        lastDisplayedGameId: 'game-1',
-        activeGameType: 'calpoker',
-        gameInstances: { 'game-1': ACTIVE_INSTANCE },
-        handState: calpokerStateCodec.encode({
-          playerHand: [1n, 2n],
-          opponentHand: [3n, 4n],
-          moveNumber: 1n,
-          isPlayerTurn: true,
-          iStarted: true,
-          error: null,
-        }),
-        betweenHandLastHandProposal: {
-          player_a_contribution: '20',
-          player_b_contribution: '20',
-          sender_is_player_a: false,
-          game_timeout: '15',
-          game_type: 'calpoker',
-          parameters: null,
-        },
-      }),
+      'a missing keyed instance',
+      (state: any) => delete state.session.presentation.gameInstances['game-1'],
+      /game game-1 is missing its keyed instance/,
     ],
-  ])('rejects a %s record carrying a complete active-game payload', (_kind, save) => {
-    expect(() => validateSessionSaveEnvelope(save)).toThrow('unexpected');
+    [
+      'an unrelated keyed instance',
+      (state: any) => {
+        state.session.presentation.gameInstances.unrelated = {
+          ...state.session.presentation.gameInstances['game-1'],
+          id: 'unrelated',
+        };
+      },
+      /game unrelated is an unrelated keyed instance/,
+    ],
+    [
+      'terminal and presentation disagreement',
+      (state: any) => (state.session.presentation.gameInstances['game-1'].presentation = 'ended'),
+      /presentation and terminal state disagree/,
+    ],
+    [
+      'a live hand without package state',
+      (state: any) => (state.session.presentation.handState = null),
+      /current hand is missing handState/,
+    ],
+    [
+      'package-owned hand state that cannot restore',
+      (state: any) => (state.session.presentation.handState.state = { malformed: true }),
+      /handState cannot be restored/,
+    ],
+  ])('rejects %s in the current presentation format', (_label, corrupt, error) => {
+    const state: any = structuredClone(activeSave());
+    corrupt(state);
+    expect(() => decodeDurableApplicationState(state)).toThrow(error);
   });
 
-  it('rejects terminal records with live protocol fields and live records with terminal fields', () => {
-    const live = liveSave();
-    const terminal = baseSave({
+  it('rejects a terminal current hand without package state', () => {
+    const state = baseSave({
       channelStatus: { state: 'ResolvedClean' },
       coinsOfInterest: [],
-      terminalIStarted: true,
-    });
-    expect(() =>
-      validateSessionSaveEnvelope({
-        ...terminal,
-        pairing: live.phase === 'live' ? live.pairing : undefined,
-        live: live.phase === 'live' ? live.live : undefined,
-      } as SessionSave),
-    ).toThrow('unexpected');
-    expect(() =>
-      validateSessionSaveEnvelope({
-        ...live,
-        terminal: { iStarted: true, coinsOfInterest: [] },
-      } as SessionSave),
-    ).toThrow('unexpected');
-  });
-
-  it('decodes one legitimate snapshot for every v13 phase', () => {
-    const preferences = baseSave({ blockchainType: 'simulator' });
-    const preHandshake = baseSave({
-      pairingToken: 'pair',
-      iStarted: false,
-      myContribution: '20',
-      theirContribution: '20',
-      perGameAmount: '2',
-    });
-    const live = liveSave();
-    const terminal = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
-      coinsOfInterest: [],
-      terminalIStarted: true,
-      activeGameIds: [],
       currentHandGameIds: ['game-1'],
       currentHandOrigin: 'local',
       lastDisplayedGameId: 'game-1',
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
-      betweenHandLastHandProposal: {
-        player_a_contribution: '20',
-        player_b_contribution: '20',
-        sender_is_player_a: false,
-        game_timeout: '15',
-        game_type: 'calpoker',
-        parameters: null,
-      },
+      handState: null,
     });
-    expect(decodeSessionSaveEnvelope(preferences).phase).toBe('preferences');
-    expect(decodeSessionSaveEnvelope(preHandshake).phase).toBe('pre-handshake');
-    expect(decodeSessionSaveEnvelope(live).phase).toBe('live');
-    expect(decodeSessionSaveEnvelope(terminal).phase).toBe('terminal');
-  });
 
-  it('accepts cloud as preferences.blockchainType', () => {
-    const decoded = decodeSessionSaveEnvelope(baseSave({ blockchainType: 'cloud' }));
-    expect(decoded.phase).toBe('preferences');
-    expect(decoded.save.preferences.blockchainType).toBe('cloud');
-  });
-
-  it('rejects an unknown preferences.blockchainType', () => {
-    expect(() => decodeSessionSaveEnvelope(baseSave({ blockchainType: 'not-a-wallet' }))).toThrow(
-      'Garbled save: invalid preferences.blockchainType: not-a-wallet',
-    );
+    expect(() => decodeDurableApplicationState(state)).toThrow(/current hand is missing handState/);
   });
 
   it.each([
-    ['schema', { gameSessionSchemaVersion: undefined }],
-    ['message counter', { messageNumber: undefined }],
-    ['remote counter', { remoteNumber: undefined }],
-    ['role', { iStarted: undefined }],
-    ['pairing token', { pairingToken: undefined }],
-    ['unacked messages', { unackedMessages: undefined }],
-    ['my contribution', { myContribution: undefined }],
-    ['their contribution', { theirContribution: undefined }],
-    ['per-game amount', { perGameAmount: undefined }],
-    ['reward puzzle hash', { rewardPuzzleHash: null }],
-  ])('rejects a live resumable record missing its %s', (_label, fields) => {
-    expect(() => validateSessionSaveEnvelope(liveSave(fields))).toThrow();
+    ['aggregate root', (state: any) => (state.unexpected = true)],
+    ['identity', (state: any) => (state.identity.unexpected = true)],
+    ['preferences', (state: any) => (state.preferences.unexpected = true)],
+    ['history', (state: any) => (state.history.unexpected = true)],
+    ['session wrapper', (state: any) => (state.session.unexpected = true)],
+    ['pairing', (state: any) => (state.session.pairing.unexpected = true)],
+    ['live', (state: any) => (state.session.live.unexpected = true)],
+    ['presentation', (state: any) => (state.session.presentation.unexpected = true)],
+    ['rejection', (state: any) => (state.rejectionTransports[0].unexpected = true)],
+  ])('rejects an unknown key in %s at the whole-root boundary', (_label, mutate) => {
+    expectWholeRootRejection(mutate);
   });
 
-  it('rejects a live/current hand without its game-owned payload', () => {
-    const save = activeSave();
-    if (save.phase !== 'live') throw new Error('expected live fixture');
-    Reflect.deleteProperty(save.presentation, 'handState');
-    expect(() => validateSessionSaveEnvelope(save)).toThrow('invalid handState');
-  });
-
-  it.each([
-    'activeGameIds',
-    'currentHandGameIds',
-    'currentHandOrigin',
-    'lastDisplayedGameId',
-    'gameInstances',
-    'activeGameType',
-    'handState',
-    'channelStatus',
-    'myRunningBalance',
-    'channelNotifQueue',
-    'gameNotifQueue',
-    'dismissedChannelStatus',
-    'cleanShutdownStarted',
-    'betweenHandMode',
-    'betweenHandCompose',
-    'betweenHandLastHandProposal',
-    'betweenHandRejectedOnceHandProposal',
-    'betweenHandPendingRetryHandProposal',
-    'proposalGroups',
-    'waitingStateEnteredAt',
-    'cleanShutdownGraceStartedAt',
-  ] satisfies Array<keyof SessionPresentationSave>)(
-    'rejects a v13 presentation missing required %s',
-    (field) => {
-      const save = liveSave();
-      if (save.phase !== 'live') throw new Error('expected live fixture');
-      Reflect.deleteProperty(save.presentation, field);
-      expect(() => validateSessionSaveEnvelope(save)).toThrow();
-    },
-  );
-
-  it.each([
-    ['activeGameIds', { activeGameIds: ['game-1', 'game-1'] }],
-    ['currentHandGameIds', { currentHandGameIds: ['game-1', 'game-1'] }],
-  ])('rejects duplicate %s', (_label, fields) => {
-    expect(() => validateSessionSaveEnvelope(activeSave(fields))).toThrow('duplicate');
-  });
-
-  it.each([
-    ['active', { gameInstances: {} }],
-    ['current', { activeGameIds: [], gameInstances: {} }],
-    ['last display', { activeGameIds: [], currentHandGameIds: [], gameInstances: {} }],
-  ])('rejects a missing %s instance', (_label, fields) => {
-    expect(() => validateSessionSaveEnvelope(activeSave(fields))).toThrow('missing its keyed');
-  });
-
-  it('retains completed current-hand members but rejects active terminal members', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: { 'game-1': TERMINAL_INSTANCE },
-        }),
-      ),
-    ).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(activeSave({ gameInstances: { 'game-1': TERMINAL_INSTANCE } })),
-    ).toThrow('active game game-1 is terminal');
-  });
-
-  it('requires presentation and terminal state to end together', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: {
-            'game-1': { ...TERMINAL_INSTANCE, presentation: 'finishing' },
-          },
-        }),
-      ),
-    ).toThrow('presentation and terminal state disagree');
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: {
-            'game-1': { ...ACTIVE_INSTANCE, presentation: 'ended' },
-          },
-        }),
-      ),
-    ).toThrow('presentation and terminal state disagree');
-  });
-
-  it('rejects only a generic hand-envelope game type mismatch', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          handState: calpokerStateCodec.encode({
-            playerHand: [1n, 2n],
-            opponentHand: [3n, 4n],
-            moveNumber: 1n,
-            isPlayerTurn: true,
-            iStarted: true,
-            error: null,
-          }),
-          activeGameType: 'spacepoker',
-        }),
-      ),
-    ).toThrow('activeGameType does not match');
-  });
-
-  it('rejects unrelated keyed instances but retains a terminal display member', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          gameInstances: {
-            'game-1': ACTIVE_INSTANCE,
-            unrelated: { ...TERMINAL_INSTANCE, id: 'unrelated' },
-          },
-        }),
-      ),
-    ).toThrow('unrelated keyed instance');
-
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: ['game-1'],
-          currentHandGameIds: ['game-1'],
-          lastDisplayedGameId: 'terminal',
-          gameInstances: {
-            'game-1': ACTIVE_INSTANCE,
-            terminal: { ...TERMINAL_INSTANCE, id: 'terminal' },
-          },
-        }),
-      ),
-    ).not.toThrow();
-  });
-
-  it('accepts terminal frozen snapshots with or without remount state', () => {
+  it('rejects an unknown terminal key at the whole-root boundary', () => {
     const terminal = baseSave({
-      channelStatus: { state: 'ResolvedClean' },
+      channelStatus: {
+        state: 'ResolvedClean',
+        advisory: null,
+        coin: null,
+        our_balance: null,
+        their_balance: null,
+        game_allocated: null,
+      },
       coinsOfInterest: [],
-      activeGameIds: [],
-      currentHandGameIds: ['game-1'],
-      currentHandOrigin: 'peer',
-      lastDisplayedGameId: 'game-1',
-      activeGameType: 'calpoker',
-      gameInstances: { 'game-1': TERMINAL_INSTANCE },
-      betweenHandLastHandProposal: {
-        player_a_contribution: '20',
-        player_b_contribution: '20',
-        sender_is_player_a: false,
-        game_timeout: '15',
-        game_type: 'calpoker',
-        parameters: null,
-      },
     });
-    expect(() => validateSessionSaveEnvelope(terminal)).not.toThrow();
-    expect(() =>
-      validateSessionSaveEnvelope(
-        terminal.phase === 'terminal'
-          ? {
-              ...terminal,
-              presentation: {
-                ...terminal.presentation,
-                handState: calpokerStateCodec.encode({
-                  playerHand: [1n, 2n],
-                  opponentHand: [3n, 4n],
-                  moveNumber: 1n,
-                  isPlayerTurn: false,
-                  iStarted: false,
-                  error: null,
-                }),
-              },
-            }
-          : terminal,
-      ),
-    ).not.toThrow();
+    expect(decodeDurableApplicationState(terminal).save).toEqual(terminal);
+    expectWholeRootRejection((state) => (state.session.terminal.unexpected = true), terminal);
   });
 
-  it('rejects persisted hands without matching game terms', () => {
-    expect(() =>
-      validateSessionSaveEnvelope(activeSave({ betweenHandLastHandProposal: null })),
-    ).toThrow('betweenHandLastHandProposal');
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameType: 'spacepoker',
-          handState: spacepokerStateCodec.encode({
-            gameState: { handler: 2n, myTurn: true, N: 4n },
-            playerHoleCards: [1n, 2n],
-            playerBoost: false,
-            opponentHoleCards: null,
-            opponentBoost: null,
-            communityCards: [null, null, null, null, null],
-            halfPot: 1n,
-            lastRaise: 0n,
-            iRaisedLast: false,
-            handHistory: [],
-            outcome: null,
-            terminalState: 'none',
-            coinTossIOpen: true,
-            unitSizeMojos: 10n,
-            displayMode: 'mojos',
-            error: null,
-          }),
-          betweenHandLastHandProposal: {
-            player_a_contribution: '20',
-            player_b_contribution: '20',
-            sender_is_player_a: false,
-            game_timeout: '15',
-            game_type: 'calpoker',
-            parameters: null,
-          },
-        }),
-      ),
-    ).toThrow('activeGameType does not match betweenHandLastHandProposal.game_type');
-  });
-
-  it.each([
-    undefined,
-    [{ label: '', id: 'coin' }],
-    [{ label: 'Coin', id: '' }],
-    [{ label: 'Coin', id: 'coin', parentId: '' }],
-    [{ label: 'Coin', id: 'coin', parentId: 7 }],
-    [
-      { label: 'Coin A', id: 'same' },
-      { label: 'Coin B', id: 'same' },
-    ],
-  ])('rejects invalid terminal coin lists', (coinsOfInterest) => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        baseSave({
-          channelStatus: { state: 'ResolvedClean' },
-          coinsOfInterest,
-        }),
-      ),
-    ).toThrow();
-  });
-
-  it.each([
-    { ...TERMINAL_INSTANCE.terminal, outcome: null },
-    {
-      type: 'none',
-      outcome: null,
-      label: 'unexpected',
-      myReward: null,
-      rewardCoinHex: null,
-    },
-    {
-      type: 'ended-cancelled',
-      outcome: 'settled_cleanly',
-      label: 'Cancelled',
-      myReward: null,
-      rewardCoinHex: null,
-    },
-    { ...TERMINAL_INSTANCE.terminal, myReward: 'not-an-amount' },
-    {
-      type: 'ended-cancelled',
-      outcome: null,
-      label: 'Cancelled',
-      myReward: '1',
-      rewardCoinHex: null,
-    },
-  ])('rejects malformed cross-field terminal outcomes', (terminal) => {
-    expect(() =>
-      validateSessionSaveEnvelope(
-        activeSave({
-          activeGameIds: [],
-          gameInstances: {
-            'game-1': { ...TERMINAL_INSTANCE, terminal },
-          },
-        }),
-      ),
-    ).toThrow();
-  });
-
-  it.each(['outcome', 'label', 'myReward', 'rewardCoinHex'] as const)(
-    'rejects an omitted game terminal %s while accepting explicit null',
-    (field) => {
-      const omitted = structuredClone(activeSave());
-      if (omitted.phase !== 'live') throw new Error('expected live fixture');
-      Reflect.deleteProperty(omitted.presentation.gameInstances['game-1'].terminal, field);
-      expect(() => validateSessionSaveEnvelope(omitted)).toThrow(`terminal.${field}`);
-
-      expect(() => validateSessionSaveEnvelope(activeSave())).not.toThrow();
-    },
-  );
-
-  it.each(['myAlias', 'opponentAlias'] as const)(
-    'rejects an omitted terminal session %s while accepting explicit null',
-    (field) => {
-      const omitted = baseSave({
-        channelStatus: { state: 'ResolvedClean' },
-        coinsOfInterest: [],
+  it.each(walletStageFixtures.map(({ slice, entry }) => [entry.stage, slice, entry] as const))(
+    'rejects an unknown %s provider-operation key at the whole-root boundary',
+    (_stage, slice, entry) => {
+      const state = activeSave({
+        walletProviderScope: scope,
+        channelFundingOperations: slice === 'channelFundingOperations' ? [entry] : [],
+        feeAttachments: slice === 'feeAttachments' ? [entry] : [],
       });
-      if (omitted.phase !== 'terminal') throw new Error('expected terminal fixture');
-      Reflect.deleteProperty(omitted.terminal, field);
-      expect(() => validateSessionSaveEnvelope(omitted)).toThrow(`terminal.${field}`);
-
-      expect(() =>
-        validateSessionSaveEnvelope(
-          baseSave({
-            channelStatus: { state: 'ResolvedClean' },
-            coinsOfInterest: [],
-          }),
-        ),
-      ).not.toThrow();
+      expect(decodeDurableApplicationState(state).save).toEqual(state);
+      expectWholeRootRejection((corrupt) => (corrupt[slice][0].unexpected = true), state);
     },
   );
 
-  it.each([
-    ['between-hand mode', { betweenHandMode: 'unknown-mode' }, 'betweenHandMode'],
-    [
-      'between-hand terms',
-      {
-        betweenHandLastHandProposal: {
-          player_a_contribution: 'not-an-amount',
-          player_b_contribution: '10',
-          sender_is_player_a: false,
-          game_timeout: '15',
-          game_type: 'calpoker',
-          parameters: null,
-        },
-      },
-      'betweenHandLastHandProposal.player_a_contribution',
-    ],
-    [
-      'peer proposal',
-      {
-        proposalGroups: [
-          {
-            primary_id: 'proposal-1',
-            member_ids: [],
-            origin: 'peer',
-            disposition: 'incoming-cached',
-            hand_proposal: {
-              player_a_contribution: '10',
-              player_b_contribution: '10',
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
-              parameters: null,
-            },
-          },
-        ],
-      },
-      'member_ids',
-    ],
-    [
-      'proposal groups',
-      {
-        proposalGroups: [
-          {
-            primary_id: 'proposal-1',
-            member_ids: ['proposal-1', 'proposal-1'],
-            origin: 'local',
-            disposition: 'outgoing',
-            hand_proposal: {
-              player_a_contribution: '100',
-              player_b_contribution: '100',
-              sender_is_player_a: true,
-              game_timeout: '15',
-              game_type: 'krunk',
-              parameters: null,
-            },
-          },
-        ],
-      },
-      'duplicate',
-    ],
-  ])('rejects malformed %s state', (_label, fields, message) => {
-    expect(() => validateSessionSaveEnvelope(liveSave(fields as Partial<SessionSave>))).toThrow(
-      message,
+  it('rejects duplicate rejection identities', () => {
+    const duplicateRejection = completeAggregate();
+    duplicateRejection.rejectionTransports.push(
+      structuredClone(duplicateRejection.rejectionTransports[0]),
     );
+    expect(() => decodeDurableApplicationState(duplicateRejection)).toThrow(/duplicate/);
+  });
+
+  it('rejects operations stored in the wrong durable slice', () => {
+    const fundingInFees = completeAggregate();
+    fundingInFees.feeAttachments.push(fundingInFees.channelFundingOperations.pop()!);
+    expect(() => decodeDurableApplicationState(fundingInFees)).toThrow(/invalid/);
   });
 
   it.each([
-    ['channel discriminant', { channelStatus: { state: 'Bogus' } }, 'channelStatus.state'],
+    ['channel funding', 'channelFundingOperations', obligation],
     [
-      'channel balance',
-      { channelStatus: { state: 'Active', our_balance: { Amount: 'nope' } } },
-      'channelStatus.our_balance',
-    ],
-    [
-      'notification kind',
+      'fee attachment',
+      'feeAttachments',
       {
-        channelNotifQueue: [{ id: 1n, kind: 'unknown', title: 'Title', message: 'Message' }],
-      },
-      'notification[0].kind',
+        owner: obligation.owner,
+        submissionId: 'fee-duplicate',
+        stage: 'reserved',
+        providerReservationId: 'fee-duplicate-reservation',
+        reason: '',
+      } satisfies FeeAttachment,
     ],
-    [
-      'notification id',
-      {
-        gameNotifQueue: [
-          { id: 'not-an-id', kind: 'proposal-rejected', title: 'Title', message: 'Message' },
-        ],
-      },
-      'notification id',
-    ],
-    ['transport counter', { messageNumber: '1' }, 'messageNumber'],
-    [
-      'transport message payload',
-      { unackedMessages: [{ msgno: 1n, msg: [1, 2, 3] }] },
-      'unackedMessages[0].msg',
-    ],
-    ['cradle bytes', { serializedGameSession: [1, 2, 3] }, 'serializedGameSession'],
-    ['timeout numeric string', { channelTimeout: '0' }, 'channelTimeout'],
-  ])('rejects malformed %s metadata', (_label, fields, message) => {
-    expect(() =>
-      validateSessionSaveEnvelope(liveSave(fields as unknown as Partial<SessionSave>)),
-    ).toThrow(message);
+  ] as const)('rejects duplicate provider reservation ids within %s', (_label, slice, entry) => {
+    const state = activeSave({
+      walletProviderScope: scope,
+      channelFundingOperations: slice === 'channelFundingOperations' ? [entry, entry] : [],
+      feeAttachments: slice === 'feeAttachments' ? [entry, entry] : [],
+    });
+    expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
   });
 
-  it('restores only host-owned compose state', () => {
-    const save = liveSave({
-      betweenHandMode: 'decision',
-      betweenHandCompose: {
-        selected_game: 'calpoker',
-        game_timeout: '20',
-        proposal_sent: false,
-      },
-      betweenHandLastHandProposal: {
-        player_a_contribution: '12',
-        player_b_contribution: '12',
-        sender_is_player_a: false,
-        game_timeout: '20',
-        game_type: 'calpoker',
-        parameters: null,
-      },
-      channelNotifQueue: [{ id: 1n, kind: 'channel-state', title: 'Channel', message: 'Ready' }],
-      myRunningBalance: '-3',
+  it('rejects duplicate provider reservation ids across durable slices', () => {
+    const state = completeAggregate();
+    state.feeAttachments.push({
+      ...uncertainCancellation,
+      providerReservationId: obligation.providerReservationId,
     });
+    expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
+  });
 
-    expect(() => validateSessionSaveEnvelope(save)).not.toThrow();
-    expect(() => sessionModelFromSave(save)).not.toThrow();
-    expect(sessionModelFromSave(save).betweenHand.compose).toEqual({
-      selectedGame: 'calpoker',
-      gameTimeout: 20n,
-      proposalSent: false,
-    });
+  it('rejects an operation whose provider scope differs from the aggregate context', () => {
+    const state = structuredClone(completeAggregate());
+    state.channelFundingOperations[0]!.owner.providerScope = {
+      provider: 'walletconnect',
+      fingerprint: '999',
+      chainId: 'chia:testnet11',
+    };
+    expect(() => decodeDurableApplicationState(state)).toThrow(/owner\/context mismatch/);
+  });
+
+  it('permits no session with unresolved channel funding operations', () => {
+    const state = completeAggregate();
+    state.session = null;
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
 });

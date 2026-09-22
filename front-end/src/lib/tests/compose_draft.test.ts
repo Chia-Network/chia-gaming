@@ -8,11 +8,9 @@ import type { HandProposal } from '../session/types';
 
 const TERMS: HandProposal = {
   gameType: 'calpoker',
-  playerAContribution: 25n,
-  playerBContribution: 25n,
   senderIsPlayerA: false,
   gameTimeout: 15n,
-  parameters: null,
+  parameters: 25n,
 };
 
 describe('compose host state', () => {

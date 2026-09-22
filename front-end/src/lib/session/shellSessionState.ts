@@ -1,9 +1,14 @@
 import type { GameSessionParams, PeerConnectionResult, SessionPhase } from '../../types/ChiaGaming';
 import type { AdvisoryStartParams } from '../../services/HubConnection';
 import type { RestoreStatus } from '../../hooks/SessionController';
+import type { ReliableTransportState } from '../../services/PeerSession';
 import type { AcceptReason } from './acceptLifecycle';
 import type { SessionModel } from './model';
-import type { LiveSessionSave, PreHandshakeSessionSave } from './saveEnvelope';
+import type {
+  LiveSessionSave,
+  PreHandshakeSessionSave,
+  SessionTransportSave,
+} from './saveEnvelope';
 
 export type PendingSessionProposal = {
   from_id: string;
@@ -38,6 +43,19 @@ export function isAcceptSessionTransition(transition: ShellSessionTransition): b
   );
 }
 
+/** Durable transport residue for a live relay. The save has no `sessionId`. */
+export function transportSaveFromReliableState(
+  state: ReliableTransportState,
+): SessionTransportSave {
+  return {
+    messageNumber: state.messageNumber,
+    remoteNumber: state.remoteNumber,
+    unackedMessages: structuredClone(state.unackedMessages),
+    disposition: state.disposition,
+    terminalHandoff: null,
+  };
+}
+
 export function peerConnectionForSavedSession(
   connection: PeerConnectionResult,
   save: LiveSessionSave | PreHandshakeSessionSave,
@@ -65,7 +83,6 @@ export interface ShellSessionState {
   sessionError: boolean;
   restoreStatus: RestoreStatus;
   restoreError: string | null;
-  restoreHubReconciled: boolean;
   transition: ShellSessionTransition;
 }
 
@@ -79,7 +96,6 @@ export type ShellSessionAction =
   | { type: 'setSessionError'; value: boolean }
   | { type: 'setRestoreStatus'; value: RestoreStatus }
   | { type: 'setRestoreError'; value: string | null }
-  | { type: 'setRestoreHubReconciled'; value: boolean }
   | {
       type: 'beginAccept';
       reason: ShellSessionTransitionReason;
@@ -106,7 +122,6 @@ export const initialShellSessionState: ShellSessionState = {
   sessionError: false,
   restoreStatus: 'idle',
   restoreError: null,
-  restoreHubReconciled: false,
   transition: { kind: 'idle' },
 };
 
@@ -133,8 +148,6 @@ export function shellSessionReducer(
       return { ...state, restoreStatus: action.value };
     case 'setRestoreError':
       return { ...state, restoreError: action.value };
-    case 'setRestoreHubReconciled':
-      return { ...state, restoreHubReconciled: action.value };
     case 'beginAccept':
       // Clears consent prompts atomically with entering the Accept transition.
       return {

@@ -4,7 +4,6 @@ import {
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
-  type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
 
@@ -46,21 +45,6 @@ export interface KrunkHandState {
 export interface KrunkHand extends GameHand<KrunkHandState> {
   updateGame(memberIndex: number, reducer: (current: KrunkGameState) => KrunkGameState): void;
 }
-
-/** Test/helper envelope only; persistence treats the state as opaque. */
-export const krunkStateCodec = {
-  gameType: 'krunk',
-  encode: (state: KrunkHandState): PersistedGameState<KrunkHandState> => ({
-    gameType: 'krunk',
-    state,
-  }),
-  decode: (value: unknown): KrunkHandState | null =>
-    typeof value === 'object' &&
-    value !== null &&
-    (value as Partial<PersistedGameState>).gameType === 'krunk'
-      ? ((value as PersistedGameState<KrunkHandState>).state ?? null)
-      : null,
-};
 
 export function initialKrunkGameState(role: KrunkRole): KrunkGameState {
   return {
@@ -343,16 +327,22 @@ export function createKrunkHand(init: GameHandInitialization): KrunkHand {
   if (init.members.length !== 2) {
     throw new Error('Krunk requires two games');
   }
+  const firstStake = init.members[0]!.playerAContribution + init.members[0]!.playerBContribution;
+  const secondStake = init.members[1]!.playerAContribution + init.members[1]!.playerBContribution;
   if (
-    init.members[0]!.playerAContribution <= 0n ||
-    init.members[0]!.playerBContribution !== 0n ||
-    init.members[1]!.playerAContribution !== 0n ||
-    init.members[1]!.playerBContribution !== init.members[0]!.playerAContribution
+    firstStake <= 0n ||
+    secondStake !== firstStake ||
+    (init.members[0]!.playerAContribution === 0n) ===
+      (init.members[0]!.playerBContribution === 0n) ||
+    (init.members[1]!.playerAContribution === 0n) ===
+      (init.members[1]!.playerBContribution === 0n) ||
+    init.members[0]!.playerAContribution > 0n === init.members[1]!.playerAContribution > 0n ||
+    init.members.some((member) => member.readableParameters.toBigInt() !== firstStake)
   ) {
-    throw new Error('Krunk requires its approved A and B contributions in separate members');
+    throw new Error('Krunk requires matching approved and readable split contributions');
   }
   return krunkHandFromState({
-    perPlayerStake: init.members[0]!.playerAContribution,
+    perPlayerStake: firstStake,
     members: [
       initialKrunkGameState(init.members[0]!.ourTurn ? 'alice' : 'bob'),
       initialKrunkGameState(init.members[1]!.ourTurn ? 'alice' : 'bob'),

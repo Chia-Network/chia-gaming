@@ -7,8 +7,7 @@ const LEASE_KEY = 'appState_activeTab';
 const TAB_ID_SESSION_KEY = 'appState_tabId';
 
 let autoResumeLatch = false;
-let fenced = false;
-const fencedListeners = new Set<() => void>();
+export type StorageAuthorityLossReason = 'takeover' | 'sibling-reset' | 'durable-authority-lost';
 
 export function randomHex(): string {
   const bytes = new Uint8Array(16);
@@ -32,23 +31,8 @@ const tabId: string = (() => {
   }
   return id;
 })();
-
-function fireFenced(): void {
-  for (const cb of fencedListeners) {
-    try {
-      cb();
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-export function onFenced(cb: () => void): void {
-  fencedListeners.add(cb);
-}
-
-export function offFenced(cb: () => void): void {
-  fencedListeners.delete(cb);
+export function getStorageTabId(): string {
+  return tabId;
 }
 
 // The lease lives in localStorage but `tabId` lives in sessionStorage, so a
@@ -76,22 +60,9 @@ export function checkLease(): boolean {
   }
 }
 
-export function claimLease(): void {
-  fenced = false;
+export function markLeaseClaimed(): void {
   try {
     localStorage.setItem(LEASE_KEY, tabId);
-  } catch {
-    /* ignore */
-  }
-}
-
-export function reclaimLease(): void {
-  claimLease();
-}
-
-export function clearLease(): void {
-  try {
-    localStorage.removeItem(LEASE_KEY);
   } catch {
     /* ignore */
   }
@@ -106,14 +77,6 @@ export function releaseLeaseIfOwner(): void {
   } catch {
     /* ignore */
   }
-}
-
-export function isFenced(): boolean {
-  return fenced;
-}
-
-export function fencePersistence(): void {
-  fenced = true;
 }
 
 export function hasSavedSessionMarker(): boolean {
@@ -197,32 +160,30 @@ export function signalHardResetToOtherTabs(): void {
   }
 }
 
-export function installStorageCoordination(onHardReset: () => void): void {
+export function installStorageCoordination(
+  onAuthorityLost: (reason: StorageAuthorityLossReason) => void,
+  onHardReset: () => void,
+): void {
   if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
   window.addEventListener('storage', (event: StorageEvent) => {
     if (event.key === RESET_KEY) {
+      onAuthorityLost('sibling-reset');
       onHardReset();
-      window.location.reload();
       return;
     }
-    if (event.key === LEASE_KEY && event.newValue !== tabId && !fenced) {
-      fenced = true;
-      fireFenced();
+    if (event.key === LEASE_KEY && event.newValue !== tabId) {
+      onAuthorityLost('takeover');
     }
   });
 
   setInterval(() => {
-    if (fenced) return;
     if (!checkLease()) {
-      fenced = true;
-      fireFenced();
+      onAuthorityLost('takeover');
     }
   }, 3000);
 }
 
 export function resetStorageCoordinationForTests(): void {
-  fenced = false;
-  fencedListeners.clear();
   autoResumeLatch = false;
   try {
     localStorage.removeItem(LEASE_KEY);

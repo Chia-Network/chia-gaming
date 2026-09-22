@@ -44,6 +44,8 @@ pnpm-store/
 deploy_player_app/
 deploy_hub/
 desktop/release/
+.stage-player/
+.stage-hub/
 
 # macos
 .DS_Store

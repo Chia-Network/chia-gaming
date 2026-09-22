@@ -24,14 +24,21 @@ on_exit() {
 trap on_exit EXIT
 
 PLATFORM=""
+RELEASE_VERSION=""
 BUNDLE_ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --debug) set -x; BUNDLE_ARGS+=(--debug) ;;
         --platform=*) PLATFORM="${arg#--platform=}" ;;
+        --release-version=*) RELEASE_VERSION="${arg#--release-version=}" ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
+
+if [ -n "$RELEASE_VERSION" ] && ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+    echo "Invalid release version: $RELEASE_VERSION"
+    exit 1
+fi
 
 if ! command -v node &>/dev/null; then
     if [ -f ~/.nvm/nvm.sh ]; then
@@ -58,7 +65,7 @@ HUB_SERVICE_DIR="$HUB_DIR/hub-service"
 
 DATE=$(date +%Y%m%d)
 HASH=$(git -C "$ROOT_DIR" rev-parse --short=6 HEAD)
-TAG="${PLATFORM:+${PLATFORM}-}${DATE}-${HASH}"
+TAG="${RELEASE_VERSION:-${PLATFORM:+${PLATFORM}-}${DATE}-${HASH}}"
 GAME_TARBALL="chia-gaming-${TAG}.tgz"
 GAME_ZIP="chia-gaming-${TAG}.zip"
 HUB_TARBALL="chia-gaming-hub-${TAG}.tgz"

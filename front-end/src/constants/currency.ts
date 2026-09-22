@@ -1,12 +1,10 @@
-import { PREFERENCES_KEY } from '../hooks/savePreferences';
+import { storageRepository } from '../lib/session/storageRepository';
 
 /**
  * User-visible currency labels for the selected Chia network. Testnet uses the
  * T-prefixed nomenclature (TXCH / TMojo); mainnet keeps the standard names.
  *
- * The network preference is read from the persisted `appPreferences` blob so
- * this stays a side-effect-free leaf module (no dependency on the save graph,
- * which imports `util` and would otherwise form an import cycle).
+ * The repository-owned aggregate is the only preference authority.
  */
 export interface CurrencyLabels {
   /** Uppercase ticker: XCH / TXCH. */
@@ -22,14 +20,7 @@ export interface CurrencyLabels {
 }
 
 function readNetworkIsTestnet(): boolean {
-  try {
-    const raw = localStorage.getItem(PREFERENCES_KEY);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as { network?: unknown };
-    return parsed.network === 'testnet';
-  } catch {
-    return false;
-  }
+  return storageRepository.query('network') === 'testnet';
 }
 
 export function isTestnet(): boolean {

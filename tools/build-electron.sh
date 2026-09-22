@@ -14,7 +14,9 @@
 # repository; see desktop/scripts/package-app.mjs for why.
 #
 # Usage:
-#   tools/build-electron.sh [--platform=mac|win|linux] [--debug]
+#   tools/build-electron.sh [--platform=mac|win|linux]
+#                           [--arch=x64|arm64|universal]
+#                           [--release-version=X.Y.Z[-PRERELEASE]] [--debug]
 set -e
 
 SELF="$(basename "$0")"
@@ -30,22 +32,46 @@ on_exit() {
 trap on_exit EXIT
 
 PLATFORM=""
+ARCH=""
+RELEASE_VERSION=""
 BUNDLE_ARGS=()
 for arg in "$@"; do
     case "$arg" in
         --debug) set -x; BUNDLE_ARGS+=(--debug) ;;
         --platform=*) PLATFORM="${arg#--platform=}" ;;
+        --arch=*) ARCH="${arg#--arch=}" ;;
+        --release-version=*) RELEASE_VERSION="${arg#--release-version=}" ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
 done
 
+PACKAGE_ARGS=()
 case "$PLATFORM" in
-    mac)   PLATFORM_FLAG="--mac" ;;
-    win)   PLATFORM_FLAG="--win" ;;
-    linux) PLATFORM_FLAG="--linux" ;;
-    "")    PLATFORM_FLAG="" ;;
+    mac)   PACKAGE_ARGS+=(--mac) ;;
+    win)   PACKAGE_ARGS+=(--win) ;;
+    linux) PACKAGE_ARGS+=(--linux) ;;
+    "") ;;
     *) echo "Unknown platform: $PLATFORM (expected mac|win|linux)"; exit 1 ;;
 esac
+
+case "$ARCH" in
+    x64|arm64|universal) PACKAGE_ARGS+=("--$ARCH") ;;
+    "") ;;
+    *) echo "Unknown architecture: $ARCH (expected x64|arm64|universal)"; exit 1 ;;
+esac
+
+if [ "$ARCH" = "universal" ] && [ "$PLATFORM" != "mac" ]; then
+    echo "Universal architecture is supported only for macOS"
+    exit 1
+fi
+
+if [ -n "$RELEASE_VERSION" ]; then
+    if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+        echo "Invalid release version: $RELEASE_VERSION"
+        exit 1
+    fi
+    PACKAGE_ARGS+=("--release-version=$RELEASE_VERSION")
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -58,7 +84,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ELECTRON_RUN_AS_NODE makes the Electron binary behave as plain Node, which
 # breaks both electron-builder and any launch of the app itself.
-echo "=== Packaging Electron app ${PLATFORM_FLAG} ==="
-env -u ELECTRON_RUN_AS_NODE pnpm --dir "$ROOT_DIR" --filter chia-gaming-desktop run package $PLATFORM_FLAG
+echo "=== Packaging Electron app ${PACKAGE_ARGS[*]} ==="
+env -u ELECTRON_RUN_AS_NODE pnpm --dir "$ROOT_DIR" --filter chia-gaming-desktop run package "${PACKAGE_ARGS[@]}"
 
 ABORTED=0

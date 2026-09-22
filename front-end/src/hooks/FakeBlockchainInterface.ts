@@ -1,4 +1,4 @@
-import { encodeU64AsClvmHex, normalizeCoinStringHex } from '../util';
+import { encodeU64AsClvmHex, normalizeCoinStringHex, normalizeHexString } from '../util';
 import { getCurrencyLabels } from '../constants/currency';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { jsonParse, jsonStringify } from '../util/jsonSafe';
@@ -8,6 +8,12 @@ import {
   InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
+  WalletOfferCompletion,
+  WalletOfferProvider,
+  WalletOfferOperation,
+  WalletOfferRequest,
+  WalletOfferCancellationOutcome,
+  WalletSubmitOutcome,
 } from '../types/ChiaGaming';
 
 import { log, diagStack, diagNote } from '../services/log';
@@ -19,6 +25,161 @@ function sleepMs(ms: number): Promise<void> {
 function getWebSocketClass(): any {
   if (typeof globalThis.WebSocket !== 'undefined') return globalThis.WebSocket;
   throw new Error('No WebSocket implementation available');
+}
+
+export class SimulatorTransportError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'SimulatorTransportError';
+    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+export function classifyFakeBlockchainSubmitResult(result: unknown): WalletSubmitOutcome {
+  if (!Array.isArray(result)) {
+    return { status: 'rejected', detail: 'Malformed simulator spend response' };
+  }
+  const status =
+    typeof result[0] === 'bigint'
+      ? Number(result[0])
+      : typeof result[0] === 'number'
+        ? result[0]
+        : null;
+  if (status === 1) {
+    return { status: 'acknowledged' };
+  }
+  if (status !== 3) {
+    return {
+      status: 'rejected',
+      detail:
+        status === null
+          ? 'Malformed simulator spend response'
+          : `Unknown simulator spend status=${status}`,
+    };
+  }
+  const detail =
+    typeof result[1] === 'bigint'
+      ? Number(result[1])
+      : typeof result[1] === 'number'
+        ? result[1]
+        : null;
+  if (detail === null) {
+    return { status: 'rejected', detail: 'Malformed simulator spend rejection' };
+  }
+  const diagnostic = typeof result[2] === 'string' ? result[2] : '';
+  const message = `spend rejected: status=[${result[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
+  return { status: 'rejected', detail: message };
+}
+
+export function classifyFakeBlockchainSubmitError(error: unknown): WalletSubmitOutcome {
+  const detail = error instanceof Error ? error.message : String(error);
+  if (error instanceof SimulatorTransportError) {
+    return { status: 'unavailable', detail };
+  }
+  if (
+    /\bALREADY_INCLUDING_TRANSACTION\b|\bduplicate transaction\b|\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(
+      detail,
+    )
+  ) {
+    return { status: 'acknowledged', detail };
+  }
+  return { status: 'rejected', detail: detail || 'Simulator rejected spend' };
+}
+
+type SyntheticFeeOfferState = 'reserved' | 'submitted';
+
+function requireCoinHex(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^(?:0x)?[0-9a-fA-F]{64}$/.test(value)) {
+    throw new Error(`Malformed simulator wallet bundle ${label}`);
+  }
+  return normalizeHexString(value);
+}
+
+function requireU64(value: unknown, label: string): bigint {
+  const amount =
+    typeof value === 'bigint'
+      ? value
+      : typeof value === 'number' && Number.isSafeInteger(value)
+        ? BigInt(value)
+        : null;
+  if (amount === null || amount < 0n || amount > 0xffff_ffff_ffff_ffffn) {
+    throw new Error(`Malformed simulator wallet bundle ${label}`);
+  }
+  return amount;
+}
+
+function walletSpendInputCoinKeys(bundle: unknown): Set<string> {
+  if (typeof bundle !== 'object' || bundle === null || Array.isArray(bundle)) {
+    throw new Error('Malformed simulator wallet bundle');
+  }
+  const coinSpends = (bundle as { coin_spends?: unknown }).coin_spends;
+  if (!Array.isArray(coinSpends) || coinSpends.length === 0) {
+    throw new Error('Malformed simulator wallet bundle coin_spends');
+  }
+  const inputCoinKeys = new Set<string>();
+  for (const [index, coinSpend] of coinSpends.entries()) {
+    if (typeof coinSpend !== 'object' || coinSpend === null || Array.isArray(coinSpend)) {
+      throw new Error(`Malformed simulator wallet bundle coin_spends[${index}]`);
+    }
+    const coin = (coinSpend as { coin?: unknown }).coin;
+    if (typeof coin !== 'object' || coin === null || Array.isArray(coin)) {
+      throw new Error(`Malformed simulator wallet bundle coin_spends[${index}].coin`);
+    }
+    const fields = coin as Record<string, unknown>;
+    const parent = requireCoinHex(
+      fields.parent_coin_info,
+      `coin_spends[${index}].coin.parent_coin_info`,
+    );
+    const puzzleHash = requireCoinHex(fields.puzzle_hash, `coin_spends[${index}].coin.puzzle_hash`);
+    const amount = requireU64(fields.amount, `coin_spends[${index}].coin.amount`);
+    inputCoinKeys.add(`${parent}:${puzzleHash}:${amount}`);
+  }
+  return inputCoinKeys;
+}
+
+export class SyntheticFeeOfferTracker {
+  private readonly offers = new Map<
+    string,
+    { state: SyntheticFeeOfferState; inputCoinKeys: Set<string> }
+  >();
+
+  reserve(tradeId: string, feeBundle: unknown): void {
+    if (this.offers.has(tradeId)) {
+      throw new Error(`Duplicate simulator fee offer ${tradeId}`);
+    }
+    const inputCoinKeys = walletSpendInputCoinKeys(feeBundle);
+    for (const [existingTradeId, offer] of this.offers) {
+      if ([...inputCoinKeys].some((coinKey) => offer.inputCoinKeys.has(coinKey))) {
+        throw new Error(
+          `Simulator fee offer ${tradeId} reuses an input reserved by ${existingTradeId}`,
+        );
+      }
+    }
+    this.offers.set(tradeId, {
+      state: 'reserved',
+      inputCoinKeys,
+    });
+  }
+
+  hasOffers(): boolean {
+    return this.offers.size > 0;
+  }
+
+  markSubmitted(finalizedBundle: unknown): void {
+    const finalizedBundleInputCoinKeys = walletSpendInputCoinKeys(finalizedBundle);
+    for (const offer of this.offers.values()) {
+      if ([...offer.inputCoinKeys].every((coinKey) => finalizedBundleInputCoinKeys.has(coinKey))) {
+        offer.state = 'submitted';
+      }
+    }
+  }
+
+  cancel(tradeId: string): SyntheticFeeOfferState | undefined {
+    const offer = this.offers.get(tradeId);
+    if (!offer) return undefined;
+    this.offers.delete(tradeId);
+    return offer.state;
+  }
 }
 
 export class FakeBlockchainInterface implements InternalBlockchainInterface {
@@ -48,11 +209,33 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private connectLoopPromise: Promise<void> | null = null;
   private blockWaiters = new Set<() => void>();
   private setupComplete = false;
+  private nextSyntheticTradeId = 0;
+  private syntheticFeeOffers = new SyntheticFeeOfferTracker();
+  private walletOfferProvider: WalletOfferProvider | null = null;
 
   constructor(wsUrl: string) {
     this.wsUrl = wsUrl;
     this.blockchainAddressData = { puzzleHash: '' };
     this.deleted = false;
+  }
+
+  getWalletOfferProvider(
+    owner?: Pick<WalletOfferOperation['owner'], 'installationPlayerId' | 'peerSessionId'>,
+  ) {
+    const identity = owner?.installationPlayerId ?? this.uniqueId;
+    if (!identity) return null;
+    if (
+      this.walletOfferProvider?.scope.provider !== 'simulator' ||
+      this.walletOfferProvider.scope.identity !== identity
+    ) {
+      this.walletOfferProvider = {
+        capability: 'terminal',
+        scope: { provider: 'simulator', identity },
+        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
+        cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
+      };
+    }
+    return this.walletOfferProvider;
   }
 
   private connect(): Promise<void> {
@@ -114,7 +297,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
           );
         }
         for (const [, p] of this.pending) {
-          p.reject(new Error('WebSocket closed'));
+          p.reject(new SimulatorTransportError('WebSocket closed'));
         }
         this.pending.clear();
         // Fire-and-forget reconnect.  A deliberate shutdown makes runConnectLoop
@@ -218,13 +401,18 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
 
   private sendRequest(method: string, params?: any): Promise<any> {
     if (!this.ws || this.ws.readyState !== 1) {
-      return Promise.reject(new Error('not connected'));
+      return Promise.reject(new SimulatorTransportError('not connected'));
     }
     const id = this.nextId++;
     const msg = jsonStringify({ id, method, params: params ?? {} });
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.ws!.send(msg);
+      try {
+        this.ws!.send(msg);
+      } catch (error) {
+        this.pending.delete(id);
+        reject(new SimulatorTransportError('WebSocket send failed', error));
+      }
     });
   }
 
@@ -245,19 +433,27 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     _changePuzzleHash: string,
     _source?: string,
     _fee?: bigint,
-  ): Promise<string> {
-    const status_array = await this.sendRequest('spend', { blob });
-    if (!Array.isArray(status_array) || status_array.length < 1) {
-      throw new Error('status result array was empty');
+  ): Promise<WalletSubmitOutcome> {
+    if (this.syntheticFeeOffers.hasOffers()) {
+      try {
+        walletSpendInputCoinKeys(_spendBundle);
+      } catch (error) {
+        return {
+          status: 'rejected',
+          detail: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
-    if (status_array[0] != 1) {
-      const detail = status_array[1] ?? '?';
-      const diagnostic = status_array[2] ?? '';
-      const msg = `spend rejected: status=[${status_array[0]},${detail}]${diagnostic ? ' ' + diagnostic : ''}`;
-      console.warn('[blockchain]', msg);
-      throw new Error(msg);
+    try {
+      const result = classifyFakeBlockchainSubmitResult(await this.sendRequest('spend', { blob }));
+      if (result.status === 'acknowledged') {
+        this.syntheticFeeOffers.markSubmitted(_spendBundle);
+      }
+      if (result.status === 'rejected') console.warn('[blockchain]', result.detail);
+      return result;
+    } catch (error) {
+      return classifyFakeBlockchainSubmitError(error);
     }
-    return '';
   }
 
   async getBalance(): Promise<bigint> {
@@ -283,6 +479,13 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     return this.sendRequest('farm_block');
   }
 
+  async replaceChain(rollbackHeight: bigint, targetHeight: bigint): Promise<bigint> {
+    return this.sendRequest('replace_chain', {
+      rollbackHeight: Number(rollbackHeight),
+      targetHeight: Number(targetHeight),
+    });
+  }
+
   waitForNextBlock(timeoutMs = 15_000): Promise<void> {
     return new Promise((resolve, reject) => {
       const finish = () => {
@@ -298,24 +501,67 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     });
   }
 
-  async createOfferForIds(
-    uniqueId: string,
-    offer: { [walletId: string]: bigint },
-    extraConditions?: Array<{ opcode: bigint; args: string[] }>,
-    coinIds?: string[],
-    maxHeight?: bigint,
-    _openingFee?: bigint,
-  ): Promise<any | null> {
-    const params: any = { who: uniqueId, offer };
-    const conditions = [...(extraConditions ?? [])];
+  async beginWalletOffer(
+    _operation: WalletOfferOperation,
+    request: WalletOfferRequest,
+  ): Promise<WalletOfferCompletion> {
+    if (request.kind === 'fee') {
+      return this.beginFeeOffer(request);
+    }
+    const params: any = { who: request.uniqueId, offer: request.offer };
+    const conditions = [...(request.extraConditions ?? [])];
+    const { maxHeight } = request;
     if (maxHeight !== undefined) {
       conditions.push({ opcode: 87n, args: [encodeU64AsClvmHex(maxHeight)] });
     }
     if (conditions.length > 0) params.extraConditions = conditions;
-    if (coinIds) params.coinIds = coinIds;
+    if (request.coinIds) params.coinIds = request.coinIds;
     const raw = await this.sendRequest('create_offer_for_ids', params);
-    if (!raw) return null;
-    return typeof raw === 'string' ? jsonParse(raw) : raw;
+    if (!raw) return { kind: 'failure', reason: 'simulator could not build a funding offer' };
+    return {
+      kind: 'created-ephemeral',
+      material: { kind: 'bundle', bundle: typeof raw === 'string' ? jsonParse(raw) : raw },
+    };
+  }
+
+  private async beginFeeOffer(
+    request: Extract<WalletOfferRequest, { kind: 'fee' }>,
+  ): Promise<WalletOfferCompletion> {
+    const { fee, concurrentSpendCoinId } = request;
+    if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
+    try {
+      const bundle = await this.sendRequest('create_offer_for_ids', {
+        who: this.uniqueId,
+        offer: { '1': -fee },
+        nativeFee: true,
+        extraConditions: [
+          { opcode: 64n, args: [concurrentSpendCoinId] },
+          { opcode: 52n, args: [encodeU64AsClvmHex(fee)] },
+        ],
+      });
+      if (!bundle) return { kind: 'failure', reason: 'simulator could not build a fee offer' };
+      const tradeId = `sim-fee-${this.uniqueId}-${this.nextSyntheticTradeId++}`;
+      this.syntheticFeeOffers.reserve(tradeId, bundle);
+      return { kind: 'created-reserved', material: { kind: 'bundle', bundle }, tradeId };
+    } catch (error) {
+      if (error instanceof SimulatorTransportError) {
+        return { kind: 'unavailable', reason: error.message };
+      }
+      return {
+        kind: 'failure',
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async beginWalletOfferCancellation(tradeId: string): Promise<WalletOfferCancellationOutcome> {
+    const state = this.syntheticFeeOffers.cancel(tradeId);
+    if (state === undefined) {
+      return { status: 'already-terminal', detail: 'simulator fee offer is not active' };
+    }
+    return state === 'submitted'
+      ? { status: 'already-terminal', detail: 'simulator fee offer was spent' }
+      : { status: 'cancelled' };
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
@@ -378,6 +624,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async beginConnect(uniqueId: string, _fresh = false): Promise<ConnectionSetup> {
+    this.uniqueId = uniqueId;
     return {
       qrUri: `sim://${this.wsUrl.replace('ws://', '')}/${uniqueId}`,
       title: 'Simulator',

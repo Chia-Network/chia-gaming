@@ -1,11 +1,11 @@
 import { Program } from 'clvm-lib';
 import {
   KrunkHandler,
-  krunkStateCodec,
   type KrunkGameState,
   type KrunkHand,
   type KrunkHandState,
 } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
@@ -136,11 +136,9 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   const adapters = await createActivePair(poller, 11);
   const proposal: HandProposal = {
     gameType: 'krunk',
-    playerAContribution: 100n,
-    playerBContribution: 100n,
     senderIsPlayerA: true,
     gameTimeout: 15n,
-    parameters: null,
+    parameters: 100n,
   };
   const lanes = adapters.map((adapter) => {
     const controller = adapter.blob!;
@@ -204,9 +202,9 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   await exchange();
   const review = lanes[1].runtime
     .getState()
-    .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-review');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-review');
   assert.ok(review);
-  lanes[1].runtime.dispatch({ type: 'accept-review', primaryId: review.primaryId });
+  lanes[1].runtime.dispatch({ type: 'accept-review', id: review.id });
   await exchange();
 
   const firstIds = [...lanes[0].runtime.getState().model.game.currentHandIds];
@@ -313,13 +311,14 @@ export async function runKrunkReloadCoverage(poller: BlockchainPoller): Promise<
   await exchange();
   const secondProposal = lanes[1].runtime
     .getState()
-    .model.betweenHand.proposalGroups.find((group) => group.disposition === 'incoming-cached');
+    .model.betweenHand.pendingProposals.find((proposal) => proposal.lifecycle === 'peer-cached');
   assert.ok(secondProposal);
-  const secondIds = secondProposal.memberIds;
-  assert.equal(secondIds.length, 2);
-  assert.notDeepEqual(secondIds, firstIds);
+  assert.equal(secondProposal.id.length > 0, true);
   lanes[1].runtime.dispatch({ type: 'choose-same-terms' });
   await exchange();
+  const secondIds = lanes[0].runtime.getState().model.game.currentHandIds;
+  assert.equal(secondIds.length, 2);
+  assert.notDeepEqual(secondIds, firstIds);
 
   assert.deepEqual(lanes[0].runtime.getState().model.game.currentHandIds, secondIds);
   assert.equal(hand(lanes[0]).members.length, 2);

@@ -1,5 +1,6 @@
 import {
   createSessionModel,
+  decodeDurableApplicationState,
   channelStatusModelFromPayload,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -9,14 +10,13 @@ import {
   selectGameSessionView,
   selectGameSpecificView,
   selectSessionPhase,
-  sessionModelFromSave,
   nextGameInstanceAfterLocalTurn,
 } from '../session/model';
-import { decodeChannelStatusPayload } from '../session/persistence';
-import type { SessionSave } from '../../hooks/save';
+import { validateChannelStatus } from '../session/persistencePayloads';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave({
     myContribution: '100',
     theirContribution: '100',
@@ -362,9 +362,30 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
   });
 
-  it('promotes inbound integer state numbers to bigint before persistence', () => {
-    expect(
-      decodeChannelStatusPayload({
+  it('owns WASM channel coin bytes across memory growth', () => {
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    const wasmCoin = new Uint8Array(memory.buffer, 0, 72);
+    wasmCoin.set(Array.from({ length: wasmCoin.length }, (_, index) => index));
+    const status = channelStatusModelFromPayload({
+      state: 'ShuttingDown',
+      advisory: null,
+      coin: wasmCoin,
+      our_balance: { Amount: '100' },
+      their_balance: { Amount: '101' },
+      game_allocated: { Amount: '0' },
+    });
+
+    memory.grow(1);
+
+    expect(wasmCoin.byteLength).toBe(0);
+    expect(status.coin).toBeInstanceOf(Uint8Array);
+    expect(status.coin).toHaveLength(72);
+    expect(status.coin?.[71]).toBe(71);
+  });
+
+  it('rejects number state numbers at the model event boundary', () => {
+    expect(() =>
+      validateChannelStatus({
         state: 'Active',
         advisory: null,
         coin: null,
@@ -375,11 +396,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         unrolling_state_number: 2,
         preempting_state_number: 3,
       }),
-    ).toMatchObject({
-      state_number: 0n,
-      unrolling_state_number: 2n,
-      preempting_state_number: 3n,
-    });
+    ).toThrow('channelStatus.state_number');
   });
 
   it('names unroll, preempt, and finish-unroll actions with the relevant state numbers', () => {
@@ -559,7 +576,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       unroll_initiator: 'us' as const,
       semantic_phase: 'finishing_spending' as const,
     };
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       baseSave({
         version: 22n,
         playerId: 'p1',
@@ -567,7 +584,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         channelStatus,
         coinsOfInterest: [],
       }),
-    );
+    ).model;
 
     expect(restored.channel.status).toEqual(channelStatusModelFromPayload(channelStatus));
     expect(restored.channel.status.ourBalance).toBe('42');
@@ -578,7 +595,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
   });
 
   it('restores pre-progress saves with unknown progress fields', () => {
-    const restored = sessionModelFromSave(
+    const restored = decodeDurableApplicationState(
       liveEnvelope({
         activeGameIds: [],
         channelStatus: {
@@ -590,7 +607,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
           game_allocated: null,
         },
       }),
-    );
+    ).model;
 
     expect(restored.channel.status).toMatchObject({
       unrollInitiator: null,
@@ -730,8 +747,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
           '7': {
             id: '7',
             amount: '20',
-            coin: { coinHex: null, turnState: 'ended' },
-            handStatus: 'ended',
+            coinHex: null,
+            presentation: 'ended',
             terminal: {
               type: 'settled',
               outcome: 'forfeited_skipped_reveal',
@@ -774,8 +791,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
             '7': {
               id: '7',
               amount: '100',
-              coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-              handStatus: 'playing-move',
+              coinHex: 'abcd',
+              presentation: 'playing-move',
               terminal: INITIAL_GAME_TERMINAL_MODEL,
             },
           },
@@ -799,20 +816,31 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         | 'finishing-spending'
         | 'opponent-illegal-move',
       coinHex: string | null,
-    ) => ({
-      activeIds: ['7'],
-      currentHandIds: ['7'],
-      instances: {
-        '7': {
-          id: '7',
-          amount: '100',
-          coin: { coinHex, turnState },
-          handStatus: 'active' as const,
-          terminal: INITIAL_GAME_TERMINAL_MODEL,
+    ) => {
+      const presentation = {
+        'their-turn': 'off-chain-their-turn',
+        'playing-on-chain': 'playing-move',
+        replaying: 'replaying-move',
+        finishing: 'finishing',
+        'finishing-waiting-timeout': 'finishing-waiting-timeout',
+        'finishing-spending': 'finishing-spending',
+        'opponent-illegal-move': 'illegal-move',
+      }[turnState] as const;
+      return {
+        activeIds: ['7'],
+        currentHandIds: ['7'],
+        instances: {
+          '7': {
+            id: '7',
+            amount: '100',
+            coinHex,
+            presentation,
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
         },
-      },
-      lastDisplayedId: '7',
-    });
+        lastDisplayedId: '7',
+      };
+    };
     expect(
       selectGameDashboardView(
         createSessionModel({
@@ -903,15 +931,15 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       '7': {
         id: '7',
         amount: '100',
-        coin: { coinHex: 'aaaa', turnState: 'my-turn' as const },
-        handStatus: 'our-turn' as const,
+        coinHex: 'aaaa',
+        presentation: 'on-chain-my-turn' as const,
         terminal: INITIAL_GAME_TERMINAL_MODEL,
       },
       '9': {
         id: '9',
         amount: '100',
-        coin: { coinHex: 'bbbb', turnState: 'their-turn' as const },
-        handStatus: 'their-turn' as const,
+        coinHex: 'bbbb',
+        presentation: 'on-chain-their-turn' as const,
         terminal: INITIAL_GAME_TERMINAL_MODEL,
       },
     };
@@ -956,11 +984,11 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const makeInstance = (id: string, handStatus: 'our-turn' | 'their-turn') => ({
       id,
       amount: '100',
-      coin: {
-        coinHex: `${id}${id}`,
-        turnState: handStatus === 'our-turn' ? ('my-turn' as const) : ('their-turn' as const),
-      },
-      handStatus,
+      coinHex: `${id}${id}`,
+      presentation:
+        handStatus === 'our-turn'
+          ? ('on-chain-my-turn' as const)
+          : ('on-chain-their-turn' as const),
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     });
     const first = makeInstance('7', 'our-turn');
@@ -1000,8 +1028,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const settled = {
       id: 'picker',
       amount: '100',
-      coin: { coinHex: null, turnState: 'ended' as const, onChain: true },
-      handStatus: 'ended' as const,
+      coinHex: null,
+      presentation: 'ended' as const,
       terminal: {
         type: 'settled' as const,
         outcome: 'settled_cleanly' as const,
@@ -1013,8 +1041,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const active = {
       id: 'guesser',
       amount: '100',
-      coin: { coinHex: null, turnState: 'their-turn' as const, onChain: true },
-      handStatus: 'their-turn' as const,
+      coinHex: null,
+      presentation: 'on-chain-their-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     };
     const model = createSessionModel({
@@ -1044,14 +1072,13 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const pending = (id: string) => ({
       id,
       amount: '100',
-      coin: { coinHex: null, turnState: 'my-turn' as const },
-      handStatus: 'active' as const,
+      coinHex: null,
+      presentation: 'off-chain-my-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     });
     const ended = (id: string, myReward: string) => ({
       ...pending(id),
-      coin: { coinHex: null, turnState: 'ended' as const },
-      handStatus: 'ended' as const,
+      presentation: 'ended' as const,
       terminal: {
         type: 'settled' as const,
         outcome: 'settled_cleanly' as const,
@@ -1186,8 +1213,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
             'game-1': pending('game-1'),
             'game-2': {
               ...pending('game-2'),
-              coin: { coinHex: null, turnState: 'ended' },
-              handStatus: 'ended',
+              presentation: 'ended',
               terminal: {
                 type: 'game-error',
                 outcome: null,

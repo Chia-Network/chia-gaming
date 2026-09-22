@@ -1,61 +1,48 @@
 import { isCatalogGameType, isProposalParameterValue, validateHandProposal } from '../gameRegistry';
-import type { ComposeDraftState } from './composeDraft';
 import type { SessionPresentationSave } from './saveEnvelope';
-import type { HandProposal, ProposalGroupModel } from './types';
+import type { HandProposal, PendingProposalModel } from './types';
+import { isUncancelledProposalLifecycle } from './proposalPolicy';
 import {
-  parseDecimalString,
+  requireBigint,
   requireBoolean,
+  requireExactKeys,
   requireRecord,
   requireString,
-  requireUniqueIds,
 } from './persistencePrimitives';
 
-export function encodeComposeDraftState(
-  compose: ComposeDraftState,
-): SessionPresentationSave['betweenHandCompose'] {
-  return {
-    selected_game: compose.selectedGame,
-    game_timeout: compose.gameTimeout.toString(),
-    proposal_sent: compose.proposalSent,
-  };
-}
+const COMPOSE_KEYS = new Set(['selectedGame', 'gameTimeout']);
+const HAND_PROPOSAL_KEYS = new Set(['senderIsPlayerA', 'gameTimeout', 'gameType', 'parameters']);
+const PENDING_PROPOSAL_KEYS = new Set(['id', 'lifecycle', 'handProposal']);
 
-export function parseComposeDraftState(value: unknown): ComposeDraftState {
+export function parseComposeDraftState(
+  value: unknown,
+): SessionPresentationSave['betweenHandCompose'] {
   const saved = requireRecord(value, 'betweenHandCompose');
-  const selectedGame = saved.selected_game;
+  requireExactKeys(saved, COMPOSE_KEYS, 'betweenHandCompose');
+  const selectedGame = saved.selectedGame;
   if (!isCatalogGameType(selectedGame)) {
-    throw new Error('Garbled save: invalid betweenHandCompose.selected_game');
+    throw new Error('Garbled save: invalid betweenHandCompose.selectedGame');
   }
   return {
-    selectedGame: selectedGame,
-    gameTimeout: parseDecimalString(saved.game_timeout, 'betweenHandCompose.game_timeout', 0n),
-    proposalSent: requireBoolean(saved.proposal_sent, 'betweenHandCompose.proposal_sent'),
+    selectedGame,
+    gameTimeout: requireBigint(saved.gameTimeout, 'betweenHandCompose.gameTimeout'),
   };
 }
 
 export function parseHandProposalSnapshot(value: unknown, label: string): HandProposal {
   const saved = requireRecord(value, label);
-  const gameType = saved.game_type;
+  requireExactKeys(saved, HAND_PROPOSAL_KEYS, label);
+  const gameType = saved.gameType;
   if (!isCatalogGameType(gameType)) {
-    throw new Error(`Garbled save: unknown ${label}.game_type ${String(gameType)}`);
+    throw new Error(`Garbled save: unknown ${label}.gameType ${String(gameType)}`);
   }
   if (!isProposalParameterValue(saved.parameters)) {
     throw new Error(`Garbled save: invalid ${label}.parameters`);
   }
   const terms: HandProposal = {
     gameType,
-    playerAContribution: parseDecimalString(
-      saved.player_a_contribution,
-      `${label}.player_a_contribution`,
-      1n,
-    ),
-    playerBContribution: parseDecimalString(
-      saved.player_b_contribution,
-      `${label}.player_b_contribution`,
-      1n,
-    ),
-    senderIsPlayerA: requireBoolean(saved.sender_is_player_a, `${label}.sender_is_player_a`),
-    gameTimeout: parseDecimalString(saved.game_timeout, `${label}.game_timeout`, 1n),
+    senderIsPlayerA: requireBoolean(saved.senderIsPlayerA, `${label}.senderIsPlayerA`),
+    gameTimeout: requireBigint(saved.gameTimeout, `${label}.gameTimeout`, 1n),
     parameters: saved.parameters,
   };
   if (!validateHandProposal(terms)) {
@@ -64,66 +51,41 @@ export function parseHandProposalSnapshot(value: unknown, label: string): HandPr
   return terms;
 }
 
-export function parseOptionalHandProposalSnapshot(
-  saved: unknown,
-  label: string,
-): HandProposal | null {
-  return saved === null ? null : parseHandProposalSnapshot(saved, label);
-}
-
-export function parseProposalGroups(value: unknown, label: string): ProposalGroupModel[] {
+export function parsePendingProposals(value: unknown, label: string): PendingProposalModel[] {
   if (!Array.isArray(value)) throw new Error(`Garbled save: invalid ${label}`);
   const seen = new Set<string>();
-  let localOutgoing = 0;
-  const groups = value.map((entry, index): ProposalGroupModel => {
-    const groupLabel = `${label}[${index}]`;
-    const saved = requireRecord(entry, groupLabel);
-    const primaryId = requireString(saved.primary_id, `${groupLabel}.primary_id`);
-    const memberIds = requireUniqueIds(saved.member_ids, `${groupLabel}.member_ids`, true);
-    if (primaryId !== memberIds[0]) {
-      throw new Error(`Garbled save: ${groupLabel}.primary_id is not the first member`);
-    }
-    for (const id of memberIds) {
-      if (seen.has(id)) throw new Error(`Garbled save: proposal member ${id} appears twice`);
-      seen.add(id);
-    }
-    const origin = saved.origin;
-    if (origin !== 'local' && origin !== 'peer') {
-      throw new Error(`Garbled save: invalid ${groupLabel}.origin`);
-    }
-    const disposition = saved.disposition;
+  let uncancelled = 0;
+  const proposals = value.map((entry, index): PendingProposalModel => {
+    const proposalLabel = `${label}[${index}]`;
+    const saved = requireRecord(entry, proposalLabel);
+    requireExactKeys(saved, PENDING_PROPOSAL_KEYS, proposalLabel);
+    const id = requireString(saved.id, `${proposalLabel}.id`);
+    if (seen.has(id)) throw new Error(`Garbled save: duplicate pending proposal ${id}`);
+    seen.add(id);
+    const lifecycle = saved.lifecycle;
     if (
-      disposition !== 'outgoing' &&
-      disposition !== 'incoming-cached' &&
-      disposition !== 'incoming-review' &&
-      disposition !== 'accepted'
+      lifecycle !== 'local-outgoing' &&
+      lifecycle !== 'local-cancel-queued' &&
+      lifecycle !== 'peer-cached' &&
+      lifecycle !== 'peer-review' &&
+      lifecycle !== 'peer-accept-queued' &&
+      lifecycle !== 'peer-cancel-queued'
     ) {
-      throw new Error(`Garbled save: invalid ${groupLabel}.disposition`);
+      throw new Error(`Garbled save: invalid ${proposalLabel}.lifecycle`);
     }
-    if (disposition === 'outgoing' && origin !== 'local') {
-      throw new Error(`Garbled save: outgoing ${groupLabel} is not local`);
-    }
-    if (
-      (disposition === 'incoming-cached' || disposition === 'incoming-review') &&
-      origin !== 'peer'
-    ) {
-      throw new Error(`Garbled save: incoming ${groupLabel} is not peer-originated`);
-    }
-    if (origin === 'local' && disposition === 'outgoing') localOutgoing += 1;
+    if (isUncancelledProposalLifecycle(lifecycle)) uncancelled += 1;
     const handProposal = parseHandProposalSnapshot(
-      saved.hand_proposal,
-      `${groupLabel}.hand_proposal`,
+      saved.handProposal,
+      `${proposalLabel}.handProposal`,
     );
     return {
-      primaryId,
-      memberIds,
+      id,
       handProposal,
-      origin,
-      disposition,
+      lifecycle,
     };
   });
-  if (localOutgoing > 1) {
-    throw new Error('Garbled save: multiple local outgoing proposal groups');
+  if (uncancelled > 1) {
+    throw new Error('Garbled save: multiple uncancelled proposals');
   }
-  return groups;
+  return proposals;
 }

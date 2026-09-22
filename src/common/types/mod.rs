@@ -16,6 +16,7 @@ mod node;
 mod private_key;
 mod program;
 mod program_ref;
+mod proposal_id;
 mod public_key;
 mod puzzle;
 mod puzzle_hash;
@@ -39,14 +40,15 @@ pub use self::node::Node;
 pub use self::private_key::PrivateKey;
 pub use self::program::{Program, Sha256tree, ToQuotedProgram};
 pub use self::program_ref::ProgramRef;
+pub use self::proposal_id::{LocalProposalId, WireProposalId};
 pub use self::public_key::PublicKey;
 pub use self::puzzle::Puzzle;
 pub use self::puzzle_hash::PuzzleHash;
 pub use self::serializable_chacha8::ChaCha8SerializationWrapper;
 pub use self::sha256input::{atom_from_clvm, Hash, Sha256Input};
 pub use self::spend::{
-    check_for_hex, complete_fee_offer_bundle, convert_coinset_org_spend_to_spend,
-    fee_payment_puzzle_hash, BrokenOutCoinSpendInfo, CoinSpend, CoinsetCoin, CoinsetSpendBundle,
-    CoinsetSpendRecord, Spend, SpendBundle,
+    aggregate_wallet_fee_bundle, check_for_hex, complete_fee_offer_bundle,
+    convert_coinset_org_spend_to_spend, normalize_fee_offer_bundle, BrokenOutCoinSpendInfo,
+    CoinSpend, CoinsetCoin, CoinsetSpendBundle, CoinsetSpendRecord, Spend, SpendBundle,
 };
 pub use self::timeout::Timeout;

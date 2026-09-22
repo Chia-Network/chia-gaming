@@ -382,7 +382,10 @@ function NotificationOverlay({
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
-  const isError = notification.kind === 'infra-error' || notification.kind === 'action-failed';
+  const isError =
+    notification.kind === 'infra-error' ||
+    notification.kind === 'action-failed' ||
+    notification.kind === 'recoverable-internal-error';
   const titleColor = 'text-canvas-text-contrast';
 
   useEffect(() => {
@@ -546,9 +549,12 @@ export interface GameSessionProps {
     failureHandler: (reason: string) => void,
   ) => void;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../hooks/save').SessionSave;
+  sessionSave?: import('../lib/session/persistence').RehydratedDurableApplicationState;
   onGameActivity?: () => void;
-  onSessionPhaseChange?: (phase: Exclude<SessionPhase, 'none'>, hasError: boolean) => void;
+  onSessionPhaseChange?: (
+    phase: Exclude<SessionPhase, 'none'>,
+    hasError: boolean,
+  ) => void | boolean | Promise<boolean>;
   onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
   onSessionModelChange?: (model: SessionModel) => void;
   onCoinsChange?: (coins: import('../types/ChiaGaming').CoinOfInterestEntry[]) => void;
@@ -598,6 +604,15 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   }, [sessionController, session.sessionModel, onCoinsChange, terminalMode]);
 
   const resolvedPhaseReportedRef = useRef(false);
+  const resolvedPhaseReportInFlightRef = useRef<Promise<void> | null>(null);
+  const [terminalRetryRevision, setTerminalRetryRevision] = useState(0);
+  useEffect(
+    () =>
+      sessionController.onTerminalFinalizationRetry(() => {
+        setTerminalRetryRevision((revision) => revision + 1);
+      }),
+    [sessionController],
+  );
   useEffect(() => {
     const phase = session.sessionPhase;
     if (
@@ -615,7 +630,18 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
         settledOutcome != null &&
         isErrorSettlementOutcome(settledOutcome));
     if (phase === 'resolved') {
-      resolvedPhaseReportedRef.current = true;
+      if (resolvedPhaseReportInFlightRef.current) return;
+      const report = Promise.resolve(onSessionPhaseChange(phase, hasError))
+        .then((completed) => {
+          if (completed === true) resolvedPhaseReportedRef.current = true;
+        })
+        .finally(() => {
+          if (resolvedPhaseReportInFlightRef.current === report) {
+            resolvedPhaseReportInFlightRef.current = null;
+          }
+        });
+      resolvedPhaseReportInFlightRef.current = report;
+      return;
     }
     onSessionPhaseChange(phase, hasError);
   }, [
@@ -623,8 +649,10 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
     session.channelStatus.state,
     session.gameTerminal.type,
     session.gameTerminal.outcome,
+    session.sessionModel,
     onSessionPhaseChange,
     suppressPhaseReporting,
+    terminalRetryRevision,
   ]);
 
   const previousGameModel = useRef(session.sessionModel.game);
@@ -672,7 +700,7 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
 
   // Rising edge: proposal cached in decision mode, or replaced while reviewing.
   // Combined id so promoting cache → review does not double-fire.
-  const attentionProposalId = session.incomingProposalGroup?.primaryId ?? null;
+  const attentionProposalId = session.incomingProposal?.id ?? null;
   const prevAttentionProposalId = useRef(attentionProposalId);
   useEffect(() => {
     const prev = prevAttentionProposalId.current;
@@ -716,7 +744,9 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
   const handEverStarted = session.handKey > 0;
   const setupCoverCopy = channelSetupCoverCopy(handEverStarted, session.channelStatus);
   const hasPersistedGameState = !!session.gameSpecificView.handState;
-  const hasReviewPeerProposal = session.incomingProposalGroup?.disposition === 'incoming-review';
+  const hasReviewPeerProposal =
+    session.incomingProposal?.lifecycle === 'peer-review' ||
+    session.incomingProposal?.lifecycle === 'peer-accept-queued';
   const showBetweenHandOverlay =
     session.betweenHands &&
     session.channelStatus.state === 'Active' &&
@@ -851,7 +881,8 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
             <ComposeProposalDialog session={session} maxPerHandMojos={maxPerHandMojos} />
           )}
           {session.betweenHandMode === 'review-incoming-proposal' &&
-            session.incomingProposalGroup?.disposition === 'incoming-review' && (
+            (session.incomingProposal?.lifecycle === 'peer-review' ||
+              session.incomingProposal?.lifecycle === 'peer-accept-queued') && (
               <ReviewProposalDialog session={session} />
             )}
         </BetweenHandOverlay>

@@ -9,11 +9,13 @@ import { handProposalsEqual } from '../gameRegistry';
 import { parseAmount } from '../wasm/parseAmount';
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { durableNotificationKind } from './sessionTransition';
-import { proposalGroupFromProposalMade } from './incomingProposal';
+import { pendingProposalFromProposalMade } from './incomingProposal';
 import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './gameSessionEvents';
 import { channelStatusModelFromPayload } from './normalization';
 import { isTerminalGameStatus, type NonTerminalGameStatusPayload } from './presentation';
-import { selectProposalGroupByDisposition, selectProposalGroupByMemberId } from './selectors';
+import { isUncancelledProposal } from './proposalPolicy';
+import { selectPendingProposal, selectProposalByLifecycle } from './selectors';
+import { proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -58,14 +60,100 @@ export function reduceSessionNotification(
     };
     return id;
   };
-  const cancelStale = (exceptId?: string) => {
-    const proposals = current.model.betweenHand.proposalGroups.filter(
-      (group) => group.origin === 'peer' && group.disposition !== 'accepted',
+  const cancelStale = () => {
+    const proposals = current.model.betweenHand.pendingProposals.filter(
+      (proposal) => proposalOrigin(proposal) === 'peer',
     );
     for (const proposal of proposals) {
-      if (proposal.primaryId !== exceptId) {
-        effects.push({ type: 'controller-cancel-proposal', id: proposal.primaryId });
+      cancelPeerProposalAutomatically(proposal.id);
+    }
+  };
+  const cancelPeerProposalAutomatically = (id: string) => {
+    const proposal = selectPendingProposal(current.model, id);
+    if (!proposal || proposalOrigin(proposal) !== 'peer') {
+      throw new Error(`Automatic peer proposal cancellation ${id} missing peer proposal`);
+    }
+    if (proposal.lifecycle !== 'peer-cancel-queued') {
+      step({ type: 'set-proposal-lifecycle', id, lifecycle: 'peer-cancel-queued' });
+    }
+    effects.push({ type: 'controller-cancel-proposal', id });
+  };
+  const resolveProposalCancellation = (
+    id: string,
+    reason: string,
+    insufficient?: { our_balance_short?: boolean; their_balance_short?: boolean },
+  ) => {
+    const before = current;
+    const proposal = selectPendingProposal(before.model, id);
+    if (!proposal) {
+      throw new Error(`${reason} ${id} missing normalized pending proposal`);
+    }
+    const terms = proposal?.handProposal ?? null;
+    const wasOurs = proposal ? proposalOrigin(proposal) === 'local' : false;
+    if (proposal) {
+      step({ type: 'clear-proposals', ids: [id] });
+      if (
+        proposal.lifecycle === 'peer-review' ||
+        proposal.lifecycle === 'peer-accept-queued' ||
+        proposal.lifecycle === 'local-cancel-queued'
+      ) {
+        step({ type: 'set-between-hand-mode', mode: 'compose-proposal' });
       }
+    }
+    if (insufficient) {
+      const who =
+        insufficient.our_balance_short && insufficient.their_balance_short
+          ? 'Both balances are'
+          : insufficient.our_balance_short
+            ? 'Your balance is'
+            : insufficient.their_balance_short
+              ? "The other player's balance is"
+              : 'The channel balance is';
+      step({
+        type: 'push-game-notification',
+        notification: {
+          id: nextId(),
+          kind: 'insufficient-bal',
+          title: 'Notice',
+          message: `${who} insufficient for that proposal. The hand could not start.`,
+        },
+      });
+      step({ type: 'set-pending-retry-terms', handProposal: null });
+    } else if (LOCAL_CANCEL_REASONS.has(reason) && terms) {
+      step({ type: 'set-pending-retry-terms', handProposal: terms });
+    } else if (reason === 'CancelledByPeer') {
+      step({ type: 'set-pending-retry-terms', handProposal: null });
+      step({ type: 'set-compose-proposal-sent', sent: false });
+      const sameTerms = before.model.betweenHand.newHandRequested && wasOurs;
+      step({ type: 'set-new-hand-requested', requested: false });
+      if (sameTerms) {
+        current = {
+          ...current,
+          model: {
+            ...current.model,
+            betweenHand: {
+              ...current.model.betweenHand,
+              compose: applyHandProposalToComposeDraft(
+                current.model.betweenHand.compose,
+                before.model.betweenHand.lastHandProposal,
+              ),
+              mode: 'compose-proposal',
+            },
+          },
+        };
+      } else {
+        step({
+          type: 'push-game-notification',
+          notification: {
+            id: nextId(),
+            kind: 'proposal-rejected',
+            title: 'Notice',
+            message: 'Your proposal was rejected by the other side.',
+          },
+        });
+      }
+    } else {
+      step({ type: 'set-pending-retry-terms', handProposal: null });
     }
   };
 
@@ -117,12 +205,12 @@ export function reduceSessionNotification(
       if (!current.coordination.firstGameAccepted) {
         step({ type: 'set-first-game-accepted', accepted: true });
         step({ type: 'game', action: { type: 'channel-active' } });
-        const cached = selectProposalGroupByDisposition(current.model, 'incoming-cached');
+        const cached = selectProposalByLifecycle(current.model, 'peer-cached');
         if (cached) {
           step({
-            type: 'set-proposal-disposition',
-            primaryId: cached.primaryId,
-            disposition: 'incoming-review',
+            type: 'set-proposal-lifecycle',
+            id: cached.id,
+            lifecycle: 'peer-review',
           });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         } else {
@@ -137,7 +225,7 @@ export function reduceSessionNotification(
   }
 
   if ('ProposalMade' in notification) {
-    const incoming = proposalGroupFromProposalMade(notification.ProposalMade);
+    const incoming = pendingProposalFromProposalMade(notification.ProposalMade);
     if (!incoming) {
       step({
         type: 'enqueue-error',
@@ -146,15 +234,20 @@ export function reduceSessionNotification(
       });
       return { state: current, effects };
     }
+    if (current.model.betweenHand.pendingProposals.some(isUncancelledProposal)) {
+      effects.push({ type: 'controller-cancel-proposal', id: incoming.id });
+      return { state: current, effects };
+    }
     step({
-      type: 'upsert-proposal-group',
-      group: incoming,
+      type: 'upsert-pending-proposal',
+      proposal: incoming,
     });
-    if (incoming.primaryId !== incoming.memberIds[0]) {
+    if (incoming.lifecycle === 'peer-cancel-queued') {
+      cancelPeerProposalAutomatically(incoming.id);
       return { state: current, effects };
     }
     if (current.model.game.activeIds.length > 0) {
-      effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
+      cancelPeerProposalAutomatically(incoming.id);
       return { state: current, effects };
     }
     if (current.model.game.handKey === 0) {
@@ -163,49 +256,38 @@ export function reduceSessionNotification(
     const between = current.model.betweenHand;
     const matchesLast = handProposalsEqual(
       incoming.handProposal,
-      incoming.origin,
+      proposalOrigin(incoming),
       between.lastHandProposal,
       current.model.game.currentHandOrigin,
     );
     if (between.mode === 'decision') {
-      if (matchesLast && current.coordination.sameTermsRequested) {
+      if (matchesLast && current.model.betweenHand.newHandRequested) {
         current = {
           ...current,
-          coordination: { ...current.coordination, sameTermsRequested: false },
           model: {
             ...current.model,
             betweenHand: { ...between, pendingRetryHandProposal: null, newHandRequested: false },
           },
         };
-        effects.push({ type: 'controller-accept-proposal', id: incoming.primaryId });
-      } else if (current.coordination.sameTermsRequested && !matchesLast) {
-        const outgoingMemberIds: string[] = [];
-        for (const group of between.proposalGroups) {
-          if (
-            group.origin === 'local' &&
-            group.disposition === 'outgoing' &&
-            group.primaryId !== incoming.primaryId
-          ) {
-            effects.push({ type: 'controller-cancel-proposal', id: group.primaryId });
-            outgoingMemberIds.push(...group.memberIds);
+        effects.push({ type: 'controller-accept-proposal', id: incoming.id });
+      } else if (current.model.betweenHand.newHandRequested && !matchesLast) {
+        for (const proposal of between.pendingProposals) {
+          if (proposal.lifecycle === 'local-outgoing' && proposal.id !== incoming.id) {
+            effects.push({ type: 'controller-cancel-proposal', id: proposal.id });
           }
-        }
-        if (outgoingMemberIds.length > 0) {
-          step({ type: 'clear-proposals', ids: outgoingMemberIds });
         }
         current = {
           ...current,
-          coordination: { ...current.coordination, sameTermsRequested: false },
           model: {
             ...current.model,
             betweenHand: {
               ...current.model.betweenHand,
               pendingRetryHandProposal: null,
               newHandRequested: false,
-              proposalGroups: current.model.betweenHand.proposalGroups.map((group) =>
-                group.primaryId === incoming.primaryId
-                  ? { ...group, disposition: 'incoming-review' as const }
-                  : group,
+              pendingProposals: current.model.betweenHand.pendingProposals.map((proposal) =>
+                proposal.id === incoming.id
+                  ? { ...proposal, lifecycle: 'peer-review' as const }
+                  : proposal,
               ),
               mode: 'review-incoming-proposal',
             },
@@ -215,65 +297,60 @@ export function reduceSessionNotification(
         const retry = between.pendingRetryHandProposal;
         step({ type: 'set-pending-retry-terms', handProposal: null });
         if (matchesLast) {
-          effects.push(
-            { type: 'controller-cancel-proposal', id: incoming.primaryId },
-            { type: 'controller-propose-game', handProposal: retry },
-          );
+          cancelPeerProposalAutomatically(incoming.id);
+          effects.push({ type: 'controller-propose-game', handProposal: retry });
         } else {
           step({
-            type: 'set-proposal-disposition',
-            primaryId: incoming.primaryId,
-            disposition: 'incoming-review',
+            type: 'set-proposal-lifecycle',
+            id: incoming.id,
+            lifecycle: 'peer-review',
           });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
       } else {
-        // The normalized group already carries its cached disposition.
+        // The pending proposal already carries its cached status.
       }
     } else if (between.mode === 'compose-proposal') {
       if (between.pendingRetryHandProposal) {
         const retry = between.pendingRetryHandProposal;
         step({ type: 'set-pending-retry-terms', handProposal: null });
         if (matchesLast) {
-          effects.push(
-            { type: 'controller-cancel-proposal', id: incoming.primaryId },
-            { type: 'controller-propose-game', handProposal: retry },
-          );
+          cancelPeerProposalAutomatically(incoming.id);
+          effects.push({ type: 'controller-propose-game', handProposal: retry });
         } else {
           step({ type: 'set-compose-proposal-sent', sent: false });
           step({
-            type: 'set-proposal-disposition',
-            primaryId: incoming.primaryId,
-            disposition: 'incoming-review',
+            type: 'set-proposal-lifecycle',
+            id: incoming.id,
+            lifecycle: 'peer-review',
           });
           step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
         }
       } else if (
         handProposalsEqual(
           incoming.handProposal,
-          incoming.origin,
+          proposalOrigin(incoming),
           between.rejectedOnceHandProposal,
           current.model.game.currentHandOrigin,
         )
       ) {
-        effects.push({ type: 'controller-cancel-proposal', id: incoming.primaryId });
+        cancelPeerProposalAutomatically(incoming.id);
         step({ type: 'set-rejected-terms', handProposal: null });
       } else {
         step({
-          type: 'set-proposal-disposition',
-          primaryId: incoming.primaryId,
-          disposition: 'incoming-review',
+          type: 'set-proposal-lifecycle',
+          id: incoming.id,
+          lifecycle: 'peer-review',
         });
         step({ type: 'set-between-hand-mode', mode: 'review-incoming-proposal' });
       }
     } else {
       step({
-        type: 'set-proposal-disposition',
-        primaryId: incoming.primaryId,
-        disposition: 'incoming-review',
+        type: 'set-proposal-lifecycle',
+        id: incoming.id,
+        lifecycle: 'peer-review',
       });
     }
-    effects.push({ type: 'persist-session' });
     return { state: current, effects };
   }
 
@@ -282,6 +359,9 @@ export function reduceSessionNotification(
     const accepted = notification.ProposalAcceptedGroup!;
     if (!Array.isArray(accepted.members) || accepted.members.length === 0) {
       throw new Error('ProposalAcceptedGroup missing members');
+    }
+    if (accepted.id == null) {
+      throw new Error('ProposalAcceptedGroup missing proposal id');
     }
     const members = accepted.members.map((member) => {
       const id = String(member.id);
@@ -293,15 +373,24 @@ export function reduceSessionNotification(
       if (typeof member.our_turn !== 'boolean') {
         throw new Error(`ProposalAcceptedGroup ${id} missing Rust turn authority`);
       }
-      return { id, playerAContribution, playerBContribution, ourTurn: member.our_turn };
+      if (!(member.readable_parameters instanceof Uint8Array)) {
+        throw new Error(`ProposalAcceptedGroup ${id} missing readable parameters`);
+      }
+      return {
+        id,
+        playerAContribution,
+        playerBContribution,
+        ourTurn: member.our_turn,
+        readableParameters: member.readable_parameters,
+      };
     });
     if (new Set(members.map((member) => member.id)).size !== members.length) {
       throw new Error('ProposalAcceptedGroup contains duplicate member IDs');
     }
-    const id = members[0]!.id;
     const previousHandIds = current.model.game.currentHandIds;
     step({
       type: 'notification-accepted-group',
+      proposalId: String(accepted.id),
       members,
     });
     step({ type: 'remove-game-notifications', kind: 'proposal-rejected' });
@@ -310,7 +399,7 @@ export function reduceSessionNotification(
       previousHandIds.some(
         (groupId, index) => groupId !== current.model.game.currentHandIds[index],
       );
-    if (first) cancelStale(id);
+    if (first) cancelStale();
     return { state: current, effects };
   }
 
@@ -394,78 +483,20 @@ export function reduceSessionNotification(
   }
 
   if (durableKind === 'insufficient-balance') {
-    const insufficient = notification.InsufficientBalance as Record<string, unknown> | undefined;
+    const insufficient = notification.InsufficientBalance;
     const id = String(insufficient?.id ?? '');
-    step({
-      type: 'notification-insufficient-balance',
-      id,
-      notification: {
-        id: nextId(),
-        kind: 'insufficient-bal',
-        title: 'Notice',
-        message: 'Insufficient balance for that proposal. The hand could not start.',
-      },
-    });
-    cancelStale();
+    resolveProposalCancellation(id, 'InsufficientBalance', insufficient);
     return { state: current, effects };
   }
 
   if ('ProposalCancelled' in notification) {
     const cancelled = notification.ProposalCancelled;
     const id = String(cancelled?.id ?? '');
-    const groupIds = cancelled?.group_ids.map(String) ?? [];
     const reason = String(cancelled?.reason ?? '');
-    const before = current;
-    const proposal =
-      groupIds
-        .map((memberId) => selectProposalGroupByMemberId(before.model, memberId))
-        .find(Boolean) ?? null;
-    const terms = proposal?.handProposal ?? null;
-    const wasOurs = proposal?.origin === 'local';
-    if (id) {
-      step({ type: 'clear-proposals', ids: proposal?.memberIds ?? groupIds });
-      if (proposal?.disposition === 'incoming-review') {
-        step({ type: 'set-between-hand-mode', mode: 'compose-proposal' });
-      }
+    if (!selectPendingProposal(current.model, id)) {
+      return { state: current, effects };
     }
-    if (LOCAL_CANCEL_REASONS.has(reason) && terms) {
-      step({ type: 'set-pending-retry-terms', handProposal: terms });
-    } else if (reason === 'CancelledByPeer') {
-      step({ type: 'set-pending-retry-terms', handProposal: null });
-      step({ type: 'set-compose-proposal-sent', sent: false });
-      const sameTerms = before.coordination.sameTermsRequested && wasOurs;
-      step({ type: 'set-same-terms-requested', requested: false });
-      step({ type: 'set-new-hand-requested', requested: false });
-      if (sameTerms) {
-        current = {
-          ...current,
-          model: {
-            ...current.model,
-            betweenHand: {
-              ...current.model.betweenHand,
-              compose: applyHandProposalToComposeDraft(
-                current.model.betweenHand.compose,
-                before.model.betweenHand.lastHandProposal,
-              ),
-              mode: 'compose-proposal',
-            },
-          },
-        };
-      } else {
-        step({
-          type: 'push-game-notification',
-          notification: {
-            id: nextId(),
-            kind: 'proposal-rejected',
-            title: 'Notice',
-            message: 'Your proposal was rejected by the other side.',
-          },
-        });
-      }
-    } else {
-      step({ type: 'set-pending-retry-terms', handProposal: null });
-    }
-    effects.push({ type: 'persist-session' });
+    resolveProposalCancellation(id, reason);
     return { state: current, effects };
   }
 
@@ -480,7 +511,6 @@ export function reduceSessionNotification(
         message: moveRejectedMessage(String(rejected.tag ?? ''), String(rejected.message ?? '')),
       },
     });
-    effects.push({ type: 'persist-session' });
     return { state: current, effects };
   }
 

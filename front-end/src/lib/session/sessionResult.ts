@@ -9,7 +9,7 @@ import type {
   GameCoinModel,
   GameTerminalModel,
   HandProposal,
-  ProposalGroupModel,
+  PendingProposalModel,
   QueuedNotificationModel,
   SessionModel,
 } from './types';
@@ -17,7 +17,7 @@ import type { selectGameSpecificView } from './selectors';
 import {
   selectGameSessionView,
   selectIProposedHand,
-  selectIncomingProposalGroup,
+  selectIncomingProposal,
   selectGameSpecificView as selectTerminalGameSpecificView,
   selectSessionPhase,
 } from './selectors';
@@ -28,7 +28,6 @@ export interface UseGameSessionResult {
   gameConnectionState: GameConnectionState;
   perGameAmount: bigint;
   currentHandAmount: bigint;
-  myRunningBalance: bigint;
   iStarted: boolean;
   playerNumber: number;
   channelStatus: ChannelStatusModel;
@@ -44,7 +43,7 @@ export interface UseGameSessionResult {
   handSource: GameHandSource;
   appendGameLog: (line: string) => void;
   betweenHandMode: BetweenHandModeModel;
-  incomingProposalGroup: ProposalGroupModel | null;
+  incomingProposal: PendingProposalModel | null;
   lastHandProposal: HandProposal | null;
   composeDraftState: ComposeDraftState;
   chooseNewHandSameTerms: () => void;
@@ -55,7 +54,7 @@ export interface UseGameSessionResult {
   composeProposalSent: boolean;
   newHandRequested: boolean;
   submitComposedProposal: (handProposal: HandProposal) => void;
-  acceptReviewedProposal: (primaryId: string) => void;
+  acceptReviewedProposal: (id: string) => void;
   rejectReviewedProposal: () => void;
   startCleanShutdown: () => void;
   cleanShutdownStarted: boolean;
@@ -139,7 +138,6 @@ export function projectTerminalSessionResult(
     sessionModel: model,
     gameConnectionState: model.channel.connection,
     currentHandAmount: view.currentHandAmount,
-    myRunningBalance: model.myRunningBalance,
     iStarted,
     playerNumber: iStarted ? 1 : 2,
     channelStatus: view.channelStatus,
@@ -155,7 +153,7 @@ export function projectTerminalSessionResult(
     handSource: terminalGameHandSource(restoreRegisteredGameHand(model)),
     appendGameLog: NOOP,
     betweenHandMode: model.betweenHand.mode,
-    incomingProposalGroup: selectIncomingProposalGroup(model),
+    incomingProposal: selectIncomingProposal(model),
     lastHandProposal: model.betweenHand.lastHandProposal,
     composeDraftState: model.betweenHand.compose,
     chooseNewHandSameTerms: NOOP,

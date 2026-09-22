@@ -1,6 +1,6 @@
 import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
-import type { SessionSave } from './session/saveEnvelope';
+import type { DurableSessionPhase } from './session/saveEnvelope';
 import {
   createSessionModel,
   isPreActiveChannelStatus,
@@ -8,14 +8,10 @@ import {
   selectShouldAdvertiseAvailable,
 } from './session/model';
 
-export function isRestoreBlocked(
-  restoring: boolean,
-  restoreStatus: RestoreStatus,
-  hubReconciled: boolean,
-): boolean {
+export function isRestoreBlocked(restoring: boolean, restoreStatus: RestoreStatus): boolean {
   return selectRestoreBlocked(
     createSessionModel({
-      restore: { restoring, status: restoreStatus, hubReconciled, error: null },
+      restore: { restoring, status: restoreStatus, error: null },
     }),
   );
 }
@@ -23,16 +19,15 @@ export function isRestoreBlocked(
 /**
  * After live terminal finalization the GameSession mount is no longer a restore.
  * Clearing `restoring` prevents re-arming the "Restoring session..." gate when
- * finishResolvedSessionDisplay resets status/hubReconciled — a resumed session
+ * finishResolvedSessionDisplay resets status — a resumed session
  * otherwise keeps params.restoring=true forever and would flash that UI on slash
  * (or any error resolution that stays on the game tab).
  */
 export function restoreGateAfterTerminalFinalization(): {
   restoring: false;
   restoreStatus: 'idle';
-  hubReconciled: false;
 } {
-  return { restoring: false, restoreStatus: 'idle', hubReconciled: false };
+  return { restoring: false, restoreStatus: 'idle' };
 }
 
 /**
@@ -55,7 +50,6 @@ export function shouldAdvertiseAvailable(
       restore: {
         restoring: restoreBlocked,
         status: restoreBlocked ? 'restoring' : 'restored',
-        hubReconciled: !restoreBlocked,
         error: null,
       },
     }),
@@ -97,7 +91,7 @@ export function shouldWarnOnSessionUnload(sessionPhase: SessionPhase): boolean {
  */
 export function sessionLocksNetwork(
   sessionPhase: SessionPhase,
-  savePhase?: SessionSave['phase'],
+  savePhase?: DurableSessionPhase['phase'],
   pairingToken?: string,
 ): boolean {
   if (sessionPhase === 'off-chain' || sessionPhase === 'on-chain') return true;
@@ -151,9 +145,9 @@ export async function transitionToFreshSession(dependencies: {
 
 /**
  * Phase reports are terminal lifecycle inputs to Shell. A restored save is only
- * a persisted projection until WASM restoration and hub reconciliation finish,
- * so it must not cause terminal cleanup. Once unblocked, a resolved phase is
- * reported once from the current session projection.
+ * a persisted projection until local WASM restoration finishes, so it must not
+ * cause terminal cleanup. Once unblocked, a resolved phase is reported once
+ * from the current session projection.
  */
 export function shouldReportSessionPhase(
   sessionPhase: Exclude<SessionPhase, 'none'>,
@@ -215,7 +209,7 @@ export type HubPlayerIdRemapAction = 'none' | 'cancel-attempt' | 'go-on-chain' |
 export function hubPlayerIdRemapAction(
   previousPlayerId: string | undefined,
   registeredPlayerId: string,
-  savedPhase: SessionSave['phase'] | undefined,
+  savedPhase: DurableSessionPhase['phase'] | undefined,
   sessionPhase: SessionPhase,
   channelState: string | null | undefined,
   hasPairingToken = false,

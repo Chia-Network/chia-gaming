@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use clvm_traits::ToClvm;
 
@@ -6,8 +6,6 @@ use rand::Rng;
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(test)]
-use crate::channel_state::types::ChannelCoinSpendInfo;
 use crate::channel_state::types::{ChannelEnv, ChannelPrivateKeys, ReadableMove};
 use crate::channel_state::ChannelState;
 use crate::common::constants::CREATE_COIN;
@@ -15,8 +13,9 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr, Program,
-    ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    LocalProposalId, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
+    ToQuotedProgram,
 };
 use crate::session_phases::effects::{
     apply_effects, ChannelStatus, ChannelStatusSnapshot, CoinOfInterest, Effect, FailedGameAction,
@@ -29,6 +28,8 @@ use crate::session_phases::handshake::{
 use crate::session_phases::handshake_initiator::HandshakeInitiatorPhase;
 use crate::session_phases::handshake_receiver::HandshakeReceiverPhase;
 use crate::session_phases::proposal::GameProposal;
+#[cfg(test)]
+use crate::session_phases::types::GameAction;
 use crate::session_phases::types::{
     ChannelFundingWallet, OffChainPhaseInit, PacketSender, PeerMessage, SpendWalletReceiver,
     ToLocalUI, WalletSpendInterface,
@@ -75,7 +76,7 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
     ) -> Result<Option<Vec<Effect>>, Error>;
-    fn coin_puzzle_and_solution(
+    fn coin_puzzle_and_solution_in_place(
         &mut self,
         env: &mut ChannelEnv<'_>,
         coin_id: &CoinString,
@@ -99,12 +100,6 @@ pub trait PeerLifecyclePhase {
         game_id: &GameID,
         mover_share: Amount,
         entropy: Hash,
-    ) -> Result<Vec<Effect>, Error>;
-    #[cfg(test)]
-    fn self_accept_proposal(
-        &mut self,
-        env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
     ) -> Result<Vec<Effect>, Error>;
     fn take_next_phase(&mut self) -> Option<Box<dyn PeerLifecyclePhase>>;
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error>;
@@ -130,20 +125,20 @@ pub trait PeerLifecyclePhase {
         env: &mut ChannelEnv<'_>,
         bundle: SpendBundle,
     ) -> Result<Vec<Effect>, Error>;
-    fn propose_games(
+    fn propose(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        games: &[GameProposal],
-    ) -> Result<(Vec<GameID>, Vec<Effect>), Error>;
+        proposal: &GameProposal,
+    ) -> Result<(LocalProposalId, Vec<Effect>), Error>;
     fn accept_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn cancel_proposal(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<Vec<Effect>, Error>;
     fn shut_down(&mut self, env: &mut ChannelEnv<'_>) -> Result<Vec<Effect>, Error>;
     fn go_on_chain(
@@ -171,22 +166,13 @@ pub trait PeerLifecyclePhase {
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)>;
 
     #[cfg(test)]
-    fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error>;
+    fn off_chain_phase_for_testing(&mut self) -> Option<&mut OffChainPhase> {
+        None
+    }
     #[cfg(test)]
-    fn force_unroll_spend_for_testing(
-        &self,
-        env: &mut ChannelEnv<'_>,
-    ) -> Result<SpendBundle, Error>;
-    #[cfg(test)]
-    fn last_channel_coin_spend_info_for_testing(&self) -> Option<ChannelCoinSpendInfo>;
-    #[cfg(test)]
-    fn force_stale_unroll_spend_for_testing(
-        &self,
-        env: &mut ChannelEnv<'_>,
-        saved: &ChannelCoinSpendInfo,
-    ) -> Result<SpendBundle, Error>;
-    #[cfg(test)]
-    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase>;
+    fn take_off_chain_phase_for_testing(&mut self) -> Option<OffChainPhase> {
+        None
+    }
     fn get_game_coin(&self, game_id: &GameID) -> Option<CoinString>;
 }
 
@@ -211,7 +197,7 @@ impl SpendWalletReceiver for Box<dyn PeerLifecyclePhase> {
         coin_id: &CoinString,
         puzzle_and_solution: Option<(&Program, &Program)>,
     ) -> Result<Vec<Effect>, Error> {
-        (**self).coin_puzzle_and_solution(env, coin_id, puzzle_and_solution)
+        (**self).coin_puzzle_and_solution_in_place(env, coin_id, puzzle_and_solution)
     }
 }
 
@@ -234,7 +220,7 @@ pub trait MessagePeerQueue {
 ///
 /// A coin first discovered already spent is represented as `Created` followed by
 /// `Spent`, allowing creation to transition the phase before its spend arrives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoinObservation {
     Created(CoinString),
     Spent(CoinString),
@@ -279,6 +265,7 @@ impl MessagePeerQueue for SimulatedPeer<SimulatedWalletSpend> {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Serialize, Deserialize))]
 pub struct DrainResult {
     pub events: GameSessionEventQueue,
 }
@@ -307,18 +294,13 @@ struct GameSessionState {
 
     pub is_failed: bool,
     pub is_on_chain: bool,
-    #[serde(default)]
     session_disposition: Option<SessionDisposition>,
-    #[serde(default)]
     pending_outbound_terminal: Option<TerminalHandoffCommand>,
-    #[serde(default)]
     next_terminal_handoff_id: u64,
-    #[serde(default)]
     channel_creation_expiry: Option<u64>,
-    #[serde(default)]
     channel_established: bool,
-    #[serde(default)]
     channel_expired: bool,
+    pending_coin_solution_requests: BTreeSet<CoinString>,
 
     /// Genesis challenge (AGG_SIG_ME additional data) for the network this
     /// session is bound to. Threaded in at creation so all on-chain signing
@@ -343,18 +325,15 @@ impl PacketSender for GameSessionState {
 }
 
 impl WalletSpendInterface for GameSessionState {
-    fn spend_transaction_and_add_fee(
+    fn spend_transaction(
         &mut self,
-        bundle: &SpendBundle,
-        expiry: Option<u64>,
+        submission: &crate::session_phases::effects::TransactionSubmission,
     ) -> Result<(), Error> {
-        if expiry.is_some() {
-            self.channel_creation_expiry = expiry;
+        if submission.expiry.is_some() {
+            self.channel_creation_expiry = submission.expiry;
         }
-        self.events.push_back(GameSessionEvent::OutboundTransaction(
-            bundle.clone(),
-            expiry,
-        ));
+        self.events
+            .push_back(GameSessionEvent::OutboundTransaction(submission.clone()));
         Ok(())
     }
     fn register_coin(
@@ -362,7 +341,7 @@ impl WalletSpendInterface for GameSessionState {
         coin_id: &CoinString,
         timeout: &Timeout,
         _name: Option<&'static str>,
-        spend: Option<SpendBundle>,
+        spend: Option<crate::session_phases::effects::TransactionSubmission>,
         semantic: Option<TimeoutClaimSemantic>,
     ) -> Result<(), Error> {
         self.events.push_back(GameSessionEvent::WatchCoin {
@@ -376,6 +355,9 @@ impl WalletSpendInterface for GameSessionState {
         Ok(())
     }
     fn request_puzzle_and_solution(&mut self, coin_id: &CoinString) -> Result<(), Error> {
+        if !self.pending_coin_solution_requests.insert(coin_id.clone()) {
+            return Ok(());
+        }
         self.events
             .push_back(GameSessionEvent::CoinSolutionRequest(coin_id.clone()));
         Ok(())
@@ -389,9 +371,6 @@ pub struct GameSession {
     state: GameSessionState,
     peer: Box<dyn PeerLifecyclePhase>,
     last_channel_status: Option<ChannelStatusSnapshot>,
-    #[cfg(test)]
-    #[serde(skip)]
-    saved_unroll_snapshot: Option<ChannelCoinSpendInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -409,6 +388,25 @@ pub struct GameSessionConfig {
 }
 
 impl GameSession {
+    #[cfg(test)]
+    fn off_chain_phase_for_testing(&mut self) -> Result<&mut OffChainPhase, Error> {
+        let phase_name = self.peer.phase_name();
+        self.peer
+            .off_chain_phase_for_testing()
+            .ok_or_else(|| phase_operation_error(phase_name, "off_chain_phase_for_testing"))
+    }
+
+    pub(crate) fn detach_observation_output(&mut self) -> DrainResult {
+        DrainResult {
+            events: std::mem::take(&mut self.state.events),
+        }
+    }
+
+    pub(crate) fn prepend_observation_output(&mut self, mut output: DrainResult) {
+        output.events.append(&mut self.state.events);
+        self.state.events = output.events;
+    }
+
     pub fn new_with_keys(config: GameSessionConfig, private_keys: ChannelPrivateKeys) -> Self {
         GameSession {
             state: GameSessionState {
@@ -429,6 +427,7 @@ impl GameSession {
                 channel_creation_expiry: None,
                 channel_established: false,
                 channel_expired: false,
+                pending_coin_solution_requests: BTreeSet::new(),
                 agg_sig_me_additional_data: config.agg_sig_me_additional_data.clone(),
                 events: GameSessionEventQueue::default(),
                 inbound_messages: VecDeque::default(),
@@ -450,8 +449,6 @@ impl GameSession {
                 }
             },
             last_channel_status: None,
-            #[cfg(test)]
-            saved_unroll_snapshot: None,
         }
     }
     pub fn new<R: Rng>(rng: &mut R, config: GameSessionConfig) -> Self {
@@ -488,14 +485,6 @@ impl ToLocalUI for GameSessionState {
 
 impl GameSession {
     #[cfg(test)]
-    pub fn proposal_contributions_for_testing(
-        &self,
-    ) -> Result<Vec<(GameID, Amount, Amount)>, Error> {
-        let channel = self.peer.channel_state()?;
-        Ok(channel.proposal_contributions_for_testing())
-    }
-
-    #[cfg(test)]
     pub fn allocated_balances_for_testing(&self) -> Result<(Amount, Amount), Error> {
         let channel = self.peer.channel_state()?;
         Ok((
@@ -505,34 +494,54 @@ impl GameSession {
     }
 
     #[cfg(test)]
+    pub fn next_game_id_for_testing(&self) -> Result<GameID, Error> {
+        Ok(self.peer.channel_state()?.next_game_id_for_testing())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_potato_for_testing(&self) -> bool {
+        self.peer
+            .channel_status_snapshot()
+            .and_then(|snapshot| snapshot.have_potato)
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
     pub fn corrupt_state_for_testing(&mut self, new_sn: usize) -> Result<(), Error> {
-        self.peer.corrupt_state_for_testing(new_sn)
+        self.off_chain_phase_for_testing()?
+            .corrupt_state_for_testing(new_sn)
     }
 
     #[cfg(test)]
-    pub fn force_unroll_spend(&self, allocator: &mut AllocEncoder) -> Result<SpendBundle, Error> {
-        let mut env =
-            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        self.peer.force_unroll_spend_for_testing(&mut env)
+    pub fn force_unroll_spend(
+        &mut self,
+        allocator: &mut AllocEncoder,
+    ) -> Result<SpendBundle, Error> {
+        let genesis = self.state.agg_sig_me_additional_data.clone();
+        let mut env = ChannelEnv::new_with_genesis(allocator, &genesis)?;
+        self.off_chain_phase_for_testing()?
+            .force_unroll_spend(&mut env)
     }
 
     #[cfg(test)]
-    pub fn save_unroll_snapshot(&mut self) {
-        self.saved_unroll_snapshot = self.peer.last_channel_coin_spend_info_for_testing();
+    pub fn unroll_snapshot_for_testing(
+        &mut self,
+    ) -> Option<crate::channel_state::types::ChannelCoinSpendInfo> {
+        self.peer
+            .off_chain_phase_for_testing()
+            .and_then(|phase| phase.get_last_channel_coin_spend_info().cloned())
     }
 
     #[cfg(test)]
     pub fn force_stale_unroll_spend(
-        &self,
+        &mut self,
         allocator: &mut AllocEncoder,
+        snapshot: &crate::channel_state::types::ChannelCoinSpendInfo,
     ) -> Result<SpendBundle, Error> {
-        let saved = self.saved_unroll_snapshot.as_ref().ok_or_else(|| {
-            Error::StrErr("force_stale_unroll_spend: no snapshot saved".to_string())
-        })?;
-        let mut env =
-            ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-        self.peer
-            .force_stale_unroll_spend_for_testing(&mut env, saved)
+        let genesis = self.state.agg_sig_me_additional_data.clone();
+        let mut env = ChannelEnv::new_with_genesis(allocator, &genesis)?;
+        self.off_chain_phase_for_testing()?
+            .force_stale_unroll_spend(&mut env, snapshot)
     }
 
     pub fn historical_unroll_count(&self) -> Option<usize> {
@@ -638,6 +647,7 @@ impl GameSession {
     fn mark_abandoned(&mut self) {
         self.state.session_disposition = Some(SessionDisposition::Abandoned);
         self.state.pending_outbound_terminal = None;
+        self.state.pending_coin_solution_requests.clear();
         self.state.peer_disconnected = true;
         self.state.inbound_messages.clear();
         // Abandonment replaces the session's pending presentation with one
@@ -852,7 +862,7 @@ impl GameSession {
             if observations.iter().any(
                 |observation| matches!(observation, CoinObservation::Created(coin) if coin == channel.channel_coin()),
             ) {
-                self.state.channel_established = true;
+                self.confirm_channel_creation();
                 return;
             }
         }
@@ -862,8 +872,7 @@ impl GameSession {
         if !channel_creation_expiry_reached(height, expiry) {
             return;
         }
-        self.state.channel_expired = true;
-        self.state.is_failed = true;
+        self.expire_channel_creation();
         let snapshot = ChannelStatusSnapshot {
             advisory: Some("channel coin not confirmed in time".to_string()),
             ..ChannelStatusSnapshot::new(ChannelStatus::Failed)
@@ -872,6 +881,27 @@ impl GameSession {
             Self::make_channel_status_notification(&snapshot),
         ));
         self.last_channel_status = Some(snapshot);
+    }
+
+    fn confirm_channel_creation(&mut self) {
+        if self.state.channel_established || self.state.channel_expired {
+            return;
+        }
+        self.state.channel_established = true;
+        self.state
+            .events
+            .push_back(GameSessionEvent::ChannelCoinConfirmed);
+    }
+
+    fn expire_channel_creation(&mut self) {
+        if self.state.channel_established || self.state.channel_expired {
+            return;
+        }
+        self.state.channel_expired = true;
+        self.state.is_failed = true;
+        self.state
+            .events
+            .push_back(GameSessionEvent::ChannelCreationTimedOut);
     }
 
     pub fn push_event(&mut self, event: GameSessionEvent) {
@@ -1131,7 +1161,13 @@ impl GameSession {
 
             self.state
                 .events
-                .push_back(GameSessionEvent::OutboundTransaction(spends, None));
+                .push_back(GameSessionEvent::OutboundTransaction(
+                    crate::session_phases::effects::TransactionSubmission::attach_to(
+                        spends,
+                        None,
+                        &parent_coin,
+                    ),
+                ));
 
             self.peer
                 .channel_transaction_completion(&mut env, &unfunded_offer)?
@@ -1145,6 +1181,10 @@ impl GameSession {
 }
 
 impl GameSession {
+    pub fn agg_sig_me_additional_data(&self) -> &Hash {
+        &self.state.agg_sig_me_additional_data
+    }
+
     #[cfg(test)]
     pub fn flush_pending(&mut self, allocator: &mut AllocEncoder) -> Result<(), Error> {
         let effects = {
@@ -1187,15 +1227,40 @@ impl GameSession {
     pub fn self_accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
+        let genesis = self.state.agg_sig_me_additional_data.clone();
         let reported_effects = {
-            let mut env =
-                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.self_accept_proposal(&mut env, game_id)?
+            let mut env = ChannelEnv::new_with_genesis(allocator, &genesis)?;
+            self.off_chain_phase_for_testing()?
+                .self_accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_game_action_for_testing(
+        &mut self,
+        action: GameAction,
+    ) -> Result<(), Error> {
+        self.off_chain_phase_for_testing()?
+            .queue_game_action_for_testing(action);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_cached_unroll_update_for_testing(&mut self) -> Result<(), Error> {
+        self.off_chain_phase_for_testing()?
+            .fail_next_cached_unroll_update_for_testing();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued_game_action_count_for_testing(&mut self) -> Result<usize, Error> {
+        Ok(self
+            .off_chain_phase_for_testing()?
+            .queued_game_action_count_for_testing())
     }
 
     pub fn cheat(
@@ -1253,15 +1318,15 @@ impl GameSession {
         self.peer.handshake_finished()
     }
 
-    pub fn propose_games(
+    pub fn propose(
         &mut self,
         allocator: &mut AllocEncoder,
-        games: &[GameProposal],
-    ) -> Result<Vec<GameID>, Error> {
+        proposal: &GameProposal,
+    ) -> Result<LocalProposalId, Error> {
         let (result, reported_effects) = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.propose_games(&mut env, games)?
+            self.peer.propose(&mut env, proposal)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(result)
@@ -1270,12 +1335,12 @@ impl GameSession {
     pub fn accept_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.accept_proposal(&mut env, game_id)?
+            self.peer.accept_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1284,12 +1349,12 @@ impl GameSession {
     pub fn cancel_proposal(
         &mut self,
         allocator: &mut AllocEncoder,
-        game_id: &GameID,
+        proposal_id: &LocalProposalId,
     ) -> Result<(), Error> {
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer.cancel_proposal(&mut env, game_id)?
+            self.peer.cancel_proposal(&mut env, proposal_id)?
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1321,34 +1386,6 @@ impl GameSession {
                 }
                 Err(error) => return Err(error),
             }
-        };
-        self.process_effects(reported_effects, allocator)?;
-        Ok(())
-    }
-
-    pub fn accept_proposal_and_move(
-        &mut self,
-        allocator: &mut AllocEncoder,
-        id: &GameID,
-        readable: ReadableMove,
-        new_entropy: Hash,
-    ) -> Result<(), Error> {
-        let reported_effects = {
-            let mut env =
-                ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            let mut effects = self.peer.accept_proposal(&mut env, id)?;
-            match self.peer.make_move(&mut env, id, &readable, new_entropy) {
-                Ok(move_effects) => effects.extend(move_effects),
-                Err(Error::GameMoveRejected { tag, message }) => {
-                    effects.push(Effect::Notify(GameNotification::MoveRejected {
-                        id: *id,
-                        tag: String::from_utf8_lossy(&tag).into_owned(),
-                        message: String::from_utf8_lossy(&message).into_owned(),
-                    }));
-                }
-                Err(error) => return Err(error),
-            }
-            effects
         };
         self.process_effects(reported_effects, allocator)?;
         Ok(())
@@ -1517,7 +1554,10 @@ impl GameSession {
         Ok(())
     }
 
-    pub fn report_puzzle_and_solution(
+    /// Internal callback implementation. Production callers must enter through
+    /// `TransactionManager::report_puzzle_and_solution` so phase mutations,
+    /// effects, and pending-request retirement commit atomically.
+    pub(crate) fn report_puzzle_and_solution_in_place(
         &mut self,
         allocator: &mut AllocEncoder,
         coin_id: &CoinString,
@@ -1526,14 +1566,45 @@ impl GameSession {
         if self.state.session_disposition.is_some() {
             return Ok(());
         }
+        if !self.state.pending_coin_solution_requests.contains(coin_id) {
+            return Err(Error::StrErr(format!(
+                "no pending puzzle-and-solution request for coin {}",
+                coin_id.to_coin_id()
+            )));
+        }
         let reported_effects = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
             self.peer
-                .coin_puzzle_and_solution(&mut env, coin_id, puzzle_and_solution)?
+                .coin_puzzle_and_solution_in_place(&mut env, coin_id, puzzle_and_solution)?
         };
         self.process_effects(reported_effects, allocator)?;
+        self.state.pending_coin_solution_requests.remove(coin_id);
         Ok(())
+    }
+
+    pub(crate) fn pending_coin_solution_requests(&self) -> Vec<CoinString> {
+        self.state
+            .pending_coin_solution_requests
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Rebuild transient host delivery after an explicit persisted-session
+    /// restore. Observation working copies must not call this: their detached
+    /// event journals are restored separately by `TransactionManager`.
+    pub fn restore_runtime(&mut self) {
+        for coin in self.state.pending_coin_solution_requests.iter().cloned() {
+            let already_queued = self.state.events.iter().any(
+                |event| matches!(event, GameSessionEvent::CoinSolutionRequest(queued) if queued == &coin),
+            );
+            if !already_queued {
+                self.state
+                    .events
+                    .push_back(GameSessionEvent::CoinSolutionRequest(coin));
+            }
+        }
     }
 }
 
@@ -1548,8 +1619,15 @@ impl GameSession {
 #[cfg(test)]
 mod sequencing_tests {
     use super::*;
-    use crate::common::types::CoinID;
+    use crate::channel_state::types::{OnChainGameState, TimeoutClaimState};
+    use crate::common::types::{CoinID, PrivateKey};
+    use crate::session_phases::on_chain::{OnChainPhase, OnChainPhaseArgs};
+    use crate::session_phases::types::PotatoState;
+    use crate::transaction_manager::TransactionManager;
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::rc::Rc;
 
     fn unrolling_snapshot(
@@ -1592,6 +1670,68 @@ mod sequencing_tests {
             expiry + CHANNEL_EXPIRY_BUFFER,
             expiry,
         ));
+    }
+
+    #[test]
+    fn channel_creation_host_facts_emit_exactly_once() {
+        fn session(seed: u8) -> GameSession {
+            let mut allocator = AllocEncoder::new();
+            let mut rng = ChaCha8Rng::from_seed([seed; 32]);
+            let identity =
+                ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+            GameSession::new_with_keys(
+                GameSessionConfig {
+                    game_types: BTreeMap::new(),
+                    is_initiator: true,
+                    identity,
+                    my_contribution: Amount::new(100),
+                    their_contribution: Amount::new(100),
+                    channel_timeout: Timeout::new(5),
+                    unroll_timeout: Timeout::new(15),
+                    reward_puzzle_hash: PuzzleHash::from_bytes([seed; 32]),
+                    agg_sig_me_additional_data: Hash::from_bytes([seed.wrapping_add(1); 32]),
+                },
+                rng.random(),
+            )
+        }
+
+        let mut confirmed = session(0x31);
+        confirmed.confirm_channel_creation();
+        confirmed.confirm_channel_creation();
+        confirmed.expire_channel_creation();
+        assert_eq!(
+            confirmed
+                .state
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameSessionEvent::ChannelCoinConfirmed))
+                .count(),
+            1
+        );
+        assert!(!confirmed
+            .state
+            .events
+            .iter()
+            .any(|event| matches!(event, GameSessionEvent::ChannelCreationTimedOut)));
+
+        let mut timed_out = session(0x41);
+        timed_out.expire_channel_creation();
+        timed_out.expire_channel_creation();
+        timed_out.confirm_channel_creation();
+        assert_eq!(
+            timed_out
+                .state
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameSessionEvent::ChannelCreationTimedOut))
+                .count(),
+            1
+        );
+        assert!(!timed_out
+            .state
+            .events
+            .iter()
+            .any(|event| matches!(event, GameSessionEvent::ChannelCoinConfirmed)));
     }
 
     #[derive(Default)]
@@ -1731,13 +1871,104 @@ mod sequencing_tests {
             "coin_created went to the handshake handler, not the replacement"
         );
     }
+
+    #[test]
+    fn invalid_on_chain_puzzle_callback_preserves_game_map_and_pending_request() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([0x52; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([0x53; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x54; 32]),
+            },
+            rng.random(),
+        );
+        let game_id = GameID(7);
+        let game_coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0x55; 32])),
+            &PuzzleHash::from_bytes([0x56; 32]),
+            &Amount::new(20),
+        );
+        session.peer = Box::new(OnChainPhase::new(OnChainPhaseArgs {
+            have_potato: PotatoState::Present,
+            channel_timeout: Timeout::new(5),
+            game_action_queue: VecDeque::new(),
+            game_map: HashMap::from([(
+                game_coin.clone(),
+                OnChainGameState {
+                    game_id,
+                    puzzle_hash: PuzzleHash::from_bytes([0x56; 32]),
+                    our_turn: false,
+                    state_number: 0,
+                    timeout_claim: TimeoutClaimState::Waiting,
+                    pending_slash_amount: None,
+                    cheating_move_mover_share: None,
+                    timeout_claim_armed: false,
+                    game_timeout: Timeout::new(10),
+                    game_finished: false,
+                },
+            )]),
+            pending_moves: HashMap::new(),
+            private_keys: rng.random(),
+            reward_puzzle_hash: PuzzleHash::from_bytes([0x57; 32]),
+            their_reward_puzzle_hash: PuzzleHash::from_bytes([0x58; 32]),
+            my_out_of_game_balance: Amount::new(80),
+            their_out_of_game_balance: Amount::new(100),
+            my_allocated_balance: Amount::new(20),
+            their_allocated_balance: Amount::new(0),
+            live_games: Vec::new(),
+            pending_settlements: Vec::new(),
+            unroll_advance_timeout: Timeout::new(15),
+            is_initial_potato: true,
+            state_number: 0,
+            was_stale: false,
+            resolved_clean: false,
+            terminal_reward_coin: None,
+            game_payout_coins: Vec::new(),
+        }));
+        session
+            .state
+            .pending_coin_solution_requests
+            .insert(game_coin.clone());
+        let mut manager = TransactionManager::new(session);
+        let before = bencodex::to_vec(&manager).expect("serialize before invalid callback");
+        let invalid_puzzle = Program::from_bytes(&[0x02]).expect("serialized atom");
+        let solution = Program::nil();
+
+        manager
+            .report_puzzle_and_solution(
+                &mut allocator,
+                &game_coin,
+                Some((&invalid_puzzle, &solution)),
+            )
+            .expect_err("invalid puzzle must fail");
+
+        assert_eq!(
+            bencodex::to_vec(&manager).expect("serialize after invalid callback"),
+            before
+        );
+        assert_eq!(manager.get_game_coin(&game_id), Some(game_coin.clone()));
+        assert_eq!(
+            manager.snapshot_pending_coin_solution_requests(),
+            [game_coin]
+        );
+    }
 }
 
 #[cfg(test)]
 mod genesis_challenge_tests {
     use super::*;
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
-    use crate::common::types::PrivateKey;
+    use crate::common::types::{CoinID, PrivateKey};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
@@ -1822,13 +2053,143 @@ mod genesis_challenge_tests {
         session
             .start_handshake(&mut allocator, Amount::default())
             .expect("receiver start is an intentional no-op");
+        let proposal = GameProposal {
+            sender_is_player_a: true,
+            game_type: GameType::from_hash(Hash::default()),
+            timeout: Timeout::new(10),
+            parameters: crate::session_phases::proposal::ProposalParameters::Null,
+        };
         let error = session
-            .propose_games(&mut allocator, &[])
+            .propose(&mut allocator, &proposal)
             .expect_err("receiver cannot propose games during handshake");
         assert!(matches!(
             error,
             Error::StrErr(message)
-                if message == "propose_games is not available in handshake receiver phase"
+                if message == "propose is not available in handshake receiver phase"
         ));
+    }
+
+    #[test]
+    fn pending_coin_solution_request_survives_restore_and_reissues_once() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([3u8; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x11; 32]),
+            },
+            rng.random(),
+        );
+        let coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([4; 32])),
+            &PuzzleHash::from_bytes([5; 32]),
+            &Amount::new(6),
+        );
+
+        session
+            .state
+            .request_puzzle_and_solution(&coin)
+            .expect("first request");
+        session
+            .state
+            .request_puzzle_and_solution(&coin)
+            .expect("duplicate request");
+        let drained = session
+            .flush_and_collect(&mut allocator)
+            .expect("drain request");
+        assert_eq!(
+            drained
+                .events
+                .iter()
+                .filter(
+                    |event| matches!(event, GameSessionEvent::CoinSolutionRequest(c) if c == &coin)
+                )
+                .count(),
+            1,
+            "a live pending request must emit once"
+        );
+
+        let bytes = bencodex::to_vec(&session).expect("serialize pending request");
+        let mut restored: GameSession =
+            bencodex::from_slice(&bytes).expect("restore pending request");
+        assert!(restored.state.events.is_empty(), "events are transient");
+        restored.restore_runtime();
+        restored.restore_runtime();
+        let reissued = restored
+            .flush_and_collect(&mut allocator)
+            .expect("drain restored request");
+        assert_eq!(
+            reissued
+                .events
+                .iter()
+                .filter(
+                    |event| matches!(event, GameSessionEvent::CoinSolutionRequest(c) if c == &coin)
+                )
+                .count(),
+            1,
+            "restore must reissue pending work exactly once"
+        );
+
+        restored
+            .report_puzzle_and_solution_in_place(&mut allocator, &coin, None)
+            .expect("matching callback");
+        assert!(restored.state.pending_coin_solution_requests.is_empty());
+        let duplicate = restored
+            .report_puzzle_and_solution_in_place(&mut allocator, &coin, None)
+            .expect_err("duplicate callback must be rejected");
+        assert!(format!("{duplicate:?}").contains("no pending puzzle-and-solution request"));
+    }
+
+    #[test]
+    fn unknown_coin_solution_callback_does_not_clear_pending_request() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([4u8; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: false,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([2; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x11; 32]),
+            },
+            rng.random(),
+        );
+        let pending = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([6; 32])),
+            &PuzzleHash::from_bytes([7; 32]),
+            &Amount::new(8),
+        );
+        let unknown = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([9; 32])),
+            &PuzzleHash::from_bytes([10; 32]),
+            &Amount::new(11),
+        );
+        session
+            .state
+            .request_puzzle_and_solution(&pending)
+            .expect("request");
+
+        session
+            .report_puzzle_and_solution_in_place(&mut allocator, &unknown, None)
+            .expect_err("unknown callback must be rejected");
+        assert_eq!(
+            session.state.pending_coin_solution_requests,
+            BTreeSet::from([pending])
+        );
     }
 }

@@ -18,12 +18,12 @@ import {
 } from '../../host';
 import { HandProposalForm } from './handProposalForm';
 import {
-  calpokerStateCodec,
   isCalpokerHandState,
   restoreCalpokerHand,
   type CalpokerHand,
   type CalpokerHandState,
 } from './serialize';
+import { testStateCodec } from '../../testStateCodec';
 import CaliforniaPoker from './components/CaliforniaPoker';
 import {
   GAME_STATES,
@@ -32,6 +32,8 @@ import {
 } from './components/constants/constants';
 import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
 import type { CaliforniapokerProps, CalpokerOutcomeView } from './types/CaliforniapokerProps';
+
+const calpokerStateCodec = testStateCodec<CalpokerHandState>('calpoker');
 
 jest.mock('./components/components/GameBottomBar', () => () => null);
 jest.mock('./components/components', () => {
@@ -113,7 +115,7 @@ function liveSource(port: TestLiveGamePort): GameMountView<CalpokerHand> {
 
 describe('Calpoker bigint domain helpers', () => {
   it('owns proposal form state and exposes it through getProposal', () => {
-    const ref = createRef<GameProposalFormHandle<Record<string, never>>>();
+    const ref = createRef<GameProposalFormHandle<bigint>>();
     let renderer: ReactTestRenderer;
     act(() => {
       renderer = create(
@@ -129,9 +131,7 @@ describe('Calpoker bigint domain helpers', () => {
     });
     expect(ref.current?.getProposal()).toEqual({
       ok: true,
-      senderContribution: 100n,
-      receiverContribution: 100n,
-      parameters: {},
+      parameters: 100n,
     });
     act(() => renderer!.unmount());
   });

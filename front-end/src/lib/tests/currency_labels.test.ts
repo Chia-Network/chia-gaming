@@ -1,19 +1,15 @@
 import { getCurrencyLabels, isTestnet } from '../../constants/currency';
 import { formatAmount, formatMojos } from '../../util';
-
-const PREFERENCES_KEY = 'appPreferences';
+import { storageRepository } from '../session/storageRepository';
 
 function selectNetwork(network: 'mainnet' | 'testnet' | undefined) {
-  if (network === undefined) {
-    localStorage.removeItem(PREFERENCES_KEY);
-    return;
-  }
-  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ playerId: 'test', network }));
+  if (network !== undefined)
+    void storageRepository.updatePreference({ key: 'network', value: network });
 }
 
 describe('currency labels follow the network preference', () => {
   afterEach(() => {
-    localStorage.removeItem(PREFERENCES_KEY);
+    storageRepository._resetForTests();
   });
 
   it('defaults to mainnet nomenclature when no preference is stored', () => {
@@ -43,7 +39,7 @@ describe('currency labels follow the network preference', () => {
 
 describe('formatAmount / formatMojos honor the network labels', () => {
   afterEach(() => {
-    localStorage.removeItem(PREFERENCES_KEY);
+    storageRepository._resetForTests();
   });
 
   it('formats mainnet amounts with XCH / MOJO / mojos', () => {

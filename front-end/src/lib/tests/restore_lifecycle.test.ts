@@ -20,27 +20,31 @@ import {
 } from '../restoreLifecycle';
 
 describe('restore lifecycle gates', () => {
-  it('blocks restored-session behavior until wasm restore and hub reconciliation both finish', () => {
-    expect(isRestoreBlocked(true, 'idle', false)).toBe(true);
-    expect(isRestoreBlocked(true, 'restoring', false)).toBe(true);
-    expect(isRestoreBlocked(true, 'restored', false)).toBe(true);
-    expect(isRestoreBlocked(true, 'failed', true)).toBe(true);
-    expect(isRestoreBlocked(true, 'restored', true)).toBe(false);
-    expect(isRestoreBlocked(false, 'idle', false)).toBe(false);
+  it('reveals locally restored presentation without waiting for hub or wallet reconnection', () => {
+    expect(isRestoreBlocked(true, 'idle')).toBe(true);
+    expect(isRestoreBlocked(true, 'restoring')).toBe(true);
+    expect(isRestoreBlocked(true, 'failed')).toBe(true);
+    expect(isRestoreBlocked(true, 'restored')).toBe(false);
+    expect(isRestoreBlocked(false, 'idle')).toBe(false);
+
+    expect(shouldMountGameSession(true, false, true, false)).toEqual({
+      startSession: true,
+      keepSession: true,
+    });
   });
 
   it('does not re-arm Restoring session after terminal finalization of a resumed mount', () => {
     // Resumed live sessions keep params.restoring=true after WASM+hub succeed.
-    expect(isRestoreBlocked(true, 'restored', true)).toBe(false);
+    expect(isRestoreBlocked(true, 'restored')).toBe(false);
 
-    // The old finishResolvedSessionDisplay reset (idle + hubReconciled=false)
+    // Resetting restore status after terminal finalization
     // while leaving restoring=true re-blocked GameSession via suppressPhaseReporting.
-    expect(isRestoreBlocked(true, 'idle', false)).toBe(true);
+    expect(isRestoreBlocked(true, 'idle')).toBe(true);
     expect(shouldSuppressPhaseReporting(true, false)).toBe(true);
 
     const after = restoreGateAfterTerminalFinalization();
     expect(after.restoring).toBe(false);
-    expect(isRestoreBlocked(after.restoring, after.restoreStatus, after.hubReconciled)).toBe(false);
+    expect(isRestoreBlocked(after.restoring, after.restoreStatus)).toBe(false);
 
     // Even if restoreBlocked were still true, a terminal presentation must win:
     // slash stays on the game tab (hasError) and must show the finished freeze.

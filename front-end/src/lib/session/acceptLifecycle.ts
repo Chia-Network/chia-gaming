@@ -7,17 +7,17 @@
  */
 
 import type {
+  DurableApplicationState,
+  DurableSessionPhase,
   SessionHistorySave,
   SessionIdentitySave,
   SessionPairingSave,
-  SessionPresentationSave,
-  SessionSave,
   SessionTransportSave,
-  TerminalSessionSave,
 } from './saveEnvelope';
-import type { ChannelStatus } from '../../types/ChiaGaming';
+import type { ChannelStatus, WalletProviderScope } from '../../types/ChiaGaming';
 import type { SessionModel } from './types';
 import { PRE_ACTIVE_CHANNEL_STATES } from './selectors';
+import { storageRepository } from './storageRepository';
 
 export type AcceptPhase = 'idle' | 'accepting' | 'persistDraining' | 'liveMounting' | 'active';
 
@@ -84,75 +84,63 @@ export function shouldCompleteAcceptTransition(model: SessionModel): boolean {
   return !ACCEPT_SETUP_CANCEL_CHANNEL_STATES.has(model.channel.status.state);
 }
 
-export type TerminalSessionBackup = {
-  terminal: TerminalSessionSave['terminal'];
-  presentation: SessionPresentationSave;
-} | null;
-
 export type FreshStartCheckpoint = {
+  walletProviderScope: WalletProviderScope;
   pairing: SessionPairingSave;
   transport: SessionTransportSave;
   identity?: Partial<SessionIdentitySave>;
   history?: Partial<SessionHistorySave>;
 };
 
+export function applyFreshStartCheckpoint(
+  state: DurableApplicationState,
+  checkpoint: FreshStartCheckpoint,
+): DurableApplicationState {
+  return {
+    ...state,
+    identity: { ...state.identity, ...checkpoint.identity },
+    history: { ...state.history, ...checkpoint.history },
+    walletContext: structuredClone(checkpoint.walletProviderScope),
+    session: {
+      phase: 'pre-handshake',
+      pairing: structuredClone(checkpoint.pairing),
+      transport: structuredClone(checkpoint.transport),
+    },
+  };
+}
+
 /**
- * Persist the pre-cradle live checkpoint for a fresh Accept start.
- * Backs up a finished terminal envelope from `loadState()` so Cancel mid-write
- * can restore the freeze rather than leaving preferences-only IndexedDB under
- * a still-visible results UI. `onCommitted` runs as soon as `replaceSession`
- * lands so a later restore failure still takes full-attempt teardown disposition.
+ * Capture the pre-cradle phase through the aggregate boundary. If cancellation
+ * races the write, restore the prior terminal phase (or no phase) through that
+ * same boundary.
  */
-export async function persistFreshStartCheckpoint(args: {
+export async function captureFreshStart(args: {
   epoch: number;
   getCurrentEpoch: () => number;
-  loadState: () => SessionSave;
-  replaceSession: (checkpoint: FreshStartCheckpoint) => Promise<void>;
-  saveTerminalSession: (fields: NonNullable<TerminalSessionBackup>) => Promise<void>;
-  clearSessionPreservingHistory: () => void;
   checkpoint: FreshStartCheckpoint;
   onCommitted: () => void;
 }): Promise<void> {
-  const {
-    epoch,
-    getCurrentEpoch,
-    loadState,
-    replaceSession,
-    saveTerminalSession,
-    clearSessionPreservingHistory,
-    checkpoint,
-    onCommitted,
-  } = args;
+  const { epoch, getCurrentEpoch, checkpoint, onCommitted } = args;
 
-  // Cancel / epoch bump before the write lands: keep the finished freeze.
   if (epoch !== getCurrentEpoch()) return;
 
-  // Prefer durable cache over sessionSaveRef — finishResolvedSessionDisplay
-  // nulls the ref while loadState() still holds the terminal envelope.
-  const prior = loadState();
-  const terminalBackup: TerminalSessionBackup =
-    prior.phase === 'terminal'
-      ? {
-          terminal: structuredClone(prior.terminal),
-          presentation: structuredClone(prior.presentation),
-        }
-      : null;
-
-  await replaceSession(checkpoint);
-
-  // Write landed: from here, failure disposition is full attempt teardown so we
-  // never leave a live cradle under a finished freeze / abandon-peer-only path.
+  let priorSession: DurableSessionPhase | null = null;
+  let priorWalletContext: DurableApplicationState['walletContext'] = null;
+  const snapshot = storageRepository.patchApplicationState((state: DurableApplicationState) => {
+    priorSession = state.session?.phase === 'terminal' ? structuredClone(state.session) : null;
+    priorWalletContext = structuredClone(state.walletContext);
+    return applyFreshStartCheckpoint(state, checkpoint);
+  });
+  await storageRepository.write(snapshot);
   onCommitted();
 
-  // Cancel raced the write: restore the finished freeze rather than leaving
-  // preferences-only IndexedDB under a still-visible results UI.
   if (epoch !== getCurrentEpoch()) {
-    if (terminalBackup) {
-      await saveTerminalSession(terminalBackup);
-    } else {
-      clearSessionPreservingHistory();
-    }
-    return;
+    const rollback = storageRepository.patchApplicationState((state) => ({
+      ...state,
+      session: structuredClone(priorSession),
+      walletContext: structuredClone(priorWalletContext),
+    }));
+    await storageRepository.write(rollback);
   }
 }
 /** Clear waiting / abandon / clean-shutdown timers and related UI flags. */

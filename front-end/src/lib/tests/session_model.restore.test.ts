@@ -11,18 +11,15 @@ import {
   selectShellView,
   selectGameTabConnected,
   isCleanShutdownInProgress,
-  sessionAmountsFromSave,
-  sessionModelFromSave,
+  decodeDurableApplicationState,
   snapshotFromSessionModel,
   isFinishingGameStatus,
-  nextGameTurnAfterLocalTurn,
-  isActivelyPlayingOnChain,
   projectGameStatus,
 } from '../session/model';
-import type { SessionSave } from '../../hooks/save';
+import { type DurableApplicationState } from '../session/saveEnvelope';
 import { liveSave } from './session_save_envelope.fixtures';
 
-function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
+function liveEnvelope(fields: Partial<DurableApplicationState>): DurableApplicationState {
   return liveSave({
     myContribution: '100',
     theirContribution: '100',
@@ -32,12 +29,11 @@ function liveEnvelope(fields: Partial<SessionSave>): SessionSave {
 }
 
 describe('session model restore, schema, and event contracts', () => {
-  it('derives restore blocking and shell decisions from the canonical model', () => {
+  it('does not block restored local presentation on external hub reconciliation', () => {
     const restoring = createSessionModel({
       restore: {
         restoring: true,
         status: 'restored',
-        hubReconciled: false,
         error: null,
       },
       peer: { connected: false },
@@ -50,10 +46,10 @@ describe('session model restore, schema, and event contracts', () => {
       },
     });
 
-    expect(selectRestoreBlocked(restoring)).toBe(true);
+    expect(selectRestoreBlocked(restoring)).toBe(false);
     expect(selectSessionPhase(restoring)).toBe('off-chain');
     expect(selectShellView(restoring, 'off-chain')).toMatchObject({
-      restoreBlocked: true,
+      restoreBlocked: false,
       canAdvertiseAvailable: false,
       sessionError: false,
     });
@@ -121,7 +117,7 @@ describe('session model restore, schema, and event contracts', () => {
   });
 
   it('restores between-hand state into the same game view shape live state uses', () => {
-    const save: SessionSave = liveEnvelope({
+    const save: DurableApplicationState = liveEnvelope({
       version: 22n,
       playerId: 'p1',
       serializedGameSession: new Uint8Array([1, 2, 3]),
@@ -135,6 +131,7 @@ describe('session model restore, schema, and event contracts', () => {
       perGameAmount: '10',
       rewardPuzzleHash: '11'.repeat(32),
       unackedMessages: [],
+      handKey: 1n,
       activeGameIds: [],
       activeGameType: 'spacepoker',
       channelStatus: {
@@ -148,32 +145,26 @@ describe('session model restore, schema, and event contracts', () => {
       },
       betweenHandMode: 'review-incoming-proposal',
       betweenHandLastHandProposal: {
-        player_a_contribution: '10',
-        player_b_contribution: '10',
-        sender_is_player_a: false,
-        game_timeout: '23',
-        game_type: 'spacepoker',
-        parameters: 1n,
+        senderIsPlayerA: false,
+        gameTimeout: 23n,
+        gameType: 'spacepoker',
+        parameters: [10n, 1n],
       },
-      proposalGroups: [
+      pendingProposals: [
         {
-          primary_id: '42',
-          member_ids: ['42'],
-          origin: 'peer',
-          disposition: 'incoming-review',
-          hand_proposal: {
-            player_a_contribution: '20',
-            player_b_contribution: '20',
-            sender_is_player_a: false,
-            game_timeout: '31',
-            game_type: 'spacepoker',
-            parameters: 2n,
+          id: '42',
+          lifecycle: 'peer-review',
+          handProposal: {
+            senderIsPlayerA: false,
+            gameTimeout: 31n,
+            gameType: 'spacepoker',
+            parameters: [10n, 2n],
           },
         },
       ],
     });
 
-    const restored = sessionModelFromSave(save);
+    const restored = decodeDurableApplicationState(save).model;
     const live = createSessionModel({
       channel: {
         status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active', havePotato: true },
@@ -192,30 +183,24 @@ describe('session model restore, schema, and event contracts', () => {
       },
       betweenHand: {
         mode: 'review-incoming-proposal',
-        proposalGroups: [
+        pendingProposals: [
           {
-            primaryId: '42',
-            memberIds: ['42'],
-            origin: 'peer',
-            disposition: 'incoming-review',
+            id: '42',
+            lifecycle: 'peer-review',
             handProposal: {
               gameType: 'spacepoker',
-              playerAContribution: 20n,
-              playerBContribution: 20n,
               senderIsPlayerA: false,
               gameTimeout: 31n,
-              parameters: 2n,
+              parameters: [10n, 2n],
             },
           },
         ],
         rejectedOnceHandProposal: null,
         lastHandProposal: {
           gameType: 'spacepoker',
-          playerAContribution: 10n,
-          playerBContribution: 10n,
           senderIsPlayerA: false,
           gameTimeout: 23n,
-          parameters: 1n,
+          parameters: [10n, 1n],
         },
         compose: {
           selectedGame: 'spacepoker',
@@ -228,8 +213,8 @@ describe('session model restore, schema, and event contracts', () => {
     });
 
     expect(selectGameSessionView(restored).betweenHands).toBe(true);
-    expect(selectGameSessionView(restored).currentHandAmount).toBe(10n);
-    expect(restored.betweenHand.proposalGroups).toEqual(live.betweenHand.proposalGroups);
+    expect(selectGameSessionView(restored).currentHandAmount).toBe(0n);
+    expect(restored.betweenHand.pendingProposals).toEqual(live.betweenHand.pendingProposals);
     expect(restored.betweenHand.mode).toBe(live.betweenHand.mode);
   });
 
@@ -334,58 +319,6 @@ describe('session model restore, schema, and event contracts', () => {
     ).toBe(false);
   });
 
-  it('parses saved session amounts through a shared bigint adapter', () => {
-    expect(
-      sessionAmountsFromSave(
-        liveEnvelope({
-          myContribution: '100',
-          theirContribution: '50',
-          perGameAmount: '45',
-        } as any),
-      ),
-    ).toEqual({ myContribution: 100n, theirContribution: 50n, perGameAmount: 45n });
-
-    expect(
-      sessionAmountsFromSave(
-        liveEnvelope({
-          myContribution: '100',
-          theirContribution: '100',
-          perGameAmount: '10',
-        } as any),
-      ),
-    ).toEqual({ myContribution: 100n, theirContribution: 100n, perGameAmount: 10n });
-
-    expect(() =>
-      sessionAmountsFromSave(
-        liveEnvelope({
-          myContribution: '100',
-          theirContribution: '50',
-          perGameAmount: undefined,
-        } as any),
-      ),
-    ).toThrow('Garbled save');
-
-    expect(() =>
-      sessionAmountsFromSave(
-        liveEnvelope({
-          myContribution: 'bad',
-          theirContribution: '50',
-          perGameAmount: '10',
-        } as any),
-      ),
-    ).toThrow('Garbled save');
-
-    expect(() =>
-      sessionAmountsFromSave(
-        liveEnvelope({
-          myContribution: '50',
-          theirContribution: undefined,
-          perGameAmount: '10',
-        } as any),
-      ),
-    ).toThrow('Garbled save');
-  });
-
   it('keeps histories out of the presentation snapshot', () => {
     const model = createSessionModel({
       history: {
@@ -416,8 +349,8 @@ describe('session model restore, schema, and event contracts', () => {
           '7': {
             id: '7',
             amount: '100',
-            coin: { coinHex: 'abcd', turnState: 'replaying' },
-            handStatus: 'replaying-move',
+            coinHex: 'abcd',
+            presentation: 'replaying-move',
             terminal: INITIAL_GAME_TERMINAL_MODEL,
           },
         },
@@ -435,30 +368,6 @@ describe('session model restore, schema, and event contracts', () => {
     });
   });
 
-  it('does not regress terminal hand status when a local turn callback arrives late', () => {
-    expect(nextGameTurnAfterLocalTurn('ended', false, 'Unrolling')).toBe('ended');
-    expect(nextGameTurnAfterLocalTurn('finishing', true, 'ResolvedUnrolled')).toBe('finishing');
-    expect(nextGameTurnAfterLocalTurn('playing-on-chain', true, 'Unrolling')).toBe(
-      'playing-on-chain',
-    );
-    expect(nextGameTurnAfterLocalTurn('replaying', true, 'ResolvedUnrolled')).toBe('replaying');
-    expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Unrolling')).toBe('my-turn');
-    expect(nextGameTurnAfterLocalTurn('my-turn', false, 'Active')).toBe('their-turn');
-  });
-
-  it('keeps an in-progress on-chain play/replay from reverting to "Your turn"', () => {
-    // While the hook is (re)playing our move on-chain, an on-chain-my-turn for
-    // the same coin must not downgrade the display back to 'Your turn'.
-    expect(isActivelyPlayingOnChain('playing-on-chain')).toBe(true);
-    expect(isActivelyPlayingOnChain('replaying')).toBe(true);
-    // A genuine new (manual) turn arrives from 'their-turn', and other states
-    // are not active play, so they still take the my-turn transition.
-    expect(isActivelyPlayingOnChain('their-turn')).toBe(false);
-    expect(isActivelyPlayingOnChain('my-turn')).toBe(false);
-    expect(isActivelyPlayingOnChain('finishing')).toBe(false);
-    expect(isActivelyPlayingOnChain('ended')).toBe(false);
-  });
-
   it('marks terminal moves as finishing regardless of their wire turn status', () => {
     expect(isFinishingGameStatus('on-chain-my-turn', true)).toBe(true);
     expect(isFinishingGameStatus('on-chain-their-turn', true)).toBe(true);
@@ -470,8 +379,8 @@ describe('session model restore, schema, and event contracts', () => {
         previous: {
           id: '7',
           amount: '100',
-          coin: { coinHex: 'coin', turnState: 'my-turn', onChain: true },
-          handStatus: 'our-turn',
+          coinHex: 'coin',
+          presentation: 'on-chain-my-turn',
           terminal: INITIAL_GAME_TERMINAL_MODEL,
         },
         payload: {
@@ -483,8 +392,7 @@ describe('session model restore, schema, and event contracts', () => {
         channelState: 'ResolvedUnrolled',
       }),
     ).toMatchObject({
-      coin: { turnState: 'finishing' },
-      handStatus: 'finishing',
+      presentation: 'finishing',
     });
   });
 
@@ -492,8 +400,8 @@ describe('session model restore, schema, and event contracts', () => {
     const previous = {
       id: '7',
       amount: '100',
-      coin: { coinHex: 'coin', turnState: 'my-turn' as const, onChain: true },
-      handStatus: 'our-turn' as const,
+      coinHex: 'coin',
+      presentation: 'on-chain-my-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     };
     expect(
@@ -508,8 +416,7 @@ describe('session model restore, schema, and event contracts', () => {
         channelState: 'ResolvedUnrolled',
       }),
     ).toMatchObject({
-      coin: { turnState: 'finishing-waiting-timeout', onChain: true },
-      handStatus: 'finishing-waiting-timeout',
+      presentation: 'finishing-waiting-timeout',
     });
     expect(
       projectGameStatus({
@@ -523,8 +430,7 @@ describe('session model restore, schema, and event contracts', () => {
         channelState: 'ResolvedUnrolled',
       }),
     ).toMatchObject({
-      coin: { turnState: 'finishing-spending', onChain: true },
-      handStatus: 'finishing-spending',
+      presentation: 'finishing-spending',
     });
   });
 });

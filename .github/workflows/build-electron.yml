@@ -32,13 +32,16 @@ jobs:
       matrix:
         include:
           - platform: mac
+            arch: universal
             os: macos-13-arm64
             artifact: chia-gaming-electron-macos
           - platform: win
+            arch: x64
             os: windows-latest
             artifact: chia-gaming-electron-windows
             environment: windows-code-signing
           - platform: linux
+            arch: x64
             os: ubuntu-22.04
             artifact: chia-gaming-electron-linux
     runs-on: ${{ matrix.os }}
@@ -187,7 +190,13 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.APPLE_DEV_ID_APP }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
-        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            args+=("--release-version=$RELEASE_VERSION")
+          fi
+          tools/build-electron.sh "${args[@]}"
 
       - name: Build signed Windows Electron installer
         if: steps.windows-signing.outputs.available == 'true'
@@ -198,14 +207,52 @@ jobs:
           AZURE_TOKEN_CREDENTIALS: prod
           AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            args+=("--release-version=$RELEASE_VERSION")
+          fi
+          tools/build-electron.sh "${args[@]}"
 
       - name: Build unsigned Electron installer
         if: steps.apple-signing.outputs.available != 'true' && steps.windows-signing.outputs.available != 'true'
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            args+=("--release-version=$RELEASE_VERSION")
+          fi
+          tools/build-electron.sh "${args[@]}"
+
+      - name: Verify universal macOS package
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          verify_dir="$RUNNER_TEMP/chia-gaming-mac-verify"
+          mkdir -p "$verify_dir"
+          unzip -q desktop/release/*.zip -d "$verify_dir"
+          shopt -s nullglob
+          app_paths=("$verify_dir"/*.app)
+          if [[ "${#app_paths[@]}" -ne 1 ]]; then
+            echo "::error::Expected one packaged macOS application, found ${#app_paths[@]}"
+            exit 1
+          fi
+          app_path="${app_paths[0]}"
+          executable="$app_path/Contents/MacOS/Chia Gaming"
+          architectures="$(lipo -archs "$executable")"
+          [[ " $architectures " == *" arm64 "* ]] || {
+            echo "::error::macOS executable lacks arm64: $architectures"
+            exit 1
+          }
+          [[ " $architectures " == *" x86_64 "* ]] || {
+            echo "::error::macOS executable lacks x86_64: $architectures"
+            exit 1
+          }
+          codesign --verify --deep --strict "$app_path"
 
       - name: Notarize and staple macOS installers
         if: steps.apple-signing.outputs.available == 'true'
@@ -215,6 +262,7 @@ jobs:
           APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          shopt -s nullglob
           for dmg in desktop/release/*.dmg; do
             xcrun notarytool submit \
               --wait \
@@ -225,6 +273,55 @@ jobs:
             xcrun stapler staple "$dmg"
             xcrun stapler validate "$dmg"
           done
+          for zip in desktop/release/*.zip; do
+            xcrun notarytool submit \
+              --wait \
+              --apple-id "$APPLE_NOTARIZE_USERNAME" \
+              --password "$APPLE_NOTARIZE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              "$zip"
+            staple_dir="$RUNNER_TEMP/chia-gaming-mac-staple"
+            rm -rf "$staple_dir"
+            mkdir -p "$staple_dir"
+            ditto -x -k "$zip" "$staple_dir"
+            app_paths=("$staple_dir"/*.app)
+            if [[ "${#app_paths[@]}" -ne 1 ]]; then
+              echo "::error::Expected one notarized macOS application, found ${#app_paths[@]}"
+              exit 1
+            fi
+            app_path="${app_paths[0]}"
+            xcrun stapler staple "$app_path"
+            xcrun stapler validate "$app_path"
+            rm "$zip"
+            ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip"
+          done
+
+      - name: Generate installer checksums
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          )
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "::error::No installer files found"
+            exit 1
+          fi
+          checksum_file="SHA256SUMS-${{ matrix.platform }}.txt"
+          (
+            cd desktop/release
+            for file in "${files[@]##*/}"; do
+              if command -v sha256sum >/dev/null 2>&1; then
+                sha256sum "$file"
+              else
+                shasum -a 256 "$file"
+              fi
+            done
+          ) > "desktop/release/$checksum_file"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -238,3 +335,28 @@ jobs:
             desktop/release/*.exe
             desktop/release/*.AppImage
             desktop/release/*.deb
+            desktop/release/SHA256SUMS-*.txt
+
+  publish:
+    name: Publish Electron installers
+    if: github.event_name == 'release'
+    needs: [build]
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chia-gaming-electron-*
+          path: release
+          merge-multiple: true
+
+      - name: Upload installers to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          files=(release/*)
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber

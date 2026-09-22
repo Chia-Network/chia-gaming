@@ -5,15 +5,16 @@ codebase — a system for playing two-player games over Chia state channels.
 For detailed coverage of specific areas, see [Further Reading](#further-reading)
 at the end of this document.
 
-**Early beta status:** The project works, but bugs are still likely. Backwards
-compatibility is attempted across on-chain wire formats, persistence formats,
-browser localStorage, external APIs, and internal interfaces, but it remains
-best-effort and may be unreliable. Breaking changes are still possible.
+**Early beta status:** The project works, but bugs are still likely. Its
+unreleased-format policy is stated in
+[Unreleased app-owned formats](#unreleased-app-owned-formats).
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Design Philosophy: Fail Fast](#design-philosophy-fail-fast)
+- [Unreleased app-owned formats](#unreleased-app-owned-formats)
+- [Persistence transactionality](#persistence-transactionality)
 - [State Channels: The Core Idea](#state-channels-the-core-idea)
 - [Coin Hierarchy](#coin-hierarchy)
 - [The Potato Protocol](#the-potato-protocol)
@@ -32,9 +33,9 @@ open, they play games entirely off-chain, exchanging signed messages. The
 blockchain is only needed in two cases:
 
 1. **Clean shutdown** — both players agree the channel is done, and they split
-  the funds.
+   the funds.
 2. **Dispute** — one player misbehaves (sends an invalid move, goes offline,
-  etc.), and the other player forces the game state on-chain for the blockchain
+   etc.), and the other player forces the game state on-chain for the blockchain
    to resolve.
 
 This design means most games never touch the blockchain at all. The on-chain
@@ -65,7 +66,7 @@ The one essential distinction is the **trust boundary**:
   rejected gracefully. A peer sending a bad batch is a protocol violation we
   expect and handle (reject the batch, go on-chain); it is not a bug in our
   code, so it must never crash us.
-- **Internal invariants** — conditions that can only be false if *our own* code
+- **Internal invariants** — conditions that can only be false if _our own_ code
   is wrong — fail loudly. These use `game_assert!` / `game_assert_eq!`, which
   panic in debug/test builds (so the bug is impossible to miss) and return an
   `Err` in release builds (so a deployed process degrades into an error
@@ -79,6 +80,83 @@ validation program is nil) can only happen if a caller is buggy — so the move
 handler asserts rather than silently discarding the move. Discarding it would
 hide the bug and leave the broken caller in place to cause subtler problems
 later.
+
+---
+
+## Unreleased app-owned formats
+
+Before the initial beta, no player-app or hub persistence format is a released
+compatibility contract. App-owned browser envelopes, IndexedDB layouts, WASM
+cradles, and game-owned saved state therefore decode only their current format:
+incompatible changes advance the relevant version, with no migration,
+predecessor fallback, alias, or dual read for formats that never shipped.
+Explicit versions remain in place as centralized migration hooks for the first
+released predecessor.
+
+This policy does not relax deployed external compatibility. Wallet and Cloud
+RPCs, Chia offer compression and bech32 handling, Coinset JSON, peer and
+on-chain protocols, and historical signed-unroll recognition remain
+compatibility-sensitive contracts.
+
+---
+
+## Persistence transactionality
+
+Persistence is crash transactionality over the residue of a completed drain,
+not continuous autosave and not a substitute for in-process rollback. A drain
+owner consumes one stimulus and all consequences to a fixed point, then captures
+the minimal state that remains authoritative or unresolved. If the process is
+lost, rehydrating the last successful boundary supplies the rollback
+implicitly. Explicit clone/restore is reserved for a narrow operation that can
+fail while the process continues—such as untrusted peer validation, a chain
+observation, or synchronous game-hand mutation—and its temporary working copy
+must disappear before capture.
+
+The live `SessionMachineRuntime` is the only dirty/coalescing scheduler. It owns
+protocol/controller/UI/transport drains and folds preference, history, funding,
+fee, and rejection mutations into the same quiescent snapshot. Channel-funding
+and fee-attachment owners still checkpoint a reservation before mutating the
+provider. Before a committed runtime has serializable WASM fields and becomes
+the persistence owner, reliable negotiation, rejection, and other explicit
+product boundaries build and write a whole-root snapshot immediately.
+`StorageRepository` owns the in-memory aggregate, storage authority, and exact
+serialized whole-root writes; it does not schedule, debounce, or capture state.
+
+An ordinary checkpoint failure does not stop play: project and release the
+captured boundary once, keep the latest in-memory root dirty, warn once per
+degradation episode, and retry on later activity without replaying released
+effects. Authority loss instead fences the obsolete owner. External work that
+is still unresolved at the fixed point remains durable until an explicit
+completion, acknowledgement, cancellation, replacement, or terminal event
+retires it.
+
+Durable inventory, grouped by restore consumer:
+
+- **Boot and UI:** identity, preferences, bounded history/logs, user-authored
+  compose values, actionable proposal/retry and clean-shutdown intent, policy
+  timer timestamps, last displayed hand, and frozen terminal presentation.
+- **Live session and peer transport:** the opaque Rust cradle, pairing facts,
+  unacknowledged reliable frames, terminal handoff, and bounded rejection
+  records; the receive reorder buffer is reconstructed by replay.
+- **Wallet and submission recovery:** provider scope, unresolved wallet
+  obligations, retained transaction/submission and replay intent, retired IDs,
+  and pending puzzle/solution requests. Wallet result bytes are deliberately
+  not durable; reservation identity is sufficient for cancel-and-reoffer
+  recovery. In Rust, the replay epoch, `pending_coin_solution_requests`, and
+  `retired_submission_ids` are durable deduplication or unresolved-work markers.
+- **Chain reconciliation:** the previous snapshot height and present/vanished
+  coin baselines, channel-status deduplication, and timeout-submission markers.
+  The corresponding `last_channel_status` and `timeout_finish_submitted` fields
+  are retained protocol residue needed to detect downtime reorgs and avoid
+  duplicate work, not disposable caches.
+- **Deliberately transient:** peer-message, chain-observation, local-hand, and
+  batch-plan rollback copies, adapter flights, promises, generated effects,
+  projection-only warnings, and other consumed or reconstructible work.
+
+Before admitting a field to a current persistence schema, name all four:
+**drain owner**, **restore consumer**, **why reconstruction is impossible or
+unsafe**, and **retirement event**. Importance alone is not a durability
+argument; a field without all four stays transient.
 
 ---
 
@@ -135,17 +213,17 @@ Funding coins (one per player)
 ### Channel Coin
 
 - Created as a child of a **zero-value standard singleton launcher**. The
-receiver's persisted funding offer fixes its ancestry through a signed one-time
-pre-launcher; the initiator's quoted contribution coin asserts the launcher's
-announcement. CHIP-25 messages bind both wallet spends without host-selected
-coin IDs.
+  receiver's persisted funding offer fixes its ancestry through a signed one-time
+  pre-launcher; the initiator's quoted contribution coin asserts the launcher's
+  announcement. CHIP-25 messages bind both wallet spends without host-selected
+  coin IDs.
 - Controlled by a **2-of-2 aggregate signature** — neither player can spend it
-alone.
+  alone.
 - Every off-chain state update produces a new signed commitment for how this
-coin would be spent (to the unroll coin). The actual coin on-chain doesn't
-move until someone initiates a dispute or shutdown.
+  coin would be spent (to the unroll coin). The actual coin on-chain doesn't
+  move until someone initiates a dispute or shutdown.
 - On clean shutdown, both players agree to spend the channel coin directly to
-payout coins (no unroll needed).
+  payout coins (no unroll needed).
 
 **Key code:** `src/channel_state/types/channel_coin.rs`,
 `ChannelState` in `src/channel_state/mod.rs`
@@ -155,22 +233,22 @@ payout coins (no unroll needed).
 The unroll coin implements the **optimistic rollback** mechanism:
 
 - **Curried parameters:** `SHARED_PUBKEY` (aggregate 2-of-2 unroll public
-key), `OLD_SEQUENCE_NUMBER`, `DEFAULT_CONDITIONS_HASH`
+  key), `OLD_SEQUENCE_NUMBER`, `DEFAULT_CONDITIONS_HASH`
 - **Solution:** The conditions list, passed as the dotted-pair cdr of the
-puzzle args.  Dispatch is via `shatree(conditions) == DEFAULT_CONDITIONS_HASH`.
-- **Timeout path** (hash matches): The conditions are returned as-is.  They
-include `ASSERT_HEIGHT_RELATIVE` so the spend can only land after the
-timeout elapses.  These conditions create the game coins and reward coins
-reflecting the last agreed state.
+  puzzle args. Dispatch is via `shatree(conditions) == DEFAULT_CONDITIONS_HASH`.
+- **Timeout path** (hash matches): The conditions are returned as-is. They
+  include `ASSERT_HEIGHT_RELATIVE` so the spend can only land after the
+  timeout elapses. These conditions create the game coins and reward coins
+  reflecting the last agreed state.
 - **Preemption path** (hash does not match): The puzzle checks that the
-conditions contain a **higher sequence number** with the correct parity,
-then prepends `AGG_SIG_UNSAFE SHARED_PUBKEY (shatree conditions)` and
-returns.  The aggregate signature from both unroll keys ensures the
-conditions were co-signed.
+  conditions contain a **higher sequence number** with the correct parity,
+  then prepends `AGG_SIG_UNSAFE SHARED_PUBKEY (shatree conditions)` and
+  returns. The aggregate signature from both unroll keys ensures the
+  conditions were co-signed.
 
 **Parity rule.** Each player only ever sends half-signed states of one parity
 to the opponent (based on `started_with_potato`), so each player can only
-fully sign states of the parity they *receive*. The unroll puzzle requires
+fully sign states of the parity they _receive_. The unroll puzzle requires
 that a preempting state has the opposite parity from the published unroll.
 This prevents a rollback attack: without the rule, a malicious player could
 publish a very old unroll and immediately preempt it with a less-old-but-still-
@@ -186,10 +264,10 @@ in the first ordinary Batch.
 
 **Unroll state tracking.** The code tracks `latest_sent_unroll` (the most
 recent unroll we sent the opponent) and `latest_received_unroll` (the most
-recent unroll received from them).  For preemption, only the latest state
+recent unroll received from them). For preemption, only the latest state
 is needed — it has the highest sequence number and the correct parity.
-However, the opponent can broadcast *any* unroll we ever sent them (all
-carry valid aggregate signatures from the time they were created).  To
+However, the opponent can broadcast _any_ unroll we ever sent them (all
+carry valid aggregate signatures from the time they were created). To
 identify these on-chain, the `ChannelState` maintains an
 `unroll_puzzle_hash_map` that maps each unroll puzzle hash to a compact
 historical record: state number, committed conditions hash, and timeout
@@ -224,10 +302,10 @@ The referee enforces game rules on-chain:
 
 - **Move:** Advance the game state (creates a new game coin with updated args)
 - **Timeout:** If the current mover doesn't act within `game_timeout` blocks,
-the pot is split according to `mover_share` (see
-[Referee Puzzle Args](ON_CHAIN.md#referee-puzzle-args) for semantics)
+  the pot is split according to `mover_share` (see
+  [Referee Puzzle Args](ON_CHAIN.md#referee-puzzle-args) for semantics)
 - **Slash:** If a previous move was provably invalid, the opponent can slash and
-take the funds
+  take the funds
 
 **Key code:** `src/referee/mod.rs`, `src/referee/types.rs`,
 `clsp/referee/onchain/referee.clsp`
@@ -259,57 +337,77 @@ time, there's no ambiguity about move ordering.
 
 Every ordinary potato pass is a single `PeerMessage::Batch` containing:
 
-1. `**actions: Vec<BatchAction>`** — zero or more game operations to apply
-  sequentially:
-  - `ProposeGroup` — propose one factory-derived atomic game group
-  - `AcceptProposalGroup` — accept one complete pending proposal group
-  - `CancelProposalGroup` — cancel one complete pending proposal group
-  - `Move` — make a game move
-  - `AcceptSettlement` — accept a game result (end game)
-2. `**signatures: StateUpdateSignatures`** — two half-signatures covering the final
-  channel state after all actions in the batch have been applied:
-  - A half-signature of the **channel coin** spend committing to the new unroll
+1. `**actions: Vec<BatchAction>`\*\* — zero or more game operations to apply
+   sequentially:
+
+- `Propose` — propose one factory-derived request
+- `AcceptProposal` — accept one pending proposal
+- `CancelProposal` — cancel one pending proposal
+- `Move` — make a game move
+- `AcceptSettlement` — accept a game result (end game)
+
+2. `**signatures: StateUpdateSignatures`\*\* — two half-signatures covering the final
+   channel state after all actions in the batch have been applied:
+
+- A half-signature of the **channel coin** spend committing to the new unroll
   coin (so both players can unroll to the latest agreed state).
-  - A half-signature for **preempting the unroll coin** to this state (so the
+- A half-signature for **preempting the unroll coin** to this state (so the
   recipient can prove they have a more recent state if the opponent publishes
   a stale unroll).
-   Both are half-signatures because the channel coin and unroll coin are 2-of-2
-   constructions — each potato pass carries the sender's half, and the receiver
-   combines it with their own to form the full aggregate signature.
-   The signatures are always verified. Clean shutdown is not a Batch field: the
-potato holder sends `PeerMessage::CleanShutdown { channel_half_sig }`. Both
-peers derive the same canonically ordered direct payouts from the agreed
-balances and handshake reward puzzle hashes. The responder returns only its
-half in `PeerMessage::CleanShutdownComplete { channel_half_sig }`; each peer
-locally combines and consensus-validates the finished spend before submission.
-If actions are queued before shutdown, they are first flushed in an ordinary
-Batch and the sender requests the potato back.
+  Both are half-signatures because the channel coin and unroll coin are 2-of-2
+  constructions — each potato pass carries the sender's half, and the receiver
+  combines it with their own to form the full aggregate signature.
+  The signatures are always verified. Clean shutdown is not a Batch field: the
+  potato holder sends `PeerMessage::CleanShutdown { channel_half_sig }`. Both
+  peers derive the same canonically ordered direct payouts from the agreed
+  balances and handshake reward puzzle hashes. The responder returns only its
+  half in `PeerMessage::CleanShutdownComplete { channel_half_sig }`; each peer
+  locally combines and consensus-validates the finished spend before submission.
+  If actions are queued before shutdown, they are first flushed in an ordinary
+  Batch and the sender requests the potato back.
 
 The receiver processes actions sequentially and rejects the entire batch if any
-action fails validation. Rejection uses a **rollback mechanism**: before peer
-batch processing begins, `OffChainPhase` snapshots both the `ChannelState` and
-the local `game_action_queue`. If any action or signature verification fails,
-both snapshots are restored. This makes a peer batch atomic across all state that
-could otherwise affect dispute recovery: intermediate mutations to `live_games`,
-`pending_settlements`, balances, `state_number`, `cached_redo_actions`, and
-queued local actions are not allowed to leak out of a failed peer batch. The
-error then triggers go-on-chain (the peer sent a bad batch, so we dispute
-on-chain).
+action fails validation. Untrusted `PeerMessage::Batch` processing runs against
+an explicit cloneable rollback snapshot containing channel state, local actions,
+incoming messages, potato ownership, peer-potato intent, clean-shutdown
+correlation, last spend commitment, and height. If any action or signature
+verification fails, the complete working state is restored and no effects or
+replacement phase are published. A separate narrow snapshot protects received
+`CleanShutdown`, which cancels proposals before its peer signature is
+validated. Other trusted local mutations fail loudly instead of paying for a
+broad transactional wrapper. Invalid peer data triggers go-on-chain only after
+rollback.
 
-Local queue draining is independently transactional wherever it runs. Before
-`drain_queue_into_batch` starts, it snapshots the channel state and action
-queue; any failure restores both before returning diagnostic context to its
-caller. The caller may then remove only the failed local action and either
-retry or notify the UI. This applies both while responding to a received batch
-and during the host's ordinary pending-action flush, so no unsent prefix of a
-failed drain remains applied locally.
+After a valid received batch commits, queued local game actions are reconciled
+once against the new peer state. Known stale moves, settlements, and cheats are
+removed with `ActionFailed`; the remaining queue is drained once. An unexpected
+local drain failure is an internal error, not a retryable peer-batch condition.
+That drain builds a narrow local `BatchPlan` over a cloned channel, queue
+disposition, and staged effects. It commits only after cached-unroll
+finalization succeeds. A trusted action error removes and attributes only the
+failing action while preserving every other queued action in order; a
+finalization error preserves the full queue. This packaging boundary is not a
+general rollback or retry mechanism. `OffChainPhase` exclusively owns planning
+and commit: planning mutates only the `BatchPlan`; commit replaces the live
+channel and queue and publishes effects together. `BatchPlan` owns and mutates
+only durable protocol and queue working state. Transient, nonserialized caches
+remain outside the plan and are not transactionally cloned. Tests reach this
+behavior through the concrete test-only `OffChainPhase` seam on `GameSession`,
+not test operations implemented by every lifecycle phase.
+
+This rollback scope is an architectural invariant. Core atomicity exists to
+isolate mutations made while validating untrusted peer input; it is not a
+general transaction abstraction for trusted local UI calls, height updates,
+coin observations, ordinary queue drains, or `go_on_chain`. Do not widen the
+snapshot boundary to those paths. A valid peer batch must commit before stale
+local intents are reconciled.
 
 Because the batch comes with the potato, the sender constructed it while holding
 the definitive state. Every action in the batch should be valid against that
 state — any failure is a protocol violation by the peer, not a benign race.
 
-The sender is responsible for ordering actions correctly (e.g., game acceptances
-before proposal acceptances to ensure funds are available).
+The sender is responsible for ordering actions correctly. Proposal acceptances
+run in batch order against the balances left by earlier actions.
 
 Only one move per game is allowed per batch, enforced by the existing turn-taking
 rules (you can't move on your opponent's turn).
@@ -321,13 +419,13 @@ The `current_state_number` increments once per batch, not per action.
 Before batch processing begins, two checks protect the receiver:
 
 - **Local receive policy:** The browser defaults reject message bodies larger
-than 10 MiB and bound future-number distance, queued message count, and queued
-bytes. These configurable denial-of-service limits are local policy, not
-negotiated protocol constants.
+  than 10 MiB and bound future-number distance, queued message count, and queued
+  bytes. These configurable denial-of-service limits are local policy, not
+  negotiated protocol constants.
 - **Double-potato detection:** If a `Batch` arrives while we already hold the
-potato (`PotatoState::Present`), it is rejected as a protocol violation.
-Only one player can hold the potato at a time; receiving a second batch
-means the peer is misbehaving.
+  potato (`PotatoState::Present`), it is rejected as a protocol violation.
+  Only one player can hold the potato at a time; receiving a second batch
+  means the peer is misbehaving.
 
 ### Local Action Queueing
 
@@ -336,8 +434,9 @@ unified pattern:
 
 1. The action is placed on an internal queue.
 2. The session requests or uses the potato:
-  - If we hold the potato: drain all queued actions into a single batch and send
-  - If we don't hold the potato: send a `RequestPotato` message
+
+- If we hold the potato: drain all queued actions into a single batch and send
+- If we don't hold the potato: send a `RequestPotato` message
 
 This ensures that multiple user actions between potato receives are
 automatically batched together.
@@ -378,12 +477,12 @@ return validator programs; non-nil next hashes are resolved in the local
 registry.
 
 The `game_action_queue` is populated only by local API calls (user/UI actions),
-never directly by received peer messages. Received batches can still make queued
-local actions stale as a side effect of valid peer state changes, so failed peer
-batch handling snapshots the queue as part of the atomic boundary. Separately,
-`drain_queue_into_batch` processes the local queue when we hold the potato; any
-errors during local draining reflect bugs or stale local intents, not a normal
-peer-data recovery path.
+never directly by received peer messages. A valid received batch commits its
+peer-authored state first. Rust then reconciles queued local intents against
+that committed state; stale intents produce `ActionFailed` without rejecting or
+rolling back the valid peer batch. Separately, `drain_queue_into_batch`
+processes the local queue when we hold the potato; errors during local draining
+reflect bugs or stale local intents, not a peer-data recovery path.
 
 ### Non-Potato Messages
 
@@ -410,12 +509,12 @@ wire/message protocol labels. A and B include a text-to-`u32` capabilities map;
 `peer_protocol = 1` is required and unknown capability keys are ignored.
 Handshake messages are not sent via `Batch`:
 
-| Step | Sender | Message | Payload type |
-|------|--------|---------|--------------|
-| A | Initiator | `HandshakeA` | keys, reward ph, PoPs, and contributions |
-| B | Receiver | `HandshakeB` | receiver identity, pre-launcher ID, and state-0 signatures |
-| C | Initiator | `HandshakeC` | initiator funding bundle and state-1 signatures |
-| D | Receiver | `HandshakeD` | receiver funding/acceptance bundle |
+| Step | Sender    | Message      | Payload type                                               |
+| ---- | --------- | ------------ | ---------------------------------------------------------- |
+| A    | Initiator | `HandshakeA` | keys, reward ph, PoPs, and contributions                   |
+| B    | Receiver  | `HandshakeB` | receiver identity, pre-launcher ID, and state-0 signatures |
+| C    | Initiator | `HandshakeC` | initiator funding bundle and state-1 signatures            |
+| D    | Receiver  | `HandshakeD` | receiver funding/acceptance bundle                         |
 
 #### Between-message wallet interactions
 
@@ -433,11 +532,23 @@ coin reserves the opening fee and asserts the singleton launcher's
 announcement. The initiator sends the completed half and state-1 signatures
 in C.
 
-On C, the receiver verifies state 1, combines both exact halves, runs Chia
-consensus validation, sends its acceptance half in D, and submits the locally
-assembled transaction. The initiator independently combines and validates C
-and D before submission. Neither endpoint accepts an untrusted aggregate
-bundle supplied by its peer.
+In both roles Rust emits the canonical funding request, the external wallet
+constructs an offer from that request, and Rust validates the returned offer
+before the handshake can advance. Rejection ends that handshake attempt; it
+does not cause the controller to invent successor or predecessor requests.
+
+Once each role knows the predicted channel coin, Rust registers it directly.
+The channel coin's later creation completes activation; the local wallet
+funding input is validated as part of the assembled transaction but is not an
+intermediate protocol watch.
+
+On C, the receiver first validates the complete assembled funding transaction
+and verifies state 1 against a staged channel-state clone. Only after every
+check succeeds does it commit genesis state, send its acceptance half in D, and
+submit the locally assembled transaction. A rejected C leaves the receiver
+byte-for-byte unchanged and may be followed by a valid retry. The initiator
+independently combines and validates C and D before submission. Neither endpoint
+accepts an untrusted aggregate bundle supplied by its peer.
 
 #### State machine
 
@@ -485,7 +596,7 @@ handler no longer reports channel status.
    coins use simple BLS key aggregation (pk_a + pk_b). Without proof that
    each party controls the private key behind their public key, a rogue key
    attack is possible: the responder (who sees the initiator's key first)
-   could craft pk_rogue = G*sk_attacker − pk_honest, making the aggregate
+   could craft pk_rogue = G\*sk_attacker − pk_honest, making the aggregate
    entirely controlled by the attacker. To prevent this, each `HandshakeA`/`B`
    message includes a PoP for both the channel key and the unroll key:
    `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
@@ -501,10 +612,10 @@ handler no longer reports channel status.
 
 The handshake requires one offer from each wallet:
 
-| Call | When | Purpose |
-|------|------|---------|
-| `createOfferForIds(amount + fee, conditions)` | After A (receiver) | Fix the pre-launcher ancestry and receiver funding half |
-| `createOfferForIds(amount + fee, conditions)` | After B (initiator) | Build the quoted contribution funding half |
+| Call                                          | When                | Purpose                                                 |
+| --------------------------------------------- | ------------------- | ------------------------------------------------------- |
+| `createOfferForIds(amount + fee, conditions)` | After A (receiver)  | Fix the pre-launcher ancestry and receiver funding half |
+| `createOfferForIds(amount + fee, conditions)` | After B (initiator) | Build the quoted contribution funding half              |
 
 Both calls let the wallet select and reserve their inputs. Persisting the
 offers prevents two concurrent sessions—or both peers using the same
@@ -545,9 +656,11 @@ offer-based wallets, the funding transaction contains seven logical spends:
 The two wallet inputs provide both contributions plus both opening fees; the
 launcher creates a channel worth the contributions, leaving exactly the two
 declared fees. Opening bundles are marked so submission does not attach a
-second fee. Cloud Wallet's direct-spend API omits the two settlement coins and
-creates the same pre-launcher or contribution child directly from its wallet
-spend.
+second fee. Cloud Wallet uses the same persisted-offer settlement shape as
+WalletConnect, including the protocol-provided CLVM conditions. Its wallet and
+offer operations use the Cloud Wallet GraphQL API, while peak, coin, puzzle,
+and transaction-submission traffic is relayed unchanged through that API's
+Coinset proxy.
 
 **Key code:** `src/session_phases/handshake_initiator.rs`,
 `src/session_phases/handshake_receiver.rs`,
@@ -622,17 +735,17 @@ HandshakeReceiver  ─┘
 Two related but distinct concepts appear throughout the docs:
 
 - **Peer handlers** are concrete Rust types implementing `PeerLifecyclePhase` (for
-example `OffChainPhase`, `SpendChannelCoinPhase`). They model
-which component currently owns protocol logic.
+  example `OffChainPhase`, `SpendChannelCoinPhase`). They model
+  which component currently owns protocol logic.
 - **States** are notification-level enums exposed to the UI and tests:
-`ChannelStatus` and `GameStatusKind` (inside `GameNotification::GameStatus`).
-They model what phase/outcome the user should see.
+  `ChannelStatus` and `GameStatusKind` (inside `GameNotification::GameStatus`).
+  They model what phase/outcome the user should see.
 - **On-chain lifecycle states** are a protocol lens over coin progression.
-For channels, this is commonly reasoned about as
-`channel coin created -> unrolling -> unrolled/resolved`.
-For individual games, this is commonly reasoned about as
-`off-chain live game -> on-chain my/their move loop -> terminal resolution`
-(most commonly timeout, but slash/error terminals also exist).
+  For channels, this is commonly reasoned about as
+  `channel coin created -> unrolling -> unrolled/resolved`.
+  For individual games, this is commonly reasoned about as
+  `off-chain live game -> on-chain my/their move loop -> terminal resolution`
+  (most commonly timeout, but slash/error terminals also exist).
 
 These are not the same thing. A handler transition often emits a state change,
 but there is no one-to-one mapping between handler types and state values.
@@ -649,64 +762,373 @@ and its phases emit protocol intents and interpret ordered observations;
 Neither the browser nor a wallet adapter may infer or override a protocol
 outcome.
 
+This is a security-sensitive application that constructs transactions
+controlling real value. Rust is therefore also the mandatory home for logic
+equivalent to backend business logic: authorization, transaction construction
+and validation, fee policy and attachment, and durable submission/retry state.
+JavaScript's dynamic browser and provider surface is useful for integration but
+is not a suitable source of truth for those rules. Moving such logic into the
+host requires an explicit architectural justification, not mere implementation
+convenience.
+
 JavaScript is the browser host. It transports opaque peer bytes, persists and
 replays transport state, adapts wallet and chain APIs, forwards raw chain
-observations, and projects Rust facts into UI. It may enforce explicit product
-capability policy—for example, this client currently starts at most one
-concurrent proposal group—but proposal groups are atomic only at formation and
-acceptance: Krunk's paired games still progress and settle independently.
+observations, and projects Rust facts into UI. It enforces an intentional
+one-uncancelled-proposal admission policy across local and peer proposals.
+Rust's protocol model still supports multiple pending proposals, and a
+successful acceptance may create multiple games: Krunk's paired games still
+progress and settle independently.
 It does not maintain a game-move replay journal. Post-unroll redo is
 reconstructed from Rust-owned channel and on-chain state; after browser restore,
 a game's normal state-driven effect may resubmit an automatic action only when
 the restored canonical state still precedes that action.
 
-Each game package owns its concrete mutable hand. Fresh hands are created from
-accepted initialization terms; restored hands are constructed directly from
-only their saved state. The shared hand boundary exposes `getState()` plus
-host-delivered updates. For a protocol action the game mutates its own hand
-first; the browser keeps the previous canonical hand only as a temporary
-synchronous rollback checkpoint. If Rust rejects the command, the browser
-restores that checkpoint. If Rust accepts the command as queued or already
-applied, the mutated complete hand becomes canonical immediately and is
-persisted atomically with Rust's serialized prepared-action queue. There is no
-durable `pendingCandidates` layer. `LocalActionApplied` is host-only
-protocol-presentation bookkeeping: it may advance the host's turn display, but
-does not promote game-owned state or grant the game permission to act.
+Outbound transactions carry a Rust-owned stable identifier, expiry, and
+captured fee intent. Exact canonical content is used only for idempotent
+deduplication: different transactions that spend the same inputs receive
+different IDs, and rejection retires only the named intent. Wallet delivery
+acknowledgement and chain finality are separate. Ordinary reconnect replay is
+limited to unacknowledged submissions. A lower tip replays the surviving
+retained set once for that rollback epoch; at an equal-or-higher replacement
+tip, only an intent whose watched output is explicitly absent and whose own
+input is explicitly live is reactivated.
+All replay paths reuse the current exact Rust-owned broadcast variant.
+This is **transaction rebroadcast**: resubmission of exact chain bytes.
+WalletConnect `pushTransactions` is intrinsically idempotent for those exact
+bytes and never creates orphan-risk reservation state.
+**Reliable peer-frame replay** is separate transport behavior that resends
+unacknowledged numbered peer frames after reconnect or peer availability.
+
+`TransactionManager` is the durable retained owner of transaction submission
+intent. `SubmissionPump` owns one browser map and one ordered promise tail for
+persistence-gated launch, one-shot wallet delivery, and
+relinquishment. It is not a second durable retry journal.
+
+Rust captures the configured fee amount, target, and explicit
+`SubmitWithoutFee` attachment-failure policy when an intent is emitted.
+Wallet adapters perform one attempt and return only a typed
+acknowledged/unavailable/rejected outcome. Structured success or a response
+identifying the exact same transaction as already included is idempotent
+success. Failure to complete communication with the wallet is unavailable; an
+error returned by the wallet is rejected. Adapters preserve that provenance
+instead of deriving retry policy from consensus, mempool, or coin-status text.
+Fee-bearing wallet outputs from either WalletConnect or Cloud Wallet are
+validated and aggregated by one Rust boundary, including complete aggregate
+signature verification for `AGG_SIG_UNSAFE`. JavaScript does not inspect
+protocol bundle names, puzzles, inputs, or ordering, choose fee fallback, or
+own durable retry state.
+
+Blockchain observations have an explicit transaction boundary inside
+`TransactionManager`. Each observation pays an intentional Bencodex
+serialize/deserialize cost to create a deep working copy of the full durable
+manager and nested `GameSession`; effects-only rollback cannot cover the
+protocol mutations made by callbacks. Pending events, watch/unwatch deltas,
+cradle output, and other skipped observation bookkeeping live in a separate
+transient journal that is restored unchanged on failure or prepended to new
+output on commit. Test-only stale-unroll snapshots instead belong to the
+simulator harness and are passed explicitly; they are not journaled production
+session state. Observation callbacks use a fresh scratch allocator, and all
+surviving CLVM values own serialized `Program` bytes rather than allocator-local
+`NodePtr`s.
+
+Shared frontend state owns only lifecycle facts: membership and protocol IDs,
+origins, keyed presentation, active-game type, and terminal facts. Each game
+package alone owns its concrete mutable hand and opaque saved state. Fresh hands
+come from accepted initialization terms; restored hands come directly from that
+package's current saved state. `SessionMachineRuntime.activeHand` is only a
+cache rebuilt from and snapshotted back into canonical `handState`, never a
+second authority. For a protocol action the package mutates its hand first and
+the browser retains the previous canonical hand only as a synchronous rollback
+checkpoint. Rust rejection restores both cache and model; acceptance snapshots
+the complete hand and persists it atomically with Rust's prepared-action queue.
+There is no durable candidate layer or shared inspection of package fields.
 
 Proposal persistence stores the exact opaque Bencodex parameter value together
 with the generic player-A/player-B terms and sender orientation. Each package
 decodes that value only for its own form, display, and hand initialization;
-there are no game-specific proposal save keys. Proposal-group integrity remains
-a generic host concern, while each game asserts its factory topology when
-creating a fresh hand.
+there are no game-specific proposal save keys. The host tracks each pending
+proposal as one scalar endpoint-local record. Rust runs the factory at
+acceptance and reports the complete ordered generated-game list; each package
+asserts that accepted topology when creating a fresh hand.
 
-| Concern | Owner |
-| --- | --- |
-| Protocol phases, game/channel facts, validation, lifecycle, spends; watch lifecycle and ordering | Rust |
-| Raw peer bytes, ACK durability, wallet RPC, chain polling | JavaScript host |
-| UI projection, notification presentation, client capability constraints | JavaScript UI |
+The current browser admits exactly one uncancelled proposal across both origins.
+A second incoming proposal is definitively cancelled without being admitted to
+the frontend model; a cancellation-queued proposal no longer occupies the
+slot. This is a temporary UI capability while the product presents one hand at
+a time, not a protocol restriction. Rust deliberately retains multi-proposal
+support so future multi-hand UX can lift the admission policy without changing
+the wire or core ledger.
+
+| Concern                                                                                                                           | Owner           |
+| --------------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| Protocol phases, game/channel facts, validation, lifecycle, spends; fee and submission intent; watch/retry lifecycle and ordering | Rust            |
+| Raw peer bytes, peer ACK durability, one-shot wallet RPC, chain polling                                                           | JavaScript host |
+| UI projection, notification presentation, client capability constraints                                                           | JavaScript UI   |
+
+`StorageRepository` atomically claims authority and reads one strict
+`DurableApplicationState` v5, then owns the in-memory root, mutation ordering,
+reset epochs, and serialized exact writes. It has no persistence scheduler.
+IndexedDB v5 has exactly two stores:
+coordination metadata and `application-state/current`. Coordination is separate
+because it fences writes; it is not application state. Any incompatible or
+malformed aggregate field rejects the whole root and shows the hard-reset
+recovery path. There is no partial session, wallet, or rejection salvage.
+`ChannelFundingRuntime` transiently orchestrates only channel-funding
+operations; it has no independent record, codec version, hydration gate, dirty
+flag, revision, or writer. `SubmissionPump` owns persistence-gated launch,
+one-shot execution of Rust-issued opaque attempts, and its fee-specific
+`FeeAttachmentRuntime` and reducer. These are the two explicit reservation
+owners. They share provider adapters and readiness epochs, but there is no
+generic wallet-operation, settlement, or session cancellation owner.
+
+`SessionMachineRuntime` is constructed inert, so render-time construction
+cannot claim protocol ownership. Its committed React layout effect installs the
+render callback and activates runtime processing; the controller attaches
+persistence and reliable-commit ownership only after serializable WASM fields
+exist. React cleanup clears only that render callback. Protocol retirement belongs to `SessionController`
+cleanup, including terminal cleanup and replacement of the committed runtime.
+The controller retains the committed runtime across presentation unmounts, so a
+renderer remount resumes the same accumulated model rather than reconstructing
+one from an older checkpoint.
+
+Once activated, `SessionMachineRuntime` is the sole active browser commit
+coordinator. It drains every consequence of a stimulus to a fixed point:
+reducer work, commands, controller/WASM results, generated events, UX-model
+updates, and reliable transport changes. It then synchronously captures one
+complete aggregate boundary and attempts one atomic write before
+projecting React state and releasing sends/ACKs. This same rule applies while
+completing work after rehydration. React projection is not part of the drain;
+holding it until the persistence attempt finishes prevents transient UX states
+and flicker. The runtime directly provides the peer
+`ReliableCommitCoordinator` facet and its authoritative model snapshot.
+`enqueueResult<T>` places result-bearing controller work on this same
+serialized boundary and returns a typed promise that resolves or rejects when
+that work executes, including work queued behind an in-progress commit.
+
+The controller's single committed runtime slot is the exclusive, retire-aware
+authority. Committing a replacement retires the previous runtime; takeover,
+reload, and controller cleanup retire the current one. Retirement discards
+queued work and rejects pending promises and not-yet-launched effects, so an
+obsolete owner cannot publish, persist, release, or transfer work into a later
+authority generation. A known reservation returned late may be cancelled
+best-effort through its original provider, but the new owner resumes only
+obligations present in its claimed durable snapshot.
+
+Restore separates local presentation from external recovery. One strict decode
+rehydrates the aggregate into presentation, split owner-specific reservation slices, rejection
+descriptors, and session bootstrap data. Once the aggregate and opaque WASM
+cradle have hydrated, the saved shell, game, and dashboard are visible even
+when the hub, wallet, or blockchain is still unavailable. Actions requiring
+those services remain gated until their independent reconciliation succeeds.
+
+Funding requests use one explicit canonical model: `amount`, `fee`, and
+optional `max_height` are canonical decimal `u64` strings; condition opcodes are
+bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
+omitted rather than stored as null. The aggregate stores one canonical
+wallet-provider scope with strict, purpose-specific
+`channelFundingOperations` and `feeAttachments` slices.
+`ChannelFundingRuntime` attaches one stable funding inbox to that session while
+Rust and the aggregate own durable protocol and recovery state.
+After restore, the same operation cannot launch another wallet offer until its
+orphaned reservation has settled; there is no successor/predecessor funding
+protocol. Rust owns transaction submission intent and the frontend submission
+queue owns only ordered one-shot wallet delivery.
+
+The browser aggregate is strict `DurableApplicationState` v5, its opaque
+Rust/WASM cradle is schema 23, and the app IndexedDB is schema 5. Under the
+[unreleased-format policy](#unreleased-app-owned-formats), any incompatible or
+malformed field rejects the whole root. The unchanged evidence remains
+available for diagnosis until explicit hard reset.
+Rust snapshots convert checked `usize` state numbers to `u64`; the WASM
+boundary exposes every present channel state-number field as JavaScript
+`bigint`. Internal host and persisted forms stay `bigint`, with `number`
+conversion allowed only at external APIs that explicitly require it.
+
+Persisted funding offers enter `channelFundingOperations` and are orchestrated
+by `ChannelFundingRuntime`; fee reservations enter the fee-specific
+`feeAttachments` ledger owned by `SubmissionPump` and `FeeAttachmentRuntime`.
+Each reserved trade carries its mandatory internal `providerReservationId`, exact owner
+(`installationPlayerId`, peer session, and strict provider/account scope),
+stable purpose/operation identity, stage, and bounded reason. A `creating`
+entry embeds the canonical create request and exact recovery ID; a
+`cancelling` entry records the exact trade and cancellation recovery ID.
+The wallet provider owns external offer lifecycle; the controller and Rust own
+protocol intent. Multiple trades for one operation remain distinct. The
+aggregate is installed before wallet mutation can begin. Whole-root
+malformation is shown at Resume / Start Over, and a connected wallet with a
+different scope exposes a visible mismatch. Funding unavailability remains
+pending rather than becoming a rejection. Controller retirement promotes only
+`reserved` entries to
+cancellation; `retained-for-replay` remains owned by Rust replay.
+Channel funding survives material delivery in `awaiting-channel` until typed
+Rust `ChannelCoinConfirmed` forgets it or `ChannelCreationTimedOut` requests
+cancellation of that exact `providerReservationId`. An attached fee offer
+survives wallet acknowledgement for exact transaction replay until Rust
+submission retirement requests cancellation of that exact
+`providerReservationId`; Cloud
+cancellation completes only after its signature request reaches a successful
+terminal state. Cloud is recoverable after begin: before a begin response
+supplies a `signatureRequest` ID, response loss is persisted uncertainty; once
+the ID is known, `creating`/`cancelling` persist it for exact paired
+reconciliation. The aggregate carries the typed provenance
+`orphanRisk: 'pre-id-response-lost'` from that uncertain pre-ID attempt through
+a later identified recovery or created trade, so successful replacement does
+not erase the external-orphan warning. Popup source/origin/request correlation
+and cleanup remain adapter responsibilities. Deployed WalletConnect lacks
+end-to-end idempotency and response-loss reconciliation, so it is best-effort
+throughout and uses the same provenance when its response is lost. Persisted
+pre-ID Cloud or WalletConnect uncertainty launches exactly one automatic new
+attempt on each later provider-readiness epoch, including after reload, with no
+timer or immediate loop.
+
+`BootRecoveryBoundary` owns pending wipe, read-only preclaim inspection,
+atomic claim-and-read, one strict rehydrate, takeover, reset retry, and
+authority loss. Takeover is the old owner's death, not a handoff. The winning
+claim returns the exact durable aggregate read in the claim transaction; only
+that snapshot is rehydrated, with no in-flight callback or transient obligation
+imported from the previous owner. Pending pre-claim identity, history, and
+preference edits are then folded into that root. Every session, terminal,
+clear, rejection, and wallet mutation requires claimed authority and writes one
+whole aggregate through the active runtime or an immediate pre-runtime boundary.
+Strict validation rejects unknown or missing fields, duplicate obligations,
+invalid discriminants, and non-current versions. IndexedDB v5 coordination
+stores durable owner, write, and reset epochs; each aggregate mutation checks
+that authority atomically with its write. `localStorage` ownership and resume
+markers are UX hints only. Hard reset advances the durable reset epoch before
+deleting only the exact app and external WalletConnect database manifest and
+intentionally erases every obligation. Blocked or failed deletion remains on
+recovery UI with Retry; foreign same-origin databases and lookalikes are
+preserved.
+
+Ordinary IndexedDB I/O failure never gates use, transaction release, or
+cancellation; the in-memory aggregate remains pending for a later checkpoint.
+`StorageAuthorityLostError` and `StorageAuthorityRequiredError` instead mean
+the old owner is dead: Shell destroys its controller and suppresses its pending
+writes/effects. A new claimant independently rehydrates the latest flushed
+durable whole root; no controller snapshot or transient work crosses the
+authority generation. Failed cancellation retries only on restore or wallet
+reconnect/readiness—never by a timer or immediate loop. This is
+readiness-only, durable, nonblocking cleanup. Terminal finalization is blocked
+while reservation creation or identification is unresolved, or while funding
+material is still owed to Rust. Identified funding or fee cancellation residue
+remains durable and does not block terminal session capture.
+Going offline detaches the provider RPC without
+discarding cleanup; retirement records the required transitions, and matching
+restore/reconnect attachment drains them.
+
+Diagnostic history is bounded by 256 KiB of total UTF-8 text, retaining the
+newest complete entries and dropping an individually oversized entry; the
+2,000-entry limit remains a secondary defense. Existing per-field Rust and
+JavaScript incident bounds still apply.
+
+Persistence is checkpointing, not permission to continue a game for money. If
+the browser write fails, the runtime reports one transient, dismissible
+durability warning for that degradation episode but still projects and releases
+that captured boundary exactly once, including
+wallet cleanup, transaction submission, and peer frame/ACK work. The in-memory
+state remains dirty and a later activity retries a full checkpoint containing
+all still-unresolved durable intent without resending already released effects;
+success clears any still-visible warning and re-arms reporting for a later
+episode. The warning is projection-only and is never serialized. There is no immediate retry spin or
+durability-required effect gate. This deliberately accepts a degraded crash
+window: if the page dies before a later write succeeds, the peer or chain may
+have advanced beyond the last local checkpoint.
+
+A released effect is deduplicated by key only while pending. Duplicate callers
+receive the same promise, which settles with the launched external work. The
+persistence attempt gates launching that work but does not await its completion;
+the key is removed before launch so reentrant work may schedule the same key for
+a later boundary.
+
+Rust emits an immediate no-fee base variant when fee acquisition is unavailable
+or rejected, while retaining the stable ID and fee intent until chain
+terminality. Wallet readiness or an explicit fresh-chain rebroadcast epoch may
+later upgrade that ID to a fee-bearing variant; base acknowledgement does not
+end fee seeking. Each retained intent owns one active attempt and Rust validates
+its intent and variant fingerprints internally.
+The host reports coherent chain readiness only through `chain_snapshot_ready`.
+An unavailable exact-variant successor waits for that snapshot; a genuinely
+newer fee-bearing successor may launch immediately, and unrelated IDs remain
+independent. Each drained attempt carries its immutable Rust-issued predecessor
+token and typed relationship; JavaScript returns only opaque attempt tokens and
+does not infer lineage from echoed goals or fingerprints.
+
+Rust submission draining uses a serialized transactional working copy through
+JavaScript conversion, committing only after conversion succeeds, plus an
+isolated working copy per candidate. For an
+`A/B/C` queue with an invalid `B`, `A` and `C` commit, `B` is consumed and
+reported once, and later drains do not rediscover it. Abandonment emits the
+retained submission's retirement ID before removing it so provider reservation
+cleanup cannot be lost. A failure is availability-preserving only when that
+per-item boundary proves the remaining manager/session state intact: the host
+persists one bounded incident containing JavaScript stack and Rust context,
+shows one dismissible nonfatal modal, and keeps the game/dashboard active
+without also emitting an ordinary or global error. Unknown global integrity
+remains fatal. This uses the same failed-checkpoint policy as other live work:
+attempt persistence, then release the isolated safe boundary once and keep the
+latest in-memory state dirty.
+
+Puzzle/solution data from a successful trusted-wallet RPC is still protocol
+evidence, not trusted structure. Malformed puzzle or solution bytes make the
+Rust callback fail transactionally and remain a fatal/terminal request outcome;
+ordinary readiness or height changes must not retry that deterministic failure.
+
+No active-session adapter, reducer effect, or protocol callback may establish a
+competing save, render, or send boundary. New event sources must enter the same
+fixed-point drain.
+
+Reliable transport persists unacknowledged frames and the cooperative terminal
+handoff's exact command, frame bytes, message number, sent state, and ACK state.
+Restore either reuses that exact frame or completes the still-pending Rust
+handoff after an already-durable ACK; it never allocates a replacement frame.
+The receive reorder buffer remains transient: a restored sender retransmits its
+durable unacknowledged frames to reconstruct any gap without replaying an
+authoritative move twice. Likewise, Rust persists outstanding coin
+puzzle/solution requests and reissues them once after restore; chain
+observations themselves are rebuilt from a fresh coherent poll.
 
 The browser also separates three lifetimes that end at different moments.
-Protocol lifetime ends only after queued terminal reductions and the durable
-terminal snapshot are flushed, at which point the real controller and transport
-attachments are destroyed. Visual lifetime can continue: the same React hand
-component and `handKey` remain mounted, but receive the finalized model through
-the `frozen: true` branch of the same mount contract, which structurally has no
+Protocol lifetime ends after queued terminal reductions and terminal aggregate
+capture. An ordinary terminal-record write failure reports the existing
+one-per-episode durability warning but does not block the frozen presentation
+or protocol teardown; the in-memory terminal root remains dirty for a later
+aggregate checkpoint. Storage authority loss still fences the obsolete owner,
+and unresolved protocol or wallet obligations still block terminal capture.
+Visual lifetime can continue after finalization: the same React hand component
+and `handKey` remain mounted, but receive the finalized model through the
+`frozen: true` branch of the same mount contract, which structurally has no
 intent port. The retained hand is restored from that finalized terminal model;
 `frozen` means terminal, read-only, and no port, not stale pre-finalization game
-state. Cold restoration is separate again:
-`FinishedSessionGameView` always attempts a package's frozen mount from valid
-persisted hand state when no live tree survived (for example, after reload).
+state. Cold restoration
+is separate again: `FinishedSessionGameView` always attempts a package's frozen
+mount from valid persisted hand state when no live tree survived (for example,
+after reload).
+
+Submission promises cover persistence-gated launch, wallet delivery, and Rust
+acknowledgement or rejection. Rust retirement separately moves the exact
+provider reservation ID into durable best-effort fee cancellation; that cleanup
+may outlive terminal capture. Terminal finalization repeatedly drains controller
+events, persistence, submission promises, and reliable transport to quiescence
+before atomically taking the terminal snapshot from the post-quiescence
+authoritative runtime model and retiring protocol ownership in the same
+synchronous controller continuation. Once sealed, the controller rejects and
+retires every incoming runtime until cleanup, so a renderer remount cannot
+resurrect protocol ownership during the terminal write. An authority error
+publishes no terminal result, marker, or teardown; the old owner dies and a new
+claimant restores the latest flushed durable live root before independently
+finalizing.
+
+These ownership and persistence boundaries change no peer wire schema.
 
 ### Handlers
 
-| Handler | File | Role |
-|---------|------|------|
-| `HandshakeInitiatorPhase` | `session_phases/handshake_initiator.rs` | Initiator side of the handshake (sends A and C). Transitions after local channel observation. |
-| `HandshakeReceiverPhase` | `session_phases/handshake_receiver.rs` | Receiver side (sends B and D and starts with the potato). Same local observation gate. |
-| `OffChainPhase` | `session_phases/mod.rs` | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games. |
-| `SpendChannelCoinPhase` | `session_phases/spend_channel_coin_phase.rs` | Watches the channel coin spend and handles both clean shutdown (change coin observation) and unroll paths. Handles preemption, forward-aligns game state, always transitions to `OnChainPhase`. |
-| `OnChainPhase` | `session_phases/on_chain.rs` | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages. |
+| Handler                   | File                                         | Role                                                                                                                                                                                            |
+| ------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HandshakeInitiatorPhase` | `session_phases/handshake_initiator.rs`      | Initiator side of the handshake (sends A and C). Transitions after local channel observation.                                                                                                   |
+| `HandshakeReceiverPhase`  | `session_phases/handshake_receiver.rs`       | Receiver side (sends B and D and starts with the potato). Same local observation gate.                                                                                                          |
+| `OffChainPhase`           | `session_phases/mod.rs`                      | Off-chain game play: batching actions, exchanging the potato, proposing/accepting/playing games.                                                                                                |
+| `SpendChannelCoinPhase`   | `session_phases/spend_channel_coin_phase.rs` | Watches the channel coin spend and handles both clean shutdown (change coin observation) and unroll paths. Handles preemption, forward-aligns game state, always transitions to `OnChainPhase`. |
+| `OnChainPhase`            | `session_phases/on_chain.rs`                 | On-chain dispute resolution: submits moves, claims timeouts, detects slashes. Driven entirely by coin-watching events, not peer messages.                                                       |
 
 Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle`,
 `emit_failure_cleanup`) live in `src/session_phases/handler_base.rs`.
@@ -719,109 +1141,102 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 
 ### Core layers (bottom to top)
 
-
-| Layer                     | Directory / File                             | Responsibility                                                               |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Types & Utilities**     | `src/common/`                                | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.           |
-| **Referee**               | `src/referee/`                               | Per-game state machine: moves, timeouts, slashes                             |
-| **Channel State**         | `src/channel_state/`                       | Channel/unroll/game coin management, balance tracking                        |
-| **Handshake Handlers**    | `src/session_phases/handshake_initiator.rs`, `handshake_receiver.rs` | Four-message handshake state machines, one per side       |
-| **Off-Chain Phase**       | `src/session_phases/mod.rs`                  | Off-chain game play: batching, potato exchange, proposals, moves             |
-| **Spend Channel Coin Phase** | `src/session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainPhase |
-| **On-Chain Phase**        | `src/session_phases/on_chain.rs`             | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato) |
-| **Handler Base**          | `src/session_phases/handler_base.rs`         | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`   |
-| **Game Session**          | `src/game_session.rs`                      | `PeerLifecyclePhase` trait, `GameSession` struct                          |
-| **Simulator**             | `src/simulator/`                             | Block-level simulation for integration tests                                 |
-
+| Layer                        | Directory / File                                                     | Responsibility                                                                            |
+| ---------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **Types & Utilities**        | `src/common/`                                                        | `CoinString`, `PuzzleHash`, `Amount`, `Hash`, `AllocEncoder`, etc.                        |
+| **Referee**                  | `src/referee/`                                                       | Per-game state machine: moves, timeouts, slashes                                          |
+| **Channel State**            | `src/channel_state/`                                                 | Channel/unroll/game coin management, balance tracking                                     |
+| **Handshake Handlers**       | `src/session_phases/handshake_initiator.rs`, `handshake_receiver.rs` | Four-message handshake state machines, one per side                                       |
+| **Off-Chain Phase**          | `src/session_phases/mod.rs`                                          | Off-chain game play: batching, potato exchange, proposals, moves                          |
+| **Spend Channel Coin Phase** | `src/session_phases/spend_channel_coin_phase.rs`                     | Watches channel coin spend; handles clean shutdown and unroll paths, creates OnChainPhase |
+| **On-Chain Phase**           | `src/session_phases/on_chain.rs`                                     | Post-unroll dispute resolution: coin watching, timeouts, slashes (no potato)              |
+| **Handler Base**             | `src/session_phases/handler_base.rs`                                 | Shared utilities: `build_channel_to_unroll_bundle`, `emit_failure_cleanup`                |
+| **Game Session**             | `src/game_session.rs`                                                | `PeerLifecyclePhase` trait, `GameSession` struct                                          |
+| **Simulator**                | `src/simulator/`                                                     | Block-level simulation for integration tests                                              |
 
 ### Chialisp puzzles
 
-
-| File                                          | Purpose                                                   |
-| --------------------------------------------- | --------------------------------------------------------- |
-| `clsp/unroll/unroll_puzzle.clsp`              | Unroll coin: timeout vs challenge with sequence numbers   |
-| `clsp/referee/onchain/referee.clsp`           | Game coin: move / timeout / slash enforcement             |
-| `clsp/games/game_codes.clinc` | Shared game error codes                                      |
-| `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp` | Calpoker validation programs (one per protocol step) |
-| `games/calpoker/clsp/calpoker_generate.clinc` | Off-chain calpoker handlers (Alice & Bob sides)      |
-| `games/spacepoker/clsp/onchain/*.clsp`       | Space Poker validation programs                           |
-| `games/spacepoker/clsp/spacepoker_generate.clinc` | Off-chain Space Poker handlers                        |
-| `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                           |
-| `games/krunk/clsp/krunk_generate.clinc`      | Off-chain Krunk handlers (Alice & Bob sides)              |
-| `games/krunk/clsp/factory_args.clvm.bin`| Generated factory curry arguments: `(pubkey signed_dict_tree)` |
-| `games/debug/clsp/factory.clsp`             | Debug game: validator, my-turn, their-turn, and factory   |
-| `clsp/handler_api.md`                         | Handler calling conventions (see also `HANDLER_GUIDE.md`) |
-
+| File                                                | Purpose                                                        |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| `clsp/unroll/unroll_puzzle.clsp`                    | Unroll coin: timeout vs challenge with sequence numbers        |
+| `clsp/referee/onchain/referee.clsp`                 | Game coin: move / timeout / slash enforcement                  |
+| `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
+| `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp`      | Calpoker validation programs (one per protocol step)           |
+| `games/calpoker/clsp/calpoker_generate.clinc`       | Off-chain calpoker handlers (Alice & Bob sides)                |
+| `games/spacepoker/clsp/onchain/*.clsp`              | Space Poker validation programs                                |
+| `games/spacepoker/clsp/spacepoker_generate.clinc`   | Off-chain Space Poker handlers                                 |
+| `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                                      |
+| `games/krunk/clsp/krunk_generate.clinc`             | Off-chain Krunk handlers (Alice & Bob sides)                   |
+| `games/krunk/clsp/factory_args.clvm.bin`            | Generated factory curry arguments: `(pubkey signed_dict_tree)` |
+| `games/debug/clsp/factory.clsp`                     | Debug game: validator, my-turn, their-turn, and factory        |
+| `clsp/handler_api.md`                               | Handler calling conventions (see also `HANDLER_GUIDE.md`)      |
 
 ### Test infrastructure
 
-
-| File                                        | Purpose                                                  |
-| ------------------------------------------- | -------------------------------------------------------- |
-| `games/calpoker/rust/tests/sim.rs`          | Calpoker test registration and helpers                   |
-| `games/spacepoker/rust/tests/sim.rs`        | Space Poker test registration and helpers                |
-| `games/krunk/rust/tests/sim.rs`             | Krunk test registration and helpers                      |
-| `games/debug/rust/mod.rs`                   | Debug game: minimal game with controllable `mover_share` |
-| `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite           |
-| `src/test_support/peer/peer_harness.rs`   | Test peer helper                                         |
-| `src/test_support/sim_script.rs`                  | `SimScriptAction` enum and simulation loop driver        |
-| `ct-automation.sh`                         | Preferred quiet full-suite wrapper for automation and LLM agents |
-| `tools/local-wasm-tests.sh`                 | Local JS/WASM integration test runner                    |
-
+| File                                        | Purpose                                                          |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `games/calpoker/rust/tests/sim.rs`          | Calpoker test registration and helpers                           |
+| `games/spacepoker/rust/tests/sim.rs`        | Space Poker test registration and helpers                        |
+| `games/krunk/rust/tests/sim.rs`             | Krunk test registration and helpers                              |
+| `games/debug/rust/mod.rs`                   | Debug game: minimal game with controllable `mover_share`         |
+| `src/simulator/tests/session_phases_sim.rs` | Integration tests including notification suite                   |
+| `src/test_support/peer/peer_harness.rs`     | Test peer helper                                                 |
+| `src/test_support/sim_script.rs`            | `SimScriptAction` enum and simulation loop driver                |
+| `ct-automation.sh`                          | Preferred quiet full-suite wrapper for automation and LLM agents |
+| `tools/local-wasm-tests.sh`                 | Local JS/WASM integration test runner                            |
 
 ---
 
 ## Key Types
 
-
-| Type                            | Location                                       | Purpose                                                                                                      |
-| ------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `CoinString`                    | `common/types/coin_string.rs`                  | Serialized coin: `parent_id ‖ puzzle_hash ‖ amount`                                                          |
-| `PuzzleHash`                    | `common/types/puzzle_hash.rs`                  | 32-byte hash identifying a puzzle                                                                            |
-| `GameID`                        | `common/types/game_id.rs`                      | A `u64` nonce that uniquely identifies a game; see [Game IDs and Nonces](ON_CHAIN.md#game-ids-and-nonces)    |
-| `SpendBundle`                   | (chia types)                                   | Collection of `CoinSpend`s forming an atomic transaction                                                     |
-| `RefereePuzzleArgs`             | `referee/types.rs`                             | All args curried into the referee puzzle                                                                     |
-| `Referee`                       | `referee/mod.rs`                               | Enum: `MyTurn` / `TheirTurn`                                                                                 |
-| `ChannelState`                | `channel_state/mod.rs`                       | Manages channel state, unroll, live games                                                                    |
-| `OffChainPhase`                 | `session_phases/mod.rs`                        | Turn-taking protocol over the wire                                                                           |
-| `OnChainPhase`            | `session_phases/on_chain.rs`                   | Drives on-chain dispute flow                                                                                 |
-| `LiveGame`                      | `channel_state/types/live_game.rs`           | Wraps referee for a single active game                                                                       |
-| `ProposedGame`                  | `channel_state/types/proposed_game.rs`       | One pending member of a factory-derived atomic group stored in `proposed_games` |
-| `UnrollCoin`                    | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                    |
-| `GameSession`                    | `game_session.rs`                              | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                |
-| `ValidationInfo`                | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                              |
-| `CachedRedoActions` | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`) |
-| `BatchAction`                   | `session_phases/types.rs`                      | Peer-level batch action variants: group-level `ProposeGroup`, `AcceptProposalGroup`, `CancelProposalGroup`, plus per-game `Move` and `AcceptSettlement` |
-| `GameAction`                    | `session_phases/types.rs`                      | Actions: `Move(GameID, PreparedMove)`, `AcceptSettlement`, `CleanShutdown`, `QueuedProposalGroup`, `QueuedAcceptProposalGroup`, `QueuedCancelProposalGroup`, `QueuedCancelProposalGroupSilently`, `Cheat` |
-| `GameSessionState`    | `game_session.rs`                              | Per-session mutable state: queues, flags, `peer_disconnected`                                                |
-| `OnChainGameState`              | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout` |
-| `SettlementOutcome`             | `session_phases/effects.rs`                    | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux) |
-| `GameNotification`              | `session_phases/effects.rs`                    | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, gameplay `GameStatus { status: GameStatusKind, ... }`, and unified settlement `GameSettled { id, outcome, our_share, coin_id }` |
-| `Effect`                        | `session_phases/effects.rs`                    | All side effects returned by handler methods (notifications, transactions, coin registrations)               |
-| `PeerLifecyclePhase`                   | `game_session.rs`                              | Trait implemented by all lifecycle phases — uniform interface for messages, coin events, game actions        |
-| `HandshakeInitiatorPhase`     | `session_phases/handshake_initiator.rs`        | Initiator handshake state machine (A → C → coin_created)                                                    |
-| `HandshakeReceiverPhase`      | `session_phases/handshake_receiver.rs`         | Receiver handshake state machine (B → D → coin_created)                                                     |
-| `SpendChannelCoinPhase`       | `session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; clean shutdown detection + unroll handling, creates `OnChainPhase`         |
-| `ChannelCoinSpendInfo`          | `channel_state/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                  |
-| `PeerMessage`                   | `session_phases/types.rs`                      | Wire message enum: `HandshakeA`–`HandshakeD`, `Batch`, `RequestPotato`, `Message`, etc.                     |
+| Type                                 | Location                                     | Purpose                                                                                                                                                                                                             |
+| ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CoinString`                         | `common/types/coin_string.rs`                | Serialized coin: `parent_id ‖ puzzle_hash ‖ amount`                                                                                                                                                                 |
+| `PuzzleHash`                         | `common/types/puzzle_hash.rs`                | 32-byte hash identifying a puzzle                                                                                                                                                                                   |
+| `GameID`                             | `common/types/game_id.rs`                    | A `u64` nonce that identifies a factory-created live game; see [Game IDs and Nonces](ON_CHAIN.md#game-ids-and-nonces)                                                                                               |
+| `LocalProposalId` / `WireProposalId` | `common/types/proposal_id.rs`                | Endpoint-local pending handle and origin-assigned parity wire identifier; both retain compact integer encoding                                                                                                      |
+| `SpendBundle`                        | (chia types)                                 | Collection of `CoinSpend`s forming an atomic transaction                                                                                                                                                            |
+| `RefereePuzzleArgs`                  | `referee/types.rs`                           | All args curried into the referee puzzle                                                                                                                                                                            |
+| `Referee`                            | `referee/mod.rs`                             | Enum: `MyTurn` / `TheirTurn`                                                                                                                                                                                        |
+| `ChannelState`                       | `channel_state/mod.rs`                       | Manages channel state, unroll, live games                                                                                                                                                                           |
+| `OffChainPhase`                      | `session_phases/mod.rs`                      | Turn-taking protocol over the wire                                                                                                                                                                                  |
+| `OnChainPhase`                       | `session_phases/on_chain.rs`                 | Drives on-chain dispute flow                                                                                                                                                                                        |
+| `LiveGame`                           | `channel_state/types/live_game.rs`           | Wraps referee for a single active game                                                                                                                                                                              |
+| `ProposedGame`                       | `channel_state/types/proposed_game.rs`       | Lightweight pending terms plus local-handle/origin-wire-ID mapping; members are created at acceptance                                                                                                               |
+| `UnrollCoin`                         | `channel_state/types/unroll_coin.rs`         | Unroll coin state and puzzle construction                                                                                                                                                                           |
+| `GameSession`                        | `game_session.rs`                            | Production session host: owns current phase, queues, emits `GameSessionEvent`s                                                                                                                                      |
+| `ValidationInfo`                     | `channel_state/types/validation_info.rs`     | Game validation program + state                                                                                                                                                                                     |
+| `CachedRedoActions`                  | `channel_state/types/potato.rs`              | Internal protocol replay entries: `CachedSendMove`, `CachedAcceptSettlement`, and per-ID `ProposalAccepted` (not the UI `ProposalAcceptedGroup`)                                                                    |
+| `BatchAction`                        | `session_phases/types.rs`                    | Peer-level actions: proposal `Propose`, `AcceptProposal`, `CancelProposal`, plus per-game `Move` and `AcceptSettlement`                                                                                             |
+| `GameAction`                         | `session_phases/types.rs`                    | Local actions: game moves/settlements, scalar queued proposal intents, clean shutdown, and test-only cheat support                                                                                                  |
+| `GameSessionState`                   | `game_session.rs`                            | Per-session mutable state: queues, flags, `peer_disconnected`                                                                                                                                                       |
+| `OnChainGameState`                   | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout`                                                                                   |
+| `SettlementOutcome`                  | `session_phases/effects.rs`                  | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)                   |
+| `GameNotification`                   | `session_phases/effects.rs`                  | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, gameplay `GameStatus { status: GameStatusKind, ... }`, and unified settlement `GameSettled { id, outcome, our_share, coin_id }` |
+| `Effect`                             | `session_phases/effects.rs`                  | All side effects returned by handler methods (notifications, transactions, coin registrations)                                                                                                                      |
+| `PeerLifecyclePhase`                 | `game_session.rs`                            | Trait implemented by all lifecycle phases — uniform interface for messages, coin events, game actions                                                                                                               |
+| `HandshakeInitiatorPhase`            | `session_phases/handshake_initiator.rs`      | Initiator handshake state machine (A → C → coin_created)                                                                                                                                                            |
+| `HandshakeReceiverPhase`             | `session_phases/handshake_receiver.rs`       | Receiver handshake state machine (B → D → coin_created)                                                                                                                                                             |
+| `SpendChannelCoinPhase`              | `session_phases/spend_channel_coin_phase.rs` | Watches channel coin spend; clean shutdown detection + unroll handling, creates `OnChainPhase`                                                                                                                      |
+| `ChannelCoinSpendInfo`               | `channel_state/types/`                       | Solution, conditions, and aggregate signature for spending the channel coin                                                                                                                                         |
+| `PeerMessage`                        | `session_phases/types.rs`                    | Wire message enum: `HandshakeA`–`HandshakeD`, `Batch`, `RequestPotato`, `Message`, etc.                                                                                                                             |
 
 ---
 
 ## Further Reading
 
-| Document | Covers |
-| --- | --- |
-| [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md) | How to write a game: package layout, registry hook, host and CLVM APIs |
-| [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md) | Game proposals, off-chain game flow, AcceptSettlement lifecycle |
-| [`ON_CHAIN.md`](ON_CHAIN.md) | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking |
-| [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md) | Notification types, lifecycle invariants, WASM event FIFO |
-| [`INTERNALS.md`](INTERNALS.md) | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!` |
-| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md) | Simulator test harness, `SimScriptAction` reference, trigger semantics, test-writing conventions |
-| [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) | Off-chain handler API, on-chain validator conventions |
-| [`clsp/handler_api.md`](clsp/handler_api.md) | CLVM calling conventions for handler functions |
-| [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md) | Debugging, testing, `./cb.sh` / `./ct.sh` usage |
-| [`WEBSOCKET_PROTOCOL.md`](WEBSOCKET_PROTOCOL.md) | Player-to-hub game relay carrier, messages, routing, and reconnect semantics |
-| [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md) | Reliable peer framing and authoritative peer message semantics |
-| [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, hub relay, session persistence |
-| [`CLVM_DOS.md`](CLVM_DOS.md) | CLVM denial-of-service vectors: ladder bombs, execution cost, trust categories per call site, solution constraints |
-
+| Document                                               | Covers                                                                                                             |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| [`GAME_WRITING_GUIDE.md`](GAME_WRITING_GUIDE.md)       | How to write a game: package layout, registry hook, host and CLVM APIs                                             |
+| [`GAME_LIFECYCLE.md`](GAME_LIFECYCLE.md)               | Game proposals, off-chain game flow, AcceptSettlement lifecycle                                                    |
+| [`ON_CHAIN.md`](ON_CHAIN.md)                           | Dispute resolution, clean shutdown, preemption, stale unrolls, the referee, on-chain game state tracking           |
+| [`UX_NOTIFICATIONS.md`](UX_NOTIFICATIONS.md)           | Notification types, lifecycle invariants, WASM event FIFO                                                          |
+| [`INTERNALS.md`](INTERNALS.md)                         | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!`                     |
+| [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md)         | Simulator test harness, `SimScriptAction` reference, trigger semantics, test-writing conventions                   |
+| [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md)                 | Off-chain handler API, on-chain validator conventions                                                              |
+| [`clsp/handler_api.md`](clsp/handler_api.md)           | CLVM calling conventions for handler functions                                                                     |
+| [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md)             | Debugging, testing, `./cb.sh` / `./ct.sh` usage                                                                    |
+| [`WEBSOCKET_PROTOCOL.md`](WEBSOCKET_PROTOCOL.md)       | Player-to-hub game relay carrier, messages, routing, and reconnect semantics                                       |
+| [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md)                 | Reliable peer framing and authoritative peer message semantics                                                     |
+| [`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md) | React frontend, WASM bridge, hub relay, session persistence                                                        |
+| [`CLVM_DOS.md`](CLVM_DOS.md)                           | CLVM denial-of-service vectors: ladder bombs, execution cost, trust categories per call site, solution constraints |

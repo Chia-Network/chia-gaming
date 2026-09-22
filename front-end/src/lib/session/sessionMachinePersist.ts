@@ -1,125 +1,139 @@
 import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
+import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
+import { type DurableApplicationState, type TerminalSessionSave } from './saveEnvelope';
+import { storageRepository } from './storageRepository';
 import {
-  loadState,
-  saveSession,
-  saveTerminalSession,
-  type SessionCacheUpdate,
-  type SessionPresentationSave,
-} from '../../hooks/save';
-import { channelStatusModelFromPayload, normalizeSessionPresentation } from './normalization';
-import { isTerminalChannelSnapshot } from './selectors';
+  channelStatusModelFromPayload,
+  channelStatusPayloadFromModel,
+  normalizeSessionPresentation,
+} from './normalization';
+import { recentDiagnosticEntries } from './historyLimits';
 import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionMachineState } from './sessionMachineTypes';
+import type { SessionModel } from './types';
 
 export interface SessionPersistDependencies {
   controller: SessionController;
-  getState(): SessionMachineState;
+  state: SessionMachineState;
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-  save?: typeof saveSession;
-  saveTerminal?: typeof saveTerminalSession;
 }
 
-/** Assemble at effect execution time from WASM facts and machine authority. */
-export function assembleSessionSave(dependencies: SessionPersistDependencies): {
-  live: Extract<SessionCacheUpdate, { scope: 'live' }>;
-  terminal: boolean;
-  presentation: SessionPresentationSave;
-  terminalIStarted: boolean;
-  myAlias?: string;
-  opponentAlias?: string;
-} | null {
-  const wasm = dependencies.controller.getWasmFields();
+export interface TerminalCapture {
+  kind: 'terminal';
+  controller: SessionController;
+  model: SessionModel;
+  identity: {
+    iStarted: boolean;
+    myAlias: string | null;
+    opponentAlias: string | null;
+  };
+  coinsOfInterest: CoinOfInterestEntry[];
+}
+
+/**
+ * Freeze one complete fixed-point boundary synchronously. Reducer/controller
+ * work and generated durable obligations must drain before this call.
+ */
+export function buildDurableApplicationState(
+  capture: ({ kind: 'live' } & SessionPersistDependencies) | TerminalCapture,
+): DurableApplicationState | null {
+  if (capture.kind === 'terminal') {
+    const walletProviderScope = capture.controller.getWalletProviderScope();
+    const terminal: TerminalSessionSave['terminal'] = {
+      iStarted: capture.identity.iStarted,
+      coinsOfInterest: structuredClone(capture.coinsOfInterest),
+      myAlias: capture.identity.myAlias,
+      opponentAlias: capture.identity.opponentAlias,
+    };
+    const presentation = snapshotFromSessionModel(capture.model, {
+      channelStatus: channelStatusPayloadFromModel(capture.model.channel.status),
+      waitingStateEnteredAt: null,
+      cleanShutdownGraceStartedAt: null,
+    });
+    return storageRepository.patchApplicationState((root) => ({
+      ...root,
+      walletContext: structuredClone(walletProviderScope),
+      session: {
+        phase: 'terminal',
+        terminal,
+        presentation,
+      },
+    }));
+  }
+
+  const wasm = capture.controller.getWasmFields();
   if (!wasm) return null;
-  const state = dependencies.getState();
+  const state = capture.state;
   const authoritativeStatus = wasm.channelStatus
     ? channelStatusModelFromPayload(wasm.channelStatus)
     : state.model.channel.status;
-  const restoreStatus = dependencies.getRestoreStatus();
+  const restoreStatus = capture.getRestoreStatus();
   const model = normalizeSessionPresentation({
     ...state.model,
     restore: {
-      restoring: dependencies.restoring,
+      restoring: capture.restoring,
       status: restoreStatus,
-      error: dependencies.getRestoreError(),
-      hubReconciled: restoreStatus === 'restored',
+      error: capture.getRestoreError(),
     },
     channel: { ...state.model.channel, status: authoritativeStatus },
     history: {
       ...state.model.history,
       wasmNotificationHistory: wasm.wasmNotificationHistory,
-      diagnosticLog: wasm.diagnosticLog,
+      diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
     },
   });
-  const current = loadState();
-  const currentPairing =
-    current.phase === 'pre-handshake' || current.phase === 'live' ? current.pairing : undefined;
-  const currentPresentation = current.phase === 'live' ? current.presentation : null;
   if (wasm.rewardPuzzleHash === null) {
     throw new Error('Cannot persist an initialized session without a reward puzzle hash');
   }
+  const rewardPuzzleHash = wasm.rewardPuzzleHash;
   const presentation = snapshotFromSessionModel(model, {
-    channelStatus: wasm.channelStatus ?? null,
-    waitingStateEnteredAt: currentPresentation?.waitingStateEnteredAt ?? null,
-    cleanShutdownGraceStartedAt: currentPresentation?.cleanShutdownGraceStartedAt ?? null,
+    channelStatus: wasm.channelStatus ? channelStatusPayloadFromModel(authoritativeStatus) : null,
+    waitingStateEnteredAt: wasm.waitingStateEnteredAt,
+    cleanShutdownGraceStartedAt: wasm.cleanShutdownGraceStartedAt,
   });
-  return {
-    terminal: isTerminalChannelSnapshot(authoritativeStatus) && model.game.activeIds.length === 0,
-    presentation,
-    terminalIStarted: wasm.iStarted,
-    myAlias: wasm.myAlias,
-    opponentAlias: wasm.opponentAlias,
-    live: {
-      scope: 'live',
-      pairing: {
-        token: wasm.pairingToken,
-        peerId: currentPairing?.peerId,
-        gameSessionId: wasm.gameSessionId,
-        iStarted: wasm.iStarted,
-        myContribution: wasm.myContribution,
-        theirContribution: wasm.theirContribution,
-        perGameAmount: wasm.perGameAmount,
-        channelTimeout: currentPairing?.channelTimeout,
-        unrollTimeout: currentPairing?.unrollTimeout,
-        myAlias: wasm.myAlias,
-        opponentAlias: wasm.opponentAlias,
+  const walletProviderScope = capture.controller.getWalletProviderScope();
+  return storageRepository.patchApplicationState((root) => {
+    const currentPairing =
+      root.session?.phase === 'pre-handshake' || root.session?.phase === 'live'
+        ? root.session.pairing
+        : undefined;
+    return {
+      ...root,
+      walletContext: structuredClone(walletProviderScope),
+      session: {
+        phase: 'live',
+        pairing: {
+          token: wasm.pairingToken,
+          peerId: currentPairing?.peerId,
+          gameSessionId: wasm.gameSessionId,
+          iStarted: wasm.iStarted,
+          myContribution: wasm.myContribution,
+          theirContribution: wasm.theirContribution,
+          perGameAmount: wasm.perGameAmount,
+          channelTimeout: currentPairing?.channelTimeout,
+          unrollTimeout: currentPairing?.unrollTimeout,
+          myAlias: wasm.myAlias,
+          opponentAlias: wasm.opponentAlias,
+        },
+        live: {
+          serializedGameSession: wasm.serializedGameSession,
+          gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
+          messageNumber: wasm.messageNumber,
+          remoteNumber: wasm.remoteNumber,
+          rewardPuzzleHash,
+          unackedMessages: wasm.unackedMessages,
+          terminalHandoff: wasm.terminalHandoff,
+          disposition: wasm.transportDisposition,
+        },
+        presentation,
       },
-      live: {
-        serializedGameSession: wasm.serializedGameSession,
-        gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
-        messageNumber: wasm.messageNumber,
-        remoteNumber: wasm.remoteNumber,
-        rewardPuzzleHash: wasm.rewardPuzzleHash,
-        unackedMessages: wasm.unackedMessages,
-        disposition: wasm.transportDisposition,
-        durabilityWarning: wasm.durabilityWarning,
-      },
-      presentation,
       history: {
+        ...root.history,
         wasmNotificationHistory: wasm.wasmNotificationHistory,
-        diagnosticLog: wasm.diagnosticLog,
+        diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
       },
-    },
-  };
-}
-
-export async function persistSessionSnapshot(
-  dependencies: SessionPersistDependencies,
-): Promise<void> {
-  const assembled = assembleSessionSave(dependencies);
-  if (!assembled) return;
-  if (assembled.terminal) {
-    await (dependencies.saveTerminal ?? saveTerminalSession)({
-      terminal: {
-        iStarted: assembled.terminalIStarted,
-        coinsOfInterest: dependencies.controller.getCoinsOfInterest(),
-        myAlias: assembled.myAlias ?? null,
-        opponentAlias: assembled.opponentAlias ?? null,
-      },
-      presentation: assembled.live.presentation,
-    });
-  } else {
-    await (dependencies.save ?? saveSession)(assembled.live);
-  }
+    };
+  });
 }

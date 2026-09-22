@@ -4,10 +4,8 @@ import {
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
-  type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
-import { spacepokerProposalParameters } from './unitSize';
 
 function isForfeitOutcome(outcome: SettlementOutcome): boolean {
   return outcome === 'forfeited_skipped_reveal' || outcome === 'forfeited_we_accepted';
@@ -66,21 +64,6 @@ export interface SpacepokerHandState {
 export interface SpacepokerHand extends GameHand<SpacepokerHandState> {
   update(reducer: (current: SpacepokerHandState) => SpacepokerHandState): void;
 }
-
-/** Test/helper envelope only; persistence treats the state as opaque. */
-export const spacepokerStateCodec = {
-  gameType: 'spacepoker',
-  encode: (state: SpacepokerHandState): PersistedGameState<SpacepokerHandState> => ({
-    gameType: 'spacepoker',
-    state,
-  }),
-  decode: (value: unknown): SpacepokerHandState | null =>
-    typeof value === 'object' &&
-    value !== null &&
-    (value as Partial<PersistedGameState>).gameType === 'spacepoker'
-      ? ((value as PersistedGameState<SpacepokerHandState>).state ?? null)
-      : null,
-};
 
 const HANDLERS = new Set([0n, 1n, 2n, 3n, 4n, 5n, 6n]);
 const TERMINALS = new Set([
@@ -214,10 +197,7 @@ export function isSpacepokerHandState(value: unknown): value is SpacepokerHandSt
   );
 }
 
-function initialState(
-  init: GameHandInitialization,
-  unitSizeMojos: bigint,
-): SpacepokerHandState {
+function initialState(init: GameHandInitialization, unitSizeMojos: bigint): SpacepokerHandState {
   const member = init.members[0]!;
   if (
     member.playerAContribution <= 0n ||
@@ -283,7 +263,7 @@ type SpacepokerReadableEvent =
   | { type: 'opponent-moved'; readable: Program }
   | { type: 'game-message'; readable: Program };
 
-function reduceSpacepokerSettlementStateCore(
+export function reduceSpacepokerSettlementState(
   current: SpacepokerHandState,
   outcome: SettlementOutcome,
 ): SpacepokerHandState {
@@ -371,13 +351,6 @@ function reduceSpacepokerSettlementStateCore(
     outcome: null,
     terminalState: 'settled',
   };
-}
-
-export function reduceSpacepokerSettlementState(
-  current: SpacepokerHandState,
-  outcome: SettlementOutcome,
-): SpacepokerHandState {
-  return reduceSpacepokerSettlementStateCore(current, outcome);
 }
 
 function bigints(program: Program): bigint[] {
@@ -552,7 +525,9 @@ function reduceSpacepokerHandState(
   event: GameUpdate,
 ): SpacepokerHandState {
   if (event.type === 'hand-ended') {
-    const settled = event.outcome ? reduceSpacepokerSettlementState(current, event.outcome) : current;
+    const settled = event.outcome
+      ? reduceSpacepokerSettlementState(current, event.outcome)
+      : current;
     return {
       ...settled,
       gameState: { ...settled.gameState, myTurn: false },
@@ -584,11 +559,20 @@ export function createSpacepokerHand(init: GameHandInitialization): SpacepokerHa
   if (init.members.length !== 1) {
     throw new Error('Space Poker hand requires one game');
   }
-  const parameters = spacepokerProposalParameters.decode(init.parameters);
-  if (!parameters) {
-    throw new Error('Space Poker hand requires valid proposal parameters');
+  const readableParameters = init.members[0]!.readableParameters.toList();
+  if (readableParameters.length !== 2) {
+    throw new Error('Space Poker hand requires two readable parameters');
   }
-  return spacepokerHandFromState(initialState(init, parameters.betUnitMojos));
+  const stackSize = readableParameters[0]!.toBigInt();
+  const betUnitMojos = readableParameters[1]!.toBigInt();
+  if (
+    stackSize <= 0n ||
+    betUnitMojos <= 0n ||
+    stackSize * betUnitMojos !== init.members[0]!.playerAContribution
+  ) {
+    throw new Error('Space Poker hand received invalid resolved parameters');
+  }
+  return spacepokerHandFromState(initialState(init, betUnitMojos));
 }
 
 export function restoreSpacepokerHand(savedState: unknown): SpacepokerHand {

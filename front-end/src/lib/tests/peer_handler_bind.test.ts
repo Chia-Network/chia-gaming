@@ -1,8 +1,16 @@
 import { encodePeerAppMessage, PeerSession, type MessageHandler } from '../../services/PeerSession';
 import type { HubConnection } from '../../services/HubConnection';
 import { SessionController } from '../../hooks/SessionController';
-import { makeMockCradle, mockWasmConnection } from './message_protocol.harness';
+import {
+  attachTestCommitCoordinator,
+  makeMockCradle,
+  mockWasmConnection,
+  setTestPersistence,
+} from './message_protocol.harness';
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { createSessionModel } from '../session/model';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 
 /** Mirrors Shell's direct-owner bypass for the legacy callback bridge. */
 function bindPeerMessageHandler(
@@ -42,7 +50,11 @@ describe('delayed PeerSession message-handler binding', () => {
     controller.loadWasm(mockWasmConnection);
     controller.setGameSession(cradle);
     controller.kickSystem(2);
-    controller.onSaveNeeded = jest.fn(() => Promise.resolve());
+    attachTestCommitCoordinator(controller);
+    setTestPersistence(
+      controller,
+      jest.fn(() => Promise.resolve()),
+    );
     const legacyDelivery = jest.fn((msgno: number, msg: Uint8Array) => {
       controller.deliverMessage(BigInt(msgno), msg);
     });
@@ -87,7 +99,11 @@ describe('delayed PeerSession message-handler binding', () => {
     controller.loadWasm(mockWasmConnection);
     controller.setGameSession(cradle);
     controller.kickSystem(2);
-    controller.onSaveNeeded = jest.fn(() => Promise.resolve());
+    attachTestCommitCoordinator(controller);
+    setTestPersistence(
+      controller,
+      jest.fn(() => Promise.resolve()),
+    );
     controller.setInboundSessionRejectHandler(() => order.push('cancel'));
 
     peerSession.deliverRawPeerMessage(
@@ -124,6 +140,19 @@ describe('delayed PeerSession message-handler binding', () => {
     controller.loadWasm(mockWasmConnection);
     controller.setGameSession(cradle);
     controller.kickSystem(2);
+    const normalPersist = jest.fn(async () => {
+      order.push('normal-persist');
+    });
+    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+      persist: normalPersist,
+    });
+    runtime.activate();
     controller.setInboundSessionRejectPersistence(async () => {
       order.push('persist-receipt');
     });
@@ -139,6 +168,7 @@ describe('delayed PeerSession message-handler binding', () => {
     await controller.flushPendingWork();
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(order).toEqual(['persist-receipt', 'ack-6', 'cancel']);
+    expect(normalPersist).not.toHaveBeenCalled();
     controller.cleanup();
   });
 
@@ -155,6 +185,7 @@ describe('delayed PeerSession message-handler binding', () => {
     controller.loadWasm(mockWasmConnection);
     controller.setGameSession(cradle);
     controller.kickSystem(2);
+    attachTestCommitCoordinator(controller);
     let receiptRemoteNumber = 0n;
     controller.setInboundSessionRejectPersistence(async (_session, remoteNumber) => {
       receiptRemoteNumber = remoteNumber;
@@ -196,8 +227,12 @@ describe('delayed PeerSession message-handler binding', () => {
     controller.loadWasm(mockWasmConnection);
     controller.setGameSession(cradle);
     controller.kickSystem(2);
+    attachTestCommitCoordinator(controller);
     controller.channelReady = true;
-    controller.onSaveNeeded = jest.fn(() => Promise.resolve());
+    setTestPersistence(
+      controller,
+      jest.fn(() => Promise.resolve()),
+    );
     controller.setInboundSessionRejectHandler(cancel);
 
     peerSession.deliverRawPeerMessage(

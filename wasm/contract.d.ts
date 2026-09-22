@@ -18,6 +18,40 @@ export interface SpendBundle {
   spends: CoinSpend[];
 }
 
+export interface TransactionSubmission {
+  id: string;
+  /** Opaque Rust-issued identifier for this exact delivery attempt. */
+  attempt_token: string;
+  /** Rust-issued predecessor in this stable submission's delivery lineage. */
+  predecessor_attempt_token?: string | null;
+  /** Immutable relationship to the predecessor. */
+  relationship: 'initial' | 'exact' | 'newer-fee-bearing' | 'other';
+  bundle: SpendBundle;
+  fee_request?: { target: string; amount: string } | null;
+}
+
+export type SubmissionDrainFailureStage =
+  | 'fingerprint'
+  | 'retained-state'
+  | 'expected-outputs'
+  | 'submission-id';
+
+export interface SubmissionDrainFailure {
+  candidate_index: string;
+  retained_submission_id?: string | null;
+  candidate_submission_id?: string | null;
+  intent_fingerprint?: string | null;
+  stage: SubmissionDrainFailureStage;
+  message: string;
+  rust_context: string;
+}
+
+export interface SubmissionDrain {
+  submissions: TransactionSubmission[];
+  retired_submission_ids: string[];
+  failures: SubmissionDrainFailure[];
+}
+
 export interface IChiaIdentity {
   private_key: string;
   synthetic_private_key: string;
@@ -144,9 +178,6 @@ export type ProposalParameterValue =
 
 export interface ProposalMadePayload {
   id: bigint;
-  group_ids: bigint[];
-  player_a_contribution: unknown;
-  player_b_contribution: unknown;
   sender_is_player_a: unknown;
   timeout: unknown;
   game_type: unknown;
@@ -158,9 +189,11 @@ export interface AcceptedGameMember {
   player_a_contribution: unknown;
   player_b_contribution: unknown;
   our_turn: boolean;
+  readable_parameters: Uint8Array;
 }
 
 export interface ProposalAcceptedGroupPayload {
+  id: bigint;
   members: AcceptedGameMember[];
 }
 
@@ -176,7 +209,6 @@ export type CancelReason =
 
 export interface ProposalCancelledPayload {
   id: bigint;
-  group_ids: bigint[];
   reason: CancelReason;
 }
 
@@ -228,7 +260,9 @@ export type GameSessionEvent =
   | { Log: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
-  | { NeedCoinSpend: NeedCoinSpendRequest };
+  | { NeedCoinSpend: NeedCoinSpendRequest }
+  | { ChannelCoinConfirmed: null }
+  | { ChannelCreationTimedOut: null };
 
 export interface WatchedCoinEntry {
   coin_name: string;
@@ -246,7 +280,7 @@ export interface WasmResult {
   unwatchCoins: WatchedCoinEntry[];
   actionSucceeded: boolean;
   disposition: WasmDisposition;
-  ids?: string[];
+  id?: string;
 }
 
 export interface GameSessionConfig {

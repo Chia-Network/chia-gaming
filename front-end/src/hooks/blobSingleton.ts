@@ -1,28 +1,22 @@
 import { SessionController } from './SessionController';
+import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
-import {
-  clearSession,
-  clearGameSessionPreservingHistory,
-  flushSessionSave,
-  markSavedSession,
-  LiveSessionSave,
-  SessionSave,
-} from './save';
+import { type RehydratedDurableApplicationState } from '../lib/session/persistence';
+import { storageRepository } from '../lib/session/storageRepository';
+import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { coerceToBytes } from '../util';
 import { getGenesisChallenge } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { ReliablePeerTransport } from '../services/PeerSession';
 import {
-  DIAGNOSTIC_LOG_LIMIT,
+  recentDiagnosticEntries,
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
 
 export let sessionController: SessionController | null = null;
-/** @deprecated alias for sessionController */
-export { sessionController as blobSingleton };
 export let initStarted = false;
 let transactionPublishNerfed = false;
 const transactionPublishNerfListeners = new Set<(nerfed: boolean) => void>();
@@ -49,19 +43,6 @@ export function setTransactionPublishNerfed(nerfed: boolean): void {
 export function subscribeTransactionPublishNerfed(listener: (nerfed: boolean) => void): () => void {
   transactionPublishNerfListeners.add(listener);
   return () => transactionPublishNerfListeners.delete(listener);
-}
-
-function requireBigIntCounter(value: unknown, label: string): bigint {
-  if (typeof value === 'bigint') return value;
-  if (typeof value === 'number' && Number.isInteger(value)) return BigInt(value);
-  if (typeof value === 'string') {
-    try {
-      return BigInt(value);
-    } catch {
-      /* fall through */
-    }
-  }
-  throw new Error(`restoreSession: missing or invalid ${label}`);
 }
 
 function requireBoolean(value: unknown, label: string): boolean {
@@ -94,9 +75,6 @@ export function destroyFlushedTerminalSessionController(controller: SessionContr
   sessionController = null;
   initStarted = false;
 }
-/** @deprecated use destroySessionController */
-export { destroySessionController as destroyBlobSingleton };
-
 export async function configSessionController(
   sc: SessionController,
   iStarted: boolean,
@@ -140,70 +118,64 @@ export async function configSessionController(
 
 export async function restoreSession(
   sc: SessionController,
-  save: LiveSessionSave,
+  bootstrap: RehydratedDurableApplicationState,
   wasmStateInit: WasmStateInit,
 ): Promise<void> {
+  if (bootstrap.state.session?.phase !== 'live') {
+    throw new Error('restoreSession requires a live durable session');
+  }
+  const save = bootstrap.state;
+  const session = bootstrap.state.session;
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
   const currentSchema = BigInt(wasmConnection.game_session_serialization_schema());
-  if (save.live.gameSessionSchemaVersion !== currentSchema) {
-    const savedSchema = save.live.gameSessionSchemaVersion.toString();
-    await clearSession();
-    markSavedSession();
+  if (session.live.gameSessionSchemaVersion !== currentSchema) {
+    const savedSchema = session.live.gameSessionSchemaVersion.toString();
     throw new Error(
       `Unsupported saved game format: cradle schema ${savedSchema}; current schema is ${currentSchema}`,
     );
   }
 
   const cradleBytes =
-    save.live.serializedGameSession instanceof Uint8Array
-      ? save.live.serializedGameSession
+    session.live.serializedGameSession instanceof Uint8Array
+      ? session.live.serializedGameSession
       : (() => {
           throw new Error('restoreSession serializedGameSession must be a Uint8Array');
         })();
   const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
-  if (sc.getGameSessionId() !== save.pairing.gameSessionId) {
+  if (sc.getGameSessionId() !== session.pairing.gameSessionId) {
     throw new Error('restoreSession: reliable session id does not match persisted pairing');
   }
-  sc.messageNumber = requireBigIntCounter(save.live.messageNumber, 'messageNumber');
-  sc.remoteNumber = requireBigIntCounter(save.live.remoteNumber, 'remoteNumber');
-  sc.iStarted = requireBoolean(save.pairing.iStarted, 'iStarted');
-  sc.pairingToken = requireString(save.pairing.token, 'pairingToken');
-  if (!Array.isArray(save.live.unackedMessages)) {
-    throw new Error('restoreSession: missing or invalid unackedMessages');
-  }
-  sc.unackedMessages = save.live.unackedMessages.map((m) => ({
-    msgno: requireBigIntCounter(m.msgno, 'unackedMessages.msgno'),
-    msg: m.msg,
-  }));
-  if (save.live.disposition !== 'active') {
+  sc.restoreTransportCheckpoint(session.live);
+  sc.iStarted = requireBoolean(session.pairing.iStarted, 'iStarted');
+  sc.pairingToken = requireString(session.pairing.token, 'pairingToken');
+  if (session.live.disposition !== 'active') {
     throw new Error('restoreSession: live reliable transport is not active');
   }
   sc.wasmNotificationHistory = recentEntries(
     save.history.wasmNotificationHistory ?? [],
     WASM_NOTIFICATION_HISTORY_LIMIT,
   );
-  sc.diagnosticLog = recentEntries(save.history.diagnosticLog ?? [], DIAGNOSTIC_LOG_LIMIT);
-  sc.durabilityWarning = save.live.durabilityWarning;
-  if (!Array.isArray(save.presentation.activeGameIds)) {
-    throw new Error('restoreSession: missing or invalid activeGameIds');
-  }
-  sc.activeGameIds = [...save.presentation.activeGameIds];
+  sc.diagnosticLog = recentDiagnosticEntries(save.history.diagnosticLog ?? []);
+  sc.restorePresentationTiming({
+    waitingStateEnteredAt: session.presentation.waitingStateEnteredAt,
+    cleanShutdownGraceStartedAt: session.presentation.cleanShutdownGraceStartedAt,
+  });
   sc.restoreChannelStatus(
-    save.presentation.channelStatus
+    session.presentation.channelStatus
       ? {
-          ...save.presentation.channelStatus,
-          coin: coerceToBytes(save.presentation.channelStatus.coin),
+          ...session.presentation.channelStatus,
+          coin: coerceToBytes(session.presentation.channelStatus.coin),
         }
       : null,
   );
-  sc.myAlias = save.pairing.myAlias;
-  sc.opponentAlias = save.pairing.opponentAlias;
-  if (!save.live.rewardPuzzleHash) {
+  sc.myAlias = session.pairing.myAlias;
+  sc.opponentAlias = session.pairing.opponentAlias;
+  if (!session.live.rewardPuzzleHash) {
     throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
   }
-  sc.rewardPuzzleHash = save.live.rewardPuzzleHash;
+  sc.rewardPuzzleHash = session.live.rewardPuzzleHash;
   sc.setGameSession(cradle);
 
   log('[restore] session restored');
@@ -222,7 +194,7 @@ export function getOrCreateSessionController(
   myContribution: bigint,
   theirContribution: bigint,
   iStarted: boolean,
-  sessionSave?: SessionSave,
+  sessionBootstrap?: RehydratedDurableApplicationState,
   pairingToken?: string,
   perGameAmount?: bigint,
   getFee?: () => bigint,
@@ -241,7 +213,12 @@ export function getOrCreateSessionController(
     myContribution,
     theirContribution,
     peerConn,
+    channelFundingRuntime,
+    sessionBootstrap?.state.walletContext ?? undefined,
   );
+  if (sessionBootstrap?.state.session?.phase === 'live') {
+    sessionController.restoreTransportCheckpoint(sessionBootstrap.state.session.live);
+  }
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;
@@ -274,11 +251,11 @@ export function getOrCreateSessionController(
 
   // Only cradle restores go through restoreSession. pairingToken-only saves are
   // a pre-cradle handshake checkpoint (e.g. deploy-stale reload mid-accept).
-  if (sessionSave?.phase === 'live') {
+  if (sessionBootstrap?.state.session?.phase === 'live') {
     const restoringObject = sessionController;
     const doRestore = async () => {
       try {
-        await restoreSession(restoringObject, sessionSave, wasmStateInit);
+        await restoreSession(restoringObject, sessionBootstrap, wasmStateInit);
       } catch (e) {
         console.error('[sessionController] restoreSession error:', e);
         log(`[sessionController] restoreSession error: ${String(e)}`);
@@ -300,9 +277,10 @@ export function getOrCreateSessionController(
         }
         // Pending handshake fields must already be on disk (Shell). Flush before
         // asset fetch so a stale-deploy reload can Resume into newSession again.
-        await flushSessionSave();
+        await storageRepository.checkpointDomainMutations();
         if (sessionController !== owningController) return;
-        await clearGameSessionPreservingHistory();
+        const snapshot = storageRepository.patchApplicationState(clearGameSessionState);
+        await storageRepository.write(snapshot);
         if (sessionController !== owningController) return;
         await configSessionController(
           owningController,
@@ -330,12 +308,4 @@ export function getOrCreateSessionController(
   }
 
   return { sessionController };
-}
-
-/** @deprecated use getOrCreateSessionController */
-export function getBlobSingleton(...args: Parameters<typeof getOrCreateSessionController>): {
-  gameObject: SessionController;
-} {
-  const result = getOrCreateSessionController(...args);
-  return { gameObject: result.sessionController };
 }

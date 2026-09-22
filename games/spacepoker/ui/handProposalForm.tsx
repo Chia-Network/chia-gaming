@@ -13,15 +13,9 @@ export const HandProposalForm = forwardRef<
 ) {
   const initialParams = initialValues?.parameters ?? null;
   const [betUnitMojos, setBetUnitMojos] = useState(initialParams?.betUnitMojos ?? 1n);
-  const initialStake = initialValues
-    ? initialValues.senderContribution
-    : defaultContribution > 0n
-      ? defaultContribution
-      : 10n;
   const [stackSize, setStackSize] = useState(
-    initialParams && initialParams.betUnitMojos > 0n
-      ? initialStake / initialParams.betUnitMojos
-      : 10n,
+    initialParams?.stackSize ??
+      (defaultContribution > 0n && betUnitMojos > 0n ? defaultContribution / betUnitMojos : 10n),
   );
   const [validationError, setValidationError] = useState<string | null>(null);
   const betSize = betUnitMojos * stackSize;
@@ -30,9 +24,9 @@ export const HandProposalForm = forwardRef<
   useImperativeHandle(ref, () => ({
     getProposal: () => {
       const error =
-        betUnitMojos <= 0n || stackSize <= 0n
-          ? 'Bet unit and stack size must be positive.'
-          : maxPerHandMojos !== null && betSize > maxPerHandMojos
+        betUnitMojos <= 0n || stackSize < 0n
+          ? 'Minimum raise must be positive and stack size cannot be negative.'
+          : stackSize > 0n && maxPerHandMojos !== null && betSize > maxPerHandMojos
             ? 'Per-player stake exceeds the available reserve.'
             : null;
       setValidationError(error);
@@ -40,9 +34,7 @@ export const HandProposalForm = forwardRef<
         ? { ok: false, error }
         : {
             ok: true,
-            senderContribution: betSize,
-            receiverContribution: betSize,
-            parameters: { betUnitMojos },
+            parameters: { stackSize, betUnitMojos },
           };
     },
   }));
@@ -58,7 +50,7 @@ export const HandProposalForm = forwardRef<
             : undefined
         }
         disabled={disabled}
-        label="Bet unit"
+        label="Minimum raise"
         exceedsLabel="Exceeds available reserve."
         onKeyDown={(event) => {
           if (event.key === 'Enter') onSubmit();
@@ -68,7 +60,7 @@ export const HandProposalForm = forwardRef<
         <label className="text-xs font-medium text-canvas-text">Stack size (units per player)</label>
         <input
           type="number"
-          min={1}
+          min={0}
           className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
           value={stackSize.toString()}
           disabled={disabled}
@@ -82,8 +74,14 @@ export const HandProposalForm = forwardRef<
         />
       </div>
       <div className="text-xs text-canvas-text">
-        Per-player stake: {formatSpacepokerMojos(betSize)} · Total game size:{' '}
-        {formatSpacepokerMojos(betSize * 2n)}
+        {stackSize === 0n ? (
+          <>No limit · stake resolves from both reserves when accepted</>
+        ) : (
+          <>
+            Per-player stake: {formatSpacepokerMojos(betSize)} · Total game size:{' '}
+            {formatSpacepokerMojos(betSize * 2n)}
+          </>
+        )}
       </div>
       {validationError && <p className="text-xs text-alert-text">{validationError}</p>}
     </>
