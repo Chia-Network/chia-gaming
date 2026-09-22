@@ -231,6 +231,48 @@ describe('DurableApplicationState strict validation', () => {
   });
 
   it.each([
+    [
+      'membership outside the current hand',
+      (state: any) => (state.session.presentation.currentHandGameIds = []),
+      /active game game-1 is not in currentHandGameIds/,
+    ],
+    [
+      'a missing keyed instance',
+      (state: any) => delete state.session.presentation.gameInstances['game-1'],
+      /game game-1 is missing its keyed instance/,
+    ],
+    [
+      'an unrelated keyed instance',
+      (state: any) => {
+        state.session.presentation.gameInstances.unrelated = {
+          ...state.session.presentation.gameInstances['game-1'],
+          id: 'unrelated',
+        };
+      },
+      /game unrelated is an unrelated keyed instance/,
+    ],
+    [
+      'terminal and presentation disagreement',
+      (state: any) => (state.session.presentation.gameInstances['game-1'].presentation = 'ended'),
+      /presentation and terminal state disagree/,
+    ],
+    [
+      'a live hand without package state',
+      (state: any) => (state.session.presentation.handState = null),
+      /live current hand is missing handState/,
+    ],
+    [
+      'package-owned hand state that cannot restore',
+      (state: any) => (state.session.presentation.handState.state = { malformed: true }),
+      /handState cannot be restored/,
+    ],
+  ])('rejects %s in the current presentation format', (_label, corrupt, error) => {
+    const state: any = structuredClone(activeSave());
+    corrupt(state);
+    expect(() => decodeDurableApplicationState(state)).toThrow(error);
+  });
+
+  it.each([
     ['aggregate root', (state: any) => (state.unexpected = true)],
     ['identity', (state: any) => (state.identity.unexpected = true)],
     ['preferences', (state: any) => (state.preferences.unexpected = true)],

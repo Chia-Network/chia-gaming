@@ -8,7 +8,7 @@ import { storageRepository } from '../session/storageRepository';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
+import { buildDurableApplicationState } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionModel } from '../session/types';
 import {
@@ -123,15 +123,16 @@ export async function injectSessionReload(
   await lane.controller.flushPendingWork();
   await lane.runtime.persist();
   await lane.runtime.persist();
-  await captureDurableApplicationState({
+  const snapshot = buildDurableApplicationState({
     kind: 'live',
     controller: lane.controller,
-    getState: () => lane.runtime.getState(),
+    state: lane.runtime.getState(),
     restoring: lane.controller.getRestoreStatus() !== 'idle',
     getRestoreStatus: () => lane.controller.getRestoreStatus(),
     getRestoreError: () => lane.controller.getRestoreError(),
-  })?.write();
-  await storageRepository.flushAggregate();
+  });
+  if (snapshot) await storageRepository.write(snapshot);
+  await storageRepository.checkpointDomainMutations();
   lane.subscription.unsubscribe();
   lane.runtime.setRender(() => {});
   lane.controller.cleanup();

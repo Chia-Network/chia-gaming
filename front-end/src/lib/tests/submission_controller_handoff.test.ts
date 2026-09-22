@@ -94,7 +94,7 @@ describe('submission controller handoff and quiescence', () => {
       controller.reportDurabilityError(failure);
       throw failure;
     });
-    const captureTerminal = jest.fn(() => ({ write: jest.fn().mockResolvedValue(undefined) }));
+    const persistTerminal = jest.fn().mockResolvedValue(undefined);
     const teardown = jest.fn((terminalController) =>
       terminalController.cleanupAfterTerminalFlush(),
     );
@@ -107,14 +107,14 @@ describe('submission controller handoff and quiescence', () => {
           identity: { myName: 'Alice', opponentName: 'Bob', iStarted: true },
         },
         {
-          captureTerminal,
+          persistTerminal,
           updateMarker: jest.fn(),
           teardown,
         },
       );
 
       expect(result.model).toEqual(authoritativeModel);
-      expect(captureTerminal).toHaveBeenCalledWith(
+      expect(persistTerminal).toHaveBeenCalledWith(
         expect.objectContaining({ model: authoritativeModel }),
       );
       expect(teardown).toHaveBeenCalledWith(controller);

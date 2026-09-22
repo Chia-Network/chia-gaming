@@ -1,10 +1,5 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
-import { gameSliceReducer, type GameSlice } from './gameSlice';
-import {
-  createRegisteredGameHand,
-  restoreRegisteredGameHandState,
-  snapshotRegisteredGameHand,
-} from '../gameRegistry';
+import { gameSliceReducer } from './gameSlice';
 import { Program } from 'clvm-lib';
 import type { GameHandInitialization, GameUpdate, PersistedGameState } from '@games/host';
 import { selectPendingProposal } from './selectors';
@@ -14,7 +9,7 @@ import type {
   SessionMachineState,
   SessionMachineTransition,
 } from './sessionMachineTypes';
-import type { RegisteredGameType, SessionModel } from './types';
+import type { RegisteredGameType } from './types';
 
 export type DurableGameEvent = Extract<
   SessionMachineEvent,
@@ -28,30 +23,9 @@ export type DurableGameEvent = Extract<
   | { type: 'local-action-applied' }
 >;
 
-function gameSliceFromModel(model: SessionModel): GameSlice {
-  return {
-    handKey: model.game.handKey,
-    activeIds: model.game.activeIds,
-    currentHandIds: model.game.currentHandIds,
-    currentHandOrigin: model.game.currentHandOrigin,
-    instances: model.game.instances,
-    lastDisplayedId: model.game.lastDisplayedId,
-    activeGameType: model.game.activeGameType,
-  };
-}
-
-function withGameSlice(model: SessionModel, game: GameSlice): SessionModel {
-  return { ...model, game: { ...model.game, ...game } };
-}
-
-type DurableGameEventWithHandState = DurableGameEvent & {
-  readonly handState?: PersistedGameState | null;
-};
-
 export interface ActiveGameHandContext {
   create(gameType: RegisteredGameType, init: GameHandInitialization): PersistedGameState;
   receive(update: GameUpdate): PersistedGameState;
-  restore(checkpoint: PersistedGameState | null): void;
   clear(): void;
 }
 
@@ -78,39 +52,13 @@ function memberIndexForProtocolId(state: SessionMachineState, id: string): numbe
   return matches[0]!;
 }
 
-function reduceHandSnapshot(
-  state: SessionMachineState,
-  saved: PersistedGameState | null,
-  update: GameUpdate,
-): PersistedGameState {
-  const gameType = state.model.game.activeGameType;
-  if (saved === null) {
-    throw new Error('Game update requires persisted game-owned hand state');
-  }
-  const hand = restoreRegisteredGameHandState(gameType, saved);
-  hand.receive(update);
-  return snapshotRegisteredGameHand(gameType, hand);
-}
-
-function reduceHandUpdateAcrossSnapshots(
+function updateActiveHand(
   state: SessionMachineState,
   update: GameUpdate,
-  suppliedHandState: PersistedGameState | null | undefined,
-  activeHand?: ActiveGameHandContext,
+  activeHand: ActiveGameHandContext | undefined,
 ): SessionMachineTransition {
-  activeHand?.receive(update);
-  const handState =
-    suppliedHandState ?? reduceHandSnapshot(state, state.model.game.handState, update);
-  return {
-    state: {
-      ...state,
-      model: {
-        ...state.model,
-        game: { ...state.model.game, handState },
-      },
-    },
-    effects: [],
-  };
+  if (!activeHand) throw new Error('Game package mutation requires an active hand context');
+  return withHandState(state, activeHand.receive(update));
 }
 
 function assertNever(event: never): never {
@@ -119,7 +67,7 @@ function assertNever(event: never): never {
 
 export function reduceDurableGameEvent(
   state: SessionMachineState,
-  event: DurableGameEventWithHandState,
+  event: DurableGameEvent,
   activeHand?: ActiveGameHandContext,
 ): SessionMachineTransition {
   switch (event.type) {
@@ -128,10 +76,7 @@ export function reduceDurableGameEvent(
       return {
         state: {
           ...state,
-          model: withGameSlice(
-            state.model,
-            gameSliceReducer(gameSliceFromModel(state.model), event.action),
-          ),
+          model: { ...state.model, game: gameSliceReducer(state.model.game, event.action) },
         },
         effects: [],
       };
@@ -147,7 +92,7 @@ export function reduceDurableGameEvent(
       const pendingProposals = state.model.betweenHand.pendingProposals.filter(
         (candidate) => candidate.id !== proposal.id,
       );
-      const game = gameSliceReducer(gameSliceFromModel(state.model), {
+      const game = gameSliceReducer(state.model.game, {
         type: 'accepted-group',
         groupIds: acceptedIds,
         members: event.members.map((member) => ({
@@ -157,12 +102,11 @@ export function reduceDurableGameEvent(
         origin: proposalOrigin(proposal),
         gameType: proposal.handProposal.gameType,
       });
-      const modelWithGame = withGameSlice(state.model, game);
       const initialized = {
         ...state,
         model: {
-          ...modelWithGame,
-          game: { ...modelWithGame.game, handState: null },
+          ...state.model,
+          game: { ...game, handState: null },
           betweenHand: {
             ...state.model.betweenHand,
             pendingProposals,
@@ -190,23 +134,17 @@ export function reduceDurableGameEvent(
           readableParameters: Program.deserialize(member.readableParameters),
         })),
       };
-      const handState =
-        event.handState ??
-        activeHand?.create(proposal.handProposal.gameType, init) ??
-        snapshotRegisteredGameHand(
-          proposal.handProposal.gameType,
-          createRegisteredGameHand(proposal.handProposal.gameType, init),
-        );
-      return withHandState(initialized, handState);
+      if (!activeHand) throw new Error('Game acceptance requires an active hand context');
+      return withHandState(initialized, activeHand.create(proposal.handProposal.gameType, init));
     }
     case 'notification-game-status': {
-      const game = gameSliceReducer(gameSliceFromModel(state.model), {
+      const game = gameSliceReducer(state.model.game, {
         type: 'status',
         id: event.id,
         payload: event.payload,
         channelState: event.channelState,
       });
-      const projected = { ...state, model: withGameSlice(state.model, game) };
+      const projected = { ...state, model: { ...state.model, game } };
       if (event.readable === null) {
         return { state: projected, effects: [] };
       }
@@ -224,10 +162,10 @@ export function reduceDurableGameEvent(
               readable,
               moverShare: event.moverShare,
             };
-      return reduceHandUpdateAcrossSnapshots(projected, update, event.handState, activeHand);
+      return updateActiveHand(projected, update, activeHand);
     }
     case 'notification-game-terminal': {
-      const game = gameSliceReducer(gameSliceFromModel(state.model), {
+      const game = gameSliceReducer(state.model.game, {
         type: 'settled',
         id: event.id,
         terminal: event.terminal,
@@ -236,7 +174,8 @@ export function reduceDurableGameEvent(
       const base = {
         ...state,
         model: {
-          ...withGameSlice(state.model, game),
+          ...state.model,
+          game,
           betweenHand: isLast
             ? {
                 ...state.model.betweenHand,
@@ -250,44 +189,31 @@ export function reduceDurableGameEvent(
         memberIndex: memberIndexForProtocolId(base, event.id),
         outcome: event.terminal.outcome,
       };
-      return reduceHandUpdateAcrossSnapshots(base, update, event.handState, activeHand);
+      return updateActiveHand(base, update, activeHand);
     }
     case 'notification-abandoned': {
       activeHand?.clear();
-      const game = gameSliceReducer(gameSliceFromModel(state.model), { type: 'abandoned' });
+      const game = gameSliceReducer(state.model.game, { type: 'abandoned' });
       return {
         state: {
           ...state,
-          model: {
-            ...withGameSlice(state.model, game),
-            game: {
-              ...withGameSlice(state.model, game).game,
-              handState: null,
-            },
-          },
+          model: { ...state.model, game },
         },
         effects: [],
       };
     }
     case 'hand-state-changed': {
-      if (event.gameType !== state.model.game.activeGameType) {
+      if (event.handState.gameType !== state.model.game.activeGameType) {
         throw new Error(
-          `Internal hand state gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
+          `Internal hand state gameType ${event.handState.gameType} does not match active ${state.model.game.activeGameType}`,
         );
       }
-      const handState = event.handState ?? { gameType: event.gameType, state: event.state };
-      return {
-        state: {
-          ...state,
-          model: { ...state.model, game: { ...state.model.game, handState } },
-        },
-        effects: [],
-      };
+      return withHandState(state, event.handState);
     }
     case 'local-game-action-committed': {
-      if (event.gameType !== state.model.game.activeGameType) {
+      if (event.handState.gameType !== state.model.game.activeGameType) {
         throw new Error(
-          `Internal committed gameType ${event.gameType} does not match active ${state.model.game.activeGameType}`,
+          `Internal committed gameType ${event.handState.gameType} does not match active ${state.model.game.activeGameType}`,
         );
       }
       if (
@@ -296,27 +222,17 @@ export function reduceDurableGameEvent(
       ) {
         throw new Error(`Internal committed game id ${event.id} is not an active hand member`);
       }
-      const handState = event.handState ?? { gameType: event.gameType, state: event.state };
-      return {
-        state: {
-          ...state,
-          model: {
-            ...state.model,
-            game: { ...state.model.game, handState },
-          },
-        },
-        effects: [],
-      };
+      return withHandState(state, event.handState);
     }
     case 'local-action-applied': {
-      const game = gameSliceReducer(gameSliceFromModel(state.model), {
+      const game = gameSliceReducer(state.model.game, {
         type: 'local-turn',
         id: event.id,
         isMyTurn: false,
         channelState: state.model.channel.status.state,
       });
       return {
-        state: { ...state, model: withGameSlice(state.model, game) },
+        state: { ...state, model: { ...state.model, game } },
         effects: [],
       };
     }

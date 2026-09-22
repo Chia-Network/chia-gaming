@@ -280,7 +280,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       serializedGameSession: new Uint8Array([1, 2, 3]),
     });
     if (save.session?.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
 
@@ -320,7 +320,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       serializedGameSession: new Uint8Array([9, 8, 7]),
     });
     if (save.session?.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     localStorage.clear();
@@ -366,7 +366,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       gameSessionSchemaVersion: 3n,
       diagnosticLog: ['preserve restore evidence'],
     });
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     localStorage.clear();
@@ -555,6 +555,57 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     },
   );
 
+  it('treats a save cleared between resume inspection and claim as a fresh claim', async () => {
+    await storageRepository.claimApplicationState();
+    const save = liveSave({
+      pairingToken: 'cleared-before-resume-claim',
+      serializedGameSession: new Uint8Array([3, 2, 1]),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const originalInspect = storageRepository.inspect.bind(storageRepository);
+    let inspectionCount = 0;
+    const inspect = jest.spyOn(storageRepository, 'inspect').mockImplementation(async () => {
+      const inspected = await originalInspect();
+      inspectionCount += 1;
+      if (inspectionCount === 2) {
+        const racingClaim = await indexedDbStoragePort.claimAndRead('clearing-tab');
+        await indexedDbStoragePort.writeApplicationState(baseSave(), racingClaim.authority);
+      }
+      return inspected;
+    });
+    const onSessionId = jest.fn();
+    const onFreshClaim = jest.fn();
+    const onRestore = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          onSessionId,
+          onFreshClaim,
+          onRestore,
+        }),
+      );
+    });
+
+    await waitForRender(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    await waitForRender(renderer!, 'Fresh dashboard');
+
+    expect(inspect).toHaveBeenCalledTimes(2);
+    expect(onSessionId).toHaveBeenCalledTimes(1);
+    expect(onFreshClaim).toHaveBeenCalledWith(expect.objectContaining({ session: null }), 'boot');
+    expect(onRestore).not.toHaveBeenCalled();
+    inspect.mockRestore();
+  });
+
   it('hard-resets preserved malformed aggregate evidence on explicit retry', async () => {
     await storageRepository.claimApplicationState();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -606,7 +657,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     });
     await waitForRender(renderer!, 'Fresh dashboard');
     expect(renderer!.root.findByProps({ children: 'Fresh dashboard' })).toBeDefined();
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
   });
 
   it('suppresses fresh-claim callbacks when authority is lost before snapshot delivery', async () => {
@@ -685,7 +736,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       serializedGameSession: new Uint8Array([7, 8, 9]),
     });
     if (save.session?.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
 
@@ -731,7 +782,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       serializedGameSession: new Uint8Array([4, 5, 6]),
     });
     if (save.session?.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
 

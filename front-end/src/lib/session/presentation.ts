@@ -10,8 +10,6 @@ import type {
   GameInstanceModel,
   GameInstanceViewModel,
   GameProtocolPresentation,
-  GameTurnState,
-  HandStatus,
 } from './types';
 
 export { EMPTY_GAME_TERMINAL_MODEL as INITIAL_GAME_TERMINAL_MODEL } from './types';
@@ -24,10 +22,6 @@ export const ON_CHAIN_CHANNEL_STATES = new Set<ChannelStatus>([
   'ResolvedStale',
 ]);
 
-export interface GamePresentationModel {
-  coin: GameCoinModel;
-  handStatus: HandStatus;
-}
 export type NonTerminalGameStatusState = Exclude<
   GameStatusState,
   'ended-cancelled' | 'ended-error'
@@ -50,165 +44,76 @@ export function isFinishingGameStatus(
     ['my-turn', 'their-turn', 'on-chain-my-turn', 'on-chain-their-turn'].includes(status)
   );
 }
-export function isActivelyPlayingOnChain(current: GameTurnState): boolean {
-  return current === 'playing-on-chain' || current === 'replaying';
-}
-export function gameCoinIdentityForGameStatus(
-  previous: GameCoinModel,
-  status: GameStatusState,
-  hasNewCoinIdentity: boolean,
-  retainOnChain = false,
-): Pick<GameCoinModel, 'coinHex' | 'onChain'> {
-  const onChain = [
-    'on-chain-my-turn',
-    'on-chain-their-turn',
-    'replaying',
-    'playing-move',
-    'illegal-move-detected',
-    'finishing-waiting-timeout',
-    'finishing-spending',
-  ].includes(status);
-  return {
-    coinHex: hasNewCoinIdentity ? null : previous.coinHex,
-    onChain: onChain || (retainOnChain && previous.onChain === true),
-  };
-}
-
 export function projectGameStatus({
   previous,
   payload,
   channelState,
 }: {
-  previous: GamePresentationModel;
+  previous: GameInstanceModel;
   payload: NonTerminalGameStatusPayload;
   channelState: ChannelStatus;
-}): GamePresentationModel {
-  if (previous.coin.turnState === 'ended') return previous;
+}): GameInstanceModel {
+  if (previous.presentation === 'ended') return previous;
   const { status } = payload;
   const finishing = isFinishingGameStatus(status, payload.other_params?.game_finished);
   const preserveLocal =
     ON_CHAIN_CHANNEL_STATES.has(channelState) && (status === 'my-turn' || status === 'their-turn');
-  const identity = gameCoinIdentityForGameStatus(
-    previous.coin,
-    status,
-    payload.coin_id != null,
-    preserveLocal,
-  );
+  const coinHex = payload.coin_id != null ? null : previous.coinHex;
   if (
     preserveLocal ||
-    (status === 'on-chain-my-turn' && isActivelyPlayingOnChain(previous.coin.turnState))
+    (status === 'on-chain-my-turn' &&
+      (previous.presentation === 'playing-move' || previous.presentation === 'replaying-move'))
   ) {
-    return { coin: { ...previous.coin, ...identity }, handStatus: previous.handStatus };
+    return coinHex === previous.coinHex ? previous : { ...previous, coinHex };
   }
+  let presentation: GameProtocolPresentation;
   if (status === 'finishing-waiting-timeout') {
-    return {
-      coin: { ...identity, turnState: 'finishing-waiting-timeout', onChain: true },
-      handStatus: 'finishing-waiting-timeout',
-    };
-  }
-  if (status === 'finishing-spending') {
-    return {
-      coin: { ...identity, turnState: 'finishing-spending', onChain: true },
-      handStatus: 'finishing-spending',
-    };
-  }
-  if (status === 'my-turn' || status === 'on-chain-my-turn') {
-    return {
-      coin: { ...identity, turnState: finishing ? 'finishing' : 'my-turn' },
-      handStatus: finishing ? 'finishing' : status === 'on-chain-my-turn' ? 'our-turn' : 'active',
-    };
-  }
-  if (status === 'their-turn' || status === 'on-chain-their-turn') {
-    const timeout = payload.other_params?.submitting_timeout_claim === true;
-    return {
-      coin: {
-        ...identity,
-        turnState: finishing ? 'finishing' : timeout ? 'submitting-timeout' : 'their-turn',
-      },
-      handStatus: finishing
-        ? 'finishing'
-        : timeout
-          ? 'submitting-timeout'
-          : status === 'on-chain-their-turn'
-            ? 'their-turn'
-            : 'active',
-    };
-  }
-  if (status === 'replaying') {
-    return { coin: { ...identity, turnState: 'replaying' }, handStatus: 'replaying-move' };
-  }
-  if (status === 'playing-move') {
-    return { coin: { ...identity, turnState: 'playing-on-chain' }, handStatus: 'playing-move' };
-  }
-  if (status === 'illegal-move-detected') {
-    return { coin: { ...identity, turnState: 'opponent-illegal-move' }, handStatus: 'slashing' };
-  }
-  throw new Error(`Unexpected game status: ${String(status)}`);
-}
-
-export function nextGameTurnAfterLocalTurn(
-  current: GameTurnState,
-  isMyTurn: boolean,
-  channelState: ChannelStatus,
-): GameTurnState {
-  if (current !== 'my-turn' && current !== 'their-turn') return current;
-  if (ON_CHAIN_CHANNEL_STATES.has(channelState)) return current;
-  if (isMyTurn) return 'my-turn';
-  return 'their-turn';
-}
-export function nextGamePresentationAfterLocalTurn(
-  previous: GamePresentationModel,
-  isMyTurn: boolean,
-  channelState: ChannelStatus,
-): GamePresentationModel {
-  if (previous.coin.turnState !== 'my-turn' && previous.coin.turnState !== 'their-turn') {
-    return previous;
-  }
-  const turnState = nextGameTurnAfterLocalTurn(previous.coin.turnState, isMyTurn, channelState);
-  if (turnState === previous.coin.turnState) return previous;
-  const handStatus = 'active';
-  return turnState === previous.coin.turnState && handStatus === previous.handStatus
-    ? previous
-    : { coin: { ...previous.coin, turnState }, handStatus };
-}
-
-export function presentationFromView(instance: GameInstanceViewModel): GameProtocolPresentation {
-  switch (instance.coin.turnState) {
-    case 'my-turn':
-      return instance.coin.onChain || instance.handStatus === 'our-turn'
+    presentation = 'finishing-waiting-timeout';
+  } else if (status === 'finishing-spending') {
+    presentation = 'finishing-spending';
+  } else if (status === 'my-turn' || status === 'on-chain-my-turn') {
+    presentation = finishing
+      ? 'finishing'
+      : status === 'on-chain-my-turn'
         ? 'on-chain-my-turn'
         : 'off-chain-my-turn';
-    case 'their-turn':
-      return instance.coin.onChain || instance.handStatus === 'their-turn'
-        ? 'on-chain-their-turn'
-        : 'off-chain-their-turn';
-    case 'playing-on-chain':
-      return 'playing-move';
-    case 'replaying':
-      return 'replaying-move';
-    case 'opponent-illegal-move':
-      return 'illegal-move';
-    case 'submitting-timeout':
-      return 'submitting-timeout';
-    case 'finishing':
-      return 'finishing';
-    case 'finishing-waiting-timeout':
-      return 'finishing-waiting-timeout';
-    case 'finishing-spending':
-      return 'finishing-spending';
-    case 'ended':
-      return 'ended';
+  } else if (status === 'their-turn' || status === 'on-chain-their-turn') {
+    const timeout = payload.other_params?.submitting_timeout_claim === true;
+    presentation = finishing
+      ? 'finishing'
+      : timeout
+        ? 'submitting-timeout'
+        : status === 'on-chain-their-turn'
+          ? 'on-chain-their-turn'
+          : 'off-chain-their-turn';
+  } else if (status === 'replaying') {
+    presentation = 'replaying-move';
+  } else if (status === 'playing-move') {
+    presentation = 'playing-move';
+  } else if (status === 'illegal-move-detected') {
+    presentation = 'illegal-move';
+  } else {
+    throw new Error(`Unexpected game status: ${String(status)}`);
   }
+  return presentation === previous.presentation && coinHex === previous.coinHex
+    ? previous
+    : { ...previous, coinHex, presentation };
 }
 
-export function gameInstanceFromView(instance: GameInstanceViewModel): GameInstanceModel {
-  return {
-    id: instance.id,
-    amount: instance.amount,
-    coinHex: instance.coin.coinHex,
-    presentation: presentationFromView(instance),
-    terminal: instance.terminal,
-  };
+export function nextGameInstanceAfterLocalTurn(
+  instance: GameInstanceModel,
+  isMyTurn: boolean,
+  channelState: ChannelStatus,
+): GameInstanceModel {
+  if (
+    ON_CHAIN_CHANNEL_STATES.has(channelState) ||
+    (instance.presentation !== 'off-chain-my-turn' &&
+      instance.presentation !== 'off-chain-their-turn')
+  ) {
+    return instance;
+  }
+  const presentation = isMyTurn ? 'off-chain-my-turn' : 'off-chain-their-turn';
+  return presentation === instance.presentation ? instance : { ...instance, presentation };
 }
 
 export function gameInstanceView(instance: GameInstanceModel): GameInstanceViewModel {
@@ -268,15 +173,6 @@ export function gameInstanceView(instance: GameInstanceModel): GameInstanceViewM
     ended: { coin: { coinHex: instance.coinHex, turnState: 'ended' }, handStatus: 'ended' },
   };
   return { ...base, ...mapping[instance.presentation] };
-}
-
-export function nextGameInstanceAfterLocalTurn(
-  instance: GameInstanceViewModel,
-  isMyTurn: boolean,
-  channelState: ChannelStatus,
-): GameInstanceViewModel {
-  const next = nextGamePresentationAfterLocalTurn(instance, isMyTurn, channelState);
-  return next === instance ? instance : { ...instance, ...next };
 }
 
 type UnrollCopyChannel = Pick<

@@ -18,12 +18,12 @@ import {
 } from '../../host';
 import { HandProposalForm } from './handProposalForm';
 import {
-  calpokerStateCodec,
   isCalpokerHandState,
   restoreCalpokerHand,
   type CalpokerHand,
   type CalpokerHandState,
 } from './serialize';
+import { testStateCodec } from '../../testStateCodec';
 import CaliforniaPoker from './components/CaliforniaPoker';
 import {
   GAME_STATES,
@@ -32,6 +32,8 @@ import {
 } from './components/constants/constants';
 import { CalpokerOutcome, projectCalpokerFinalDisplay } from './outcome';
 import type { CaliforniapokerProps, CalpokerOutcomeView } from './types/CaliforniapokerProps';
+
+const calpokerStateCodec = testStateCodec<CalpokerHandState>('calpoker');
 
 jest.mock('./components/components/GameBottomBar', () => () => null);
 jest.mock('./components/components', () => {

@@ -1,11 +1,8 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { GameIntent, LiveGamePort } from '@games/host';
-import {
-  spacepokerStateCodec,
-  type SpacepokerHand,
-  type SpacepokerHandState,
-} from '@games/spacepoker/ui/serialize';
+import { type SpacepokerHand, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
+import { spacepokerStateCodec } from './game_state_helpers';
 import {
   SpHandler,
   useSpacepokerHand,

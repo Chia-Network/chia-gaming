@@ -16,7 +16,6 @@ import {
   testIndexedDb,
 } from './save.harness';
 import { storageRepository } from '../session/storageRepository';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 
 describe('tab lease', () => {
   it('detects a conflicting active-tab owner', async () => {
@@ -81,7 +80,7 @@ describe('hard reset', () => {
     const lifecycle = jest.fn();
     const unsubscribe = storageRepository.onLifecycle(lifecycle);
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });
-    localStorage.setItem('appState', 'historical-app-state');
+    localStorage.setItem('appState', 'foreign-unreleased-app-state');
     localStorage.setItem('appState_wcChangeAddress:123', 'xch1owned');
     localStorage.setItem('appState_wcRemoteWalletId:123', '2');
     localStorage.setItem('wc@2:client:0.3//session', 'walletconnect-owned');
@@ -99,7 +98,7 @@ describe('hard reset', () => {
     expect(storageRepository.lifecycleGeneration).toBe(beforeReset + 1);
     expect(lifecycle).toHaveBeenCalledWith(beforeReset + 1, 'hard-reset');
     unsubscribe();
-    expect(localStorage.getItem('appState')).toBeNull();
+    expect(localStorage.getItem('appState')).toBe('foreign-unreleased-app-state');
     expect(localStorage.getItem('appState_wcChangeAddress:123')).toBeNull();
     expect(localStorage.getItem('appState_wcRemoteWalletId:123')).toBeNull();
     expect(localStorage.getItem('wc@2:client:0.3//session')).toBeNull();
@@ -133,7 +132,7 @@ describe('hard reset', () => {
       ...sampleSession,
       walletProviderScope: { provider: 'simulator', identity: 'installation' },
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     const rejection = {
       kind: 'inbound-receipt',
       peerId: 'pre-reset-peer',
@@ -143,38 +142,24 @@ describe('hard reset', () => {
       unackedMessages: [],
       createdAt: Date.now(),
     } as const;
-    await captureDurableApplicationState({
-      kind: 'transform',
-      transform: (state) => ({ ...state, rejectionTransports: [rejection] }),
-    })?.write();
+    const snapshot = storageRepository.patchApplicationState((state) => ({
+      ...state,
+      rejectionTransports: [rejection],
+    }));
+    await storageRepository.write(snapshot);
 
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
     storageRepository.holdNextMutationForTests(held);
-    const staleCheckpoint = storageRepository.checkpointApplicationState(
-      liveSave({
-        ...sampleSession,
-        walletProviderScope: { provider: 'simulator', identity: 'installation' },
-      }),
-      [
-        {
-          providerReservationId: 'stale-reset-ledger',
-          owner: {
-            installationPlayerId: 'installation',
-            peerSessionId: 'stale-peer',
-            providerScope: { provider: 'simulator', identity: 'installation' },
-          },
-          purpose: { kind: 'funding', operationId: 'stale-operation' },
-          stage: 'awaiting-channel',
-          request: {
-            kind: 'funding',
-            canonical: { amount: '100', fee: '0', conditions: [] },
-          },
-          reason: 'held-before-hard-reset',
-        },
-      ],
+    const staleCheckpoint = storageRepository.write(
+      storageRepository.patchApplicationState(() =>
+        liveSave({
+          ...sampleSession,
+          walletProviderScope: { provider: 'simulator', identity: 'installation' },
+        }),
+      ),
     );
 
     const reset = storageRepository.hardReset();
@@ -218,8 +203,8 @@ describe('hard reset', () => {
 
     expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
     expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
-    expect(deleteDatabase).toHaveBeenCalledWith('app-state');
-    expect(deleteDatabase).toHaveBeenCalledWith('chia-gaming-historical');
+    expect(deleteDatabase).not.toHaveBeenCalledWith('app-state');
+    expect(deleteDatabase).not.toHaveBeenCalledWith('chia-gaming-historical');
     expect(deleteDatabase).not.toHaveBeenCalledWith('foreign-app-state');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
     expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');

@@ -416,11 +416,6 @@ mod gaming_wasm {
         with_game(cid, move |cradle: &mut JsGameSession| {
             let bytes =
                 bencodex::to_vec(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))?;
-            bencodex::from_slice::<JsGameSession>(&bytes).map_err(|e| {
-                types::Error::StrErr(format!(
-                    "serialized cradle failed immediate schema verification: {e}"
-                ))
-            })?;
             Ok(js_sys::Uint8Array::from(bytes.as_slice()))
         })
     }

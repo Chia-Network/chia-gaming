@@ -1,4 +1,4 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec } from './game_state_helpers';
 import { applyHandProposalToComposeDraft } from '../session/composeDraft';
 import {
   createSessionModel,
@@ -92,11 +92,11 @@ describe('session machine behavior sequences', () => {
         betweenHandMode: 'compose-proposal',
 
         betweenHandLastHandProposal: {
-          sender_is_player_a: false,
+          senderIsPlayerA: false,
 
-          game_timeout: '15',
+          gameTimeout: 15n,
 
-          game_type: 'calpoker',
+          gameType: 'calpoker',
           parameters: null,
         },
 
@@ -117,10 +117,10 @@ describe('session machine behavior sequences', () => {
           {
             id: '11',
             lifecycle: 'local-outgoing',
-            hand_proposal: {
-              sender_is_player_a: false,
-              game_timeout: '15',
-              game_type: 'calpoker',
+            handProposal: {
+              senderIsPlayerA: false,
+              gameTimeout: 15n,
+              gameType: 'calpoker',
               parameters: null,
             },
           },

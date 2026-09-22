@@ -3,14 +3,7 @@ import { coerceToBytes } from '../../util';
 import { DEFAULT_CATALOG_GAME_TYPE } from '../gameRegistry';
 import { emptyComposeDraftState } from './composeDraft';
 import { recentDiagnosticEntries } from './historyLimits';
-import { gameInstanceFromView } from './presentation';
-import type {
-  ChannelStatusModel,
-  GameInstanceModel,
-  GameInstanceViewModel,
-  SessionModel,
-  SessionModelInput,
-} from './types';
+import type { ChannelStatusModel, SessionModel, SessionModelInput } from './types';
 
 export const INITIAL_CHANNEL_STATUS_MODEL: ChannelStatusModel = {
   state: 'Handshaking',
@@ -87,15 +80,8 @@ export function channelStatusPayloadFromModel(status: ChannelStatusModel): Chann
   };
 }
 
-function canonicalInstance(instance: GameInstanceModel | GameInstanceViewModel): GameInstanceModel {
-  return 'presentation' in instance ? instance : gameInstanceFromView(instance);
-}
-
 export function createSessionModel(partial: SessionModelInput = {}): SessionModel {
   const game = partial.game ?? {};
-  const instances = Object.fromEntries(
-    Object.entries(game.instances ?? {}).map(([id, instance]) => [id, canonicalInstance(instance)]),
-  );
   return {
     restore: {
       restoring: false,
@@ -122,7 +108,7 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
       handState: null,
       queue: [],
       ...game,
-      instances,
+      instances: game.instances ?? {},
     },
     betweenHand: {
       mode: 'decision',
@@ -142,7 +128,8 @@ export function createSessionModel(partial: SessionModelInput = {}): SessionMode
     },
   };
 }
-export function clearDerivedGamePresentation(model: SessionModel): SessionModel {
+export function normalizeSessionPresentation(model: SessionModel): SessionModel {
+  if (model.channel.status.sessionDisposition !== 'Abandoned') return model;
   return {
     ...model,
     game: {
@@ -156,11 +143,6 @@ export function clearDerivedGamePresentation(model: SessionModel): SessionModel 
       handState: null,
     },
   };
-}
-export function normalizeSessionPresentation(model: SessionModel): SessionModel {
-  return model.channel.status.sessionDisposition === 'Abandoned'
-    ? clearDerivedGamePresentation(model)
-    : model;
 }
 
 export const RESOLVED_CHANNEL_STATES = new Set<ChannelStatus>([

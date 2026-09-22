@@ -12,7 +12,7 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   snapshotFromSessionModel,
 } from '../session/model';
-import { krunkStateCodec } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import type { HandProposal } from '../session/types';
 import {
   createActivePair,
@@ -142,7 +142,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     });
     assert.equal(save.session?.phase, 'live');
     if (save.session?.phase !== 'live') throw new Error('expected live save');
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
 
     await flushWrapperDrain(cradles);
     storageRepository._resetForTests();
@@ -194,7 +194,7 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     }
 
     await Promise.all(cradles.map((cradle) => cradle.shutdown()));
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     storageRepository._resetForTests();
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(SESSION_DB_NAME);

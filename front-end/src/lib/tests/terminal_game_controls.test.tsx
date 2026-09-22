@@ -23,13 +23,10 @@ import CaliforniaPoker from '@games/calpoker/ui/components/CaliforniaPoker';
 import { HandDisplay } from '@games/calpoker/ui/components/components';
 import { GAME_STATES } from '@games/calpoker/ui/components/constants/constants';
 import Krunk from '@games/krunk/ui/Krunk';
-import {
-  initialKrunkGameState,
-  krunkStateCodec,
-  restoreKrunkHand,
-} from '@games/krunk/ui/serialize';
+import { initialKrunkGameState, restoreKrunkHand } from '@games/krunk/ui/serialize';
 import SpacePoker from '@games/spacepoker/ui/SpacePoker';
-import { restoreSpacepokerHand, spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { restoreSpacepokerHand } from '@games/spacepoker/ui/serialize';
+import { krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
 import { markClientErrorReported } from '../clientError';
 

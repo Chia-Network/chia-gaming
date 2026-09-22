@@ -24,7 +24,7 @@ import { liveSave } from './session_save_envelope.fixtures';
 function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
   if (save.session?.phase !== 'live') throw new Error('expected live save');
-  return storageRepository.checkpointApplicationState(save);
+  return storageRepository.write(storageRepository.patchApplicationState(() => save));
 }
 
 it(
@@ -153,7 +153,7 @@ it(
         gameSessionSchemaVersion: BigInt(WholeWasmObject.game_session_serialization_schema()),
         pairingToken: 'reload-regression',
       });
-      await storageRepository.flushAggregate();
+      await storageRepository.checkpointDomainMutations();
 
       // Simulate marker-only boot + preference patches while resume dialog is open.
       await flushWrapperDrain([cradle1, cradle2]);
@@ -163,7 +163,7 @@ it(
       void storageRepository.updateCommon({
         history: { diagnosticLog: ['boot-before-resume'] },
       });
-      await storageRepository.flushAggregate();
+      await storageRepository.checkpointDomainMutations();
 
       storageRepository._resetForTests();
       await storageRepository.claimApplicationState();

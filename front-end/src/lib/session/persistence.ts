@@ -1,11 +1,9 @@
-import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import type {
   LiveSessionSave,
   PreHandshakeSessionSave,
   DurableRejectionTransport,
   DurableSessionPhase,
   DurableApplicationState,
-  SavedHandProposal,
   SessionHistorySave,
   SessionIdentitySave,
   SessionPairingSave,
@@ -24,6 +22,7 @@ import {
   isCatalogGameType,
   restoreRegisteredGameHandState,
 } from '../gameRegistry';
+import { isSettlementOutcome, type SettlementOutcome } from '../settlement';
 import {
   HUMAN_HISTORY_LIMIT,
   recentDiagnosticEntries,
@@ -36,29 +35,33 @@ import {
   INITIAL_CHANNEL_STATUS_MODEL,
   normalizeSessionPresentation,
 } from './normalization';
-import type { BetweenHandModeModel, HandProposal, SessionModel } from './types';
+import type {
+  BetweenHandModeModel,
+  GameInstanceModel,
+  GameProtocolPresentation,
+  GameTerminalModel,
+  GameTerminalType,
+  SessionModel,
+} from './types';
 import { isTerminalChannelSnapshot } from './selectors';
 import {
   parseComposeDraftState,
-  encodeComposeDraftState,
-  parseOptionalHandProposalSnapshot,
   parsePendingProposals,
   parseHandProposalSnapshot,
 } from './persistenceBetweenHands';
 import {
   BETWEEN_HAND_MODES,
-  parseSavedGameInstance,
   validateChannelStatus,
   validateLive,
   validatePairing,
-  validateTerminalCoins,
+  decodeTerminalCoins,
   validateTerminalFields,
   validateTransport,
 } from './persistencePayloads';
 import {
   optionalString,
+  parseDecimalString,
   parseDiscriminant,
-  requireBigintString,
   requireBigint,
   requireBoolean,
   requireNullableString,
@@ -166,6 +169,29 @@ const PRESENTATION_FIELDS = new Set([
   'pendingProposals',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
+]);
+const GAME_INSTANCE_FIELDS = new Set(['id', 'amount', 'coinHex', 'presentation', 'terminal']);
+const GAME_TERMINAL_FIELDS = new Set(['type', 'outcome', 'label', 'myReward', 'rewardCoinHex']);
+const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
+  'none',
+  'settled',
+  'insufficient-balance',
+  'ended-cancelled',
+  'game-error',
+]);
+const GAME_PRESENTATIONS: ReadonlySet<string> = new Set<GameProtocolPresentation>([
+  'off-chain-my-turn',
+  'off-chain-their-turn',
+  'on-chain-my-turn',
+  'on-chain-their-turn',
+  'playing-move',
+  'replaying-move',
+  'illegal-move',
+  'submitting-timeout',
+  'finishing',
+  'finishing-waiting-timeout',
+  'finishing-spending',
+  'ended',
 ]);
 
 function parseIdentity(value: unknown): SessionIdentitySave {
@@ -414,16 +440,51 @@ function parseRejectionTransports(value: unknown): DurableRejectionTransport[] {
   });
 }
 
-export function decodeChannelStatusPayload(value: unknown): ChannelStatusPayload | null {
-  return validateChannelStatus(value);
+function parseGameTerminal(value: unknown, label: string): GameTerminalModel {
+  const fields = requireRecord(value, label);
+  requireExactKeys(fields, GAME_TERMINAL_FIELDS, label);
+  const type = parseDiscriminant<GameTerminalType>(
+    fields.type,
+    GAME_TERMINAL_TYPES,
+    `${label}.type`,
+  );
+  let outcome: SettlementOutcome | null = null;
+  if (type === 'settled') {
+    if (!isSettlementOutcome(fields.outcome)) {
+      throw new Error(`Garbled save: invalid ${label}.outcome: ${String(fields.outcome)}`);
+    }
+    outcome = fields.outcome;
+  } else if (requireNullableString(fields.outcome, `${label}.outcome`, true) !== null) {
+    throw new Error(`Garbled save: unexpected ${label}.outcome for ${type}`);
+  }
+  return {
+    type,
+    outcome,
+    label: requireNullableString(fields.label, `${label}.label`, true),
+    myReward: requireNullableString(fields.myReward, `${label}.myReward`, true),
+    rewardCoinHex: requireNullableString(fields.rewardCoinHex, `${label}.rewardCoinHex`, true),
+  };
 }
 
-function savedHandProposalFromModel(handProposal: HandProposal): SavedHandProposal {
+function parseGameInstance(key: string, value: unknown): GameInstanceModel {
+  const label = `gameInstances.${key}`;
+  const fields = requireRecord(value, label);
+  requireExactKeys(fields, GAME_INSTANCE_FIELDS, label);
+  if (fields.id !== key) {
+    throw new Error(`Garbled save: game instance ${key} has mismatched id ${String(fields.id)}`);
+  }
+  const amount = requireString(fields.amount, `${label}.amount`);
+  parseDecimalString(amount, `${label}.amount`, 0n);
   return {
-    sender_is_player_a: handProposal.senderIsPlayerA,
-    game_timeout: handProposal.gameTimeout.toString(),
-    game_type: handProposal.gameType,
-    parameters: handProposal.parameters,
+    id: key,
+    amount,
+    coinHex: requireNullableString(fields.coinHex, `${label}.coinHex`),
+    presentation: parseDiscriminant<GameProtocolPresentation>(
+      fields.presentation,
+      GAME_PRESENTATIONS,
+      `${label}.presentation`,
+    ),
+    terminal: parseGameTerminal(fields.terminal, `${label}.terminal`),
   };
 }
 
@@ -453,10 +514,7 @@ function parsePresentation(value: unknown): SessionPresentationSave {
   );
   const savedInstances = requireRecord(fields.gameInstances, 'gameInstances');
   const gameInstances = Object.fromEntries(
-    Object.entries(savedInstances).map(([id, instance]) => {
-      const parsed = parseSavedGameInstance(id, instance);
-      return [id, parsed];
-    }),
+    Object.entries(savedInstances).map(([id, instance]) => [id, parseGameInstance(id, instance)]),
   );
   if (!isCatalogGameType(fields.activeGameType)) {
     throw new Error(`Garbled save: invalid activeGameType ${String(fields.activeGameType)}`);
@@ -466,21 +524,6 @@ function parsePresentation(value: unknown): SessionPresentationSave {
   if (fields.handState !== null && decodedHandState === null) {
     throw new Error('Garbled save: invalid handState');
   }
-  if (decodedHandState !== null) {
-    if (decodedHandState.persisted.gameType !== fields.activeGameType) {
-      throw new Error('Garbled save: activeGameType does not match handState.gameType');
-    }
-    try {
-      restoreRegisteredGameHandState(fields.activeGameType, decodedHandState.persisted);
-    } catch (error) {
-      throw new Error(
-        `Garbled save: ${fields.activeGameType} handState cannot be restored: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-        { cause: error },
-      );
-    }
-  }
   const compose = parseComposeDraftState(fields.betweenHandCompose);
   const lastHandProposal =
     fields.betweenHandLastHandProposal === null
@@ -489,14 +532,20 @@ function parsePresentation(value: unknown): SessionPresentationSave {
           fields.betweenHandLastHandProposal,
           'betweenHandLastHandProposal',
         );
-  const rejectedOnceHandProposal = parseOptionalHandProposalSnapshot(
-    fields.betweenHandRejectedOnceHandProposal,
-    'betweenHandRejectedOnceHandProposal',
-  );
-  const pendingRetryHandProposal = parseOptionalHandProposalSnapshot(
-    fields.betweenHandPendingRetryHandProposal,
-    'betweenHandPendingRetryHandProposal',
-  );
+  const rejectedOnceHandProposal =
+    fields.betweenHandRejectedOnceHandProposal === null
+      ? null
+      : parseHandProposalSnapshot(
+          fields.betweenHandRejectedOnceHandProposal,
+          'betweenHandRejectedOnceHandProposal',
+        );
+  const pendingRetryHandProposal =
+    fields.betweenHandPendingRetryHandProposal === null
+      ? null
+      : parseHandProposalSnapshot(
+          fields.betweenHandPendingRetryHandProposal,
+          'betweenHandPendingRetryHandProposal',
+        );
   const pendingProposals = parsePendingProposals(fields.pendingProposals, 'pendingProposals');
   const waitingStateEnteredAt =
     fields.waitingStateEnteredAt === null
@@ -514,55 +563,108 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     lastDisplayedGameId,
     gameInstances,
     activeGameType: fields.activeGameType,
-    handState: decodedHandState?.persisted ?? null,
-    channelStatus: decodeChannelStatusPayload(fields.channelStatus),
+    handState: decodedHandState,
+    channelStatus: validateChannelStatus(fields.channelStatus),
     cleanShutdownStarted: requireBoolean(fields.cleanShutdownStarted, 'cleanShutdownStarted'),
     betweenHandMode: parseDiscriminant<BetweenHandModeModel>(
       fields.betweenHandMode,
       BETWEEN_HAND_MODES,
       'betweenHandMode',
     ),
-    betweenHandCompose: encodeComposeDraftState(compose),
-    betweenHandLastHandProposal:
-      lastHandProposal === null ? null : savedHandProposalFromModel(lastHandProposal),
-    betweenHandRejectedOnceHandProposal:
-      rejectedOnceHandProposal === null
-        ? null
-        : savedHandProposalFromModel(rejectedOnceHandProposal),
-    betweenHandPendingRetryHandProposal:
-      pendingRetryHandProposal === null
-        ? null
-        : savedHandProposalFromModel(pendingRetryHandProposal),
+    betweenHandCompose: {
+      selectedGame: compose.selectedGame,
+      gameTimeout: compose.gameTimeout,
+    },
+    betweenHandLastHandProposal: lastHandProposal,
+    betweenHandRejectedOnceHandProposal: rejectedOnceHandProposal,
+    betweenHandPendingRetryHandProposal: pendingRetryHandProposal,
     newHandRequested: requireBoolean(fields.newHandRequested, 'newHandRequested'),
-    pendingProposals: pendingProposals.map((proposal) => ({
-      id: proposal.id,
-      lifecycle: proposal.lifecycle,
-      hand_proposal: savedHandProposalFromModel(proposal.handProposal),
-    })),
+    pendingProposals,
     waitingStateEnteredAt,
     cleanShutdownGraceStartedAt,
   };
 }
 
-export function sessionAmountsFromSave(save: DurableApplicationState): {
-  myContribution: bigint;
-  theirContribution: bigint;
-  perGameAmount: bigint;
-} {
-  if (save.session === null || save.session.phase === 'terminal') {
-    throw new Error(`Garbled save: ${save.session?.phase ?? 'no-session'} has no session amounts`);
+function validatePresentationInvariants(
+  save: SessionPresentationSave,
+  phase: 'live' | 'terminal',
+): void {
+  if (phase === 'terminal' && !isTerminalChannelSnapshot(save.channelStatus)) {
+    throw new Error('Garbled save: terminal phase requires a terminal channelStatus');
   }
-  const myContribution = requireBigintString(save.session.pairing.myContribution, 'myContribution');
-  const theirContribution = requireBigintString(
-    save.session.pairing.theirContribution,
-    'theirContribution',
-  );
-  const perGameAmount = requireBigintString(save.session.pairing.perGameAmount, 'perGameAmount');
-  return {
-    myContribution,
-    theirContribution,
-    perGameAmount,
-  };
+  const activeIds = save.activeGameIds;
+  const currentHandIds = save.currentHandGameIds;
+  const currentSet = new Set(currentHandIds);
+  for (const id of activeIds) {
+    if (!currentSet.has(id)) {
+      throw new Error(`Garbled save: active game ${id} is not in currentHandGameIds`);
+    }
+  }
+  const referencedIds = new Set([
+    ...activeIds,
+    ...currentHandIds,
+    ...(save.lastDisplayedGameId === null ? [] : [save.lastDisplayedGameId]),
+  ]);
+  for (const id of referencedIds) {
+    if (!save.gameInstances[id]) {
+      throw new Error(`Garbled save: game ${id} is missing its keyed instance`);
+    }
+  }
+  for (const [id, instance] of Object.entries(save.gameInstances)) {
+    if (!referencedIds.has(id)) {
+      throw new Error(`Garbled save: game ${id} is an unrelated keyed instance`);
+    }
+    validateTerminalFields(instance.terminal, `gameInstances.${id}.terminal`);
+    const terminal = instance.terminal.type !== 'none';
+    if ((instance.presentation === 'ended') !== terminal) {
+      throw new Error(`Garbled save: gameInstances.${id} presentation and terminal state disagree`);
+    }
+    if (activeIds.includes(id) && terminal) {
+      throw new Error(`Garbled save: active game ${id} is terminal`);
+    }
+  }
+  const hasCurrentHand = activeIds.length > 0 || currentHandIds.length > 0;
+  if (hasCurrentHand !== (save.currentHandOrigin !== null)) {
+    throw new Error(
+      hasCurrentHand
+        ? 'Garbled save: current hand is missing currentHandOrigin'
+        : 'Garbled save: currentHandOrigin requires a current hand',
+    );
+  }
+  if (phase === 'live' && hasCurrentHand && save.handState === null) {
+    throw new Error('Garbled save: live current hand is missing handState');
+  }
+  if (save.handState !== null) {
+    if (currentHandIds.length === 0) {
+      throw new Error('Garbled save: handState requires currentHandGameIds');
+    }
+    if (save.handState.gameType !== save.activeGameType) {
+      throw new Error('Garbled save: activeGameType does not match handState.gameType');
+    }
+    try {
+      restoreRegisteredGameHandState(save.activeGameType, save.handState);
+    } catch (error) {
+      throw new Error(
+        `Garbled save: ${save.activeGameType} handState cannot be restored: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        { cause: error },
+      );
+    }
+  }
+  const hasPersistedHand = hasCurrentHand || save.handState !== null;
+  if (hasPersistedHand && save.betweenHandLastHandProposal === null) {
+    throw new Error('Garbled save: persisted hand is missing betweenHandLastHandProposal');
+  }
+  if (
+    hasPersistedHand &&
+    save.betweenHandLastHandProposal !== null &&
+    save.betweenHandLastHandProposal.gameType !== save.activeGameType
+  ) {
+    throw new Error(
+      'Garbled save: activeGameType does not match betweenHandLastHandProposal.gameType',
+    );
+  }
 }
 
 export interface ParsedSessionSave {
@@ -660,42 +762,12 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
       requireExactKeys(sessionEnvelope, SESSION_FIELDS.terminal, 'session');
       const terminal = requireRecord(sessionEnvelope.terminal, 'terminal');
       requireExactKeys(terminal, TERMINAL_FIELDS, 'terminal');
-      validateTerminalCoins(terminal.coinsOfInterest);
-      const coins = terminal.coinsOfInterest as unknown[];
       presentation = parsePresentation(sessionEnvelope.presentation);
       session = {
         phase: 'terminal',
         terminal: {
           iStarted: requireBoolean(terminal.iStarted, 'terminal.iStarted'),
-          coinsOfInterest: coins.map((coin, index) => {
-            const fields = requireRecord(coin, `terminal.coinsOfInterest[${index}]`);
-            const gameId =
-              fields.game_id === undefined
-                ? undefined
-                : requireString(fields.game_id, `terminal.coinsOfInterest[${index}].game_id`);
-            const gameCoinKind =
-              fields.game_coin_kind === undefined
-                ? undefined
-                : requireString(
-                    fields.game_coin_kind,
-                    `terminal.coinsOfInterest[${index}].game_coin_kind`,
-                  );
-            if (
-              gameCoinKind !== undefined &&
-              gameCoinKind !== 'current' &&
-              gameCoinKind !== 'reward'
-            ) {
-              throw new Error(
-                `Garbled save: invalid terminal.coinsOfInterest[${index}].game_coin_kind`,
-              );
-            }
-            return {
-              label: requireString(fields.label, `terminal.coinsOfInterest[${index}].label`),
-              id: requireString(fields.id, `terminal.coinsOfInterest[${index}].id`),
-              ...(gameId === undefined ? {} : { game_id: gameId }),
-              ...(gameCoinKind === undefined ? {} : { game_coin_kind: gameCoinKind }),
-            };
-          }),
+          coinsOfInterest: decodeTerminalCoins(terminal.coinsOfInterest),
           myAlias: requireNullableString(terminal.myAlias, 'terminal.myAlias', true),
           opponentAlias: requireNullableString(
             terminal.opponentAlias,
@@ -731,93 +803,19 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
       }),
     };
   }
-  const save = presentation;
-  if (
-    typedEnvelope.session?.phase === 'terminal' &&
-    !isTerminalChannelSnapshot(save.channelStatus)
-  ) {
-    throw new Error('Garbled save: terminal phase requires a terminal channelStatus');
+  if (typedEnvelope.session?.phase !== 'live' && typedEnvelope.session?.phase !== 'terminal') {
+    throw new Error('Garbled save: presentation requires a live or terminal session');
   }
+  validatePresentationInvariants(presentation, typedEnvelope.session.phase);
+  const save = presentation;
   const activeIds = save.activeGameIds;
   const currentHandIds = save.currentHandGameIds;
-  const currentSet = new Set(currentHandIds);
-  for (const id of activeIds) {
-    if (!currentSet.has(id)) {
-      throw new Error(`Garbled save: active game ${id} is not in currentHandGameIds`);
-    }
-  }
-
-  const instances = Object.fromEntries(
-    Object.entries(save.gameInstances).map(([id, instance]) => [
-      id,
-      parseSavedGameInstance(id, instance),
-    ]),
-  );
-  const referencedIds = new Set([
-    ...activeIds,
-    ...currentHandIds,
-    ...(save.lastDisplayedGameId === null ? [] : [save.lastDisplayedGameId]),
-  ]);
-  for (const id of referencedIds) {
-    if (!instances[id]) {
-      throw new Error(`Garbled save: game ${id} is missing its keyed instance`);
-    }
-  }
-  for (const id of Object.keys(instances)) {
-    if (!referencedIds.has(id)) {
-      throw new Error(`Garbled save: game ${id} is an unrelated keyed instance`);
-    }
-  }
-  for (const [id, instance] of Object.entries(instances)) {
-    validateTerminalFields(instance.terminal, `gameInstances.${id}.terminal`);
-    const ended = instance.presentation === 'ended';
-    const terminal = instance.terminal.type !== 'none';
-    if (ended !== terminal) {
-      throw new Error(`Garbled save: gameInstances.${id} presentation and terminal state disagree`);
-    }
-    if (activeIds.includes(id) && terminal) {
-      throw new Error(`Garbled save: active game ${id} is terminal`);
-    }
-  }
-
+  const instances = save.gameInstances;
   const handState = save.handState;
-
-  const hasCurrentHand = activeIds.length > 0 || currentHandIds.length > 0;
-  if (hasCurrentHand && save.currentHandOrigin === null) {
-    throw new Error('Garbled save: current hand is missing currentHandOrigin');
-  }
-  if (!hasCurrentHand && save.currentHandOrigin !== null) {
-    throw new Error('Garbled save: currentHandOrigin requires a current hand');
-  }
-  if (typedEnvelope.session?.phase === 'live' && hasCurrentHand && handState === null) {
-    throw new Error('Garbled save: live current hand is missing handState');
-  }
-  if (handState !== null && currentHandIds.length === 0) {
-    throw new Error('Garbled save: handState requires currentHandGameIds');
-  }
-  const compose = parseComposeDraftState(save.betweenHandCompose);
-  const lastHandProposal =
-    save.betweenHandLastHandProposal === null
-      ? null
-      : parseHandProposalSnapshot(save.betweenHandLastHandProposal, 'betweenHandLastHandProposal');
-  const hasPersistedHand = activeIds.length > 0 || currentHandIds.length > 0 || handState !== null;
-  if (hasPersistedHand && lastHandProposal === null) {
-    throw new Error('Garbled save: persisted hand is missing betweenHandLastHandProposal');
-  }
-  if (
-    hasPersistedHand &&
-    lastHandProposal !== null &&
-    isCatalogGameType(save.activeGameType) &&
-    lastHandProposal.gameType !== save.activeGameType
-  ) {
-    throw new Error(
-      'Garbled save: activeGameType does not match betweenHandLastHandProposal.game_type',
-    );
-  }
+  const pendingProposals = save.pendingProposals;
   const restoredActiveIds = [...activeIds];
   const lastDisplayedId = save.lastDisplayedGameId;
   const mode = save.betweenHandMode;
-  const pendingProposals = parsePendingProposals(save.pendingProposals, 'pendingProposals');
   const model = normalizeSessionPresentation(
     createSessionModel({
       restore: {
@@ -850,17 +848,11 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
       betweenHand: {
         mode,
         pendingProposals,
-        rejectedOnceHandProposal: parseOptionalHandProposalSnapshot(
-          save.betweenHandRejectedOnceHandProposal,
-          'betweenHandRejectedOnceHandProposal',
-        ),
-        pendingRetryHandProposal: parseOptionalHandProposalSnapshot(
-          save.betweenHandPendingRetryHandProposal,
-          'betweenHandPendingRetryHandProposal',
-        ),
-        lastHandProposal,
+        rejectedOnceHandProposal: save.betweenHandRejectedOnceHandProposal,
+        pendingRetryHandProposal: save.betweenHandPendingRetryHandProposal,
+        lastHandProposal: save.betweenHandLastHandProposal,
         compose: {
-          ...compose,
+          ...save.betweenHandCompose,
           proposalSent: pendingProposals.some(
             ({ lifecycle }) =>
               lifecycle === 'local-outgoing' || lifecycle === 'local-cancel-queued',

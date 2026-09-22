@@ -2,7 +2,8 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
-import { calpokerStateCodec, type CalpokerHand } from '@games/calpoker/ui/serialize';
+import type { CalpokerHand } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec } from './game_state_helpers';
 import {
   shouldAutoFireCalpokerMove,
   useCalpokerHand,

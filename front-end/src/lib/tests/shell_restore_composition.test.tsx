@@ -147,7 +147,7 @@ describe('Shell production restore composition', () => {
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
     });
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     markSavedSession();
     releaseLeaseIfOwner();
     storageRepository._resetForTests();

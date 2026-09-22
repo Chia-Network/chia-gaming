@@ -5,7 +5,6 @@ import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
 import { type RehydratedDurableApplicationState } from '../lib/session/persistence';
 import { storageRepository } from '../lib/session/storageRepository';
-import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { coerceToBytes } from '../util';
 import { getGenesisChallenge } from '../constants/wallet-connect';
@@ -278,12 +277,10 @@ export function getOrCreateSessionController(
         }
         // Pending handshake fields must already be on disk (Shell). Flush before
         // asset fetch so a stale-deploy reload can Resume into newSession again.
-        await storageRepository.flushAggregate();
+        await storageRepository.checkpointDomainMutations();
         if (sessionController !== owningController) return;
-        await captureDurableApplicationState({
-          kind: 'transform',
-          transform: clearGameSessionState,
-        })?.write();
+        const snapshot = storageRepository.patchApplicationState(clearGameSessionState);
+        await storageRepository.write(snapshot);
         if (sessionController !== owningController) return;
         await configSessionController(
           owningController,

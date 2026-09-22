@@ -34,7 +34,10 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
-import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import {
+  createCoordinatorOnlySessionMachineRuntime,
+  reduceSessionMachineForTest,
+} from './session_machine.harness';
 import { jsonStringify } from '../../util/jsonSafe';
 
 async function waitForCall(mock: jest.Mock, count: number): Promise<void> {
@@ -383,6 +386,15 @@ describe('protocol identity loading', () => {
 });
 
 describe('SessionController WASM action results', () => {
+  const proposal = {
+    game_type: testProtocolId('calpoker'),
+    timeout: 5n,
+    player_a_contribution: 1n,
+    player_b_contribution: 1n,
+    sender_is_player_a: true,
+    parameters: null,
+  };
+
   function failedResult(reason: string): WasmResult {
     return wasmResult({
       actionSucceeded: false,
@@ -397,18 +409,7 @@ describe('SessionController WASM action results', () => {
   }
 
   it.each([
-    [
-      'proposeGame',
-      (blob: SessionController) =>
-        blob.proposeGame({
-          game_type: testProtocolId('calpoker'),
-          timeout: 5n,
-          player_a_contribution: 1n,
-          player_b_contribution: 1n,
-          sender_is_player_a: true,
-          parameters: null,
-        }),
-    ],
+    ['proposeGame', (blob: SessionController) => blob.proposeGame(proposal)],
     ['acceptProposal', (blob: SessionController) => blob.acceptProposal('7')],
     ['cancelProposal', (blob: SessionController) => blob.cancel_proposal('7')],
     ['cleanShutdown', (blob: SessionController) => blob.cleanShutdown()],
@@ -433,6 +434,16 @@ describe('SessionController WASM action results', () => {
 
     expect(() => invoke(blob)).toThrow(`${name} domain error`);
     expect(blob.cleanShutdownCalled).toBe(false);
+  });
+
+  it('requires the current scalar proposal id result', () => {
+    const { blob, cradle } = createReadyBlob();
+    const propose = jest.fn(() => wasmResult({ id: '7' }));
+    Object.assign(cradle, { propose });
+    expect(blob.proposeGame(proposal)).toBe('7');
+
+    propose.mockReturnValue({ ...wasmResult(), ids: ['legacy'] });
+    expect(() => blob.proposeGame(proposal)).toThrow('no scalar local proposal id');
   });
 
   it('returns failure and does not enter host on-chain mode when WASM rejects', () => {
@@ -474,7 +485,12 @@ describe('active game tracking', () => {
       blob.getObservable().subscribe((event) => {
         if (event.type !== 'notification') return;
         if (event.data.GameSettled) settledIds.push(String(event.data.GameSettled.id));
-        machine = reduceSessionNotification(machine, event.data, true, reduceSessionMachine).state;
+        machine = reduceSessionNotification(
+          machine,
+          event.data,
+          true,
+          reduceSessionMachineForTest,
+        ).state;
       });
 
       blob.processResult({
@@ -1201,6 +1217,7 @@ describe('WASM wallet funding requests', () => {
     expectConsoleError('wallet funding offer failed validation');
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     await blob.flushPendingWork();
+    await channelFundingRuntime.flush();
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
@@ -1700,7 +1717,7 @@ describe('wallet fee attachment on submission', () => {
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full 1');
     await waitForCall(finalize, 1);
 
-    expect(order.slice(0, 2)).toEqual(['persist-1', 'fee']);
+    expect(order.slice(0, 3)).toEqual(['persist-1', 'persist-2', 'fee']);
     expect(finalize).toHaveBeenCalledTimes(1);
 
     await blob.flushPendingSave().catch(() => {});
@@ -2097,6 +2114,7 @@ describe('wallet fee attachment on submission', () => {
 
     blob.processResult(wasmResult());
     await blob.flushPendingWork();
+    await waitForCall(beginWalletOfferCancellation, 1);
 
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('retired-trade');
   });

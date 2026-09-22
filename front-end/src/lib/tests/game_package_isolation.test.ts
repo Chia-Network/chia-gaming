@@ -137,4 +137,15 @@ describe('game package isolation', () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  it('does not inspect package-owned hand fields in shared session code', () => {
+    const sessionRoot = path.resolve(__dirname, '../session');
+    const packageOwnedFields = /\b(playerHand|opponentHand|communityCards|secretWord)\b/;
+    const offenders = walk(sessionRoot)
+      .filter((file) => /\.(ts|tsx)$/.test(file))
+      .filter((file) => !/\.(spec|test)\.(ts|tsx)$/.test(file))
+      .filter((file) => packageOwnedFields.test(fs.readFileSync(file, 'utf8')))
+      .map((file) => path.relative(sessionRoot, file));
+    expect(offenders).toEqual([]);
+  });
 });

@@ -3,11 +3,12 @@ import { SessionController } from '../../hooks/SessionController';
 import { storageRepository } from '../session/storageRepository';
 import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
-import { krunkStateCodec, type KrunkGameState } from '@games/krunk/ui/serialize';
+import type { KrunkGameState } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
+import { buildDurableApplicationState } from '../session/sessionMachinePersist';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { decodeDurableApplicationState } from '../session/persistence';
 import type { GameTerminalModel, HandProposal } from '../session/types';
@@ -99,14 +100,15 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         payloadMemberCount: hand?.members.length ?? 0,
         activeIds: [...machine.model.game.activeIds],
       });
-      await captureDurableApplicationState({
+      const snapshot = buildDurableApplicationState({
         kind: 'live',
         controller,
-        getState: () => runtime.getState(),
+        state: runtime.getState(),
         restoring: false,
         getRestoreStatus: () => 'idle',
         getRestoreError: () => null,
-      })?.write();
+      });
+      if (snapshot) await storageRepository.write(snapshot);
       decodeDurableApplicationState((await storageRepository.readCurrentState())!);
     };
     const runtime = new SessionMachineRuntime(
@@ -161,7 +163,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   const flushBoundary = async () => {
     await flushWrapperDrain(cradles);
     await Promise.all(controllers.map((controller) => controller.flushPendingSave()));
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     await Promise.resolve();
     assert.deepEqual(errors, []);
   };

@@ -69,7 +69,7 @@ describe('aggregate wallet offer lifecycle', () => {
       feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
-    await storageRepository.checkpointApplicationState(empty);
+    await storageRepository.write(storageRepository.patchApplicationState(() => empty));
   });
 
   afterEach(() => channelFundingRuntime.resetForTests());
@@ -139,7 +139,9 @@ describe('aggregate wallet offer lifecycle', () => {
     },
   ])('reloads $label from the whole aggregate', async ({ entry, expectedStage }) => {
     installWallet([entry]);
-    await storageRepository.checkpointApplicationState(storageRepository.loadState());
+    await storageRepository.write(
+      storageRepository.patchApplicationState(() => storageRepository.loadState()),
+    );
 
     storageRepository._resetForTests();
     channelFundingRuntime.resetForTests();
@@ -185,6 +187,52 @@ describe('aggregate wallet offer lifecycle', () => {
 
     resolveReconcile({ kind: 'unavailable', reason: 'offline' });
     await expect(creation).resolves.toEqual({ kind: 'unavailable', reason: 'offline' });
+  });
+
+  it('flushes the attached runtime before each provider mutation', async () => {
+    const order: string[] = [];
+    let resolveReconcile!: (value: { kind: 'unavailable'; reason: string }) => void;
+    const reconcile = new Promise<{ kind: 'unavailable'; reason: string }>((resolve) => {
+      resolveReconcile = resolve;
+    });
+    const detach = storageRepository.attachRuntime({
+      requestCommit: jest.fn(),
+      flush: async () => {
+        order.push('checkpoint');
+        await storageRepository.write(structuredClone(storageRepository.loadState()));
+      },
+    });
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(async () => {
+        order.push('begin');
+        return { kind: 'pending', recoveryId: 'SR_attached' };
+      }),
+      reconcileCreation: jest.fn(async () => {
+        order.push('reconcile');
+        expect(
+          (await storageRepository.inspect()).applicationState?.channelFundingOperations,
+        ).toEqual([expect.objectContaining({ stage: 'creating', recoveryId: 'SR_attached' })]);
+        return reconcile;
+      }),
+      beginCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+      reconcileCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    channelFundingRuntime.attachProvider(provider);
+
+    const creation = channelFundingRuntime.createOffer(
+      owner,
+      purpose,
+      providerRequest,
+      recoveryRequest,
+    );
+    await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+    expect(order).toEqual(['checkpoint', 'begin', 'checkpoint', 'reconcile']);
+
+    resolveReconcile({ kind: 'unavailable', reason: 'offline' });
+    await expect(creation).resolves.toEqual({ kind: 'unavailable', reason: 'offline' });
+    detach();
   });
 
   it('retries pre-id uncertainty once on a later readiness epoch', async () => {
@@ -272,7 +320,7 @@ describe('aggregate wallet offer lifecycle', () => {
     expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
-  it('fences a stale response and transfers cleanup after authority reclaim', async () => {
+  it('cancels a stale result without mutating the aggregate reclaimed after takeover', async () => {
     let resolveCreation!: (value: {
       kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
@@ -297,7 +345,7 @@ describe('aggregate wallet offer lifecycle', () => {
       walletContext: owner.providerScope,
     };
     storageRepository._replaceApplicationStateForTests(scoped);
-    await storageRepository.checkpointApplicationState(scoped);
+    await storageRepository.write(storageRepository.patchApplicationState(() => scoped));
     channelFundingRuntime.attachProvider(provider);
     const creation = channelFundingRuntime.createOffer(
       owner,
@@ -314,19 +362,11 @@ describe('aggregate wallet offer lifecycle', () => {
       tradeId: 'stale-trade',
     });
     await expect(creation).resolves.toMatchObject({ kind: 'unavailable' });
-    expect(cancel).not.toHaveBeenCalled();
+    await waitFor(() => cancel.mock.calls.length === 1);
+    expect(cancel).toHaveBeenCalledWith('stale-trade');
 
     await storageRepository.claimApplicationState();
-    channelFundingRuntime.attachProvider(provider);
-    expect(storageRepository.channelFundingOperations()).toEqual([
-      expect.objectContaining({
-        providerReservationId: 'stale-trade',
-        stage: 'cancel-required',
-      }),
-    ]);
-    await waitFor(() => cancel.mock.calls.length === 1);
     await channelFundingRuntime.flush();
-    expect(cancel).toHaveBeenCalledWith('stale-trade');
     expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 

@@ -20,16 +20,18 @@ import {
 import {
   isSpacepokerHandState,
   restoreSpacepokerHand,
-  spacepokerStateCodec,
   type SpacepokerHand,
   type SpacepokerHandState,
 } from './serialize';
+import { testStateCodec } from '../../testStateCodec';
 import {
   isTerminalSpacepokerHandler,
   SpHandler,
   useSpacepokerHand,
   type UseSpacepokerHandResult,
 } from './useSpacepokerHand';
+
+const spacepokerStateCodec = testStateCodec<SpacepokerHandState>('spacepoker');
 
 function handState(overrides: Partial<SpacepokerHandState> = {}): SpacepokerHandState {
   return {
@@ -71,10 +73,7 @@ describe('Space Poker hand restoration', () => {
 
 const testHands = new WeakMap<LiveGamePort, SpacepokerHand>();
 
-function liveSource(
-  port: LiveGamePort,
-  state: PersistedGameState,
-): GameMountView<SpacepokerHand> {
+function liveSource(port: LiveGamePort, state: PersistedGameState): GameMountView<SpacepokerHand> {
   const current = spacepokerStateCodec.decode(state)!;
   const hand = restoreSpacepokerHand(current);
   testHands.set(port, hand);
@@ -114,13 +113,7 @@ describe('Space Poker terminal UX', () => {
       'Opponent timed out.',
     );
     expect(
-      spacePokerTerminalCommentary(
-        'settled',
-        null,
-        'forfeited_skipped_reveal',
-        'Peer',
-        '12 MOJO',
-      ),
+      spacePokerTerminalCommentary('settled', null, 'forfeited_skipped_reveal', 'Peer', '12 MOJO'),
     ).toBe('You folded. Peer won 12 MOJO.');
     expect(spacePokerTerminalBanners('won-by-opponent-failure', null)).toEqual({
       player: 'win',
@@ -238,10 +231,7 @@ describe('Space Poker machine-owned hand state', () => {
     expect(hand?.opponentStack).toBe(9n);
 
     act(() => hand!.handleRaise(hand!.playerStack));
-    const intent = dispatch.mock.calls[0][0] as Extract<
-      GameIntent,
-      { type: 'make-move' }
-    >;
+    const intent = dispatch.mock.calls[0][0] as Extract<GameIntent, { type: 'make-move' }>;
     expect(intent.readable?.toBigInt()).toBe(9n);
   });
 

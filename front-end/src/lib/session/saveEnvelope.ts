@@ -3,19 +3,21 @@ import type {
   CoinOfInterestEntry,
   WalletProviderScope,
 } from '../../types/ChiaGaming';
-import type { PersistedGameState, ProposalParameterValue } from '@games/host';
-import type { GameProtocolPresentation } from './gameSlice';
+import type { PersistedGameState } from '@games/host';
 import type {
   BetweenHandModeModel,
-  PendingProposalLifecycle,
+  GameInstanceModel,
+  HandProposal,
+  PendingProposalModel,
   ProposalOrigin,
   RegisteredGameType,
 } from './types';
+import type { ComposeDraftState } from './composeDraft';
 import type { ChannelFundingEntry } from './channelFundingStore';
 import type { FeeAttachment } from './feeAttachmentStore';
 
 export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' as const;
-export const DURABLE_APPLICATION_STATE_VERSION = 4n;
+export const DURABLE_APPLICATION_STATE_VERSION = 5n;
 export const MAX_DURABLE_REJECTION_TRANSPORTS = 8;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
@@ -84,55 +86,24 @@ export interface SessionLiveSave extends SessionTransportSave {
   rewardPuzzleHash: string;
 }
 
-export interface SavedGameInstance {
-  id: string;
-  amount: string;
-  coinHex: string | null;
-  presentation: GameProtocolPresentation;
-  terminal: {
-    type: string;
-    outcome: string | null;
-    label: string | null;
-    myReward: string | null;
-    rewardCoinHex: string | null;
-  };
-}
-
-interface SavedHandProposalBase {
-  sender_is_player_a: boolean;
-  game_timeout: string;
-}
-
-export type SavedHandProposal = SavedHandProposalBase & {
-  game_type: RegisteredGameType;
-  parameters: ProposalParameterValue;
-};
-
 export interface SessionPresentationSave {
   handKey: bigint;
   activeGameIds: string[];
   currentHandGameIds: string[];
   currentHandOrigin: ProposalOrigin | null;
   lastDisplayedGameId: string | null;
-  gameInstances: Record<string, SavedGameInstance>;
+  gameInstances: Record<string, GameInstanceModel>;
   activeGameType: RegisteredGameType;
   handState: PersistedGameState | null;
   channelStatus: ChannelStatusPayload | null;
   cleanShutdownStarted: boolean;
   betweenHandMode: BetweenHandModeModel;
-  betweenHandCompose: {
-    selected_game: RegisteredGameType;
-    game_timeout: string;
-  };
-  betweenHandLastHandProposal: SavedHandProposal | null;
-  betweenHandRejectedOnceHandProposal: SavedHandProposal | null;
-  betweenHandPendingRetryHandProposal: SavedHandProposal | null;
+  betweenHandCompose: Pick<ComposeDraftState, 'selectedGame' | 'gameTimeout'>;
+  betweenHandLastHandProposal: HandProposal | null;
+  betweenHandRejectedOnceHandProposal: HandProposal | null;
+  betweenHandPendingRetryHandProposal: HandProposal | null;
   newHandRequested: boolean;
-  pendingProposals: Array<{
-    id: string;
-    lifecycle: PendingProposalLifecycle;
-    hand_proposal: SavedHandProposal;
-  }>;
+  pendingProposals: PendingProposalModel[];
   waitingStateEnteredAt: bigint | null;
   cleanShutdownGraceStartedAt: bigint | null;
 }
@@ -188,8 +159,4 @@ export interface DurableApplicationState {
   channelFundingOperations: ChannelFundingEntry[];
   feeAttachments: FeeAttachment[];
   rejectionTransports: DurableRejectionTransport[];
-}
-
-export function assertNever(value: never): never {
-  throw new Error(`Unexpected session phase: ${String(value)}`);
 }

@@ -194,6 +194,45 @@ describe('session machine behavior sequences', () => {
     expect(secondLauncher).toHaveBeenCalledTimes(1);
   });
 
+  it('captures an external obligation generated while draining before snapshot freeze', async () => {
+    const persist = jest.fn(async () => {});
+    const launcher = jest.fn(async () => {});
+    let generated = false;
+    const { coordinator } = runtimeWithCoordinator(persist, () => {
+      if (generated) return;
+      generated = true;
+      void coordinator.releaseAfterPersistence('drain-obligation', launcher);
+    });
+
+    coordinator.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    await coordinator.flush();
+
+    expect(persist).toHaveBeenCalledTimes(1);
+    expect(launcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('assigns a mutation arriving after snapshot freeze to the next snapshot', async () => {
+    const firstWrite = deferred();
+    const snapshots: Array<ReturnType<typeof createSessionMachineState>> = [];
+    const persist = jest.fn((state: ReturnType<typeof createSessionMachineState>) => {
+      snapshots.push(state);
+      return snapshots.length === 1 ? firstWrite.promise : Promise.resolve();
+    });
+    const { coordinator } = runtimeWithCoordinator(persist);
+
+    coordinator.dispatch({ type: 'set-first-game-accepted', accepted: true });
+    const flush = coordinator.flush();
+    await Promise.resolve();
+    coordinator.dispatch({ type: 'set-new-hand-requested', requested: true });
+    firstWrite.resolve();
+    await flush;
+
+    expect(snapshots).toHaveLength(2);
+    expect(snapshots[0].coordination.firstGameAccepted).toBe(true);
+    expect(snapshots[0].model.betweenHand.newHandRequested).toBe(false);
+    expect(snapshots[1].model.betweenHand.newHandRequested).toBe(true);
+  });
+
   it('releases a captured effect once after failed persistence and rejects sync launcher throws', async () => {
     const persist = jest
       .fn<Promise<void>, []>()

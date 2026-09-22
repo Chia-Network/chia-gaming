@@ -40,12 +40,8 @@ export const REGISTERED_GAMES = PRODUCTION_PACKAGE_KEYS.map((gameType) => ({
   displayName: packageFor(gameType).displayName,
 }));
 
-export interface DecodedPersistedGameState {
-  persisted: PersistedGameState;
-}
-
 /** Decode only the generic host envelope; the game-owned state remains opaque. */
-export function decodePersistedGameState(value: unknown): DecodedPersistedGameState | null {
+export function decodePersistedGameState(value: unknown): PersistedGameState | null {
   if (typeof value !== 'object' || value === null) return null;
   const persisted = value as Partial<PersistedGameState>;
   if (
@@ -56,9 +52,7 @@ export function decodePersistedGameState(value: unknown): DecodedPersistedGameSt
   ) {
     return null;
   }
-  return {
-    persisted: { gameType: persisted.gameType, state: persisted.state },
-  };
+  return { gameType: persisted.gameType, state: persisted.state };
 }
 
 export function createRegisteredGameHand(

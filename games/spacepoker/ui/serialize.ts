@@ -4,7 +4,6 @@ import {
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
-  type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
 
@@ -65,21 +64,6 @@ export interface SpacepokerHandState {
 export interface SpacepokerHand extends GameHand<SpacepokerHandState> {
   update(reducer: (current: SpacepokerHandState) => SpacepokerHandState): void;
 }
-
-/** Test/helper envelope only; persistence treats the state as opaque. */
-export const spacepokerStateCodec = {
-  gameType: 'spacepoker',
-  encode: (state: SpacepokerHandState): PersistedGameState<SpacepokerHandState> => ({
-    gameType: 'spacepoker',
-    state,
-  }),
-  decode: (value: unknown): SpacepokerHandState | null =>
-    typeof value === 'object' &&
-    value !== null &&
-    (value as Partial<PersistedGameState>).gameType === 'spacepoker'
-      ? ((value as PersistedGameState<SpacepokerHandState>).state ?? null)
-      : null,
-};
 
 const HANDLERS = new Set([0n, 1n, 2n, 3n, 4n, 5n, 6n]);
 const TERMINALS = new Set([

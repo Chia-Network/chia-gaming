@@ -15,13 +15,10 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
-import { KrunkHandler, krunkStateCodec, type KrunkHand } from '@games/krunk/ui/serialize';
-import {
-  calpokerStateCodec,
-  type CalpokerHand,
-  type CalpokerHandState,
-} from '@games/calpoker/ui/serialize';
-import { spacepokerStateCodec, type SpacepokerHand } from '@games/spacepoker/ui/serialize';
+import { KrunkHandler, type KrunkHand } from '@games/krunk/ui/serialize';
+import { type CalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import type { SpacepokerHand } from '@games/spacepoker/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import { wasmResult } from './message_protocol.harness';
 
@@ -659,24 +656,40 @@ describe('session machine causal sequences', () => {
         },
       },
     };
-    const transition = reduceSessionMachine(state, {
-      type: 'wasm-notification',
-      iStarted: true,
-      notification: {
-        ProposalAcceptedGroup: {
-          id: '7',
-          members: [
-            {
-              id: '7',
-              player_a_contribution: '10',
-              player_b_contribution: '10',
-              our_turn: true,
-              readable_parameters: readableInteger(10n),
-            },
-          ],
+    let hand: ReturnType<typeof createRegisteredGameHand> | null = null;
+    const transition = reduceSessionMachine(
+      state,
+      {
+        type: 'wasm-notification',
+        iStarted: true,
+        notification: {
+          ProposalAcceptedGroup: {
+            id: '7',
+            members: [
+              {
+                id: '7',
+                player_a_contribution: '10',
+                player_b_contribution: '10',
+                our_turn: true,
+                readable_parameters: readableInteger(10n),
+              },
+            ],
+          },
         },
       },
-    });
+      {
+        create: (gameType, init) => {
+          hand = createRegisteredGameHand(gameType, init);
+          return snapshotRegisteredGameHand(gameType, hand);
+        },
+        receive: () => {
+          throw new Error('Acceptance test did not expect a hand update');
+        },
+        clear: () => {
+          hand = null;
+        },
+      },
+    );
 
     expect(transition.state.model.game.queue).toEqual([
       expect.objectContaining({ id: 2n, kind: 'action-failed' }),

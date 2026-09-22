@@ -75,7 +75,7 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
-    await storageRepository.checkpointApplicationState(empty);
+    await storageRepository.write(storageRepository.patchApplicationState(() => empty));
   });
 
   it('attempts restored creation uncertainty once in the first process readiness epoch', async () => {
@@ -151,6 +151,46 @@ describe('FeeAttachmentRuntime lifecycle', () => {
     providers.ready(provider);
     await runtime.awaitIdle();
     expect(cancel).toHaveBeenCalledTimes(1);
+    runtime.detach();
+  });
+
+  it('cancels a stale fee result without mutating the aggregate reclaimed after takeover', async () => {
+    let resolveCreation!: (value: {
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }) => void;
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveCreation = resolve;
+          }),
+      ),
+      cancel,
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    const reservation = runtime.reserve(owner, 'takeover-flight', request, () => false);
+    await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+
+    storageRepository.loseAuthority('takeover');
+    resolveCreation({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1stale' },
+      tradeId: 'stale-fee-trade',
+    });
+    await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+    await waitFor(() => cancel.mock.calls.length === 1);
+    expect(cancel).toHaveBeenCalledWith('stale-fee-trade');
+
+    await storageRepository.claimApplicationState();
+    await runtime.awaitIdle();
+    expect(storageRepository.feeAttachments()).toEqual([]);
     runtime.detach();
   });
 

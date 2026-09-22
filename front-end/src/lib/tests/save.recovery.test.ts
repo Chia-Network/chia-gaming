@@ -17,7 +17,6 @@ import {
 } from '../session/indexedDb';
 import { activeSave, baseSave } from './session_save_envelope.fixtures';
 import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { freshSessionState } from '../session/sessionStateTransitions';
 import type { DurableApplicationState } from '../session/saveEnvelope';
 import {
@@ -31,7 +30,7 @@ import {
 async function writeRootTransform(
   transform: (state: DurableApplicationState) => DurableApplicationState,
 ): Promise<void> {
-  await captureDurableApplicationState({ kind: 'transform', transform })?.write();
+  await storageRepository.write(storageRepository.patchApplicationState(transform));
 }
 
 describe('session persistence: recovery', () => {
@@ -69,7 +68,7 @@ describe('session persistence: recovery', () => {
       },
       { kind: 'funding', operationId: 'pre-authority-operation' },
     );
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     storageRepository._resetForTests();
     const retainedPlayerId = storageRepository.loadState().identity.playerId;
 
@@ -164,7 +163,7 @@ describe('session persistence: recovery', () => {
   it('keeps an explicit pre-game marker across blockchainType preference writes', async () => {
     markSavedSession();
     savePreferences({ blockchainType: 'simulator' });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     expect(hasSavedSessionMarker()).toBe(true);
     expect(await storageRepository.readCurrentState()).toMatchObject({
@@ -174,7 +173,7 @@ describe('session persistence: recovery', () => {
 
   it('treats leftover blockchainType without a marker as resume-worthy', async () => {
     savePreferences({ blockchainType: 'walletconnect' });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     clearSavedSessionMarker();
 
     expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
@@ -186,7 +185,7 @@ describe('session persistence: recovery', () => {
 
   it('treats leftover hubUrl without a marker as resume-worthy', async () => {
     savePreferences({ hubUrl: 'http://localhost:3003' });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     clearSavedSessionMarker();
 
     expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
@@ -221,7 +220,7 @@ describe('session persistence: recovery', () => {
 
   it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
     saveLiveFields();
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     expect(hasSavedSessionMarker()).toBe(true);
 
     // Simulate marker-only boot: memory has preferences, IndexedDB has the cradle.
@@ -231,7 +230,7 @@ describe('session persistence: recovery', () => {
     expect(storageRepository.loadState()).not.toHaveProperty('live');
 
     saveHistory({ diagnosticLog: ['boot log'] });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     storageRepository._resetForTests();
     const restored = await storageRepository.readCurrentState();
@@ -251,14 +250,14 @@ describe('session persistence: recovery', () => {
       pairingToken: 'tok-v1',
       // Intentionally omit sessionId — handshake saves often look like this.
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     saveLiveFields({
       ...sampleSession,
       serializedGameSession: second,
       pairingToken: 'tok-v2',
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     storageRepository._resetForTests();
     const loaded = requireLive(await storageRepository.readCurrentState());
@@ -268,9 +267,10 @@ describe('session persistence: recovery', () => {
 
   it('returns a pre-game blockchainType record when the boot marker is set', async () => {
     localStorage.setItem('appState_savedSession', '1');
-    await storageRepository.checkpointApplicationState(
-      baseSave({ playerId: 'player', blockchainType: 'simulator' }),
-      [],
+    await storageRepository.write(
+      storageRepository.patchApplicationState(() =>
+        baseSave({ playerId: 'player', blockchainType: 'simulator' }),
+      ),
     );
     expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { blockchainType: 'simulator' },
@@ -287,7 +287,7 @@ describe('session persistence: recovery', () => {
       ...sampleSession,
       serializedGameSession: new Uint8Array([1]),
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     const cleared = storageRepository.clearSession();
     const saved = saveLiveFields({
@@ -295,7 +295,7 @@ describe('session persistence: recovery', () => {
       serializedGameSession: new Uint8Array([2]),
       pairingToken: 'replacement-after-clear',
     });
-    const flushed = storageRepository.flushAggregate();
+    const flushed = storageRepository.checkpointDomainMutations();
     await Promise.all([cleared, saved, flushed]);
 
     const persisted = requireLive(await readApplicationState());
@@ -316,11 +316,10 @@ describe('session persistence: recovery', () => {
     const unsubscribe = storageRepository.onAuthorityLost(authorityLost);
     storageRepository.holdNextCheckpointAfterCommitForTests(barrier, committed);
 
-    saveLiveFields({
+    const checkpoint = saveLiveFields({
       ...sampleSession,
       serializedGameSession: new Uint8Array([7]),
     });
-    const checkpoint = storageRepository.flushAggregate();
     await reachedCommit;
     await storageRepository.claimApplicationState();
     release();
@@ -344,7 +343,7 @@ describe('session persistence: recovery', () => {
       },
       { kind: 'funding', operationId: 'funding-operation' },
     );
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     await storageRepository.clearSession();
     storageRepository._resetForTests();
 
@@ -378,7 +377,7 @@ describe('session persistence: recovery', () => {
       ],
     };
     storageRepository._replaceApplicationStateForTests(state);
-    await storageRepository.checkpointApplicationState(state);
+    await storageRepository.write(storageRepository.patchApplicationState(() => state));
     clearSavedSessionMarker();
 
     expect(await storageRepository.claimApplicationState()).toMatchObject({ session: null });
@@ -412,7 +411,7 @@ describe('session persistence: recovery', () => {
       ],
     };
     storageRepository._replaceApplicationStateForTests(state);
-    await storageRepository.checkpointApplicationState(state);
+    await storageRepository.write(storageRepository.patchApplicationState(() => state));
 
     await storageRepository.claimApplicationState();
 
@@ -445,9 +444,9 @@ describe('session persistence: recovery', () => {
         channelFundingOperations: [entry],
       };
       storageRepository._replaceApplicationStateForTests(state);
-      await storageRepository.checkpointApplicationState(state);
+      await storageRepository.write(storageRepository.patchApplicationState(() => state));
       saveLiveFields({ ...sampleSession, walletProviderScope: entry.owner.providerScope });
-      await storageRepository.flushAggregate();
+      await storageRepository.checkpointDomainMutations();
       if (kind === 'session deletion') {
         await storageRepository.clearSession();
       } else {
@@ -546,7 +545,7 @@ describe('session persistence: recovery', () => {
 
   it('aggregate capture preserves blockchainType', async () => {
     saveLiveFields({ ...sampleSession, blockchainType: 'walletconnect' });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     expect((await storageRepository.readCurrentState())?.preferences.blockchainType).toBe(
       'walletconnect',
     );
@@ -561,13 +560,13 @@ describe('session persistence: recovery', () => {
       value: 'Dirty Alice',
     });
     expectConsoleError('aggregate checkpoint failed');
-    await expect(Promise.all([scheduled, storageRepository.flushAggregate()])).rejects.toThrow(
-      'quota unavailable',
-    );
+    await expect(
+      Promise.all([scheduled, storageRepository.checkpointDomainMutations()]),
+    ).rejects.toThrow('quota unavailable');
     expect(storageRepository.loadState().preferences.alias).toBe('Dirty Alice');
 
     write.mockRestore();
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     expect((await readApplicationState())?.preferences.alias).toBe('Dirty Alice');
   });
 });

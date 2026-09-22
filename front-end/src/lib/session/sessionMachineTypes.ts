@@ -107,7 +107,6 @@ export type SessionMachineEvent =
         ourTurn: boolean;
         readableParameters: Uint8Array;
       }[];
-      handState?: PersistedGameState;
     }
   | {
       type: 'notification-game-status';
@@ -117,27 +116,21 @@ export type SessionMachineEvent =
       readable: Uint8Array | null;
       moverShare: bigint | null;
       iStarted: boolean;
-      handState?: PersistedGameState;
     }
   | {
       type: 'notification-game-terminal';
       id: string;
       terminal: GameTerminalModel;
-      handState?: PersistedGameState;
     }
   | { type: 'notification-abandoned' }
   | {
       type: 'hand-state-changed';
-      gameType: RegisteredGameType;
-      state: unknown;
-      handState?: PersistedGameState;
+      handState: PersistedGameState;
     }
   | {
       type: 'local-game-action-committed';
-      gameType: RegisteredGameType;
       id: string;
-      state: unknown;
-      handState?: PersistedGameState;
+      handState: PersistedGameState;
     }
   | { type: 'local-action-applied'; id: string; action: LocalActionKind }
   | { type: 'request-accept-proposal'; id: string }

@@ -27,6 +27,7 @@ class ControlledRuntime {
   private readonly pending = new Map<string, PendingRelease>();
   private readonly heldMutations: Array<(error: unknown) => void> = [];
   private nextMutationError: unknown;
+  private controller: SessionController | null = null;
 
   constructor(private holdMutations = false) {}
 
@@ -42,7 +43,15 @@ class ControlledRuntime {
 
   requestCommit(): void {}
   flush(): Promise<void> {
+    if (this.controller) {
+      this.controller.flushDeferredWork();
+      const commit = this.controller.prepareReliableCommit();
+      this.controller.completeReliableCommit(commit, true);
+    }
     return Promise.resolve();
+  }
+  attachController(controller: SessionController): void {
+    this.controller = controller;
   }
   enqueue(work: () => void): void {
     work();
@@ -101,6 +110,7 @@ const coin = 'ab'.repeat(72);
 const effectKey = `coin-solution:${coin}`;
 
 function commitRuntime(controller: SessionController, runtime: ControlledRuntime): void {
+  runtime.attachController(controller);
   controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
 }
 

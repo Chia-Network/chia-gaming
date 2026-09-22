@@ -220,15 +220,11 @@ export interface SessionModel {
   history: SessionHistoryModel;
 }
 
-type LegacyGameInput = Omit<Partial<GameModel>, 'instances'> & {
-  instances?: Record<string, GameInstanceModel | GameInstanceViewModel>;
-};
-
 export interface SessionModelInput {
   restore?: Partial<RestoreModel>;
   peer?: Partial<PeerModel>;
   channel?: Partial<ChannelModel>;
-  game?: LegacyGameInput;
+  game?: Partial<GameModel>;
   betweenHand?: Partial<BetweenHandModel>;
   history?: Partial<SessionHistoryModel>;
 }

@@ -45,12 +45,11 @@ export class FeeAttachmentRuntime {
     string,
     Extract<WalletOfferCompletion, { kind: 'created-reserved' }>
   >();
-  private readonly transfers = new Map<string, () => void>();
   private readonly restoredUncertain = new Set<string>();
   private readonly knownUncertain: Set<string>;
   private readonly unsubscribe: (() => void)[];
   private detached = false;
-  private minimumTransferGeneration = 0;
+  private hardResetEpoch = 0;
 
   constructor(
     private readonly ports: FeeAttachmentRuntimePorts,
@@ -60,17 +59,15 @@ export class FeeAttachmentRuntime {
     processKnownUncertainty.set(providers, this.knownUncertain);
     this.unsubscribe = [
       providers.subscribe((event) => this.providerEvent(event)),
-      storageRepository.onLifecycle((generation, event) => {
+      storageRepository.onLifecycle((_generation, event) => {
         if (event === 'claim') {
           this.markRestoredUncertain();
-          this.drainTransfers();
           this.resume();
         } else {
           this.flights.clear();
           this.completed.clear();
           if (event === 'hard-reset') {
-            this.minimumTransferGeneration = generation;
-            this.transfers.clear();
+            this.hardResetEpoch += 1;
             this.restoredUncertain.clear();
             this.knownUncertain.clear();
           }
@@ -170,6 +167,7 @@ export class FeeAttachmentRuntime {
     replacement: boolean,
   ): Promise<WalletOfferCompletion> {
     const generation = storageRepository.lifecycleGeneration;
+    const hardResetEpoch = this.hardResetEpoch;
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     const recoveryId =
       !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
@@ -216,7 +214,9 @@ export class FeeAttachmentRuntime {
         });
       };
       if (!storageRepository.isGenerationCurrent(generation)) {
-        this.transfer(owner, submissionId, generation, pending);
+        log(
+          `[fee-attachment] stale creation returned only recovery_id=${pendingRecoveryId}; reservation may remain orphaned submission_id=${submissionId}`,
+        );
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
       pending();
@@ -230,17 +230,8 @@ export class FeeAttachmentRuntime {
       if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
     }
     if (!storageRepository.isGenerationCurrent(generation)) {
-      if (outcome.kind === 'created-reserved') {
-        this.transfer(owner, submissionId, generation, () => {
-          this.replace(null, {
-            owner,
-            submissionId,
-            stage: 'cancel-required',
-            providerReservationId: outcome.tradeId,
-            reason: 'stale-fee-create-result',
-          });
-          void this.scheduleCancellation(outcome.tradeId);
-        });
+      if (outcome.kind === 'created-reserved' && hardResetEpoch === this.hardResetEpoch) {
+        this.cancelLateReservation(provider, outcome.tradeId, submissionId);
       }
       return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
     }
@@ -298,7 +289,6 @@ export class FeeAttachmentRuntime {
       this.replace(null, uncertain);
     };
     if (storageRepository.isGenerationCurrent(generation)) apply();
-    else this.transfer(owner, submissionId, generation, apply);
   }
 
   private resume(): void {
@@ -473,26 +463,30 @@ export class FeeAttachmentRuntime {
     return promise;
   }
 
-  private transfer(
-    owner: FeeAttachmentOwner,
+  private cancelLateReservation(
+    provider: WalletOfferProvider,
     id: string,
-    sourceGeneration: number,
-    work: () => void,
+    submissionId: string,
   ): void {
-    if (sourceGeneration < this.minimumTransferGeneration) return;
-    const key = `${providerScopeKey(owner.providerScope)}:${id}`;
-    if (!storageRepository.hasAuthority()) {
-      this.transfers.set(key, () => this.transfer(owner, id, sourceGeneration, work));
-      return;
-    }
-    storageRepository.ensureWalletContext(owner.providerScope);
-    work();
-  }
-
-  private drainTransfers(): void {
-    const transfers = [...this.transfers.values()];
-    this.transfers.clear();
-    transfers.forEach((transfer) => transfer());
+    void Promise.resolve()
+      .then(() =>
+        provider.capability === 'best-effort' || provider.capability === 'terminal'
+          ? provider.cancel(id)
+          : provider.beginCancellation(id),
+      )
+      .then(
+        (outcome) => {
+          if (outcome.status !== 'cancelled' && outcome.status !== 'already-terminal') {
+            log(
+              `[fee-attachment] stale reservation may remain orphaned submission_id=${submissionId} provider_reservation_id=${id}`,
+            );
+          }
+        },
+        (error) =>
+          log(
+            `[fee-attachment] stale reservation cancellation failed submission_id=${submissionId} provider_reservation_id=${id}: ${String(error)}`,
+          ),
+      );
   }
 
   private markRestoredUncertain(): void {
@@ -514,7 +508,6 @@ export class FeeAttachmentRuntime {
     if (!this.detached || this.flights.size) return;
     this.unsubscribe.splice(0).forEach((unsubscribe) => unsubscribe());
     this.completed.clear();
-    this.transfers.clear();
     this.restoredUncertain.clear();
   }
 }

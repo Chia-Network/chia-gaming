@@ -377,7 +377,7 @@ describe('durable channel funding record', () => {
       feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(persisted);
-    await storageRepository.checkpointApplicationState(persisted);
+    await storageRepository.write(storageRepository.patchApplicationState(() => persisted));
 
     const durableReservation = (await storageRepository.inspect()).applicationState
       ?.channelFundingOperations[0];

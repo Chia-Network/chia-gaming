@@ -371,7 +371,7 @@ construction and restore normalization live in
 
 The architectural invariants are smaller than the field list:
 
-- one strict v4 root owns common state, exactly one optional session phase,
+- one strict v5 root owns common state, exactly one optional session phase,
   bounded rejection records, and owner-specific wallet-reservation slices;
 - the live cradle and reliable frame bodies remain opaque `Uint8Array` values,
   while game-owned `handState` restores only through its registered package;
@@ -394,17 +394,19 @@ preference or application-state authority.
 #### Save architecture
 
 `StorageRepository` is the sole aggregate owner. It atomically claims
-coordination authority and reads the root, serializes semantic transforms, and
-writes complete captures. Claims, authority loss, and hard reset publish a new
-monotonic lifecycle generation so transient runtimes can fence stale
-completions. Ordinary I/O failure leaves the latest in-memory aggregate pending
+coordination authority and reads the root, serializes root mutations, and
+performs exact whole-root writes. It has no timer, debounce, capture closure, or
+second persistence scheduler. Claims, authority loss, and hard reset publish a
+new monotonic lifecycle generation so transient runtimes can fence stale
+completions. Ordinary I/O failure leaves the latest in-memory aggregate dirty
 and still releases permitted effects; authority loss retires the obsolete
 runtime and releases nothing. `ChannelFundingRuntime` and
 `FeeAttachmentRuntime` are the two explicit transient provider-orchestration
 owners over their separate aggregate slices.
 
 Session persistence is executed by `SessionMachineRuntime`, the sole active
-commit coordinator. A capture combines two authoritative sources:
+dirty/coalescing/drain scheduler. One synchronous snapshot combines two
+authoritative sources:
 
 1. **WASM-native state** — `SessionController.getWasmFields()` returns the
    cradle serialization, message counters, protocol state, history, aliases,
@@ -446,16 +448,16 @@ game mutates its concrete hand before requesting an action; the public intent
 carries no state. The runtime keeps the previous canonical
 `handState` only as a temporary synchronous checkpoint while it calls Rust. A
 synchronous command exception or `MoveRejected` restores that checkpoint. If
-Rust accepts the action as queued or already applied, the runtime rereads
-`getState()`, commits the mutated complete hand canonically, and persists it in
-the same session snapshot as the serialized Rust queue. There is no persisted
-checkpoint and no `pendingCandidates` state. `LocalActionApplied` is a host-only
-protocol-presentation fact; it can update the keyed turn presentation, but it
-does not promote game-owned state and does not grant game permission. Rejection
-is not delivered to the game.
-Before starting the asynchronous write, aggregate capture synchronously
-captures game-owned canonical `handState`, the serialized WASM cradle, and the
-reliable boundary into one immutable save input. Every package
+Rust accepts the action as queued or already applied, the runtime snapshots the
+mutated complete hand into canonical `handState` and persists it in the same
+session snapshot as the serialized Rust queue. `activeHand` is only a cache
+rebuilt from and snapshotted back into `handState`; shared code does not inspect
+package-owned fields. Rejection restores both cache and model. There is no
+persisted checkpoint or `pendingCandidates` state. `LocalActionApplied` is only
+a host lifecycle fact and does not grant game permission.
+Before starting the asynchronous write, the runtime synchronously freezes
+canonical `handState`, the serialized WASM cradle, and the reliable boundary
+into one immutable save input. Every package
 has one `render(view)` mount. Its `frozen` boolean is a type discriminant: only
 the live branch has an intent port. It is not per-move permission; game controls
 derive availability from their own handler, turn, and terminal state. The view
@@ -569,7 +571,7 @@ finalization. Going offline detaches the provider RPC without discarding
 cleanup; retirement records the required transitions, and the next matching
 lifecycle attachment drains them.
 
-The app-owned persistence versions are aggregate v4, opaque Rust/WASM cradle
+The app-owned persistence versions are aggregate v5, opaque Rust/WASM cradle
 schema 22, and IndexedDB v5. Their compatibility behavior is defined by the
 [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
 
@@ -687,7 +689,7 @@ Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The aggregate v4 presentation makes
+independently by `GameID`. The aggregate v5 presentation makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
@@ -728,12 +730,13 @@ work to a fixed point, then:
 3. Publishes the captured machine state to React once.
 4. Releases the captured outbound messages and acknowledgements in order.
 
-Pre-runtime negotiation uses the reliability owner's explicit flush path with
-the same persist-before-send rule. Channel-funding and fee-attachment owners
-separately checkpoint a reservation before provider mutation, while `StorageRepository` coalesces
-preference/history drains outside protocol work. Those repository writes fold
-sibling changes into the last complete session capture; they cannot observe or
-persist a partially drained `SessionMachineRuntime`. See the canonical
+Pre-runtime negotiation and rejection use explicit immediate whole-root writes
+with the same persist-before-release rule. Channel-funding and fee-attachment
+owners separately checkpoint a reservation before provider mutation. Once a
+runtime exists, preference, history, and wallet-ledger mutations only mark that
+runtime dirty and are folded into its next quiescent snapshot; the repository
+never schedules a competing write or observes a partially drained runtime. See
+the canonical
 [Persistence transactionality](OVERVIEW.md#persistence-transactionality)
 policy for the field-admission rule.
 
@@ -1000,7 +1003,11 @@ the wallet connection without attempting WASM deserialization.
 `StorageRepository.claimAndRead` commits the durable epochs and returns the
 exact raw aggregate read in that transaction; `StorageRepository`,
 `ChannelFundingRuntime`, and `FeeAttachmentRuntime` then decode and attach
-their owner-specific records. `localStorage` is updated afterward as a UX hint. Only pending common
+their owner-specific records. Takeover kills the old authority rather than
+transferring callbacks or in-flight obligations. The new owner rehydrates only
+the exact claimed durable root; a late known reservation may be cancelled
+best-effort by its original provider but cannot mutate the new generation.
+`localStorage` is updated afterward as a UX hint. Only pending common
 identity, preference, and history changes survive before claim; phase, terminal,
 clear, rejection, and wallet-ledger mutations reject until authority exists.
 Semantic rejection and preserving-reset transactions remain repository-owned.
@@ -1781,12 +1788,12 @@ The cohesive session modules own those responsibilities:
 - `sessionMachine.ts` is the pure root reducer.
 - `sessionMachineNotifications.ts` reduces normalized WASM notifications.
 - `sessionMachineCommands.ts` maps UI events to typed commands.
-- `sessionMachineRuntime.ts` drains commands and generated events to a fixed
-  point, attempts one aggregate checkpoint, then projects React state and
-  releases captured effects.
+- `sessionMachineRuntime.ts` owns the one dirty/coalesced drain, reaches a fixed
+  point, snapshots and writes once, then projects React state and releases
+  captured effects.
 - `sessionMachineInterpreter.ts` performs controller calls, timers,
   persistence, and async enrichment.
-- `sessionMachinePersist.ts` assembles and writes snapshots at effect time.
+- `sessionMachinePersist.ts` synchronously assembles whole-root snapshots.
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
 - `session/incomingProposal.ts` validates the generic `ProposalMade` bridge,
   retains its exact opaque Bencodex parameters, and assembles
@@ -2034,7 +2041,7 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/components/GameSession.tsx`           | Game session UI: header, coin status, game area, overlays                                                                                    |
 | `front-end/src/hooks/useGameSession.ts`              | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                        |
 | `front-end/src/lib/session/sessionMachine*.ts`       | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
-| `front-end/src/lib/session/persistence*.ts`          | Canonical strict aggregate-v4 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`       |
+| `front-end/src/lib/session/persistence*.ts`          | Canonical strict aggregate-v5 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`       |
 | `front-end/src/lib/session/sessionSnapshot.ts`       | Canonical `SessionModel` → aggregate presentation snapshot encoder                                                                           |
 | `front-end/src/lib/gameRegistry.ts`                  | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                               |
 | `front-end/src/lib/session/incomingProposal.ts`      | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                         |
@@ -2045,7 +2052,7 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/lib/gameIdentities.ts`                | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                                          |
 | `front-end/src/hooks/blobSingleton.ts`               | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                      |
 | `front-end/src/services/PeerSession.ts`              | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                               |
-| `front-end/src/lib/session/storageRepository.ts`     | Sole aggregate owner: atomic claim/read, generation-fenced transforms, capture, checkpoint, and reset                                        |
+| `front-end/src/lib/session/storageRepository.ts`     | Aggregate and authority owner: atomic claim/read, generation-fenced root mutation, serialized exact write, and reset                         |
 | `front-end/src/lib/session/channelFundingRuntime.ts` | Channel-funding-only provider orchestration, material delivery, confirmation/timeout retirement, recovery, and exact cleanup                 |
 | `front-end/src/lib/session/feeAttachmentRuntime.ts`  | Fee-attachment-only reservation, replay retention, Rust-retirement handling, recovery, and exact cleanup                                     |
 | `front-end/src/hooks/saveCoordination.ts`            | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                          |

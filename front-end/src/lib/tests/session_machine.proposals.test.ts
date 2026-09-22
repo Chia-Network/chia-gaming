@@ -9,6 +9,7 @@ import type { PendingProposalModel } from '../session/types';
 import { selectIncomingProposal } from '../session/selectors';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { reduceSessionMachineForTest } from './session_machine.harness';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -108,7 +109,7 @@ describe('scalar advisory proposal lifecycle', () => {
         },
       },
       false,
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     ).state;
     expect(state.model.betweenHand.pendingProposals).toEqual([]);
     expect(state.model.game.activeIds).toEqual(['101']);
@@ -132,7 +133,7 @@ describe('scalar advisory proposal lifecycle', () => {
         },
       },
       false,
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     ).state;
     expect(state.model.betweenHand.pendingProposals).toEqual([]);
     expect(state.model.game.activeIds).toEqual(['101']);
@@ -380,7 +381,7 @@ describe('scalar advisory proposal lifecycle', () => {
         },
       },
       false,
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     ).state;
     state = reduceSessionMachine(state, {
       type: 'upsert-pending-proposal',

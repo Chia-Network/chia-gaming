@@ -42,10 +42,9 @@ interface FundingFlight extends ProviderFlight {
 
 export class ChannelFundingRuntime {
   private readonly inFlight = new Map<string, FundingFlight>();
-  private readonly pendingAuthorityTransfers = new Map<string, () => void>();
   private readonly listeners = new Set<() => void>();
   private lifecycleUnsubscribe: (() => void) | null = null;
-  private minimumTransferGeneration = 0;
+  private hardResetEpoch = 0;
   constructor(
     private readonly providerRegistry: WalletProviderRegistry = new WalletProviderRegistry(),
   ) {
@@ -55,16 +54,12 @@ export class ChannelFundingRuntime {
 
   private subscribeLifecycle(): void {
     this.lifecycleUnsubscribe?.();
-    this.lifecycleUnsubscribe = storageRepository.onLifecycle((generation, event) => {
+    this.lifecycleUnsubscribe = storageRepository.onLifecycle((_generation, event) => {
       if (event === 'claim') {
-        this.drainAuthorityTransfers();
         this.resumeAll();
       } else {
         this.retireTransientWork();
-        if (event === 'hard-reset') {
-          this.minimumTransferGeneration = generation;
-          this.pendingAuthorityTransfers.clear();
-        }
+        if (event === 'hard-reset') this.hardResetEpoch += 1;
       }
     });
   }
@@ -207,6 +202,7 @@ export class ChannelFundingRuntime {
     replacement = false,
   ): Promise<WalletOfferCompletion> {
     const recovery = entryForOperation(this.entries(), owner, purpose);
+    const hardResetEpoch = this.hardResetEpoch;
     if (!replacement && recovery?.stage === 'best-effort-uncertain') {
       return {
         kind: 'unavailable',
@@ -254,23 +250,9 @@ export class ChannelFundingRuntime {
     if (completion.kind === 'pending') {
       const recoveryId = completion.recoveryId;
       if (!storageRepository.isGenerationCurrent(generation)) {
-        this.transferToCurrent(owner, generation, () => {
-          const current = entryForOperation(this.entries(), owner, purpose);
-          if (current?.stage === 'creating') return;
-          if (current?.stage === 'best-effort-uncertain') {
-            this.replace(current, { ...current, stage: 'creating', recoveryId });
-          } else if (!current) {
-            this.replace(null, {
-              owner,
-              purpose,
-              stage: 'creating',
-              disposition: isRetired() ? 'cancel-on-create' : 'active',
-              recoveryId,
-              request: recoveryRequest,
-              reason: 'wallet-offer-creation-pending',
-            });
-          }
-        });
+        log(
+          `[channel-funding-runtime] stale creation returned only recovery_id=${recoveryId}; external reservation risk operation=${channelFundingKey(owner, purpose)}`,
+        );
         return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
       }
       if (recovery?.stage === 'best-effort-uncertain') {
@@ -312,18 +294,8 @@ export class ChannelFundingRuntime {
       }
     }
     if (!storageRepository.isGenerationCurrent(generation)) {
-      if (completion.kind === 'created-reserved') {
-        const reservedCompletion = completion;
-        this.transferToCurrent(owner, generation, () => {
-          this.replace(null, {
-            owner,
-            purpose,
-            stage: 'cancel-required',
-            providerReservationId: reservedCompletion.tradeId,
-            reason: 'stale-create-result',
-            ...(recovery?.orphanRisk ? { orphanRisk: recovery.orphanRisk } : {}),
-          });
-        });
+      if (completion.kind === 'created-reserved' && hardResetEpoch === this.hardResetEpoch) {
+        this.cancelLateReservation(provider, completion.tradeId, channelFundingKey(owner, purpose));
       }
       return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
     }
@@ -391,10 +363,7 @@ export class ChannelFundingRuntime {
         orphanRisk: 'pre-id-response-lost',
       });
     };
-    if (!storageRepository.isGenerationCurrent(generation)) {
-      this.transferToCurrent(owner, generation, install);
-      return;
-    }
+    if (!storageRepository.isGenerationCurrent(generation)) return;
     install();
     log(
       `[channel-funding-runtime] create response lost; external reservation risk operation=${channelFundingKey(owner, purpose)}`,
@@ -688,49 +657,30 @@ export class ChannelFundingRuntime {
     const entry = this.entries().find((candidate) => channelFundingEntryKey(candidate) === channelFundingTradeKey(providerReservationId)); return entry && entry.stage !== 'creating' && entry.stage !== 'best-effort-uncertain' ? entry : null;
   }
 
-  private transferToCurrent(
-    owner: ChannelFundingOwner,
-    sourceGeneration: number,
-    apply: () => void,
+  private cancelLateReservation(
+    provider: WalletOfferProvider,
+    id: string,
+    operation: string,
   ): void {
-    if (sourceGeneration < this.minimumTransferGeneration) return;
-    const key = `transfer:${providerOwnerKey(owner)}`;
-    if (!storageRepository.hasAuthority()) {
-      this.pendingAuthorityTransfers.set(key, () =>
-        this.transferToCurrent(owner, sourceGeneration, apply),
+    void Promise.resolve()
+      .then(() =>
+        provider.capability === 'best-effort' || provider.capability === 'terminal'
+          ? provider.cancel(id)
+          : provider.beginCancellation(id),
+      )
+      .then(
+        (outcome) => {
+          if (outcome.status !== 'cancelled' && outcome.status !== 'already-terminal') {
+            log(
+              `[channel-funding-runtime] stale reservation may remain orphaned operation=${operation} provider_reservation_id=${id}`,
+            );
+          }
+        },
+        (error) =>
+          log(
+            `[channel-funding-runtime] stale reservation cancellation failed operation=${operation} provider_reservation_id=${id}: ${String(error)}`,
+          ),
       );
-      return;
-    }
-    const generation = storageRepository.lifecycleGeneration;
-    const existing = this.inFlight.get(key);
-    if (existing) return;
-    const promise = (async () => {
-      if (!storageRepository.isGenerationCurrent(generation)) return;
-      const context = storageRepository.walletContext();
-      if (!context || providerScopeKey(context) !== providerScopeKey(owner.providerScope)) {
-        throw new Error(
-          'Internal wallet consistency error: stale wallet response scope does not match the saved aggregate',
-        );
-      }
-      apply();
-      await checkpointProviderState(generation);
-      if (storageRepository.isGenerationCurrent(generation)) this.resumeAll();
-    })().catch((error) => {
-      if (!(error instanceof StorageAuthorityLostError)) {
-        log(`[channel-funding-runtime] stale response transfer failed: ${String(error)}`);
-      }
-    });
-    const flight: FundingFlight = { promise };
-    this.inFlight.set(key, flight);
-    void promise.finally(() => {
-      if (this.inFlight.get(key) === flight) this.inFlight.delete(key);
-    });
-  }
-
-  private drainAuthorityTransfers(): void {
-    const transfers = [...this.pendingAuthorityTransfers.values()];
-    this.pendingAuthorityTransfers.clear();
-    for (const transfer of transfers) transfer();
   }
 
   // prettier-ignore
@@ -743,8 +693,7 @@ export class ChannelFundingRuntime {
     this.subscribeLifecycle();
     this.providerRegistry.clear();
     this.retireTransientWork();
-    this.pendingAuthorityTransfers.clear();
-    this.minimumTransferGeneration = 0;
+    this.hardResetEpoch = 0;
     this.listeners.clear();
   }
 }

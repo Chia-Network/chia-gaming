@@ -17,7 +17,7 @@ import type {
 import type { ChannelStatus, WalletProviderScope } from '../../types/ChiaGaming';
 import type { SessionModel } from './types';
 import { PRE_ACTIVE_CHANNEL_STATES } from './selectors';
-import { captureDurableApplicationState } from './sessionMachinePersist';
+import { storageRepository } from './storageRepository';
 
 export type AcceptPhase = 'idle' | 'accepting' | 'persistDraining' | 'liveMounting' | 'active';
 
@@ -126,27 +126,21 @@ export async function captureFreshStart(args: {
 
   let priorSession: DurableSessionPhase | null = null;
   let priorWalletContext: DurableApplicationState['walletContext'] = null;
-  const prepared = captureDurableApplicationState({
-    kind: 'transform',
-    transform: (state: DurableApplicationState) => {
-      priorSession = state.session?.phase === 'terminal' ? structuredClone(state.session) : null;
-      priorWalletContext = structuredClone(state.walletContext);
-      return applyFreshStartCheckpoint(state, checkpoint);
-    },
+  const snapshot = storageRepository.patchApplicationState((state: DurableApplicationState) => {
+    priorSession = state.session?.phase === 'terminal' ? structuredClone(state.session) : null;
+    priorWalletContext = structuredClone(state.walletContext);
+    return applyFreshStartCheckpoint(state, checkpoint);
   });
-  if (!prepared) throw new Error('Fresh-start capture unexpectedly produced no aggregate');
-  await prepared.write();
+  await storageRepository.write(snapshot);
   onCommitted();
 
   if (epoch !== getCurrentEpoch()) {
-    await captureDurableApplicationState({
-      kind: 'transform',
-      transform: (state) => ({
-        ...state,
-        session: structuredClone(priorSession),
-        walletContext: structuredClone(priorWalletContext),
-      }),
-    })?.write();
+    const rollback = storageRepository.patchApplicationState((state) => ({
+      ...state,
+      session: structuredClone(priorSession),
+      walletContext: structuredClone(priorWalletContext),
+    }));
+    await storageRepository.write(rollback);
   }
 }
 /** Clear waiting / abandon / clean-shutdown timers and related UI flags. */

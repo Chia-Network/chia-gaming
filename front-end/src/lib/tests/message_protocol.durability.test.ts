@@ -342,7 +342,7 @@ describe('durability failures', () => {
       serializedGameSession: new Uint8Array([9, 9, 9]),
       pairingToken: 'previous-durable-record',
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     (cradle.serialize as jest.Mock).mockImplementation(() => {
       throw new Error('malformed cradle serialization');
     });
@@ -571,7 +571,9 @@ describe('cradle serialization schema restore guard', () => {
       gameSessionSchemaVersion: undefined,
       pairingToken: 'restore-schema-test',
     });
-    await expect(storageRepository.checkpointApplicationState(invalid)).rejects.toThrow();
+    expect(() =>
+      storageRepository.write(storageRepository.patchApplicationState(() => invalid)),
+    ).toThrow();
     const { deserializeMock } = makeRestoreHarness(makeMockCradle);
 
     expect(deserializeMock).not.toHaveBeenCalled();
@@ -598,7 +600,7 @@ describe('cradle serialization schema restore guard', () => {
       ],
     });
     storageRepository._replaceApplicationStateForTests(save);
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
     const memoryBefore = structuredClone(storageRepository.loadState());
     const durableBytesBefore = await readRawApplicationState();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
@@ -627,7 +629,7 @@ describe('cradle serialization schema restore guard', () => {
       perGameAmount: '10',
       rewardPuzzleHash: '11'.repeat(32),
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
       throw new Error('corrupt current-schema cradle');
     });

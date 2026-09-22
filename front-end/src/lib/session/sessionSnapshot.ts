@@ -1,10 +1,9 @@
 import type { ChannelStatusPayload } from '../../types/ChiaGaming';
-import type { SavedHandProposal, SessionPresentationSave } from './saveEnvelope';
-import { encodeComposeDraftState } from './persistenceBetweenHands';
+import type { SessionPresentationSave } from './saveEnvelope';
 import { isCatalogGameType, validateHandProposal } from '../gameRegistry';
 import { channelStatusPayloadFromModel } from './normalization';
 import { isUncancelledProposal } from './proposalPolicy';
-import type { HandProposal, RegisteredGameType, SessionModel } from './types';
+import type { RegisteredGameType, SessionModel } from './types';
 
 export interface SessionPresentationFacts {
   channelStatus?: ChannelStatusPayload | null;
@@ -24,18 +23,6 @@ export function snapshotFromSessionModel(
       throw new Error(`Session invariant broken: ${label} ${gameType} is not a catalog gameType`);
     }
     return gameType;
-  };
-
-  const handProposalSnapshot = (handProposal: HandProposal): SavedHandProposal => {
-    if (!validateHandProposal(handProposal)) {
-      throw new Error(`Session invariant broken: invalid ${handProposal.gameType} hand proposal`);
-    }
-    return {
-      sender_is_player_a: handProposal.senderIsPlayerA,
-      game_timeout: handProposal.gameTimeout.toString(),
-      game_type: requireCatalogGameType(handProposal.gameType, 'handProposal.gameType'),
-      parameters: handProposal.parameters,
-    };
   };
 
   const persistedGameIds = Array.from(
@@ -63,6 +50,16 @@ export function snapshotFromSessionModel(
       'Session invariant broken: persisted hand is missing betweenHandLastHandProposal',
     );
   }
+  for (const proposal of [
+    lastHandProposal,
+    model.betweenHand.rejectedOnceHandProposal,
+    model.betweenHand.pendingRetryHandProposal,
+    ...model.betweenHand.pendingProposals.map(({ handProposal }) => handProposal),
+  ]) {
+    if (proposal !== null && !validateHandProposal(proposal)) {
+      throw new Error(`Session invariant broken: invalid ${proposal.gameType} hand proposal`);
+    }
+  }
   const proposalIds = new Set<string>();
   let uncancelledProposals = 0;
   for (const proposal of model.betweenHand.pendingProposals) {
@@ -88,42 +85,22 @@ export function snapshotFromSessionModel(
     currentHandGameIds: model.game.currentHandIds,
     currentHandOrigin: model.game.currentHandOrigin,
     lastDisplayedGameId: model.game.lastDisplayedId,
-    gameInstances: Object.fromEntries(
-      persistedGameIds.map((id) => {
-        const instance = model.game.instances[id];
-        return [
-          id,
-          {
-            id: instance.id,
-            amount: instance.amount,
-            coinHex: instance.coinHex,
-            presentation: instance.presentation,
-            terminal: instance.terminal,
-          },
-        ];
-      }),
-    ),
+    gameInstances: Object.fromEntries(persistedGameIds.map((id) => [id, model.game.instances[id]])),
     channelStatus:
       facts.channelStatus === undefined
         ? channelStatusPayloadFromModel(model.channel.status)
         : facts.channelStatus,
     cleanShutdownStarted: model.channel.cleanShutdownStarted,
     betweenHandMode: model.betweenHand.mode,
-    betweenHandCompose: encodeComposeDraftState(model.betweenHand.compose),
-    betweenHandLastHandProposal:
-      lastHandProposal === null ? null : handProposalSnapshot(lastHandProposal),
-    betweenHandRejectedOnceHandProposal: model.betweenHand.rejectedOnceHandProposal
-      ? handProposalSnapshot(model.betweenHand.rejectedOnceHandProposal)
-      : null,
-    betweenHandPendingRetryHandProposal: model.betweenHand.pendingRetryHandProposal
-      ? handProposalSnapshot(model.betweenHand.pendingRetryHandProposal)
-      : null,
+    betweenHandCompose: {
+      selectedGame: model.betweenHand.compose.selectedGame,
+      gameTimeout: model.betweenHand.compose.gameTimeout,
+    },
+    betweenHandLastHandProposal: lastHandProposal,
+    betweenHandRejectedOnceHandProposal: model.betweenHand.rejectedOnceHandProposal,
+    betweenHandPendingRetryHandProposal: model.betweenHand.pendingRetryHandProposal,
     newHandRequested: model.betweenHand.newHandRequested,
-    pendingProposals: model.betweenHand.pendingProposals.map((proposal) => ({
-      id: proposal.id,
-      lifecycle: proposal.lifecycle,
-      hand_proposal: handProposalSnapshot(proposal.handProposal),
-    })),
+    pendingProposals: model.betweenHand.pendingProposals,
     waitingStateEnteredAt: facts.waitingStateEnteredAt,
     cleanShutdownGraceStartedAt: facts.cleanShutdownGraceStartedAt,
   };

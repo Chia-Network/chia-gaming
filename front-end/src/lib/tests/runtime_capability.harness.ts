@@ -32,6 +32,7 @@ export class ControlledRuntime {
     readonly reject: (error: unknown) => void;
   }> = [];
   private mutationCount = 0;
+  private controller: SessionController | null = null;
 
   constructor(
     private readonly holdMutationNumber?: number,
@@ -52,7 +53,16 @@ export class ControlledRuntime {
   requestCommit(): void {}
 
   flush(): Promise<void> {
+    if (this.controller) {
+      this.controller.flushDeferredWork();
+      const commit = this.controller.prepareReliableCommit();
+      this.controller.completeReliableCommit(commit, true);
+    }
     return Promise.resolve();
+  }
+
+  attachController(controller: SessionController): void {
+    this.controller = controller;
   }
 
   enqueue(work: () => void): void {
@@ -128,6 +138,7 @@ export class ControlledRuntime {
 }
 
 export function commitRuntime(controller: SessionController, runtime: ControlledRuntime): void {
+  runtime.attachController(controller);
   controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
 }
 

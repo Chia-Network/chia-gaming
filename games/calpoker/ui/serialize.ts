@@ -4,7 +4,6 @@ import {
   type GameHand,
   type GameHandInitialization,
   type GameUpdate,
-  type PersistedGameState,
   type SettlementOutcome,
 } from '../../host';
 import { CalpokerOutcome, projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
@@ -41,21 +40,6 @@ export interface CalpokerHandState {
 export interface CalpokerHand extends GameHand<CalpokerHandState> {
   update(reducer: (current: CalpokerHandState) => CalpokerHandState): void;
 }
-
-/** Test/helper envelope only; persistence treats the state as opaque. */
-export const calpokerStateCodec = {
-  gameType: 'calpoker',
-  encode: (state: CalpokerHandState): PersistedGameState<CalpokerHandState> => ({
-    gameType: 'calpoker',
-    state,
-  }),
-  decode: (value: unknown): CalpokerHandState | null =>
-    typeof value === 'object' &&
-    value !== null &&
-    (value as Partial<PersistedGameState>).gameType === 'calpoker'
-      ? ((value as PersistedGameState<CalpokerHandState>).state ?? null)
-      : null,
-};
 
 function isCardArray(value: unknown): value is bigint[] {
   return (
@@ -159,9 +143,7 @@ function cardsFromReadable(
   readable: Program,
   iStarted: boolean,
 ): Pick<CalpokerHandState, 'playerHand' | 'opponentHand'> {
-  const lists = readable
-    .toList()
-    .map((list) => list.toList().map((card) => card.toBigInt()));
+  const lists = readable.toList().map((list) => list.toList().map((card) => card.toBigInt()));
   return iStarted
     ? { playerHand: lists[1], opponentHand: lists[0] }
     : { playerHand: lists[0], opponentHand: lists[1] };
@@ -267,10 +249,7 @@ export function reduceCalpokerFeatureState(
   };
 }
 
-function reduceCalpokerHandState(
-  current: CalpokerHandState,
-  event: GameUpdate,
-): CalpokerHandState {
+function reduceCalpokerHandState(current: CalpokerHandState, event: GameUpdate): CalpokerHandState {
   if (event.type === 'hand-ended') {
     return { ...current, isPlayerTurn: false, settlementOutcome: event.outcome };
   }

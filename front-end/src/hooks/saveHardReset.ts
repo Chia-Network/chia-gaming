@@ -1,20 +1,13 @@
 import { SESSION_DB_NAME, type DurableStorageAuthority } from '../lib/session/indexedDb';
-import { isWalletConnectStorageKey, signalHardResetToOtherTabs } from './saveCoordination';
+import { signalHardResetToOtherTabs } from './saveCoordination';
 
 export const OWNED_INDEXED_DB_EXACT_NAMES = [
   SESSION_DB_NAME,
-  'app-state',
   'WALLET_CONNECT_V2_INDEXED_DB',
   'walletconnect',
   'walletconnect-v2',
 ] as const;
-export const OWNED_INDEXED_DB_PREFIXES = [
-  'chia-gaming-',
-  'WALLET_CONNECT_',
-  'walletconnect-',
-] as const;
 export const OWNED_LOCAL_STORAGE_EXACT_KEYS = [
-  'appState',
   'appState_savedSession',
   'appState_hardReset',
   'appState_activeTab',
@@ -23,7 +16,8 @@ export const OWNED_LOCAL_STORAGE_EXACT_KEYS = [
   'appState_cloudWalletAuth',
 ] as const;
 export const OWNED_LOCAL_STORAGE_PREFIXES = [
-  'appState_',
+  'appState_wcChangeAddress:',
+  'appState_wcRemoteWalletId:',
   'wc@',
   'WALLET_CONNECT_',
   'walletconnect',
@@ -33,14 +27,6 @@ export const OWNED_SESSION_STORAGE_EXACT_KEYS = [
   'appState_tabId',
   'appState_pendingWipe',
 ] as const;
-export const OWNED_SESSION_STORAGE_PREFIXES = ['appState_'] as const;
-
-export function isOwnedIndexedDbName(name: string): boolean {
-  return (
-    (OWNED_INDEXED_DB_EXACT_NAMES as readonly string[]).includes(name) ||
-    OWNED_INDEXED_DB_PREFIXES.some((prefix) => name.startsWith(prefix))
-  );
-}
 
 function isWalletConnectIndexedDbName(name: string): boolean {
   const lower = name.toLowerCase();
@@ -104,19 +90,6 @@ function deleteIndexedDb(
   });
 }
 
-function clearWalletConnectLocalStorageKeys(): void {
-  try {
-    const toRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && isWalletConnectStorageKey(key)) toRemove.push(key);
-    }
-    for (const key of toRemove) localStorage.removeItem(key);
-  } catch {
-    /* ignore */
-  }
-}
-
 function clearOwnedStorageKeys(
   name: 'localStorage' | 'sessionStorage',
   storage: Storage,
@@ -158,47 +131,10 @@ function clearOwnedBrowserStorageForHardReset(): HardResetFailure[] {
       'sessionStorage',
       sessionStorage,
       OWNED_SESSION_STORAGE_EXACT_KEYS,
-      OWNED_SESSION_STORAGE_PREFIXES,
+      [],
       true,
     ),
   ].filter((failure): failure is HardResetFailure => failure !== null);
-}
-
-/** Resolves true when every WalletConnect database was actually deleted. */
-async function clearWalletConnectIndexedDb(): Promise<boolean> {
-  if (typeof indexedDB === 'undefined') return true;
-  const dynamicDatabaseLookup = indexedDB as IDBFactory & {
-    databases?: () => Promise<Array<{ name?: string }>>;
-  };
-
-  if (typeof dynamicDatabaseLookup.databases === 'function') {
-    try {
-      const databases = await dynamicDatabaseLookup.databases();
-      const toDelete = databases
-        .map((db) => db.name)
-        .filter(
-          (name): name is string => typeof name === 'string' && isWalletConnectIndexedDbName(name),
-        );
-      const deleted = await Promise.all(
-        toDelete.map((name) => deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup')),
-      );
-      return deleted.every((failure) => failure === null);
-    } catch {
-      // Fall through to known database names.
-    }
-  }
-
-  const deleted = await Promise.all(
-    OWNED_INDEXED_DB_EXACT_NAMES.filter(isWalletConnectIndexedDbName).map((name) =>
-      deleteIndexedDb(name, 'WalletConnect IndexedDB cleanup'),
-    ),
-  );
-  return deleted.every((failure) => failure === null);
-}
-
-export async function clearWalletConnectStorage(): Promise<void> {
-  clearWalletConnectLocalStorageKeys();
-  await clearWalletConnectIndexedDb();
 }
 
 // A hard reset can be blocked from deleting the WalletConnect IndexedDB while a
@@ -324,7 +260,7 @@ async function clearAllIndexedDbForHardReset(): Promise<HardResetResult> {
               typeof name === 'string' &&
               name.length > 0 &&
               !known.has(name) &&
-              isOwnedIndexedDbName(name),
+              isWalletConnectIndexedDbName(name),
           )
           .map((name) => deleteIndexedDb(name, 'hard reset')),
       )

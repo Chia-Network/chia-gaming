@@ -4,11 +4,8 @@ import { markSavedSession } from '../../hooks/saveCoordination';
 import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
 import { selectDashboardCoins } from './selectors';
 import type { SessionModel } from './types';
-import {
-  captureDurableApplicationState,
-  type PreparedDurableApplicationStateCapture,
-  type TerminalCapture,
-} from './sessionMachinePersist';
+import { buildDurableApplicationState, type TerminalCapture } from './sessionMachinePersist';
+import { storageRepository } from './storageRepository';
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
 
 export interface TerminalSessionIdentity {
@@ -18,13 +15,15 @@ export interface TerminalSessionIdentity {
 }
 
 export interface TerminalFinalizationDependencies {
-  captureTerminal: (capture: TerminalCapture) => PreparedDurableApplicationStateCapture;
+  persistTerminal(capture: TerminalCapture): Promise<void>;
   updateMarker: () => void;
   teardown: (controller: SessionController) => void;
 }
 
 const defaultDependencies: TerminalFinalizationDependencies = {
-  captureTerminal: (capture) => captureDurableApplicationState(capture)!,
+  persistTerminal: async (capture) => {
+    await storageRepository.write(buildDurableApplicationState(capture)!);
+  },
   updateMarker: markSavedSession,
   teardown: destroyFlushedTerminalSessionController,
 };
@@ -65,7 +64,7 @@ export function finalizeTerminalSession(
       coinsOfInterest: coins,
     };
     try {
-      await dependencies.captureTerminal(capture).write();
+      await dependencies.persistTerminal(capture);
     } catch (error) {
       if (
         error instanceof StorageAuthorityLostError ||

@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec } from './game_state_helpers';
 import { storageRepository } from '../session/storageRepository';
 import {
   DURABLE_APPLICATION_STATE_SCHEMA,
@@ -147,13 +147,13 @@ function presentation(fields: LegacyFields): SessionPresentationSave {
     cleanShutdownStarted: false,
     betweenHandMode: 'decision',
     betweenHandCompose: {
-      selected_game: 'calpoker',
-      game_timeout: '15',
+      selectedGame: 'calpoker',
+      gameTimeout: 15n,
     },
     betweenHandLastHandProposal: {
-      sender_is_player_a: false,
-      game_timeout: '15',
-      game_type: 'calpoker',
+      senderIsPlayerA: false,
+      gameTimeout: 15n,
+      gameType: 'calpoker',
       parameters: BigInt(perGameAmount),
     },
     betweenHandRejectedOnceHandProposal: null,
@@ -298,9 +298,9 @@ export function activeSave(fields: LegacyFields = {}): DurableApplicationState {
       settlementOutcome: null,
     }),
     betweenHandLastHandProposal: {
-      sender_is_player_a: false,
-      game_timeout: '15',
-      game_type: 'calpoker',
+      senderIsPlayerA: false,
+      gameTimeout: 15n,
+      gameType: 'calpoker',
       parameters: 20n,
     },
     ...fields,
@@ -385,7 +385,7 @@ export function installSessionEnvelopeTestSetup(): void {
       feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
-    await storageRepository.checkpointApplicationState(empty);
+    await storageRepository.write(storageRepository.patchApplicationState(() => empty));
   });
 
   afterEach(() => {

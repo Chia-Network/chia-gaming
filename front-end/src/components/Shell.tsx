@@ -14,7 +14,6 @@ import {
   shouldSynthesizeSetupPending,
   startFailureDisposition,
 } from '../lib/session/acceptLifecycle';
-import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { selectGamePaneKind } from '../lib/session/gamePane';
 import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
@@ -111,7 +110,6 @@ import {
   selectGameDashboardView,
   selectGameTabConnected,
   selectStatusBarBalances,
-  sessionAmountsFromSave,
   DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   type BannerTone,
@@ -1252,10 +1250,10 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
-    return captureDurableApplicationState({
-      kind: 'transform',
-      transform: (state) => clearGameSessionState(state, { humanHistory }),
-    })!.write();
+    const snapshot = storageRepository.patchApplicationState((state) =>
+      clearGameSessionState(state, { humanHistory }),
+    );
+    return storageRepository.write(snapshot);
   }, []);
 
   const syncPeerLiveness = useCallback(() => {
@@ -2029,10 +2027,10 @@ const Shell = () => {
                     terminalHandoff: null,
                   },
                 };
-                await captureDurableApplicationState({
-                  kind: 'transform',
-                  transform: (state) => applyFreshStartCheckpoint(state, checkpoint),
-                })?.write();
+                const snapshot = storageRepository.patchApplicationState((state) =>
+                  applyFreshStartCheckpoint(state, checkpoint),
+                );
+                await storageRepository.write(snapshot);
                 if (peerSessionRef.current !== provisional) return;
                 setPendingProposalState({
                   from_id: fromId,
@@ -3007,11 +3005,14 @@ const Shell = () => {
       // GameSession without sessionSave so getOrCreate runs newSession, not restore.
       bootstrapSessionPropRef.current =
         save.session?.phase === 'live' ? sessionSaveForReactProps(save, bootstrap) : undefined;
-      const {
-        myContribution,
-        theirContribution,
-        perGameAmount: perGame,
-      } = sessionAmountsFromSave(save);
+      if (save.session === null || save.session.phase === 'terminal') {
+        throw new Error(
+          `Garbled save: ${save.session?.phase ?? 'no-session'} has no session amounts`,
+        );
+      }
+      const myContribution = BigInt(save.session.pairing.myContribution);
+      const theirContribution = BigInt(save.session.pairing.theirContribution);
+      const perGame = BigInt(save.session.pairing.perGameAmount);
       const transportDisposition =
         save.session?.phase === 'live'
           ? save.session.live.disposition

@@ -164,7 +164,7 @@ describe('RealBlockchainInterface', () => {
       feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
-    await storageRepository.checkpointApplicationState(empty);
+    await storageRepository.write(storageRepository.patchApplicationState(() => empty));
     mockWalletConnectState.forgetSessions.mockClear();
     mockWalletConnectState.disconnect.mockClear();
   });

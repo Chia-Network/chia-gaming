@@ -1,9 +1,16 @@
 import { Program } from 'clvm-lib';
-import { krunkStateCodec } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
-import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
+import { createSessionMachineState } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
-import { CALPOKER_TERMS, KRUNK_TERMS, run, send, trackProposal } from './session_machine.harness';
+import {
+  CALPOKER_TERMS,
+  KRUNK_TERMS,
+  reduceSessionMachineForTest,
+  run,
+  send,
+  trackProposal,
+} from './session_machine.harness';
 
 describe('session machine behavior sequences', () => {
   it('atomically replaces Krunk authority when the next group arrives after one member settles', () => {
@@ -128,7 +135,7 @@ describe('session machine behavior sequences', () => {
 
       false,
 
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     ).state;
 
     const terminalInstance = state.model.game.instances['1'];
@@ -164,7 +171,7 @@ describe('session machine behavior sequences', () => {
 
       false,
 
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     );
 
     expect(stale.state.model.game.instances['1']).toEqual(terminalInstance);
@@ -196,7 +203,7 @@ describe('session machine behavior sequences', () => {
 
       false,
 
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     );
 
     expect(krunkStateCodec.decode(sibling.state.model.game.handState)!.members[1].handler).toBe(4n);
@@ -321,12 +328,9 @@ describe('session machine behavior sequences', () => {
     });
 
     expect(() =>
-      reduceSessionMachine(state, {
+      reduceSessionMachineForTest(state, {
         type: 'hand-state-changed',
-
-        gameType: 'krunk',
-
-        state: {
+        handState: krunkStateCodec.encode({
           members: [
             {
               ...decoded!.members[0],
@@ -336,7 +340,7 @@ describe('session machine behavior sequences', () => {
             },
             decoded!.members[1],
           ],
-        },
+        }),
       }),
     ).not.toThrow();
   });
@@ -368,25 +372,23 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'local-game-action-committed',
-      gameType: 'krunk',
       id: '1',
-      state: {
+      handState: krunkStateCodec.encode({
         ...hand,
         members: [
           { ...hand.members[0], handler: 1n, myTurn: false, secretWord: 'CRANE' },
           hand.members[1],
         ],
-      },
+      }),
     });
     const afterFirst = krunkStateCodec.decode(state.model.game.handState)!;
     state = send(state, {
       type: 'local-game-action-committed',
-      gameType: 'krunk',
       id: '2',
-      state: {
+      handState: krunkStateCodec.encode({
         ...afterFirst,
         members: [afterFirst.members[0], { ...afterFirst.members[1], handler: 4n, myTurn: false }],
-      },
+      }),
     });
 
     const canonical = krunkStateCodec.decode(state.model.game.handState)!;
@@ -401,7 +403,7 @@ describe('session machine behavior sequences', () => {
       state,
       { MoveRejected: { id: 2n, tag: 'not_in_dictionary', message: 'XXXXX' } },
       false,
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     );
 
     expect(transition.state.model.game.queue).toEqual([
@@ -421,7 +423,7 @@ describe('session machine behavior sequences', () => {
       state,
       { MoveRejected: { id: 41n, tag: 'illegal_move', message: 'not allowed' } },
       false,
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     );
 
     expect(transition.state.model.game.queue[0]).toMatchObject({

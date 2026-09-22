@@ -1,6 +1,5 @@
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { initialKrunkGameState } from '@games/krunk/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import { storageRepository } from '../session/storageRepository';
 import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog, resetProtocolIds, setProtocolIds } from '../gameIdentities';
@@ -25,7 +24,7 @@ installSessionEnvelopeTestSetup();
 describe('durable game envelope round trips', () => {
   const saveLiveEnvelope = async (save: ReturnType<typeof liveSave>) => {
     if (save.session?.phase !== 'live') throw new Error('test fixture did not produce a live save');
-    await storageRepository.checkpointApplicationState(save);
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
   };
 
   it('canonical decode preserves a complete snapshot exactly', () => {
@@ -104,7 +103,7 @@ describe('durable game envelope round trips', () => {
   ] as const)(
     'round-trips a legitimate %s phase through IndexedDB and canonical decode',
     async (_label, save, kind) => {
-      await storageRepository.checkpointApplicationState(save);
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
       const restored = await readApplicationState();
       expect(restored).not.toBeNull();
       const decoded = decodeDurableApplicationState(restored!);
@@ -185,22 +184,22 @@ describe('durable game envelope round trips', () => {
         gameInstances,
         handState,
         betweenHandLastHandProposal: {
-          sender_is_player_a: gameType === 'krunk',
-          game_timeout: '15',
-          game_type: gameType,
+          senderIsPlayerA: gameType === 'krunk',
+          gameTimeout: 15n,
+          gameType,
           parameters:
             gameType === 'spacepoker' ? [BigInt(contribution) / 10n, 10n] : BigInt(contribution),
         },
       });
       await saveLiveEnvelope(save);
-      await storageRepository.flushAggregate();
+      await storageRepository.checkpointDomainMutations();
 
       storageRepository._resetForTests();
       const loaded = await storageRepository.readCurrentState();
       expect(loaded).not.toBeNull();
       const model = decodeDurableApplicationState(loaded!).model;
       expect(model.game.activeIds).toEqual(ids);
-      expect(decodePersistedGameState(model.game.handState)?.persisted).toEqual(handState);
+      expect(decodePersistedGameState(model.game.handState)).toEqual(handState);
     },
   );
 
@@ -212,12 +211,12 @@ describe('durable game envelope round trips', () => {
     };
     const snapshot = snapshotFromSessionModel(createSessionModel({ betweenHand: { compose } }));
     expect(snapshot.betweenHandCompose).toEqual({
-      selected_game: 'spacepoker',
-      game_timeout: '47',
+      selectedGame: 'spacepoker',
+      gameTimeout: 47n,
     });
 
     await saveLiveEnvelope(liveSave(snapshot));
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     storageRepository._resetForTests();
 
     const loaded = await storageRepository.readCurrentState();
@@ -283,7 +282,7 @@ describe('durable game envelope round trips', () => {
       },
     });
     const snapshot = snapshotFromSessionModel(model);
-    expect(snapshot.betweenHandLastHandProposal?.game_type).toBe('calpoker');
+    expect(snapshot.betweenHandLastHandProposal?.gameType).toBe('calpoker');
     const restored = decodeDurableApplicationState(liveSave(snapshot)).model;
     expect(restored.betweenHand.lastHandProposal).toEqual(lastHandProposal);
     expect(Object.hasOwn(restored.betweenHand.compose, 'drafts')).toBe(false);
@@ -297,10 +296,10 @@ describe('durable game envelope round trips', () => {
         {
           id: 'next-hand',
           lifecycle: 'local-outgoing',
-          hand_proposal: {
-            sender_is_player_a: false,
-            game_timeout: '15',
-            game_type: 'calpoker',
+          handProposal: {
+            senderIsPlayerA: false,
+            gameTimeout: 15n,
+            gameType: 'calpoker',
             parameters: 20n,
           },
         },
@@ -325,17 +324,17 @@ describe('durable game envelope round trips', () => {
       const restored = decodeDurableApplicationState(
         liveSave({
           betweenHandCompose: {
-            selected_game: 'spacepoker',
-            game_timeout: '47',
+            selectedGame: 'spacepoker',
+            gameTimeout: 47n,
           },
           pendingProposals: [
             {
               id: 'next-hand',
               lifecycle,
-              hand_proposal: {
-                sender_is_player_a: true,
-                game_timeout: '47',
-                game_type: 'spacepoker',
+              handProposal: {
+                senderIsPlayerA: true,
+                gameTimeout: 47n,
+                gameType: 'spacepoker',
                 parameters: [10n, 1n],
               },
             },
@@ -379,7 +378,7 @@ describe('durable game envelope round trips', () => {
       });
       const snapshot = snapshotFromSessionModel(decodeDurableApplicationState(save).model);
       expect(snapshot.activeGameType).toBe('calpoker');
-      expect(snapshot.betweenHandLastHandProposal?.game_type).toBe('calpoker');
+      expect(snapshot.betweenHandLastHandProposal?.gameType).toBe('calpoker');
       expect(snapshot.handState?.gameType).toBe('calpoker');
       expect(protocolIdForCatalog('calpoker')).toBe(hashes[0].id);
       resetProtocolIds();

@@ -12,7 +12,7 @@ import {
   selectSessionPhase,
   nextGameInstanceAfterLocalTurn,
 } from '../session/model';
-import { decodeChannelStatusPayload } from '../session/persistence';
+import { validateChannelStatus } from '../session/persistencePayloads';
 import { type DurableApplicationState } from '../session/saveEnvelope';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
@@ -385,7 +385,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
 
   it('rejects number state numbers at the model event boundary', () => {
     expect(() =>
-      decodeChannelStatusPayload({
+      validateChannelStatus({
         state: 'Active',
         advisory: null,
         coin: null,
@@ -747,8 +747,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
           '7': {
             id: '7',
             amount: '20',
-            coin: { coinHex: null, turnState: 'ended' },
-            handStatus: 'ended',
+            coinHex: null,
+            presentation: 'ended',
             terminal: {
               type: 'settled',
               outcome: 'forfeited_skipped_reveal',
@@ -791,8 +791,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
             '7': {
               id: '7',
               amount: '100',
-              coin: { coinHex: 'abcd', turnState: 'playing-on-chain' },
-              handStatus: 'playing-move',
+              coinHex: 'abcd',
+              presentation: 'playing-move',
               terminal: INITIAL_GAME_TERMINAL_MODEL,
             },
           },
@@ -816,20 +816,31 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         | 'finishing-spending'
         | 'opponent-illegal-move',
       coinHex: string | null,
-    ) => ({
-      activeIds: ['7'],
-      currentHandIds: ['7'],
-      instances: {
-        '7': {
-          id: '7',
-          amount: '100',
-          coin: { coinHex, turnState },
-          handStatus: 'active' as const,
-          terminal: INITIAL_GAME_TERMINAL_MODEL,
+    ) => {
+      const presentation = {
+        'their-turn': 'off-chain-their-turn',
+        'playing-on-chain': 'playing-move',
+        replaying: 'replaying-move',
+        finishing: 'finishing',
+        'finishing-waiting-timeout': 'finishing-waiting-timeout',
+        'finishing-spending': 'finishing-spending',
+        'opponent-illegal-move': 'illegal-move',
+      }[turnState] as const;
+      return {
+        activeIds: ['7'],
+        currentHandIds: ['7'],
+        instances: {
+          '7': {
+            id: '7',
+            amount: '100',
+            coinHex,
+            presentation,
+            terminal: INITIAL_GAME_TERMINAL_MODEL,
+          },
         },
-      },
-      lastDisplayedId: '7',
-    });
+        lastDisplayedId: '7',
+      };
+    };
     expect(
       selectGameDashboardView(
         createSessionModel({
@@ -920,15 +931,15 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       '7': {
         id: '7',
         amount: '100',
-        coin: { coinHex: 'aaaa', turnState: 'my-turn' as const },
-        handStatus: 'our-turn' as const,
+        coinHex: 'aaaa',
+        presentation: 'on-chain-my-turn' as const,
         terminal: INITIAL_GAME_TERMINAL_MODEL,
       },
       '9': {
         id: '9',
         amount: '100',
-        coin: { coinHex: 'bbbb', turnState: 'their-turn' as const },
-        handStatus: 'their-turn' as const,
+        coinHex: 'bbbb',
+        presentation: 'on-chain-their-turn' as const,
         terminal: INITIAL_GAME_TERMINAL_MODEL,
       },
     };
@@ -973,11 +984,11 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const makeInstance = (id: string, handStatus: 'our-turn' | 'their-turn') => ({
       id,
       amount: '100',
-      coin: {
-        coinHex: `${id}${id}`,
-        turnState: handStatus === 'our-turn' ? ('my-turn' as const) : ('their-turn' as const),
-      },
-      handStatus,
+      coinHex: `${id}${id}`,
+      presentation:
+        handStatus === 'our-turn'
+          ? ('on-chain-my-turn' as const)
+          : ('on-chain-their-turn' as const),
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     });
     const first = makeInstance('7', 'our-turn');
@@ -1017,8 +1028,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const settled = {
       id: 'picker',
       amount: '100',
-      coin: { coinHex: null, turnState: 'ended' as const, onChain: true },
-      handStatus: 'ended' as const,
+      coinHex: null,
+      presentation: 'ended' as const,
       terminal: {
         type: 'settled' as const,
         outcome: 'settled_cleanly' as const,
@@ -1030,8 +1041,8 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const active = {
       id: 'guesser',
       amount: '100',
-      coin: { coinHex: null, turnState: 'their-turn' as const, onChain: true },
-      handStatus: 'their-turn' as const,
+      coinHex: null,
+      presentation: 'on-chain-their-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     };
     const model = createSessionModel({
@@ -1061,14 +1072,13 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     const pending = (id: string) => ({
       id,
       amount: '100',
-      coin: { coinHex: null, turnState: 'my-turn' as const },
-      handStatus: 'active' as const,
+      coinHex: null,
+      presentation: 'off-chain-my-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     });
     const ended = (id: string, myReward: string) => ({
       ...pending(id),
-      coin: { coinHex: null, turnState: 'ended' as const },
-      handStatus: 'ended' as const,
+      presentation: 'ended' as const,
       terminal: {
         type: 'settled' as const,
         outcome: 'settled_cleanly' as const,
@@ -1203,8 +1213,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
             'game-1': pending('game-1'),
             'game-2': {
               ...pending('game-2'),
-              coin: { coinHex: null, turnState: 'ended' },
-              handStatus: 'ended',
+              presentation: 'ended',
               terminal: {
                 type: 'game-error',
                 outcome: null,

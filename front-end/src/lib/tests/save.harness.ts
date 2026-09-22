@@ -51,9 +51,9 @@ export const sampleSession = {
   perGameAmount: '10',
   rewardPuzzleHash: '11'.repeat(32),
   betweenHandLastHandProposal: {
-    sender_is_player_a: false,
-    game_timeout: '15',
-    game_type: 'calpoker',
+    senderIsPlayerA: false,
+    gameTimeout: 15n,
+    gameType: 'calpoker',
     parameters: null,
   },
   unackedMessages: [{ msgno: 4n, msg: new Uint8Array([3, 4, 5]) }],
@@ -126,7 +126,6 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
-  // Cancel debounced flushes so a late queueWrite cannot run after the suite.
   storageRepository._resetForTests();
   clearTestGlobal('localStorage');
   clearTestGlobal('sessionStorage');

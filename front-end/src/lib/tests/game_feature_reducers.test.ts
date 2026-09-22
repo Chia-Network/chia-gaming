@@ -4,23 +4,21 @@ import {
   reduceSpacepokerSettlementState,
 } from '@games/spacepoker/ui/handProposal';
 import { reduceCalpokerFeatureState } from '@games/calpoker/ui/handProposal';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
 import { reduceKrunkFeatureState } from '@games/krunk/ui/handProposal';
 import {
   createKrunkHand,
   initialKrunkGameState,
   KrunkHandler,
-  krunkStateCodec,
   restoreKrunkHand,
   type KrunkHandState,
 } from '@games/krunk/ui/serialize';
 import {
   createSpacepokerHand,
   restoreSpacepokerHand,
-  spacepokerStateCodec,
   type SpacepokerHandState,
 } from '@games/spacepoker/ui/serialize';
 import { restoreCalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import type { GameHandInitialization, GameUpdate } from '@games/host';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';

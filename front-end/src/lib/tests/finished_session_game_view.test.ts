@@ -9,7 +9,8 @@ import {
   selectFinishedSessionDisplay,
   sessionModelForReactProps,
 } from '../session/finishedSessionDisplay';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { initialKrunkGameState } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 
 describe('finished session shell display', () => {
   it('permits remount when the generic Calpoker envelope is present', () => {

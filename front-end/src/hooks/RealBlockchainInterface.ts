@@ -17,6 +17,7 @@ import {
 } from '../types/ChiaGaming';
 import { WalletType } from '../types/WalletType';
 import { CoinRecord } from '../types/rpc/CoinRecord';
+import { isExactDuplicateTransaction } from '../util/walletSubmit';
 
 import { log } from '../services/log';
 import {
@@ -275,14 +276,6 @@ function isStructurallyTerminalCancellation(value: unknown, tradeId: string): bo
 function isCoinRecordMiss(err: unknown): boolean {
   const text = collectErrorText(err).toLowerCase();
   return text.includes('not found') || (text.includes('coin id') && text.includes('unknown'));
-}
-
-function isExactDuplicateTransaction(detail: string): boolean {
-  return (
-    /\bALREADY_INCLUDING_TRANSACTION\b/i.test(detail) ||
-    /\bduplicate transaction\b/i.test(detail) ||
-    /\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(detail)
-  );
 }
 
 function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {

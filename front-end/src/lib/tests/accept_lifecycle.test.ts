@@ -134,7 +134,7 @@ describe('acceptLifecycle', () => {
         coinsOfInterest: [],
         terminalIStarted: true,
       });
-      await storageRepository.checkpointApplicationState(terminal);
+      await storageRepository.write(storageRepository.patchApplicationState(() => terminal));
       const onCommitted = jest.fn();
       onCommitted.mockImplementation(() => {
         epoch += 1;

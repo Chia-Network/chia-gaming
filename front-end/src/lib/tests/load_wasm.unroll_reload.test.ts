@@ -3,7 +3,10 @@ import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { storageRepository } from '../session/storageRepository';
 import { markSavedSession } from '../../hooks/saveCoordination';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
+import {
+  buildDurableApplicationState,
+  type TerminalCapture,
+} from '../session/sessionMachinePersist';
 import { rehydrateDurableApplicationState } from '../session/persistence';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { isTerminalChannelSnapshot } from '../session/selectors';
@@ -30,10 +33,10 @@ import * as assert from 'assert';
 import { createHash } from 'crypto';
 
 const harnessTerminalDependencies = {
-  captureTerminal: (capture: Parameters<typeof captureDurableApplicationState>[0]) => {
-    const prepared = captureDurableApplicationState(capture);
-    if (!prepared) throw new Error('expected terminal capture');
-    return prepared;
+  persistTerminal: async (capture: TerminalCapture) => {
+    const snapshot = buildDurableApplicationState(capture);
+    if (!snapshot) throw new Error('expected terminal snapshot');
+    await storageRepository.write(snapshot);
   },
   updateMarker: markSavedSession,
   teardown: () => {},

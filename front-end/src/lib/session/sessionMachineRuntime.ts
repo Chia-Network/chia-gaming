@@ -4,11 +4,9 @@ import type { ReliableCommitCoordinator } from '../../services/PeerSession';
 import type { WasmEvent } from '../../types/ChiaGaming';
 import { dispatchWasmNotification } from './gameSessionEvents';
 import { SessionMachineInterpreter } from './sessionMachineInterpreter';
-import {
-  captureDurableApplicationState,
-  type PreparedDurableApplicationStateCapture,
-} from './sessionMachinePersist';
+import { buildDurableApplicationState } from './sessionMachinePersist';
 import { reduceSessionMachine } from './sessionMachine';
+import { storageRepository } from './storageRepository';
 import type { ActiveGameHandContext } from './sessionMachineGame';
 import type {
   LocalGameActionRequest,
@@ -113,46 +111,38 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private readonly controller: SessionController;
   private readonly iStarted: boolean;
   private readonly restoring: boolean;
+  private readonly getRestoreStatus: () => RestoreStatus;
+  private readonly getRestoreError: () => string | null;
   private readonly bindControllerEvents: boolean;
   private controllerEventsUnsubscribe: (() => void) | null = null;
   private restoreStatusUnsubscribe: (() => void) | null = null;
   private activeHand: RegisteredGameHand | null = null;
-  private activeHandGameType: RegisteredGameType | null = null;
   private readonly activeHandContext: ActiveGameHandContext = {
     create: (gameType, init) => {
       this.activeHand = packageFor(gameType).createHand(init);
-      this.activeHandGameType = gameType;
-      return this.snapshotActiveHand();
+      return snapshotRegisteredGameHand(gameType, this.activeHand);
     },
     receive: (update) => {
       this.requireActiveHand().receive(update);
       return this.snapshotActiveHand();
     },
-    restore: (checkpoint) => {
-      this.restoreHandFrom(checkpoint);
-    },
     clear: () => {
       this.activeHand = null;
-      this.activeHandGameType = null;
     },
   };
-  private dispatching = false;
+  private draining = false;
   private readonly pendingEvents: SessionMachineEvent[] = [];
   private readonly pendingControllerWork: PendingControllerWork[] = [];
   private readonly pendingExternalEffects = new Map<string, PendingExternalEffect>();
-  private transactionActive = false;
   private committing = false;
-  private commitActivityPending = false;
   private durabilityDirty = false;
   private durabilityDegraded = false;
   private projectionPending = false;
-  private commitScheduled = false;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private commitPromise: Promise<void> = Promise.resolve();
-  private readonly preparePersistence: (
-    state: SessionMachineState,
-  ) => PreparedDurableApplicationStateCapture | null;
+  private readonly persistOverride?: (state: SessionMachineState) => Promise<void>;
   private readonly onError: (error: unknown) => void;
+  private detachStorageRuntime: (() => void) | null = null;
   private activated = false;
   private retired = false;
 
@@ -161,20 +151,12 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.controller = dependencies.controller;
     this.iStarted = dependencies.iStarted;
     this.restoring = dependencies.restoring;
+    this.getRestoreStatus = dependencies.getRestoreStatus;
+    this.getRestoreError = dependencies.getRestoreError;
     this.bindControllerEvents = dependencies.bindControllerEvents ?? false;
     this.onError = dependencies.onError;
-    this.restoreActiveHand(initial);
-    this.preparePersistence = dependencies.persist
-      ? (state) => ({ write: () => dependencies.persist!(state) })
-      : (state) =>
-          captureDurableApplicationState({
-            kind: 'live',
-            controller: dependencies.controller,
-            getState: () => state,
-            restoring: dependencies.restoring,
-            getRestoreStatus: dependencies.getRestoreStatus,
-            getRestoreError: dependencies.getRestoreError,
-          });
+    this.restoreHandFrom(initial.model.game.handState);
+    this.persistOverride = dependencies.persist;
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
       iStarted: dependencies.iStarted,
@@ -197,6 +179,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (this.activated || this.retired) return;
     this.activated = true;
     this.controller.commitSessionRuntime(this);
+    if (!this.retired) this.detachStorageRuntime = storageRepository.attachRuntime(this);
     if (this.retired || !this.bindControllerEvents) return;
     const subscription = this.controller.getObservable().subscribe({
       next: (event: WasmEvent) => this.dispatchControllerEvent(event),
@@ -221,7 +204,6 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (this.commitTimer !== null) {
       clearTimeout(this.commitTimer);
       this.commitTimer = null;
-      this.commitScheduled = false;
     }
     const error = new SessionRuntimeRetiredError();
     for (const work of this.pendingControllerWork.splice(0)) {
@@ -236,6 +218,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.controllerEventsUnsubscribe = null;
     this.restoreStatusUnsubscribe?.();
     this.restoreStatusUnsubscribe = null;
+    this.detachStorageRuntime?.();
+    this.detachStorageRuntime = null;
   }
 
   private dispatchControllerEvent(event: WasmEvent): void {
@@ -294,24 +278,23 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     });
   }
 
-  dispatch(event: SessionMachineEvent): void {
-    if (this.retired) return;
-    const durabilityProjection =
+  private isDurabilityProjection(event: SessionMachineEvent): boolean {
+    return (
       (event.type === 'enqueue-error' && event.kind === 'durability-error') ||
       ((event.type === 'dismiss-channel' || event.type === 'dismiss-channel-notification') &&
-        this.state.model.channel.queue[0]?.kind === 'durability-error');
+        this.state.model.channel.queue[0]?.kind === 'durability-error')
+    );
+  }
+
+  dispatch(event: SessionMachineEvent): void {
+    if (this.retired) return;
+    const durabilityProjection = this.isDurabilityProjection(event);
     this.pendingEvents.push(event);
     if (this.committing && durabilityProjection) {
       return;
     }
-    if (this.committing) {
-      this.commitActivityPending = true;
-      return;
-    }
-    if (this.transactionActive || this.dispatching) {
-      this.scheduleCommit(false);
-      return;
-    }
+    if (this.committing) return;
+    if (this.draining) return;
     this.runTransaction(undefined, !durabilityProjection);
     if (durabilityProjection && this.projectionPending) {
       this.projectionPending = false;
@@ -324,27 +307,18 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   }
 
   private drainMachineEvents(): void {
-    if (this.dispatching) return;
-    this.dispatching = true;
-    try {
-      while (this.pendingEvents.length > 0) {
-        const next = this.prepareGameEvent(this.pendingEvents.shift()!);
-        const previous = this.state;
-        const transition = reduceSessionMachine(previous, next, this.activeHandContext);
-        this.state = transition.state;
-        if (this.state !== previous) {
-          this.projectionPending = true;
-          if (transition.durability === 'durable') this.durabilityDirty = true;
-        }
-        for (const effect of transition.effects) {
-          this.interpreter.run(effect);
-        }
+    while (this.pendingEvents.length > 0) {
+      const next = this.pendingEvents.shift()!;
+      const previous = this.state;
+      const transition = reduceSessionMachine(previous, next, this.activeHandContext);
+      this.state = transition.state;
+      if (this.state !== previous) {
+        this.projectionPending = true;
+        if (transition.durability === 'durable') this.durabilityDirty = true;
       }
-    } catch (error) {
-      this.pendingEvents.length = 0;
-      throw error;
-    } finally {
-      this.dispatching = false;
+      for (const effect of transition.effects) {
+        this.interpreter.run(effect);
+      }
     }
   }
 
@@ -359,12 +333,12 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
         `Internal hand state gameType ${gameType} does not match active ${game.activeGameType}`,
       );
     }
-    const state = this.requireActiveHand().getState();
-    this.dispatch({ type: 'hand-state-changed', gameType, state });
+    this.dispatch({ type: 'hand-state-changed', handState: this.snapshotActiveHand() });
   }
 
   commitLocalGameAction(request: LocalGameActionRequest): void {
     const checkpoint = structuredClone(this.state.model.game.handState);
+    const stateCheckpoint = this.state;
     try {
       this.runTransaction(() => {
         const game = this.state.model.game;
@@ -395,19 +369,17 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
         }
         const disposition = this.interpreter.runLocalGameCommand(request.command, request.id);
         if (disposition === 'rejected') {
-          this.restoreAndProject(checkpoint);
+          this.restoreAndProject(checkpoint, stateCheckpoint);
           return;
         }
-        const accepted = this.snapshotActiveHand();
         this.dispatch({
           type: 'local-game-action-committed',
-          gameType: request.gameType,
           id: request.id,
-          state: accepted.state,
+          handState: this.snapshotActiveHand(),
         });
       });
     } catch (error) {
-      this.restoreAndProject(checkpoint);
+      this.restoreAndProject(checkpoint, stateCheckpoint);
       throw error;
     }
   }
@@ -416,44 +388,35 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     return this.flush();
   }
 
-  private restoreActiveHand(state: SessionMachineState): void {
-    this.restoreHandFrom(state.model.game.handState);
-  }
-
   private requireActiveHand(): RegisteredGameHand {
-    if (this.activeHand === null || this.activeHandGameType === null) {
+    if (this.activeHand === null) {
       throw new Error('Game update requires an active hand instance');
     }
     return this.activeHand;
   }
 
   private snapshotActiveHand() {
-    return snapshotRegisteredGameHand(this.activeHandGameType!, this.requireActiveHand());
-  }
-
-  private prepareGameEvent(event: SessionMachineEvent): SessionMachineEvent {
-    switch (event.type) {
-      case 'hand-state-changed':
-      case 'local-game-action-committed':
-        return { ...event, handState: this.snapshotActiveHand() } as SessionMachineEvent;
-      default:
-        return event;
-    }
+    return snapshotRegisteredGameHand(
+      this.state.model.game.activeGameType,
+      this.requireActiveHand(),
+    );
   }
 
   private restoreHandFrom(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
     if (checkpoint === null) {
       this.activeHand = null;
-      this.activeHandGameType = null;
       return;
     }
     const gameType = checkpoint.gameType as RegisteredGameType;
     this.activeHand = restoreRegisteredGameHandState(gameType, checkpoint);
-    this.activeHandGameType = gameType;
   }
 
-  private restoreAndProject(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
+  private restoreAndProject(
+    checkpoint: ReturnType<typeof this.snapshotActiveHand> | null,
+    stateCheckpoint: SessionMachineState,
+  ): void {
     this.restoreHandFrom(checkpoint);
+    this.state = stateCheckpoint;
     this.projectionPending = true;
     this.scheduleCommit(false);
   }
@@ -504,11 +467,11 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
 
   private runTransaction(work?: () => void, requestCommit = true): void {
     if (this.retired) return;
-    if (this.transactionActive) {
+    if (this.draining) {
       work?.();
       return;
     }
-    this.transactionActive = true;
+    this.draining = true;
     try {
       work?.();
       for (;;) {
@@ -517,8 +480,11 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
         if (this.pendingEvents.length === 0 && !(this.controller.hasDeferredWork?.() ?? false))
           break;
       }
+    } catch (error) {
+      this.pendingEvents.length = 0;
+      throw error;
     } finally {
-      this.transactionActive = false;
+      this.draining = false;
     }
     if (requestCommit) this.scheduleCommit(false);
   }
@@ -531,15 +497,9 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (this.retired) return;
     if (markDirty) this.durabilityDirty = true;
     if (!this.durabilityDirty && !this.projectionPending) return;
-    if (this.committing) {
-      this.commitActivityPending = true;
-      return;
-    }
-    if (this.transactionActive || this.commitScheduled) return;
-    this.commitScheduled = true;
+    if (this.committing || this.draining || this.commitTimer !== null) return;
     this.commitTimer = setTimeout(() => {
       this.commitTimer = null;
-      this.commitScheduled = false;
       this.startCommit();
     }, 0);
     if (typeof this.commitTimer === 'object' && 'unref' in this.commitTimer) {
@@ -551,17 +511,13 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (
       this.retired ||
       this.committing ||
-      this.transactionActive ||
+      this.draining ||
       (!this.durabilityDirty && !this.projectionPending)
     ) {
       return;
     }
     this.runTransaction(undefined, false);
-    if (
-      this.committing ||
-      this.transactionActive ||
-      (!this.durabilityDirty && !this.projectionPending)
-    ) {
+    if (this.committing || this.draining || (!this.durabilityDirty && !this.projectionPending)) {
       return;
     }
     const projectedState = this.state;
@@ -585,16 +541,27 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
           this.activeHandContext,
         ).state
       : structuredClone(projectedState);
-    const persistence =
-      this.controller.prepareInboundSessionRejectPersistence?.() ??
-      this.preparePersistence(persistenceState);
     this.durabilityDirty = false;
     this.projectionPending = false;
     this.committing = true;
-    this.commitActivityPending = false;
     let write: Promise<void>;
     try {
-      write = persistence?.write() ?? Promise.resolve();
+      const rejectionWrite = this.controller.persistInboundSessionRejectIfNeeded?.();
+      if (rejectionWrite) {
+        write = rejectionWrite;
+      } else if (this.persistOverride) {
+        write = this.persistOverride(persistenceState);
+      } else {
+        const snapshot = buildDurableApplicationState({
+          kind: 'live',
+          controller: this.controller,
+          state: persistenceState,
+          restoring: this.restoring,
+          getRestoreStatus: this.getRestoreStatus,
+          getRestoreError: this.getRestoreError,
+        });
+        write = snapshot ? storageRepository.write(snapshot) : Promise.resolve();
+      }
     } catch (error) {
       write = Promise.reject(error);
     }
@@ -612,6 +579,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
         void Promise.resolve(completion).then(effect.deferred.resolve, effect.deferred.reject);
       }
     };
+    let writeFailed = false;
+    let activityDirtyBeforeFailure = false;
     this.commitPromise = write
       .then(
         () => {
@@ -648,6 +617,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
             this.retire();
             throw error;
           }
+          writeFailed = true;
+          activityDirtyBeforeFailure = this.durabilityDirty;
           this.durabilityDirty = true;
           this.durabilityDegraded = true;
           this.controller.reportDurabilityError?.(error);
@@ -669,19 +640,19 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       )
       .finally(() => {
         this.committing = false;
-        if (this.retired) {
-          this.commitActivityPending = false;
-          return;
-        }
-        const activityPending = this.commitActivityPending;
-        this.commitActivityPending = false;
+        if (this.retired) return;
         if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
           const work = this.pendingControllerWork.splice(0);
-          const requiresCheckpoint = activityPending || work.length > 0;
-          this.runTransaction(() => {
-            for (const task of work) task.run();
-          }, requiresCheckpoint);
-          if (!requiresCheckpoint && this.projectionPending) {
+          const queuedActivity =
+            work.length > 0 ||
+            this.pendingEvents.some((event) => !this.isDurabilityProjection(event));
+          this.runTransaction(
+            () => {
+              for (const task of work) task.run();
+            },
+            !writeFailed || activityDirtyBeforeFailure || queuedActivity,
+          );
+          if (writeFailed && !activityDirtyBeforeFailure && !queuedActivity) {
             this.projectionPending = false;
             try {
               this.render(this.state);
@@ -689,7 +660,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
               this.onError(error);
             }
           }
-        } else if (activityPending) {
+        } else if (!writeFailed || activityDirtyBeforeFailure) {
           this.scheduleCommit(false);
         }
       });
@@ -701,7 +672,6 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (this.commitTimer !== null) {
       clearTimeout(this.commitTimer);
       this.commitTimer = null;
-      this.commitScheduled = false;
     }
     if (
       !this.committing &&

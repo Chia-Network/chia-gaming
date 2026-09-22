@@ -1,7 +1,6 @@
 import {
   createSessionModel,
   decodeDurableApplicationState,
-  clearDerivedGamePresentation,
   normalizeSessionPresentation,
   channelStatusPayloadFromModel,
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -12,13 +11,12 @@ import {
   selectGameSpecificView,
   selectPendingProposal,
   snapshotFromSessionModel,
-  gameCoinIdentityForGameStatus,
   nextGameInstanceAfterLocalTurn,
-  nextGamePresentationAfterLocalTurn,
   projectGameStatus,
 } from '../session/model';
 import { type DurableApplicationState } from '../session/saveEnvelope';
-import { initialKrunkGameState, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { initialKrunkGameState } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
@@ -147,15 +145,15 @@ describe('session model proposal and normalization contracts', () => {
           '11': {
             id: '11',
             amount: '20',
-            coin: { coinHex: null, turnState: 'my-turn' },
-            handStatus: 'active',
+            coinHex: null,
+            presentation: 'off-chain-my-turn',
             terminal: INITIAL_GAME_TERMINAL_MODEL,
           },
           '13': {
             id: '13',
             amount: '20',
-            coin: { coinHex: null, turnState: 'their-turn' },
-            handStatus: 'active',
+            coinHex: null,
+            presentation: 'off-chain-their-turn',
             terminal: INITIAL_GAME_TERMINAL_MODEL,
           },
         },
@@ -260,15 +258,15 @@ describe('session model proposal and normalization contracts', () => {
           '11': {
             id: '11',
             amount: '20',
-            coin: { coinHex: null, turnState: 'my-turn', onChain: true },
-            handStatus: 'our-turn',
+            coinHex: null,
+            presentation: 'on-chain-my-turn',
             terminal: INITIAL_GAME_TERMINAL_MODEL,
           },
           '13': {
             id: '13',
             amount: '20',
-            coin: { coinHex: null, turnState: 'their-turn', onChain: true },
-            handStatus: 'their-turn',
+            coinHex: null,
+            presentation: 'on-chain-their-turn',
             terminal: INITIAL_GAME_TERMINAL_MODEL,
           },
         },
@@ -305,53 +303,6 @@ describe('session model proposal and normalization contracts', () => {
     ]);
   });
 
-  it('clears only derived hand presentation for an abandoned session', () => {
-    const model = createSessionModel({
-      channel: {
-        status: {
-          ...INITIAL_CHANNEL_STATUS_MODEL,
-          state: 'ShuttingDown',
-          sessionDisposition: 'Abandoned',
-          ourBalance: '0',
-          theirBalance: '100',
-        },
-      },
-      game: {
-        handKey: 3,
-        activeIds: ['7'],
-        currentHandIds: ['7'],
-        currentHandOrigin: 'local',
-        instances: {
-          '7': {
-            id: '7',
-            amount: '100',
-            coin: { coinHex: 'game-coin', turnState: 'their-turn', onChain: true },
-            handStatus: 'their-turn',
-            terminal: INITIAL_GAME_TERMINAL_MODEL,
-          },
-        },
-        lastDisplayedId: '7',
-        handState: { gameType: 'calpoker', state: { cards: [1n] } },
-      },
-    });
-
-    const cleared = clearDerivedGamePresentation(model);
-
-    expect(cleared.channel).toEqual(model.channel);
-    expect(cleared.game).toMatchObject({
-      handKey: 0,
-      activeIds: [],
-      currentHandIds: [],
-      instances: {},
-      lastDisplayedId: null,
-      handState: null,
-    });
-    expect(snapshotFromSessionModel(cleared)).not.toHaveProperty('gameCoinHex');
-    expect(snapshotFromSessionModel(cleared)).not.toHaveProperty('gameTurnState');
-    expect(snapshotFromSessionModel(cleared).currentHandGameIds).toEqual([]);
-    expect(snapshotFromSessionModel(cleared).gameInstances).toEqual({});
-  });
-
   it('normalizes stale fallback presentation for live abandoned sessions', () => {
     const abandoned = normalizeSessionPresentation(
       createSessionModel({
@@ -370,8 +321,8 @@ describe('session model proposal and normalization contracts', () => {
             '7': {
               id: '7',
               amount: '40',
-              coin: { coinHex: 'stale-coin', turnState: 'their-turn', onChain: true },
-              handStatus: 'their-turn',
+              coinHex: 'stale-coin',
+              presentation: 'on-chain-their-turn',
               terminal: {
                 type: 'settled',
                 outcome: 'settled_cleanly',
@@ -412,8 +363,8 @@ describe('session model proposal and normalization contracts', () => {
         '7': {
           id: '7',
           amount: '40',
-          coin: { coinHex: 'stale', turnState: 'their-turn' as const },
-          handStatus: 'active' as const,
+          coinHex: 'stale',
+          presentation: 'off-chain-their-turn' as const,
           terminal: INITIAL_GAME_TERMINAL_MODEL,
         },
       },
@@ -502,16 +453,20 @@ describe('session model proposal and normalization contracts', () => {
   });
 
   it('marks a new on-chain game coin pending without retaining its predecessor', () => {
-    const previous = { coinHex: 'old-coin', turnState: 'their-turn' as const, onChain: true };
-
-    expect(gameCoinIdentityForGameStatus(previous, 'on-chain-their-turn', true)).toEqual({
-      coinHex: null,
-      onChain: true,
-    });
-    expect(gameCoinIdentityForGameStatus(previous, 'replaying', true)).toEqual({
-      coinHex: null,
-      onChain: true,
-    });
+    const previous = {
+      id: '7',
+      amount: '100',
+      coinHex: 'old-coin',
+      presentation: 'on-chain-their-turn' as const,
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+    };
+    expect(
+      projectGameStatus({
+        previous,
+        payload: { id: '7', status: 'replaying', coin_id: 'new-coin' },
+        channelState: 'ResolvedUnrolled',
+      }),
+    ).toMatchObject({ coinHex: null, presentation: 'replaying-move' });
 
     expect(
       selectGameDashboardView(
@@ -523,8 +478,8 @@ describe('session model proposal and normalization contracts', () => {
               '7': {
                 id: '7',
                 amount: '100',
-                coin: { coinHex: null, onChain: true, turnState: 'replaying' },
-                handStatus: 'replaying-move',
+                coinHex: null,
+                presentation: 'replaying-move',
                 terminal: INITIAL_GAME_TERMINAL_MODEL,
               },
             },
@@ -542,8 +497,8 @@ describe('session model proposal and normalization contracts', () => {
             '7': {
               id: '7',
               amount: '100',
-              coin: { coinHex: null, onChain: true, turnState: 'submitting-timeout' },
-              handStatus: 'submitting-timeout',
+              coinHex: null,
+              presentation: 'submitting-timeout',
               terminal: INITIAL_GAME_TERMINAL_MODEL,
             },
           },
@@ -555,15 +510,22 @@ describe('session model proposal and normalization contracts', () => {
   });
 
   it('projects playing-move notifications and preserves them through my-turn confirmation', () => {
-    const previousCoin = { coinHex: 'parent', turnState: 'my-turn' as const, onChain: true };
+    const previous = {
+      id: '7',
+      amount: '100',
+      coinHex: 'parent',
+      presentation: 'on-chain-my-turn' as const,
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+    };
     const playing = projectGameStatus({
-      previous: { coin: previousCoin, handStatus: 'our-turn' },
+      previous,
       payload: { id: '7', status: 'playing-move', coin_id: 'new-coin' },
       channelState: 'ResolvedUnrolled',
     });
     expect(playing).toEqual({
-      coin: { coinHex: null, onChain: true, turnState: 'playing-on-chain' },
-      handStatus: 'playing-move',
+      ...previous,
+      coinHex: null,
+      presentation: 'playing-move',
     });
 
     const confirmed = projectGameStatus({
@@ -572,24 +534,21 @@ describe('session model proposal and normalization contracts', () => {
       channelState: 'ResolvedUnrolled',
     });
     expect(confirmed).toEqual({
-      coin: { coinHex: null, onChain: true, turnState: 'playing-on-chain' },
-      handStatus: 'playing-move',
+      ...previous,
+      coinHex: null,
+      presentation: 'playing-move',
     });
   });
 
   it('preserves authoritative on-chain turn state during local turn callbacks', () => {
-    const localMove = nextGamePresentationAfterLocalTurn(
-      {
-        coin: { coinHex: 'parent', turnState: 'my-turn', onChain: true },
-        handStatus: 'our-turn',
-      },
-      false,
-      'Unrolling',
-    );
-    expect(localMove).toEqual({
-      coin: { coinHex: 'parent', turnState: 'my-turn', onChain: true },
-      handStatus: 'our-turn',
-    });
+    const localMove = {
+      id: '7',
+      amount: '100',
+      coinHex: 'parent',
+      presentation: 'on-chain-my-turn' as const,
+      terminal: INITIAL_GAME_TERMINAL_MODEL,
+    };
+    expect(nextGameInstanceAfterLocalTurn(localMove, false, 'Unrolling')).toBe(localMove);
 
     expect(
       projectGameStatus({
@@ -598,7 +557,7 @@ describe('session model proposal and normalization contracts', () => {
         channelState: 'Unrolling',
       }),
     ).toEqual(localMove);
-    expect(nextGamePresentationAfterLocalTurn(localMove, true, 'Unrolling')).toBe(localMove);
+    expect(nextGameInstanceAfterLocalTurn(localMove, true, 'Unrolling')).toBe(localMove);
   });
 
   it('keeps reset, acceptance, immediate local turn, and terminal transitions instance-owned', () => {
@@ -613,8 +572,8 @@ describe('session model proposal and normalization contracts', () => {
     const acceptedInstance = {
       id: '7',
       amount: '100',
-      coin: { coinHex: null, turnState: 'my-turn' as const, onChain: false },
-      handStatus: 'active' as const,
+      coinHex: null,
+      presentation: 'off-chain-my-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     };
     const accepted = createSessionModel({
@@ -626,7 +585,11 @@ describe('session model proposal and normalization contracts', () => {
         lastDisplayedId: '7',
       },
     });
-    expect(selectGameSessionView(accepted).gameCoin).toEqual(acceptedInstance.coin);
+    expect(selectGameSessionView(accepted).gameCoin).toEqual({
+      coinHex: null,
+      turnState: 'my-turn',
+      onChain: false,
+    });
 
     const playingInstance = nextGameInstanceAfterLocalTurn(acceptedInstance, false, 'Unrolling');
     const playing = createSessionModel({
@@ -639,8 +602,8 @@ describe('session model proposal and normalization contracts', () => {
 
     const terminalInstance = {
       ...playingInstance,
-      coin: { ...playingInstance.coin, coinHex: null, turnState: 'ended' as const },
-      handStatus: 'ended' as const,
+      coinHex: null,
+      presentation: 'ended' as const,
       terminal: {
         type: 'settled' as const,
         outcome: 'settled_cleanly' as const,
@@ -675,15 +638,15 @@ describe('session model proposal and normalization contracts', () => {
     const displayed = {
       id: '7',
       amount: '100',
-      coin: { coinHex: 'displayed-coin', turnState: 'my-turn' as const, onChain: true },
-      handStatus: 'our-turn' as const,
+      coinHex: 'displayed-coin',
+      presentation: 'on-chain-my-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     };
     const background = {
       id: '9',
       amount: '100',
-      coin: { coinHex: 'background-old', turnState: 'their-turn' as const, onChain: true },
-      handStatus: 'their-turn' as const,
+      coinHex: 'background-old',
+      presentation: 'on-chain-their-turn' as const,
       terminal: INITIAL_GAME_TERMINAL_MODEL,
     };
     const baseGame = {
@@ -716,7 +679,7 @@ describe('session model proposal and normalization contracts', () => {
     });
     const enrichedBackground = {
       ...projectedBackground,
-      coin: { ...projectedBackground.coin, coinHex: 'background-enriched' },
+      coinHex: 'background-enriched',
     };
     const afterEnrichment = createSessionModel({
       game: {
@@ -727,15 +690,15 @@ describe('session model proposal and normalization contracts', () => {
 
     expect(selectGameSessionView(before)).toMatchObject({
       displayGameId: '7',
-      gameCoin: displayed.coin,
+      gameCoin: { coinHex: 'displayed-coin', turnState: 'my-turn', onChain: true },
     });
     expect(selectGameSessionView(afterStatus)).toMatchObject({
       displayGameId: '7',
-      gameCoin: displayed.coin,
+      gameCoin: { coinHex: 'displayed-coin', turnState: 'my-turn', onChain: true },
     });
     expect(selectGameSessionView(afterEnrichment)).toMatchObject({
       displayGameId: '7',
-      gameCoin: displayed.coin,
+      gameCoin: { coinHex: 'displayed-coin', turnState: 'my-turn', onChain: true },
     });
     expect(afterEnrichment.game.instances['9'].coinHex).toBe('background-enriched');
   });

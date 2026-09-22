@@ -112,13 +112,14 @@ fail while the process continues—such as untrusted peer validation, a chain
 observation, or synchronous game-hand mutation—and its temporary working copy
 must disappear before capture.
 
-The live `SessionMachineRuntime` owns protocol/controller/UI/transport drains.
-Other boundaries are intentionally distinct: channel-funding and fee-attachment
-owners checkpoint a reservation before mutating the provider; pre-runtime reliable negotiation
-and rejection checkpoint before release; and `StorageRepository` coalesces
-preference and history mutations outside protocol work. Repository writes
-always retain the last complete session boundary while folding in those sibling
-changes; they never capture a partially drained runtime.
+The live `SessionMachineRuntime` is the only dirty/coalescing scheduler. It owns
+protocol/controller/UI/transport drains and folds preference, history, funding,
+fee, and rejection mutations into the same quiescent snapshot. Channel-funding
+and fee-attachment owners still checkpoint a reservation before mutating the
+provider. Before a runtime exists, reliable negotiation, rejection, and other
+explicit product boundaries build and write a whole-root snapshot immediately.
+`StorageRepository` owns the in-memory aggregate, storage authority, and exact
+serialized whole-root writes; it does not schedule, debounce, or capture state.
 
 An ordinary checkpoint failure does not stop play: project and release the
 captured boundary once, keep the latest in-memory root dirty, warn once per
@@ -829,18 +830,17 @@ session state. Observation callbacks use a fresh scratch allocator, and all
 surviving CLVM values own serialized `Program` bytes rather than allocator-local
 `NodePtr`s.
 
-Each game package owns its concrete mutable hand. Fresh hands are created from
-accepted initialization terms; restored hands are constructed directly from
-only their saved state. The shared hand boundary exposes `getState()` plus
-host-delivered updates. For a protocol action the game mutates its own hand
-first; the browser keeps the previous canonical hand only as a temporary
-synchronous rollback checkpoint. If Rust rejects the command, the browser
-restores that checkpoint. If Rust accepts the command as queued or already
-applied, the mutated complete hand becomes canonical immediately and is
-persisted atomically with Rust's serialized prepared-action queue. There is no
-durable `pendingCandidates` layer. `LocalActionApplied` is host-only
-protocol-presentation bookkeeping: it may advance the host's turn display, but
-does not promote game-owned state or grant the game permission to act.
+Shared frontend state owns only lifecycle facts: membership and protocol IDs,
+origins, keyed presentation, active-game type, and terminal facts. Each game
+package alone owns its concrete mutable hand and opaque saved state. Fresh hands
+come from accepted initialization terms; restored hands come directly from that
+package's current saved state. `SessionMachineRuntime.activeHand` is only a
+cache rebuilt from and snapshotted back into canonical `handState`, never a
+second authority. For a protocol action the package mutates its hand first and
+the browser retains the previous canonical hand only as a synchronous rollback
+checkpoint. Rust rejection restores both cache and model; acceptance snapshots
+the complete hand and persists it atomically with Rust's prepared-action queue.
+There is no durable candidate layer or shared inspection of package fields.
 
 Proposal persistence stores the exact opaque Bencodex parameter value together
 with the generic player-A/player-B terms and sender orientation. Each package
@@ -865,8 +865,9 @@ the wire or core ledger.
 | UI projection, notification presentation, client capability constraints                                                           | JavaScript UI   |
 
 `StorageRepository` atomically claims authority and reads one strict
-`DurableApplicationState` v4, then owns the in-memory root, mutation ordering,
-reset epochs, and aggregate checkpoints. IndexedDB v5 has exactly two stores:
+`DurableApplicationState` v5, then owns the in-memory root, mutation ordering,
+reset epochs, and serialized exact writes. It has no persistence scheduler.
+IndexedDB v5 has exactly two stores:
 coordination metadata and `application-state/current`. Coordination is separate
 because it fences writes; it is not application state. Any incompatible or
 malformed aggregate field rejects the whole root and shows the hard-reset
@@ -903,15 +904,13 @@ serialized boundary and returns a typed promise that resolves or rejects when
 that work executes, including work queued behind an in-progress commit.
 
 The controller's single committed runtime slot is the exclusive, retire-aware
-authority. Committing a replacement retires the previous runtime;
-reload and controller cleanup retire the current one. Retirement discards
-queued reducer/controller work and rejects pending result promises and
-not-yet-launched external effects, so an obsolete runtime cannot publish,
-persist, or release work after replacement. Final controller cleanup also
-settles submission deliveries and detaches in-flight external operations from
-controller quiescence; late provider results transfer to
-the `ChannelFundingRuntime` or detached `FeeAttachmentRuntime` that owns the
-durable reservation.
+authority. Committing a replacement retires the previous runtime; takeover,
+reload, and controller cleanup retire the current one. Retirement discards
+queued work and rejects pending promises and not-yet-launched effects, so an
+obsolete owner cannot publish, persist, release, or transfer work into a later
+authority generation. A known reservation returned late may be cancelled
+best-effort through its original provider, but the new owner resumes only
+obligations present in its claimed durable snapshot.
 
 Restore separates local presentation from external recovery. One strict decode
 rehydrates the aggregate into presentation, split owner-specific reservation slices, rejection
@@ -933,7 +932,7 @@ orphaned reservation has settled; there is no successor/predecessor funding
 protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
-The browser aggregate is strict `DurableApplicationState` v4, its opaque
+The browser aggregate is strict `DurableApplicationState` v5, its opaque
 Rust/WASM cradle is schema 22, and the app IndexedDB is schema 5. Under the
 [unreleased-format policy](#unreleased-app-owned-formats), any incompatible or
 malformed field rejects the whole root. The unchanged evidence remains
@@ -982,10 +981,13 @@ timer or immediate loop.
 
 `BootRecoveryBoundary` owns pending wipe, read-only preclaim inspection,
 atomic claim-and-read, one strict rehydrate, takeover, reset retry, and
-authority loss. The winning claim returns the exact aggregate read in the claim
-transaction. Pending pre-claim identity, history, and preference edits are then
-folded into that root. Every session, terminal, clear, rejection, and wallet
-mutation requires claimed authority and checkpoints one whole aggregate.
+authority loss. Takeover is the old owner's death, not a handoff. The winning
+claim returns the exact durable aggregate read in the claim transaction; only
+that snapshot is rehydrated, with no in-flight callback or transient obligation
+imported from the previous owner. Pending pre-claim identity, history, and
+preference edits are then folded into that root. Every session, terminal,
+clear, rejection, and wallet mutation requires claimed authority and writes one
+whole aggregate through the active runtime or an immediate pre-runtime boundary.
 Strict validation rejects unknown or missing fields, duplicate obligations,
 invalid discriminants, and non-current versions. IndexedDB v5 coordination
 stores durable owner, write, and reset epochs; each aggregate mutation checks

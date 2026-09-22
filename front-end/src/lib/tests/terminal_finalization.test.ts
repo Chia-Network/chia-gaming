@@ -4,12 +4,8 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import type { SessionController } from '../../hooks/SessionController';
-import {
-  initialKrunkGameState,
-  krunkStateCodec,
-  KrunkHandler,
-  restoreKrunkHand,
-} from '@games/krunk/ui/serialize';
+import { initialKrunkGameState, KrunkHandler, restoreKrunkHand } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
 import { storageRepository } from '../session/storageRepository';
@@ -25,8 +21,9 @@ import {
 import { decodeDurableApplicationState } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
 import {
-  captureDurableApplicationState,
+  buildDurableApplicationState,
   type SessionPersistDependencies,
+  type TerminalCapture,
 } from '../session/sessionMachinePersist';
 import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
 import { renderFrozenGameMount } from '../gameMountRegistry';
@@ -41,17 +38,17 @@ const walletProviderScope = { provider: 'simulator' as const, identity: 'player'
 const liveCradle = new Uint8Array([1, 2, 3]);
 
 async function persistCapturedState(dependencies: SessionPersistDependencies) {
-  const capture = captureDurableApplicationState({ kind: 'live', ...dependencies });
-  if (!capture) throw new Error('expected live capture');
+  const snapshot = buildDurableApplicationState({ kind: 'live', ...dependencies });
+  if (!snapshot) throw new Error('expected live snapshot');
   const state = structuredClone(storageRepository.loadState());
-  await capture.write();
+  await storageRepository.write(snapshot);
   return state;
 }
 
-function prepareTerminalCapture(capture: Parameters<typeof captureDurableApplicationState>[0]) {
-  const prepared = captureDurableApplicationState(capture);
-  if (!prepared) throw new Error('expected terminal capture');
-  return prepared;
+async function persistTerminalSnapshot(capture: TerminalCapture): Promise<void> {
+  const snapshot = buildDurableApplicationState(capture);
+  if (!snapshot) throw new Error('expected terminal snapshot');
+  await storageRepository.write(snapshot);
 }
 
 const handState = {
@@ -182,7 +179,7 @@ async function seedLiveSession(): Promise<void> {
     activeGameIds: [],
   });
   if (live.session?.phase !== 'live') throw new Error('expected live fixture');
-  await storageRepository.checkpointApplicationState(live);
+  await storageRepository.write(storageRepository.patchApplicationState(() => live));
   markSavedSession();
 }
 
@@ -225,16 +222,13 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   });
   const teardown = jest.fn(() => events.push('teardown'));
   const dependencies: TerminalFinalizationDependencies = {
-    captureTerminal: (capture) => {
-      const prepared = prepareTerminalCapture(capture);
-      return {
-        write: async () => {
-          events.push('stage-terminal', 'write-start');
-          await writeGate;
-          await prepared.write();
-          events.push('write-complete');
-        },
-      };
+    persistTerminal: async (capture) => {
+      const snapshot = buildDurableApplicationState(capture);
+      if (!snapshot) throw new Error('expected terminal snapshot');
+      events.push('stage-terminal', 'write-start');
+      await writeGate;
+      await storageRepository.write(snapshot);
+      events.push('write-complete');
     },
     updateMarker: () => events.push('marker'),
     teardown,
@@ -319,18 +313,18 @@ it('does not stage or tear down before controller terminal quiescence', async ()
     getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: jest.fn(() => quiescenceGate),
   } as unknown as SessionController;
-  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
+  const persistTerminal = jest.fn(async () => {});
   const teardown = jest.fn();
 
   const finalization = finalizeTerminalSession(finalizationArgs(controller), {
-    captureTerminal,
+    persistTerminal,
     updateMarker: () => {},
     teardown,
   });
   await Promise.resolve();
 
   expect(controller.quiesceForTerminalFinalization).toHaveBeenCalledTimes(1);
-  expect(captureTerminal).not.toHaveBeenCalled();
+  expect(persistTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 
   releaseQuiescence({
@@ -339,7 +333,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   });
   await finalization;
 
-  expect(captureTerminal).toHaveBeenCalledTimes(1);
+  expect(persistTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
 });
 
@@ -383,17 +377,17 @@ it('stages and returns the model produced after terminal quiescence', async () =
       ],
     })),
   } as unknown as SessionController;
-  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
+  const persistTerminal = jest.fn(async () => {});
 
   const terminal = await finalizeTerminalSession(finalizationArgs(controller), {
-    captureTerminal,
+    persistTerminal,
     updateMarker: () => {},
     teardown: () => {},
   });
 
   expect(terminal.model).toEqual(authoritativeModel);
   expect(terminal.model).not.toBe(authoritativeModel);
-  expect(captureTerminal).toHaveBeenCalledWith(
+  expect(persistTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
       model: expect.objectContaining({
         channel: expect.objectContaining({
@@ -431,7 +425,7 @@ it('round-trips an explicitly empty local alias without converting it to null', 
   args.identity.myName = '';
 
   await finalizeTerminalSession(args, {
-    captureTerminal: prepareTerminalCapture,
+    persistTerminal: persistTerminalSnapshot,
     updateMarker: markSavedSession,
     teardown: jest.fn(),
   });
@@ -471,7 +465,7 @@ it('keeps a fully resolved live checkpoint until terminal finalization succeeds'
 
   const saved = await persistCapturedState({
     controller,
-    getState: () => createSessionMachineState(model),
+    state: createSessionMachineState(model),
     restoring: false,
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
@@ -545,7 +539,7 @@ it('keeps a resolved unroll live while an on-chain game is still unresolved', as
 
   const saved = await persistCapturedState({
     controller,
-    getState: () => createSessionMachineState(activeModel),
+    state: createSessionMachineState(activeModel),
     restoring: false,
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
@@ -602,7 +596,7 @@ it('persists live machine hand state instead of a former controller bundle value
 
   const saved = await persistCapturedState({
     controller,
-    getState: () => createSessionMachineState(liveModel),
+    state: createSessionMachineState(liveModel),
     restoring: false,
     getRestoreStatus: () => 'idle',
     getRestoreError: () => null,
@@ -652,17 +646,17 @@ it('assembles current timer ownership instead of stale checkpoint timing', () =>
   } as unknown as SessionController;
   const dependencies = {
     controller,
-    getState: () => staleMachineCheckpoint,
+    state: staleMachineCheckpoint,
     restoring: false,
     getRestoreStatus: () => 'idle' as const,
     getRestoreError: () => null,
   };
 
   waitingStateEnteredAt = 300n;
-  const capture = captureDurableApplicationState({ kind: 'live', ...dependencies });
+  const snapshot = buildDurableApplicationState({ kind: 'live', ...dependencies });
   const captured = storageRepository.loadState();
 
-  expect(capture).not.toBeNull();
+  expect(snapshot).not.toBeNull();
   expect(captured.session?.phase).toBe('live');
   expect(
     captured.session?.phase === 'live' ? captured.session.presentation.waitingStateEnteredAt : null,
@@ -752,7 +746,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       coinsOfInterest: [],
     }),
   } as unknown as SessionController;
-  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
+  const persistTerminal = jest.fn(async () => {});
 
   const terminal = await finalizeTerminalSession(
     {
@@ -764,7 +758,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       },
     },
     {
-      captureTerminal,
+      persistTerminal,
       updateMarker: () => {},
       teardown: () => {},
     },
@@ -804,7 +798,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   );
   expect(markup).toContain('data-testid="finished-session-game-view"');
   expect(markup).not.toContain('Game details unavailable');
-  expect(captureTerminal).toHaveBeenCalledWith(
+  expect(persistTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
       model: expect.objectContaining({
         game: expect.objectContaining({
@@ -837,13 +831,9 @@ it('returns the terminal result and tears down after an ordinary write failure',
   } as unknown as SessionController;
   const teardown = jest.fn(() => events.push('teardown'));
   const dependencies: TerminalFinalizationDependencies = {
-    captureTerminal: (capture) => {
-      prepareTerminalCapture(capture);
-      return {
-        write: async () => {
-          throw new Error('deferred IndexedDB write failed');
-        },
-      };
+    persistTerminal: async (capture) => {
+      buildDurableApplicationState(capture);
+      throw new Error('deferred IndexedDB write failed');
     },
     updateMarker: () => events.push('marker'),
     teardown,
@@ -867,7 +857,9 @@ it('returns the terminal result and tears down after an ordinary write failure',
     decodedDurable?.session?.phase === 'live' && decodedDurable.session.live.serializedGameSession,
   ).toEqual(liveCradle);
 
-  await storageRepository.checkpointApplicationState(storageRepository.loadState());
+  await storageRepository.write(
+    storageRepository.patchApplicationState(() => storageRepository.loadState()),
+  );
 
   expect(events).toEqual(['controller-quiesce', 'marker', 'teardown']);
   expect(teardown).toHaveBeenCalledTimes(1);
@@ -900,9 +892,9 @@ it.each([
 
   await expect(
     finalizeTerminalSession(finalizationArgs(controller), {
-      captureTerminal: (capture) => {
-        prepareTerminalCapture(capture);
-        return { write: async () => Promise.reject(error()) };
+      persistTerminal: async (capture) => {
+        buildDurableApplicationState(capture);
+        throw error();
       },
       updateMarker,
       teardown,

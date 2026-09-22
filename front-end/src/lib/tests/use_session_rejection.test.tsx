@@ -14,6 +14,12 @@ function mockHub(): HubConnection & { sendToPeer: jest.Mock } {
   } as unknown as HubConnection & { sendToPeer: jest.Mock };
 }
 
+function mockRootPatching(): void {
+  jest
+    .spyOn(storageRepository, 'patchApplicationState')
+    .mockImplementation((transform) => transform(storageRepository.loadState()));
+}
+
 describe('useSessionRejection authority owner', () => {
   let renderer: ReactTestRenderer | undefined;
   let primary: PeerSession | null;
@@ -77,10 +83,8 @@ describe('useSessionRejection authority owner', () => {
       unackedMessages: [{ msgno: 1n, msg: new Uint8Array([0x64, 0x65]) }],
     };
     const cleanupFailure = new Error('delete failed');
-    jest.spyOn(storageRepository, 'prepareApplicationStateCapture').mockReturnValueOnce({
-      state: storageRepository.loadState(),
-      write: jest.fn().mockRejectedValue(cleanupFailure),
-    });
+    mockRootPatching();
+    jest.spyOn(storageRepository, 'write').mockRejectedValueOnce(cleanupFailure);
     const error = jest.spyOn(console, 'error').mockImplementation(() => {});
     act(() => {
       renderer = create(createElement(Harness));
@@ -111,10 +115,8 @@ describe('useSessionRejection authority owner', () => {
         remoteNumber: 1n,
         unackedMessages: [],
       };
-      jest.spyOn(storageRepository, 'prepareApplicationStateCapture').mockReturnValueOnce({
-        state: storageRepository.loadState(),
-        write: jest.fn().mockRejectedValue(failure),
-      });
+      mockRootPatching();
+      jest.spyOn(storageRepository, 'write').mockRejectedValueOnce(failure);
       act(() => {
         renderer = create(createElement(Harness));
       });
@@ -131,16 +133,14 @@ describe('useSessionRejection authority owner', () => {
     primary.reliableState.remoteNumber = 1n;
     const saved = storageRepository.loadState();
     jest.spyOn(storageRepository, 'loadState').mockReturnValue(saved);
+    mockRootPatching();
     let finishWrite!: () => void;
-    jest
-      .spyOn(storageRepository, 'prepareApplicationStateCapture')
-      .mockImplementation((transform) => ({
-        state: transform(storageRepository.loadState()),
-        write: () =>
-          new Promise<void>((resolve) => {
-            finishWrite = resolve;
-          }),
-      }));
+    jest.spyOn(storageRepository, 'write').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWrite = resolve;
+        }),
+    );
 
     act(() => {
       renderer = create(createElement(Harness));

@@ -1,11 +1,15 @@
 import { Program } from 'clvm-lib';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { krunkStateCodec } from '@games/krunk/ui/serialize';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
-import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
+import { createSessionMachineState } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
-import { CALPOKER_TERMS, run, send, trackProposal } from './session_machine.harness';
+import {
+  CALPOKER_TERMS,
+  reduceSessionMachineForTest,
+  run,
+  send,
+  trackProposal,
+} from './session_machine.harness';
 
 const readableInteger = (value: bigint) => Program.fromBigInt(value).serialize();
 
@@ -28,7 +32,7 @@ describe('session machine behavior sequences', () => {
     });
 
     expect(() =>
-      reduceSessionMachine(state, {
+      reduceSessionMachineForTest(state, {
         type: 'notification-game-status',
         id: '9',
         payload: { id: '9', status: 'my-turn', coin_id: null },
@@ -95,25 +99,17 @@ describe('session machine behavior sequences', () => {
       isPlayerTurn: false,
     });
 
-    const changed = reduceSessionMachine(state, {
+    const changed = reduceSessionMachineForTest(state, {
       type: 'hand-state-changed',
-
-      gameType: 'calpoker',
-
-      state: {
-        playerHand: [],
-
-        opponentHand: [],
-
-        cardSelections: [],
+      handState: calpokerStateCodec.encode({
+        ...calpokerStateCodec.decode(state.model.game.handState),
 
         moveNumber: 2n,
 
         isPlayerTurn: true,
 
         iStarted: true,
-        error: null,
-      },
+      }),
     });
     expect(changed.effects).toEqual([]);
     state = changed.state;
@@ -209,10 +205,7 @@ describe('session machine behavior sequences', () => {
 
     state = send(state, {
       type: 'hand-state-changed',
-
-      gameType: 'calpoker',
-
-      state: {
+      handState: calpokerStateCodec.encode({
         perPlayerStake: 10n,
 
         playerHand,
@@ -228,7 +221,7 @@ describe('session machine behavior sequences', () => {
         iStarted: true,
 
         settlementOutcome: null,
-      },
+      }),
     });
 
     const readableTransition = reduceSessionNotification(
@@ -254,7 +247,7 @@ describe('session machine behavior sequences', () => {
 
       true,
 
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     );
 
     const readableState = calpokerStateCodec.decode(readableTransition.state.model.game.handState);
@@ -292,7 +285,7 @@ describe('session machine behavior sequences', () => {
 
       true,
 
-      reduceSessionMachine,
+      reduceSessionMachineForTest,
     );
 
     expect(terminalTransition.effects.some((effect) => effect.type === 'emit-gameplay')).toBe(
@@ -395,12 +388,9 @@ describe('session machine behavior sequences', () => {
             : krunkStateCodec.decode(state.model.game.handState)?.members[0];
 
       expect(() =>
-        reduceSessionMachine(state, {
+        reduceSessionMachineForTest(state, {
           type: 'hand-state-changed',
-
-          gameType,
-
-          state: decodedAccepted,
+          handState: { gameType, state: decodedAccepted },
         }),
       ).not.toThrow();
 
@@ -577,21 +567,15 @@ describe('session machine behavior sequences', () => {
     });
 
     expect(() =>
-      reduceSessionMachine(state, {
+      reduceSessionMachineForTest(state, {
         type: 'hand-state-changed',
-
-        gameType: 'spacepoker',
-
-        state: {},
+        handState: { gameType: 'spacepoker', state: {} },
       }),
     ).toThrow('gameType');
 
-    const replaced = reduceSessionMachine(state, {
+    const replaced = reduceSessionMachineForTest(state, {
       type: 'hand-state-changed',
-
-      gameType: 'calpoker',
-
-      state: { malformed: true },
+      handState: { gameType: 'calpoker', state: { malformed: true } },
     });
     expect(replaced.state.model.game.handState).toEqual({
       gameType: 'calpoker',

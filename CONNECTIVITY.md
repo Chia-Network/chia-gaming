@@ -435,7 +435,7 @@ The hub does not create a session. It can only advise and relay:
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
 - **Application persistence**: `StorageRepository` atomically claims and reads
-  one salt-prefixed, masked Bencodex `DurableApplicationState` v4, owns ordered
+  one salt-prefixed, masked Bencodex `DurableApplicationState` v5, owns ordered
   root transforms, and checkpoints the whole aggregate. IndexedDB v5 has only
   coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
   schema 22. Owner-specific channel-funding operations, fee attachments, and

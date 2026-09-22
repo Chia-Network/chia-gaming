@@ -33,7 +33,7 @@ import {
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from '../lib/session/historyLimits';
-import { decodeChannelStatusPayload } from '../lib/session/persistence';
+import { validateChannelStatus } from '../lib/session/persistencePayloads';
 import { completeRegisteredGames } from '../lib/gameIdentities';
 import { catalogGameTypeFromWire } from '../lib/gameIdentities';
 import { markClientErrorReported } from '../lib/clientError';
@@ -111,8 +111,6 @@ function clvmToBytes(value: Program | null): Uint8Array {
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
-/** Yield before an unexpectedly self-replenishing active FIFO monopolizes JS. */
-const ACTIVE_DRAIN_EVENT_BUDGET = 100;
 const SUBMISSION_DRAIN_JS_STACK_LIMIT = 8_192;
 
 function proposalMadeAdmitted(notification: WasmNotification): boolean {
@@ -239,8 +237,6 @@ export class SessionController implements PollingGameSession {
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: GameSessionEvent[] = [];
-  private drainScheduled = false;
-  private drainTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingChainObservations: Array<
     | { kind: 'coin-states'; peak: bigint; records: CoinStateRecord[] }
     | { kind: 'height'; peak: bigint }
@@ -775,10 +771,6 @@ export class SessionController implements PollingGameSession {
     this.blockchain = null;
     this.persistInboundSessionReject = null;
     this.inboundSessionRejectHandler = null;
-    if (this.drainTimer) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
-    }
     this.stopKeepaliveTimer();
     if (this.beforeUnloadHandler && typeof window !== 'undefined') {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
@@ -1265,7 +1257,7 @@ export class SessionController implements PollingGameSession {
       this.flushDeferredWork();
       return;
     }
-    this.scheduleDrain();
+    if (this.eventQueue.length > 0) this.requestCommit();
   }
 
   queueHostMessage(
@@ -1363,44 +1355,11 @@ export class SessionController implements PollingGameSession {
     this.reorderQueue.clear();
   }
 
-  private scheduleDrain(): void {
-    if (this.drainScheduled || this.eventQueue.length === 0) return;
-    if (this.committedSessionRuntime) {
-      this.drainScheduled = true;
-      this.committedSessionRuntime.requestCommit();
-      return;
-    }
-    this.drainScheduled = true;
-    this.drainTimer = setTimeout(() => {
-      this.drainTimer = null;
-      this.drainActiveEventsToQuiescence();
-    }, 0);
-  }
-
-  /**
-   * Preserve the macrotask boundary before a normal drain, then consume every
-   * synchronously appended active event in that same task. Keeping
-   * `drainScheduled` set while dispatching makes re-entrant active
-   * `processResult()` calls append to this FIFO rather than schedule a second
-   * task. Terminal results retain their separate queue-clearing flush path.
-   */
-  private drainActiveEventsToQuiescence(eventBudget: number = ACTIVE_DRAIN_EVENT_BUDGET): void {
+  flushDeferredWork(eventBudget = Number.POSITIVE_INFINITY): void {
     let drained = 0;
-    try {
-      while (
-        this.eventQueue.length > 0 &&
-        !this.protocolStopped &&
-        !this.retired &&
-        drained < eventBudget
-      ) {
-        this.drainOneEvent();
-        drained += 1;
-      }
-    } finally {
-      this.drainScheduled = false;
-    }
-    if (this.eventQueue.length > 0 && !this.protocolStopped && !this.retired) {
-      this.scheduleDrain();
+    while (this.eventQueue.length > 0 && !this.retired && drained < eventBudget) {
+      this.drainOneEvent();
+      drained += 1;
     }
   }
 
@@ -1418,25 +1377,8 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  flushDeferredWork(): void {
-    if (this.drainTimer) {
-      clearTimeout(this.drainTimer);
-      this.drainTimer = null;
-    }
-    if (this.protocolStopped || this.retired) {
-      this.drainScheduled = false;
-      while (this.eventQueue.length > 0) {
-        this.drainOneEvent();
-      }
-    } else {
-      this.drainActiveEventsToQuiescence(
-        Math.max(ACTIVE_DRAIN_EVENT_BUDGET, this.eventQueue.length),
-      );
-    }
-  }
-
   hasDeferredWork(): boolean {
-    return this.eventQueue.length > 0 || this.drainScheduled;
+    return this.eventQueue.length > 0;
   }
 
   flushTransactionSubmissions(): Promise<void> {
@@ -1446,10 +1388,10 @@ export class SessionController implements PollingGameSession {
   async quiesceForTerminalFinalization(): Promise<TerminalQuiescentSnapshot> {
     const maxPasses = 20;
     let checkpointFailed = false;
-    const flushTerminalCheckpoint = async (flush: () => Promise<void>): Promise<void> => {
+    const flushRuntime = async (runtime: SessionMachineRuntime): Promise<void> => {
       if (checkpointFailed) return;
       try {
-        await flush();
+        await runtime.flush();
       } catch (error) {
         if (
           error instanceof StorageAuthorityLostError ||
@@ -1461,27 +1403,22 @@ export class SessionController implements PollingGameSession {
       }
     };
     for (let pass = 0; pass < maxPasses; pass += 1) {
-      this.flushDeferredWork();
-      await flushTerminalCheckpoint(() => this.flushPendingSave());
+      const runtime = this.committedSessionRuntime;
+      if (!runtime) {
+        throw new Error('SessionController terminal finalization requires an active runtime');
+      }
+      await flushRuntime(runtime);
 
       await Promise.allSettled([...this.pendingEffects]);
       await this.flushTransactionSubmissions();
-      await flushTerminalCheckpoint(() => this.reliableTransport.flushPending());
-
-      this.flushDeferredWork();
-      await flushTerminalCheckpoint(() => this.flushPendingSave());
+      await flushRuntime(runtime);
 
       if (
         this.pendingEffects.size === 0 &&
         this.submissionPump.isQuiescent() &&
         this.eventQueue.length === 0 &&
-        !this.drainScheduled &&
-        !this.reliableTransport.hasPendingDurability()
+        (checkpointFailed || !this.reliableTransport.hasPendingDurability())
       ) {
-        const runtime = this.committedSessionRuntime;
-        if (!runtime) {
-          throw new Error('SessionController terminal finalization requires an active runtime');
-        }
         const model = runtime.snapshotModel();
         const coinsOfInterest = structuredClone(this.getCoinsOfInterest());
         if (this.committedSessionRuntime !== runtime) continue;
@@ -1499,17 +1436,15 @@ export class SessionController implements PollingGameSession {
       return;
     }
     for (let i = 0; i < 100; i += 1) {
-      this.flushDeferredWork();
+      await this.committedSessionRuntime?.flush();
       const effects = [...this.pendingEffects];
       await Promise.allSettled(effects);
       await this.flushTransactionSubmissions();
-      await this.reliableTransport.flushPending();
-      this.flushDeferredWork();
+      await this.committedSessionRuntime?.flush();
       if (
         this.pendingEffects.size === 0 &&
         this.submissionPump.isQuiescent() &&
         this.eventQueue.length === 0 &&
-        !this.drainScheduled &&
         !this.reliableTransport.hasPendingDurability()
       ) {
         return;
@@ -1614,7 +1549,7 @@ export class SessionController implements PollingGameSession {
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
       if (n.ChannelStatus !== undefined) {
         const cs = n.ChannelStatus;
-        const channelStatus = decodeChannelStatusPayload({
+        const channelStatus = validateChannelStatus({
           ...cs,
           coin: coerceToBytes(cs.coin),
         });
@@ -2034,21 +1969,19 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  prepareInboundSessionRejectPersistence(): { write(): Promise<void> } | null {
+  persistInboundSessionRejectIfNeeded(): Promise<void> | null {
     if (!this.inboundSessionRejected) return null;
     const persist = this.persistInboundSessionReject;
     const sessionId = this.reliableState.sessionId;
     const remoteNumber = this.reliableState.remoteNumber;
-    return {
-      write: async () => {
-        if (persist) {
-          await persist(sessionId, remoteNumber);
-        } else {
-          await storageRepository.clearSession();
-        }
-        this.inboundSessionRejectCommitted = true;
-      },
-    };
+    return (async () => {
+      if (persist) {
+        await persist(sessionId, remoteNumber);
+      } else {
+        await storageRepository.clearSession();
+      }
+      this.inboundSessionRejectCommitted = true;
+    })();
   }
 
   private completeOutboundTerminalHandoffAfterAck(commandId: string): void {
@@ -2136,12 +2069,10 @@ export class SessionController implements PollingGameSession {
     if (!this.wc) throw new Error('no wasm');
     const result = this.cradle.propose(params);
     this.processCommandResult(result, 'propose game');
-    const scalarId = (result as typeof result & { id?: string }).id;
-    if (scalarId !== undefined) return scalarId;
-    if (result?.ids?.length !== 1) {
+    if (result.id === undefined) {
       throw new Error('propose game returned no scalar local proposal id');
     }
-    return result.ids[0]!;
+    return result.id;
   }
 
   acceptProposal(gameId: string): void {

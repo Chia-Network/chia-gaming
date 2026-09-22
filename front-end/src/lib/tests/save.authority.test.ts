@@ -1,6 +1,5 @@
 import { StorageAuthorityRequiredError, indexedDbStoragePort } from '../session/indexedDb';
 import { storageRepository } from '../session/storageRepository';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { activeSave } from './session_save_envelope.fixtures';
 import './save.harness';
 
@@ -13,12 +12,9 @@ describe('aggregate persistence authority', () => {
     expect(() => storageRepository.replaceChannelFunding([])).toThrow(
       StorageAuthorityRequiredError,
     );
-    expect(() =>
-      captureDurableApplicationState({
-        kind: 'transform',
-        transform: (state) => state,
-      }),
-    ).toThrow(StorageAuthorityRequiredError);
+    expect(() => storageRepository.patchApplicationState((state) => state)).toThrow(
+      StorageAuthorityRequiredError,
+    );
   });
 
   it('claim returns the exact aggregate snapshot paired with its authority', async () => {

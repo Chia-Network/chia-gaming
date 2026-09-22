@@ -1,11 +1,11 @@
 import { Program } from 'clvm-lib';
 import {
   KrunkHandler,
-  krunkStateCodec,
   type KrunkGameState,
   type KrunkHand,
   type KrunkHandState,
 } from '@games/krunk/ui/serialize';
+import { krunkStateCodec } from './game_state_helpers';
 import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';

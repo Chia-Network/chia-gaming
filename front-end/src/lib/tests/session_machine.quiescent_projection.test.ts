@@ -283,23 +283,18 @@ describe('SessionMachineRuntime quiescent projection', () => {
       myAlias: undefined,
       opponentAlias: undefined,
     }));
-    jest
-      .spyOn(storageRepository, 'prepareApplicationStateCapture')
-      .mockImplementation((transform) => {
-        const update = transform(baseSave());
-        if (update.session?.phase !== 'live') throw new Error('expected live aggregate capture');
-        captured.push({
-          bytes: update.session.live.serializedGameSession,
-          timeout: update.session.presentation.betweenHandCompose.game_timeout,
-        });
-        const ordinal = captured.length;
-        return {
-          state: update,
-          write: async () => {
-            if (ordinal === 1) await firstWrite;
-          },
-        };
+    jest.spyOn(storageRepository, 'patchApplicationState').mockImplementation((transform) => {
+      const update = transform(baseSave());
+      if (update.session?.phase !== 'live') throw new Error('expected live aggregate capture');
+      captured.push({
+        bytes: update.session.live.serializedGameSession,
+        timeout: update.session.presentation.betweenHandCompose.gameTimeout,
       });
+      return update;
+    });
+    jest.spyOn(storageRepository, 'write').mockImplementation(async () => {
+      if (captured.length === 1) await firstWrite;
+    });
     const runtime = new SessionMachineRuntime(initialState(), {
       controller: mockController,
       iStarted: false,
@@ -312,7 +307,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     jest.runOnlyPendingTimers();
     await Promise.resolve();
-    expect(captured).toEqual([{ bytes: new Uint8Array([1, 1, 1]), timeout: '20' }]);
+    expect(captured).toEqual([{ bytes: new Uint8Array([1, 1, 1]), timeout: 20n }]);
 
     wasmBytes = new Uint8Array([2, 2, 2]);
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
@@ -320,8 +315,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
     await runtime.persist();
 
     expect(captured).toEqual([
-      { bytes: new Uint8Array([1, 1, 1]), timeout: '20' },
-      { bytes: new Uint8Array([2, 2, 2]), timeout: '30' },
+      { bytes: new Uint8Array([1, 1, 1]), timeout: 20n },
+      { bytes: new Uint8Array([2, 2, 2]), timeout: 30n },
     ]);
   });
 

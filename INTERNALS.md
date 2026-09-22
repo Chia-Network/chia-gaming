@@ -523,7 +523,7 @@ Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned contracts are `DurableApplicationState` v4, opaque
+The current app-owned contracts are `DurableApplicationState` v5, opaque
 Rust/WASM cradle schema 22, and app IndexedDB v5. Internally, that means a
 non-current version is an unsupported root, not an alternate restore path; see
 the canonical

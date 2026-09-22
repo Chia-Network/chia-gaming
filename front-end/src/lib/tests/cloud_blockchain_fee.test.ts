@@ -85,7 +85,7 @@ describe('CloudBlockchainInterface fee support', () => {
       feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
-    await storageRepository.checkpointApplicationState(empty);
+    await storageRepository.write(storageRepository.patchApplicationState(() => empty));
     saveCloudWalletAuth({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',

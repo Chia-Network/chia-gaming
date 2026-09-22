@@ -225,9 +225,14 @@ export function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDepend
       const claimed = await storageRepository.claimApplicationState();
       if (!recoveryIsCurrent(generation)) return;
       if (!storageRepository.shouldOfferResumeOrStartOver(claimed)) {
+        const sessionId = await storageRepository.ensureHubIdentity();
+        if (!recoveryIsCurrent(generation)) return;
+        dependenciesRef.current.onSessionId(sessionId);
+        if (!recoveryIsCurrent(generation)) return;
+        await dependenciesRef.current.onFreshClaim(claimed, 'boot');
+        if (!recoveryIsCurrent(generation)) return;
         clearAutoResumeOnce();
-        markSavedSession();
-        setState(unavailableSavedSession());
+        setState({ kind: 'ready' });
         return;
       }
       await restoreClaimed(claimed, source, generation);

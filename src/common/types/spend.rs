@@ -446,11 +446,6 @@ pub fn complete_fee_offer_bundle(
     let settlement_solution_node = vec![notarized_payment].to_clvm(&mut allocator).into_gen()?;
     let settlement_solution = Program::from_nodeptr(&allocator, settlement_solution_node)?;
     let settlement_puzzle = Puzzle::from_bytes(&chia_puzzles::SETTLEMENT_PAYMENT)?;
-    if settlement_puzzle.sha256tree(&mut allocator) != settlement_puzzle_hash {
-        return Err(Error::StrErr(
-            "compiled settlement puzzle hash does not match its published hash".to_string(),
-        ));
-    }
 
     maker_bundle.spends.push(CoinSpend {
         coin: settlement_coin,

@@ -379,6 +379,7 @@ impl ChannelState {
             .is_some_and(|proposal| proposal.lifecycle.originated_locally())
     }
 
+    #[cfg(test)]
     pub fn next_game_id_for_testing(&self) -> GameID {
         GameID(self.acceptance_ledger.next_game_id)
     }

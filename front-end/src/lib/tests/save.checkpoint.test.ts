@@ -1,7 +1,7 @@
 import { indexedDbStoragePort, readApplicationState } from '../session/indexedDb';
 import { storageRepository } from '../session/storageRepository';
 import type { ChannelFundingEntry } from '../session/channelFundingStore';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
+import { buildDurableApplicationState } from '../session/sessionMachinePersist';
 import { decodeDurableApplicationState } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { createSessionModel } from '../session/model';
@@ -41,7 +41,9 @@ describe('aggregate checkpoints', () => {
       .mockRejectedValueOnce(failure);
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    await expect(storageRepository.checkpointApplicationState(activeSave())).rejects.toBe(failure);
+    await expect(
+      storageRepository.write(storageRepository.patchApplicationState(() => activeSave())),
+    ).rejects.toBe(failure);
 
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError.mock.calls[0][0]).toContain(
@@ -54,19 +56,39 @@ describe('aggregate checkpoints', () => {
 
   it('writes session and wallet obligations as one application state', async () => {
     const state = withWallet(activeSave());
-    await storageRepository.checkpointApplicationState(state);
+    await storageRepository.write(storageRepository.patchApplicationState(() => state));
     const stored = await readApplicationState();
     expect(stored?.session).toEqual(state.session);
     expect(stored?.walletContext).toEqual(entry.owner.providerScope);
     expect(stored?.channelFundingOperations).toEqual([entry]);
   });
 
+  it('signals an attached runtime without starting repository writes', async () => {
+    const requestCommit = jest.fn();
+    const flush = jest.fn().mockResolvedValue(undefined);
+    const detach = storageRepository.attachRuntime({ requestCommit, flush });
+    const write = jest.spyOn(indexedDbStoragePort, 'writeApplicationState');
+
+    await storageRepository.updatePreference({ key: 'alias', value: 'Runtime Alice' });
+    await storageRepository.updateCommon({ history: { humanHistory: ['runtime history'] } });
+
+    expect(requestCommit).toHaveBeenCalledTimes(2);
+    expect(write).not.toHaveBeenCalled();
+    await storageRepository.checkpointDomainMutations();
+    expect(flush).toHaveBeenCalledTimes(1);
+
+    write.mockRestore();
+    detach();
+  });
+
   it('a later whole-root checkpoint cannot retain stale wallet or session fields', async () => {
-    await storageRepository.checkpointApplicationState(
-      withWallet(activeSave({ pairingToken: 'one' })),
+    await storageRepository.write(
+      storageRepository.patchApplicationState(() =>
+        withWallet(activeSave({ pairingToken: 'one' })),
+      ),
     );
     const replacement = activeSave({ pairingToken: 'two' });
-    await storageRepository.checkpointApplicationState(replacement);
+    await storageRepository.write(storageRepository.patchApplicationState(() => replacement));
     const stored = await readApplicationState();
     expect(stored?.session).toEqual(replacement.session);
     expect(stored?.channelFundingOperations).toEqual([]);
@@ -75,7 +97,7 @@ describe('aggregate checkpoints', () => {
   it('semantic clear keeps unresolved obligations in the same aggregate', async () => {
     const state = withWallet(activeSave());
     storageRepository._replaceApplicationStateForTests(state);
-    await storageRepository.checkpointApplicationState(state);
+    await storageRepository.write(storageRepository.patchApplicationState(() => state));
     await storageRepository.clearSession();
     const stored = await readApplicationState();
     expect(stored?.session).toBeNull();
@@ -86,10 +108,9 @@ describe('aggregate checkpoints', () => {
   });
 
   it('preserves concurrent session, wallet, and rejection root transforms', async () => {
-    const first = captureDurableApplicationState({
-      kind: 'transform',
-      transform: () => activeSave({ pairingToken: 'captured-session' }),
-    })!;
+    const first = storageRepository.patchApplicationState(() =>
+      activeSave({ pairingToken: 'captured-session' }),
+    );
     const rejection = {
       kind: 'inbound-receipt' as const,
       peerId: 'peer',
@@ -99,18 +120,15 @@ describe('aggregate checkpoints', () => {
       unackedMessages: [],
       createdAt: 1,
     };
-    const second = captureDurableApplicationState({
-      kind: 'transform',
-      transform: (state) => ({
-        ...state,
-        walletContext: entry.owner.providerScope,
-        channelFundingOperations: [entry],
-        rejectionTransports: [rejection],
-      }),
-    })!;
+    const second = storageRepository.patchApplicationState((state) => ({
+      ...state,
+      walletContext: entry.owner.providerScope,
+      channelFundingOperations: [entry],
+      rejectionTransports: [rejection],
+    }));
 
-    await first.write();
-    await second.write();
+    await storageRepository.write(first);
+    await storageRepository.write(second);
 
     const stored = await readApplicationState();
     expect(stored?.session?.phase === 'live' && stored.session.pairing.token).toBe(
@@ -170,15 +188,15 @@ describe('aggregate checkpoints', () => {
         },
       }),
     );
-    const prepared = captureDurableApplicationState({
+    const snapshot = buildDurableApplicationState({
       kind: 'live',
       controller,
-      getState: () => machine,
+      state: machine,
       restoring: false,
       getRestoreStatus: () => 'idle',
       getRestoreError: () => null,
     });
-    if (!prepared) throw new Error('expected prepared live capture');
+    if (!snapshot) throw new Error('expected live snapshot');
 
     let release!: () => void;
     let committed!: () => void;
@@ -190,7 +208,7 @@ describe('aggregate checkpoints', () => {
     });
     storageRepository.holdNextCheckpointAfterCommitForTests(barrier, committed);
 
-    const liveWrite = prepared.write();
+    const liveWrite = storageRepository.write(snapshot);
     await reachedCommit;
     const duringLiveWrite = await readApplicationState();
     expect(duringLiveWrite).not.toBeNull();
@@ -216,7 +234,7 @@ describe('aggregate checkpoints', () => {
     storageRepository.replaceChannelFunding([entry]);
     release();
     await liveWrite;
-    await Promise.all([preferenceWrite, storageRepository.flushAggregate()]);
+    await Promise.all([preferenceWrite, storageRepository.checkpointDomainMutations()]);
 
     const final = await readApplicationState();
     expect(final).not.toBeNull();

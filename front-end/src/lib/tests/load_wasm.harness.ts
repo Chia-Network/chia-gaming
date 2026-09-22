@@ -13,9 +13,8 @@ import { SessionController } from '../../hooks/SessionController';
 import { clearSavedSessionMarker } from '../../hooks/saveCoordination';
 import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { calpokerStateCodec } from '@games/calpoker/ui/serialize';
-import { spacepokerStateCodec } from '@games/spacepoker/ui/serialize';
-import { initialKrunkGameState, KrunkHandler, krunkStateCodec } from '@games/krunk/ui/serialize';
+import { initialKrunkGameState, KrunkHandler } from '@games/krunk/ui/serialize';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import type { HandProposal, PersistedGameState } from '../session/types';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 import { pollOnce } from './blockchain_poller.driver';
@@ -137,7 +136,7 @@ async function cleanupActiveResources() {
   testPoller?.stop();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
-  await storageRepository.flushAggregate();
+  await storageRepository.checkpointDomainMutations();
 }
 
 afterEach(async () => {
@@ -262,7 +261,6 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
     `outbound=${cradle.waiting_messages.length}`,
     `system=${blob.systemState?.()}`,
     `queue=${blob.eventQueue?.length}`,
-    `drain=${blob.drainScheduled}`,
     `launcher=${blob.launcherProvided}`,
   ].join('/');
 }

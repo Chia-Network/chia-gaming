@@ -280,7 +280,7 @@ export interface WasmResult {
   unwatchCoins: WatchedCoinEntry[];
   actionSucceeded: boolean;
   disposition: WasmDisposition;
-  ids?: string[];
+  id?: string;
 }
 
 export interface GameSessionConfig {

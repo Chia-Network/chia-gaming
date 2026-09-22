@@ -37,6 +37,9 @@ describe('WalletConnect chain id follows the network preference', () => {
     setGlobal('localStorage', makeStorage());
     setGlobal('sessionStorage', makeStorage());
     await storageRepository.claimApplicationState();
+    await storageRepository.updateCommon({
+      preferences: { network: 'mainnet', blockchainType: undefined },
+    });
   });
 
   afterEach(() => {
@@ -81,6 +84,9 @@ describe('genesis challenge follows the network preference', () => {
     setGlobal('localStorage', makeStorage());
     setGlobal('sessionStorage', makeStorage());
     await storageRepository.claimApplicationState();
+    await storageRepository.updateCommon({
+      preferences: { network: 'mainnet', blockchainType: undefined },
+    });
   });
 
   afterEach(() => {

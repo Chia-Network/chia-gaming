@@ -47,7 +47,7 @@ export function coalesceProviderFlight<T>(
 
 async function checkpoint(generation: number): Promise<void> {
   try {
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
   } catch (error) {
     if (error instanceof StorageAuthorityLostError) throw error;
     log(`[provider-execution] aggregate persistence failed: ${String(error)}`);

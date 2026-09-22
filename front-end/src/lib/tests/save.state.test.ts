@@ -2,10 +2,9 @@ import { DURABLE_APPLICATION_STATE_VERSION as CURRENT_VERSION } from '../session
 import { storageRepository } from '../session/storageRepository';
 import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
 import { readApplicationState, SESSION_DB_NAME } from '../session/indexedDb';
-import { decodeDurableApplicationState, sessionAmountsFromSave } from '../session/model';
+import { decodeDurableApplicationState } from '../session/model';
 import { preHandshakeReplacement } from './session_save_envelope.fixtures';
 import { applyFreshStartCheckpoint } from '../session/acceptLifecycle';
-import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { clearGameSessionState } from '../session/sessionStateTransitions';
 import {
   makeStorage,
@@ -21,17 +20,14 @@ import { storageRepository } from '../session/storageRepository';
 async function capturePreHandshake(
   checkpoint: ReturnType<typeof preHandshakeReplacement>,
 ): Promise<void> {
-  await captureDurableApplicationState({
-    kind: 'transform',
-    transform: (state) => applyFreshStartCheckpoint(state, checkpoint),
-  })?.write();
+  const snapshot = storageRepository.patchApplicationState((state) =>
+    applyFreshStartCheckpoint(state, checkpoint),
+  );
+  await storageRepository.write(snapshot);
 }
 
 function clearGameSession(): Promise<void> {
-  return captureDurableApplicationState({
-    kind: 'transform',
-    transform: clearGameSessionState,
-  })!.write();
+  return storageRepository.write(storageRepository.patchApplicationState(clearGameSessionState));
 }
 
 describe('flat state', () => {
@@ -65,7 +61,7 @@ describe('flat state', () => {
         blockchainType: 'simulator',
       }),
     );
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     storageRepository._resetForTests();
     await storageRepository.claimApplicationState();
@@ -88,7 +84,7 @@ describe('flat state', () => {
         blockchainType: 'simulator',
       }),
     );
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     storageRepository._resetForTests();
     const regeneratedSessionId = storageRepository.regenerateSessionId();
@@ -113,7 +109,7 @@ describe('flat state', () => {
         blockchainType: 'simulator',
       }),
     );
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     storageRepository._resetForTests();
     await storageRepository.claimApplicationState();
@@ -180,7 +176,7 @@ describe('flat state', () => {
     markSavedSession();
     saveLiveFields({ ...sampleSession, blockchainType: 'simulator' });
     storageRepository.updatePreference({ key: 'alias', value: 'MyName' });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     await storageRepository.clearSession();
 
@@ -197,7 +193,7 @@ describe('flat state', () => {
   it('clearSession drops the boot marker when no blockchainType or hubUrl remains', async () => {
     markSavedSession();
     saveLiveFields();
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     expect(storageRepository.query('blockchainType')).toBeUndefined();
 
     await storageRepository.clearSession();
@@ -209,7 +205,7 @@ describe('flat state', () => {
   it('clearSession keeps the boot marker when only hubUrl remains', async () => {
     markSavedSession();
     savePreferences({ hubUrl: 'http://localhost:3003' });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     await storageRepository.clearSession();
 
@@ -233,7 +229,7 @@ describe('flat state', () => {
       unrollTimeout: '50',
       opponentAlias: 'Opponent',
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     await clearGameSession();
 
@@ -264,7 +260,7 @@ describe('flat state', () => {
       blockchainType: 'simulator',
       humanHistory: ['preserved'],
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     let release!: () => void;
     let committed!: () => void;
     const barrier = new Promise<void>((resolve) => {
@@ -303,7 +299,7 @@ describe('flat state', () => {
         humanHistory: ['accepted proposal'],
       }),
     );
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
 
     expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
     const loaded = await storageRepository.readCurrentState();
@@ -312,11 +308,6 @@ describe('flat state', () => {
     expect(session.pairing.token).toBe('peer_x_1');
     expect(session.pairing.myContribution).toBe('100');
     expect(session.pairing.peerId).toBe('peer-x');
-    expect(sessionAmountsFromSave(loaded!)).toEqual({
-      myContribution: 100n,
-      theirContribution: 100n,
-      perGameAmount: 10n,
-    });
   });
 
   it('getBlockchainType reads from preferences', () => {
@@ -332,7 +323,7 @@ describe('flat state', () => {
     expect(storageRepository.query('blockchainType')).toBeUndefined();
     await savePreferences({ blockchainType: 'cloud' });
     expect(storageRepository.query('blockchainType')).toBe('cloud');
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     expect(
       decodeDurableApplicationState(storageRepository.loadState()).save.preferences.blockchainType,
     ).toBe('cloud');
@@ -431,13 +422,13 @@ describe('flat state', () => {
       },
       activeGameType: 'spacepoker',
       betweenHandLastHandProposal: {
-        sender_is_player_a: false,
-        game_timeout: '15',
-        game_type: 'spacepoker',
+        senderIsPlayerA: false,
+        gameTimeout: 15n,
+        gameType: 'spacepoker',
         parameters: 10n,
       },
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     storageRepository._resetForTests();
 
     const state = await storageRepository.readCurrentState();
@@ -496,7 +487,7 @@ describe('flat state', () => {
       },
       activeGameType: 'calpoker',
     });
-    await storageRepository.flushAggregate();
+    await storageRepository.checkpointDomainMutations();
     storageRepository._resetForTests();
 
     const handState = requireLive(await storageRepository.readCurrentState()).presentation.handState

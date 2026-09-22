@@ -51,14 +51,16 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
     identity: 'submission-handoff',
   };
   const current = storageRepository.loadState();
-  return storageRepository.checkpointApplicationState({
-    ...current,
-    identity: { ...current.identity, ...save.identity },
-    preferences: { ...current.preferences, ...save.preferences },
-    history: save.history,
-    walletContext: walletProviderScope,
-    session: save.session,
-  });
+  return storageRepository.write(
+    storageRepository.patchApplicationState(() => ({
+      ...current,
+      identity: { ...current.identity, ...save.identity },
+      preferences: { ...current.preferences, ...save.preferences },
+      history: save.history,
+      walletContext: walletProviderScope,
+      session: save.session,
+    })),
+  );
 }
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
@@ -406,7 +408,7 @@ beforeEach(async () => {
     feeAttachments: [],
   };
   storageRepository._replaceApplicationStateForTests(empty);
-  await storageRepository.checkpointApplicationState(empty);
+  await storageRepository.write(storageRepository.patchApplicationState(() => empty));
   channelFundingRuntime.resetForTests();
 });
 

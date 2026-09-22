@@ -9,7 +9,6 @@ import {
 } from '../lib/session/saveEnvelope';
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
 import { storageRepository } from '../lib/session/storageRepository';
-import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
 import type { HubConnection } from '../services/HubConnection';
 import {
   decodePeerAppMessage,
@@ -42,10 +41,7 @@ const repositoryStore: RejectionStore = {
 function writeRejectionTransform(
   transform: (state: DurableApplicationState) => DurableApplicationState,
 ): Promise<void> {
-  return captureDurableApplicationState({
-    kind: 'transform',
-    transform,
-  })!.write();
+  return storageRepository.write(storageRepository.patchApplicationState(transform));
 }
 
 export function useSessionRejection(options: UseSessionRejectionOptions) {
@@ -280,7 +276,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
           ...peer.reliableState,
           terminalHandoff: null,
         });
-        await storageRepository.flushAggregate();
+        await storageRepository.checkpointDomainMutations();
       },
       acknowledged: () => {
         if (peer.reliableState.unackedMessages.length > 0) return;

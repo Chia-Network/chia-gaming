@@ -16,6 +16,7 @@ import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
 import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
+import { isExactDuplicateTransaction } from '../util/walletSubmit';
 import {
   beginOAuthPopupLogin,
   canonicalSignatureRequestId,
@@ -112,14 +113,6 @@ function coinRecordFromCoinset(record: CoinsetCoinRecord): CoinRecord {
     coinbase: record.coinbase,
     timestamp: BigInt(record.timestamp as string | number | bigint),
   };
-}
-
-function isExactDuplicateTransaction(detail: string): boolean {
-  return (
-    /\bALREADY_INCLUDING_TRANSACTION\b/i.test(detail) ||
-    /\bduplicate transaction\b/i.test(detail) ||
-    /\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(detail)
-  );
 }
 
 function cloudErrorDetail(error: unknown): string {

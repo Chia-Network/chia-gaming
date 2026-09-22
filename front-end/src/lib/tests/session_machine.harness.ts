@@ -4,10 +4,43 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type {
   SessionMachineEffect,
+  SessionMachineEvent,
   SessionMachineState,
   SessionMachineTransition,
 } from '../session/sessionMachineTypes';
 import type { HandProposal, ProposalOrigin } from '../session/types';
+import {
+  createRegisteredGameHand,
+  restoreRegisteredGameHandState,
+  snapshotRegisteredGameHand,
+  type RegisteredGameHand,
+} from '../gameRegistry';
+
+export function reduceSessionMachineForTest(
+  state: SessionMachineState,
+  event: SessionMachineEvent,
+): ReturnType<typeof reduceSessionMachine> {
+  let gameType = state.model.game.activeGameType;
+  let hand: RegisteredGameHand | null =
+    state.model.game.handState === null
+      ? null
+      : restoreRegisteredGameHandState(gameType, state.model.game.handState);
+  return reduceSessionMachine(state, event, {
+    create: (nextGameType, init) => {
+      gameType = nextGameType;
+      hand = createRegisteredGameHand(gameType, init);
+      return snapshotRegisteredGameHand(gameType, hand);
+    },
+    receive: (update) => {
+      if (hand === null) throw new Error('Test game update requires an active hand');
+      hand.receive(update);
+      return snapshotRegisteredGameHand(gameType, hand);
+    },
+    clear: () => {
+      hand = null;
+    },
+  });
+}
 
 interface SessionMachineEffectRunner {
   setAuthority(state: SessionMachineState): void;
@@ -48,7 +81,7 @@ export function send(
   state: ReturnType<typeof createSessionMachineState>,
   event: Parameters<typeof reduceSessionMachine>[1],
 ) {
-  return reduceSessionMachine(state, event).state;
+  return reduceSessionMachineForTest(state, event).state;
 }
 
 export function trackProposal(
@@ -72,7 +105,7 @@ export function run(
   event: Parameters<typeof reduceSessionMachine>[1],
   order: string[] = [],
 ) {
-  const transition = reduceSessionMachine(state, event);
+  const transition = reduceSessionMachineForTest(state, event);
   let authority = state;
   runSessionMachineTransition(transition, {
     setAuthority: (next) => {

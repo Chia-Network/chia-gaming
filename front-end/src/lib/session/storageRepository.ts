@@ -36,11 +36,9 @@ import { diagStack } from '../../services/log';
 import { providerScopeKey } from './providerKeys';
 
 type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
-interface ScheduledPersist {
-  promise: Promise<void>;
-  resolve(): void;
-  reject(reason: unknown): void;
-  unsubscribe(): void;
+interface ActivePersistenceRuntime {
+  requestCommit(): void;
+  flush(): Promise<void>;
 }
 
 function newApplicationState(): DurableApplicationState {
@@ -78,6 +76,7 @@ class StorageRepository {
     barrier: Promise<void>;
     claimed: () => void;
   } | null = null;
+  private activeRuntime: ActivePersistenceRuntime | null = null;
 
   get lifecycleGeneration(): number {
     return this.generation;
@@ -191,13 +190,9 @@ class StorageRepository {
     );
   }
 
-  async checkpointApplicationState(session: DurableApplicationState): Promise<void> {
-    await this.prepareApplicationStateCapture(() => session).write();
-  }
-
-  private writeRoot(next: DurableApplicationState): Promise<void> {
-    return this.runAuthorizedMutation(async (authority) => {
-      await indexedDbStoragePort.writeApplicationState(next, authority);
+  async write(snapshot: DurableApplicationState): Promise<void> {
+    await this.runAuthorizedMutation(async (authority) => {
+      await indexedDbStoragePort.writeApplicationState(snapshot, authority);
       const hold = this.pendingCheckpointHoldForTests;
       this.pendingCheckpointHoldForTests = null;
       if (hold) {
@@ -213,43 +208,38 @@ class StorageRepository {
       }
       throw error;
     });
+    if (snapshot.session !== null) markSavedSession();
   }
 
-  /**
-   * Apply one synchronous root transform and freeze its complete write input.
-   * Mutations after this call update `root` independently and are checkpointed
-   * later, so invoking the returned closure cannot overwrite them in memory.
-   */
-  prepareApplicationStateCapture(
+  patchApplicationState(
     transform: (current: DurableApplicationState) => DurableApplicationState,
-  ) {
+  ): DurableApplicationState {
     if (!this.hasAuthority()) throw this.authorityMutationError();
     const next = sessionState.capSessionHistories(transform(structuredClone(this.root)));
     decodeDurableApplicationState(next);
     this.root = next;
-    const snapshot = structuredClone(next);
+    return structuredClone(next);
+  }
 
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    const pending = this.takeScheduledPersist();
-
-    let written = false;
-    return {
-      write: async () => {
-        if (written) throw new Error('Durable application capture may only be written once');
-        written = true;
-        try {
-          await this.writeRoot(snapshot);
-          if (snapshot.session !== null) markSavedSession();
-          pending?.resolve();
-        } catch (error) {
-          pending?.reject(error);
-          throw error;
-        }
-      },
+  attachRuntime(runtime: ActivePersistenceRuntime): () => void {
+    this.activeRuntime = runtime;
+    return () => {
+      if (this.activeRuntime === runtime) this.activeRuntime = null;
     };
+  }
+
+  private persistDomainMutation(): Promise<void> {
+    if (this.activeRuntime) {
+      this.activeRuntime.requestCommit();
+      return Promise.resolve();
+    }
+    const write = this.write(structuredClone(this.root));
+    void write.catch(() => {});
+    return write;
+  }
+
+  checkpointDomainMutations(): Promise<void> {
+    return this.activeRuntime ? this.activeRuntime.flush() : this.write(structuredClone(this.root));
   }
 
   holdNextMutationForTests(barrier: Promise<void>): void {
@@ -330,17 +320,10 @@ class StorageRepository {
   private stopPersistenceForHardReset(): void {
     this.root = newApplicationState();
     if (!this.fenced) this.loseAuthority('durable-authority-lost');
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    this.settleScheduledPersist();
+    this.activeRuntime = null;
   }
 
   private root = newApplicationState();
-  private persistTimer: ReturnType<typeof setTimeout> | null = null;
-  private scheduledPersist: ScheduledPersist | null = null;
-  private readonly PERSIST_DEBOUNCE_MS = 300;
 
   shouldOfferResumeOrStartOver(state: DurableApplicationState = this.root): boolean {
     return (
@@ -351,79 +334,6 @@ class StorageRepository {
       state.feeAttachments.length > 0 ||
       state.rejectionTransports.length > 0
     );
-  }
-
-  private queueWrite(state: DurableApplicationState): Promise<void> {
-    const snapshot = sessionState.capSessionHistories(state);
-    const write = this.checkpointApplicationState(snapshot).then(() => {
-      if (snapshot.session !== null) {
-        markSavedSession();
-      }
-    });
-    return write;
-  }
-
-  private takeScheduledPersist(): ScheduledPersist | null {
-    const pending = this.scheduledPersist;
-    this.scheduledPersist = null;
-    pending?.unsubscribe();
-    return pending;
-  }
-
-  private settleScheduledPersist(error?: unknown): void {
-    const pending = this.takeScheduledPersist();
-    if (error === undefined) pending?.resolve();
-    else pending?.reject(error);
-  }
-
-  flushAggregate(): Promise<void> {
-    if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
-    return (async () => {
-      if (this.persistTimer) {
-        clearTimeout(this.persistTimer);
-        this.persistTimer = null;
-      }
-      const pending = this.takeScheduledPersist();
-      let write: Promise<void>;
-      try {
-        write = this.queueWrite(this.root);
-      } catch (error) {
-        pending?.reject(error);
-        return Promise.reject(error);
-      }
-      void write.then(
-        () => pending?.resolve(),
-        (error) => {
-          pending?.reject(error);
-        },
-      );
-      return pending?.promise ?? write;
-    })();
-  }
-
-  private schedulePersist(): Promise<void> {
-    if (!this.hasAuthority() || this.fenced) return Promise.resolve();
-    if (this.scheduledPersist) return this.scheduledPersist.promise;
-    let resolve!: () => void;
-    let reject!: (reason: unknown) => void;
-    const promise = new Promise<void>((accept, fail) => {
-      resolve = accept;
-      reject = fail;
-    });
-    void promise.catch(() => {});
-    const unsubscribe = this.onAuthorityLost(() => {
-      this.settleScheduledPersist(new StorageAuthorityLostError());
-    });
-    this.scheduledPersist = { promise, resolve, reject, unsubscribe };
-    const timer = setTimeout(() => {
-      this.persistTimer = null;
-      void this.flushAggregate().catch((error) => {
-        this.settleScheduledPersist(error);
-      });
-    }, this.PERSIST_DEBOUNCE_MS);
-    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
-    this.persistTimer = timer;
-    return promise;
   }
 
   constructor() {
@@ -447,11 +357,7 @@ class StorageRepository {
     this.pendingMutationBarrierForTests = null;
     this.pendingCheckpointHoldForTests = null;
     this.pendingClaimHoldForTests = null;
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    this.settleScheduledPersist();
+    this.activeRuntime = null;
     this.root = newApplicationState();
     this.preAuthorityCommonPatch = {};
     resetStorageCoordinationForTests();
@@ -469,10 +375,6 @@ class StorageRepository {
     return structuredClone(this.root.feeAttachments);
   }
 
-  walletContext(): DurableApplicationState['walletContext'] {
-    return this.root.walletContext ? structuredClone(this.root.walletContext) : null;
-  }
-
   ensureWalletContext(context: NonNullable<DurableApplicationState['walletContext']>): void {
     if (!this.hasAuthority()) throw this.authorityMutationError();
     if (this.root.walletContext) {
@@ -482,7 +384,7 @@ class StorageRepository {
       return;
     }
     this.root = { ...this.root, walletContext: structuredClone(context) };
-    void this.schedulePersist();
+    void this.persistDomainMutation().catch(() => {});
   }
 
   _replaceApplicationStateForTests(state: DurableApplicationState): void {
@@ -496,7 +398,7 @@ class StorageRepository {
       throw new Error('Internal wallet consistency error: operations require walletContext');
     }
     this.root = { ...this.root, channelFundingOperations: structuredClone([...entries]) };
-    void this.schedulePersist();
+    void this.persistDomainMutation().catch(() => {});
   }
 
   replaceFeeAttachments(entries: readonly FeeAttachment[]): void {
@@ -505,7 +407,7 @@ class StorageRepository {
       throw new Error('Internal wallet consistency error: fee attachments require walletContext');
     }
     this.root = { ...this.root, feeAttachments: structuredClone([...entries]) };
-    void this.schedulePersist();
+    void this.persistDomainMutation().catch(() => {});
   }
 
   private async installClaimedApplicationState(
@@ -536,7 +438,7 @@ class StorageRepository {
     const hasPatch = Object.keys(patch).length > 0 || feesChanged;
     if (hasPatch) {
       try {
-        await this.queueWrite(this.root);
+        await this.write(structuredClone(this.root));
       } catch (error) {
         if (error instanceof StorageAuthorityLostError) throw error;
       }
@@ -576,7 +478,7 @@ class StorageRepository {
   ): Promise<void> {
     if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
     this.root = fn(this.root);
-    return this.schedulePersist();
+    return this.persistDomainMutation();
   }
 
   getPlayerId(): string {
@@ -624,7 +526,7 @@ class StorageRepository {
       ...state,
       identity: { ...state.identity, sessionId },
     };
-    void this.schedulePersist();
+    void this.persistDomainMutation().catch(() => {});
     return sessionId;
   }
 
@@ -636,7 +538,7 @@ class StorageRepository {
       identity: { ...state.identity, sessionId, myHubPlayerId: undefined },
     };
     if (this.hasAuthority()) {
-      void this.schedulePersist();
+      void this.persistDomainMutation().catch(() => {});
     } else {
       this.preAuthorityCommonPatch.identity = {
         ...this.preAuthorityCommonPatch.identity,
@@ -663,7 +565,7 @@ class StorageRepository {
   }
 
   persistRejectionTransport(tombstone: DurableRejectionTransport): Promise<void> {
-    return this.prepareApplicationStateCapture((state) => {
+    const snapshot = this.patchApplicationState((state) => {
       const session = state.session;
       const matchesRejectedSession =
         (session?.phase === 'live' || session?.phase === 'pre-handshake') &&
@@ -682,7 +584,8 @@ class StorageRepository {
           .sort((a, b) => a.createdAt - b.createdAt)
           .slice(-MAX_DURABLE_REJECTION_TRANSPORTS),
       };
-    }).write();
+    });
+    return this.write(snapshot);
   }
 
   clearSessionPairing(): Promise<void> {
@@ -710,13 +613,8 @@ class StorageRepository {
 
   clearSession(): Promise<void> {
     if (!this.hasAuthority()) return Promise.reject(this.authorityMutationError());
-    if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
-      this.persistTimer = null;
-    }
-    this.settleScheduledPersist();
     this.root = sessionState.freshSessionState(this.root);
-    const deletePromise = this.queueWrite(this.root).then(() => {
+    const deletePromise = this.write(structuredClone(this.root)).then(() => {
       if (
         this.root.preferences.blockchainType ||
         this.root.preferences.hubUrl ||

@@ -14,14 +14,10 @@ import type { SessionModel } from './types';
 
 export interface SessionPersistDependencies {
   controller: SessionController;
-  getState(): SessionMachineState;
+  state: SessionMachineState;
   restoring: boolean;
   getRestoreStatus(): RestoreStatus;
   getRestoreError(): string | null;
-}
-
-export interface PreparedDurableApplicationStateCapture {
-  write(): Promise<void>;
 }
 
 export interface TerminalCapture {
@@ -36,22 +32,50 @@ export interface TerminalCapture {
   coinsOfInterest: CoinOfInterestEntry[];
 }
 
-function liveTransform(
-  dependencies: SessionPersistDependencies,
-): ((state: DurableApplicationState) => DurableApplicationState) | null {
-  const wasm = dependencies.controller.getWasmFields();
+/**
+ * Freeze one complete fixed-point boundary synchronously. Reducer/controller
+ * work and generated durable obligations must drain before this call.
+ */
+export function buildDurableApplicationState(
+  capture: ({ kind: 'live' } & SessionPersistDependencies) | TerminalCapture,
+): DurableApplicationState | null {
+  if (capture.kind === 'terminal') {
+    const walletProviderScope = capture.controller.getWalletProviderScope();
+    const terminal: TerminalSessionSave['terminal'] = {
+      iStarted: capture.identity.iStarted,
+      coinsOfInterest: structuredClone(capture.coinsOfInterest),
+      myAlias: capture.identity.myAlias,
+      opponentAlias: capture.identity.opponentAlias,
+    };
+    const presentation = snapshotFromSessionModel(capture.model, {
+      channelStatus: channelStatusPayloadFromModel(capture.model.channel.status),
+      waitingStateEnteredAt: null,
+      cleanShutdownGraceStartedAt: null,
+    });
+    return storageRepository.patchApplicationState((root) => ({
+      ...root,
+      walletContext: structuredClone(walletProviderScope),
+      session: {
+        phase: 'terminal',
+        terminal,
+        presentation,
+      },
+    }));
+  }
+
+  const wasm = capture.controller.getWasmFields();
   if (!wasm) return null;
-  const state = dependencies.getState();
+  const state = capture.state;
   const authoritativeStatus = wasm.channelStatus
     ? channelStatusModelFromPayload(wasm.channelStatus)
     : state.model.channel.status;
-  const restoreStatus = dependencies.getRestoreStatus();
+  const restoreStatus = capture.getRestoreStatus();
   const model = normalizeSessionPresentation({
     ...state.model,
     restore: {
-      restoring: dependencies.restoring,
+      restoring: capture.restoring,
       status: restoreStatus,
-      error: dependencies.getRestoreError(),
+      error: capture.getRestoreError(),
     },
     channel: { ...state.model.channel, status: authoritativeStatus },
     history: {
@@ -69,8 +93,8 @@ function liveTransform(
     waitingStateEnteredAt: wasm.waitingStateEnteredAt,
     cleanShutdownGraceStartedAt: wasm.cleanShutdownGraceStartedAt,
   });
-  const walletProviderScope = dependencies.controller.getWalletProviderScope();
-  return (root) => {
+  const walletProviderScope = capture.controller.getWalletProviderScope();
+  return storageRepository.patchApplicationState((root) => {
     const currentPairing =
       root.session?.phase === 'pre-handshake' || root.session?.phase === 'live'
         ? root.session.pairing
@@ -111,53 +135,5 @@ function liveTransform(
         diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
       },
     };
-  };
-}
-
-function terminalTransform(capture: TerminalCapture) {
-  const walletProviderScope = capture.controller.getWalletProviderScope();
-  const terminal: TerminalSessionSave['terminal'] = {
-    iStarted: capture.identity.iStarted,
-    coinsOfInterest: structuredClone(capture.coinsOfInterest),
-    myAlias: capture.identity.myAlias,
-    opponentAlias: capture.identity.opponentAlias,
-  };
-  const presentation = snapshotFromSessionModel(capture.model, {
-    channelStatus: channelStatusPayloadFromModel(capture.model.channel.status),
-    waitingStateEnteredAt: null,
-    cleanShutdownGraceStartedAt: null,
   });
-  return (root: DurableApplicationState): DurableApplicationState => ({
-    ...root,
-    walletContext: structuredClone(walletProviderScope),
-    session: {
-      phase: 'terminal',
-      terminal,
-      presentation,
-    },
-  });
-}
-
-/**
- * Commit one complete fixed-point boundary before I/O. Reducer/controller work,
- * generated effects, adapter flights, and projection-only warnings stay transient.
- */
-export function captureDurableApplicationState(
-  capture:
-    | ({ kind: 'live' } & SessionPersistDependencies)
-    | TerminalCapture
-    | {
-        kind: 'transform';
-        transform(state: DurableApplicationState): DurableApplicationState;
-      },
-): PreparedDurableApplicationStateCapture | null {
-  const transform =
-    capture.kind === 'live'
-      ? liveTransform(capture)
-      : capture.kind === 'terminal'
-        ? terminalTransform(capture)
-        : capture.transform;
-  if (!transform) return null;
-
-  return storageRepository.prepareApplicationStateCapture(transform);
 }
