@@ -1,9 +1,14 @@
 import type { GameSessionParams, PeerConnectionResult, SessionPhase } from '../../types/ChiaGaming';
 import type { AdvisoryStartParams } from '../../services/HubConnection';
 import type { RestoreStatus } from '../../hooks/SessionController';
+import type { ReliableTransportState } from '../../services/PeerSession';
 import type { AcceptReason } from './acceptLifecycle';
 import type { SessionModel } from './model';
-import type { LiveSessionSave, PreHandshakeSessionSave } from './saveEnvelope';
+import type {
+  LiveSessionSave,
+  PreHandshakeSessionSave,
+  SessionTransportSave,
+} from './saveEnvelope';
 
 export type PendingSessionProposal = {
   from_id: string;
@@ -36,6 +41,19 @@ export function isAcceptSessionTransition(transition: ShellSessionTransition): b
     transition.kind === 'pending' &&
     (transition.reason === 'accept-advisory' || transition.reason === 'accept-proposal')
   );
+}
+
+/** Durable transport residue for a live relay. The save has no `sessionId`. */
+export function transportSaveFromReliableState(
+  state: ReliableTransportState,
+): SessionTransportSave {
+  return {
+    messageNumber: state.messageNumber,
+    remoteNumber: state.remoteNumber,
+    unackedMessages: structuredClone(state.unackedMessages),
+    disposition: state.disposition,
+    terminalHandoff: null,
+  };
 }
 
 export function peerConnectionForSavedSession(

@@ -6,6 +6,7 @@ import {
   PendingSessionProposal,
   isAcceptSessionTransition,
   peerConnectionForSavedSession,
+  transportSaveFromReliableState,
 } from '../lib/session/shellSessionState';
 import {
   applyFreshStartCheckpoint,
@@ -1561,10 +1562,7 @@ const Shell = () => {
                     ? { unrollTimeout: unrollTimeout.toString() }
                     : {}),
                 },
-                transport: {
-                  ...structuredClone(peerSessionRef.current!.reliableState),
-                  terminalHandoff: null,
-                },
+                transport: transportSaveFromReliableState(peerSessionRef.current!.reliableState),
                 identity: {
                   sessionId: hubSessionId,
                   ...(conn.getPlayerId() ? { myHubPlayerId: conn.getPlayerId()! } : {}),
@@ -1619,6 +1617,9 @@ const Shell = () => {
         }
       } catch (error) {
         console.error('[Shell] session start failed', error);
+        log(
+          `[Shell] session start failed peer=${request.peerId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
         sendSessionReject(request.peerId);
         if (startFailureDisposition(freshStartPersistCommittedRef.current) === 'cancel-attempt') {
           cancelAttemptedSession({ error: true });
@@ -1693,6 +1694,9 @@ const Shell = () => {
           // Setup threw before startFreshSessionWithPeer could clean up (e.g.
           // after PeerSession was reserved). Do not leave the lobby stuck.
           console.error('[Shell] accept-advisory failed', error);
+          log(
+            `[Shell] accept-advisory failed peer=${advisory.peer_id}: ${error instanceof Error ? error.message : String(error)}`,
+          );
           sendSessionReject(advisory.peer_id);
           abandonFailedStartAttempt({ error: true });
         }
@@ -2023,10 +2027,7 @@ const Shell = () => {
                     channelTimeout: proposal.channel_timeout,
                     unrollTimeout: proposal.unroll_timeout,
                   },
-                  transport: {
-                    ...structuredClone(provisional.reliableState),
-                    terminalHandoff: null,
-                  },
+                  transport: transportSaveFromReliableState(provisional.reliableState),
                 };
                 const snapshot = storageRepository.patchApplicationState((state) =>
                   applyFreshStartCheckpoint(state, checkpoint),

@@ -10,8 +10,20 @@ import {
 import type { SessionModel } from '../session/types';
 import type { ChannelStatus } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
+import { transportSaveFromReliableState } from '../session/shellSessionState';
+import { PeerSession } from '../../services/PeerSession';
+import type { HubConnection } from '../../services/HubConnection';
+import { sessionReceivePolicy } from '../session/receivePolicy';
 import { baseSave } from './session_save_envelope.fixtures';
 import './save.harness';
+
+const PEER_SESSION_ID = '000102030405060708090a0b0c0d0e0f';
+
+function mockHubConnection(): HubConnection {
+  return {
+    sendToPeer: () => true,
+  } as unknown as HubConnection;
+}
 
 function modelWithChannelState(state: ChannelStatus): SessionModel {
   return {
@@ -148,6 +160,41 @@ describe('acceptLifecycle', () => {
 
       expect(onCommitted).toHaveBeenCalled();
       expect(storageRepository.loadState().session).toEqual(terminal.session);
+    });
+
+    it('accepts a transport built from a live PeerSession reliable state', async () => {
+      const peer = new PeerSession(
+        'peer',
+        PEER_SESSION_ID,
+        mockHubConnection(),
+        sessionReceivePolicy(),
+      );
+      peer.reliableTransport.allocateOutbound(new Uint8Array([0x01]));
+      // The live reliableState carries a `sessionId` the durable save must not.
+      expect(peer.reliableState).toHaveProperty('sessionId');
+
+      const liveCheckpoint: FreshStartCheckpoint = {
+        ...checkpoint,
+        transport: transportSaveFromReliableState(peer.reliableState),
+      };
+
+      await expect(
+        captureFreshStart({
+          epoch: 7,
+          getCurrentEpoch: () => 7,
+          checkpoint: liveCheckpoint,
+          onCommitted: jest.fn(),
+        }),
+      ).resolves.toBeUndefined();
+
+      const session = storageRepository.loadState().session;
+      expect(session?.phase).toBe('pre-handshake');
+      expect(session).toMatchObject({ transport: { disposition: 'active' } });
+      expect(session && 'transport' in session ? session.transport : {}).not.toHaveProperty(
+        'sessionId',
+      );
+
+      peer.destroy();
     });
   });
 });
