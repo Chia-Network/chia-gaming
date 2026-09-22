@@ -557,7 +557,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         ],
       });
       const offer = (response as any)?.offer;
-      const tradeId = (response as any)?.tradeRecord?.tradeId;
+      const tradeId = (response as any)?.tradeRecord?.trade_id;
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
         if (walletOfferMutationMayHaveSucceeded(response)) {
           return {
@@ -570,7 +570,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (typeof tradeId !== 'string' || !tradeId) {
         return {
           kind: 'unavailable',
-          reason: 'wallet returned a persisted fee offer without tradeRecord.tradeId',
+          reason: 'wallet returned a persisted fee offer without tradeRecord.trade_id',
         };
       }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
@@ -724,7 +724,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
-        const tradeId = (response as any)?.tradeRecord?.tradeId;
+        const tradeId = (response as any)?.tradeRecord?.trade_id;
         if (typeof tradeId === 'string' && tradeId) {
           return {
             kind: 'created-reserved',
@@ -734,7 +734,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         return {
           kind: 'unavailable',
-          reason: 'wallet returned a persisted funding offer without tradeRecord.tradeId',
+          reason: 'wallet returned a persisted funding offer without tradeRecord.trade_id',
         };
       }
       if (walletOfferMutationMayHaveSucceeded(response)) {

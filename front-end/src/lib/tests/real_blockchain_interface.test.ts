@@ -673,7 +673,7 @@ describe('RealBlockchainInterface', () => {
     const fundingCoinId = 'ab'.repeat(32);
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { tradeId: 'trade-id' },
+      tradeRecord: { trade_id: 'trade-id' },
     });
 
     await expect(
@@ -712,7 +712,7 @@ describe('RealBlockchainInterface', () => {
       }),
     ).resolves.toEqual({
       kind: 'unavailable',
-      reason: expect.stringMatching(/tradeRecord\.tradeId/),
+      reason: expect.stringMatching(/tradeRecord\.trade_id/),
     });
 
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
@@ -841,7 +841,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { tradeId: 'receiver-trade-id' },
+      tradeRecord: { trade_id: 'receiver-trade-id' },
     });
 
     await expect(
@@ -866,7 +866,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { tradeId: 'reserve-fee-trade' },
+      tradeRecord: { trade_id: 'reserve-fee-trade' },
     });
 
     await blockchain.beginWalletOffer(offerOperation, {
@@ -890,7 +890,7 @@ describe('RealBlockchainInterface', () => {
     mockSelectCoins.mockRejectedValue(new Error('Internal error'));
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { tradeId: 'selected-trade' },
+      tradeRecord: { trade_id: 'selected-trade' },
     });
 
     await expect(
@@ -915,7 +915,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { tradeId: 'fee-trade' },
+      tradeRecord: { trade_id: 'fee-trade' },
     });
 
     const bindCoinId = 'ab'.repeat(32);
@@ -959,7 +959,7 @@ describe('RealBlockchainInterface', () => {
       ),
     ).resolves.toEqual({
       kind: 'unavailable',
-      reason: expect.stringMatching(/tradeRecord\.tradeId/),
+      reason: expect.stringMatching(/tradeRecord\.trade_id/),
     });
   });
 
@@ -1007,7 +1007,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { tradeId: 'fee-parent-trade' },
+      tradeRecord: { trade_id: 'fee-parent-trade' },
     });
     await expect(
       blockchain.beginWalletOffer(
