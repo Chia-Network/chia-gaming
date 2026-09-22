@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 env:
@@ -32,13 +32,16 @@ jobs:
       matrix:
         include:
           - platform: mac
+            arch: universal
             os: macos-13-arm64
             artifact: chia-gaming-electron-macos
           - platform: win
+            arch: x64
             os: windows-latest
             artifact: chia-gaming-electron-windows
             environment: windows-code-signing
           - platform: linux
+            arch: x64
             os: ubuntu-22.04
             artifact: chia-gaming-electron-linux
     runs-on: ${{ matrix.os }}
@@ -187,7 +190,13 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.APPLE_DEV_ID_APP }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
-        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            args+=("--release-version=$RELEASE_VERSION")
+          fi
+          tools/build-electron.sh "${args[@]}"
 
       - name: Build signed Windows Electron installer
         if: steps.windows-signing.outputs.available == 'true'
@@ -198,14 +207,50 @@ jobs:
           AZURE_TOKEN_CREDENTIALS: prod
           AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            args+=("--release-version=$RELEASE_VERSION")
+          fi
+          tools/build-electron.sh "${args[@]}"
 
       - name: Build unsigned Electron installer
         if: steps.apple-signing.outputs.available != 'true' && steps.windows-signing.outputs.available != 'true'
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: tools/build-electron.sh --platform=${{ matrix.platform }}
+          RELEASE_VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            args+=("--release-version=$RELEASE_VERSION")
+          fi
+          tools/build-electron.sh "${args[@]}"
+
+      - name: Verify universal macOS package
+        if: matrix.platform == 'mac'
+        shell: bash
+        run: |
+          verify_dir="$RUNNER_TEMP/chia-gaming-mac-verify"
+          mkdir -p "$verify_dir"
+          unzip -q desktop/release/*.zip -d "$verify_dir"
+          app_path="$(find "$verify_dir" -maxdepth 1 -name '*.app' -print -quit)"
+          if [[ -z "$app_path" ]]; then
+            echo "::error::Packaged macOS application was not found"
+            exit 1
+          fi
+          executable="$app_path/Contents/MacOS/Chia Gaming"
+          architectures="$(lipo -archs "$executable")"
+          [[ " $architectures " == *" arm64 "* ]] || {
+            echo "::error::macOS executable lacks arm64: $architectures"
+            exit 1
+          }
+          [[ " $architectures " == *" x86_64 "* ]] || {
+            echo "::error::macOS executable lacks x86_64: $architectures"
+            exit 1
+          }
+          codesign --verify --deep --strict "$app_path"
 
       - name: Notarize and staple macOS installers
         if: steps.apple-signing.outputs.available == 'true'
@@ -226,6 +271,30 @@ jobs:
             xcrun stapler validate "$dmg"
           done
 
+      - name: Generate installer checksums
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          )
+          if [[ "${#files[@]}" -eq 0 ]]; then
+            echo "::error::No installer files found"
+            exit 1
+          fi
+          checksum_file="desktop/release/SHA256SUMS-${{ matrix.platform }}.txt"
+          for file in "${files[@]}"; do
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$file"
+            else
+              shasum -a 256 "$file"
+            fi
+          done > "$checksum_file"
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
@@ -238,3 +307,22 @@ jobs:
             desktop/release/*.exe
             desktop/release/*.AppImage
             desktop/release/*.deb
+            desktop/release/SHA256SUMS-*.txt
+
+      - name: Upload installers to GitHub release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          shopt -s nullglob
+          files=(
+            desktop/release/*.dmg
+            desktop/release/*.zip
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+            desktop/release/SHA256SUMS-*.txt
+          )
+          gh release upload "$RELEASE_TAG" "${files[@]}"

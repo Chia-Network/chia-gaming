@@ -99,6 +99,8 @@ jobs:
     name: Build deploy tarballs (Linux)
     if: github.event_name == 'release'
     needs: [unit_tests]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -124,26 +126,50 @@ jobs:
           corepack prepare pnpm@10.33.0 --activate
 
       - name: Build deploy tarballs
-        run: tools/build-deploy.sh --platform=linux
+        run: tools/build-deploy.sh --release-version=${{ github.event.release.tag_name }}
 
       - name: Verify deploy archives
-        run: tools/test-deploy-archives.sh --platform=linux
+        run: tools/test-deploy-archives.sh --release-version=${{ github.event.release.tag_name }}
+
+      - name: Generate deploy checksums
+        run: |
+          (
+            cd deploy_player_app
+            sha256sum chia-gaming-*
+          ) > SHA256SUMS-web.txt
+          (
+            cd deploy_hub
+            sha256sum chia-gaming-hub-*
+          ) >> SHA256SUMS-web.txt
 
       - name: Upload player app artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: chia-gaming-linux
+          name: chia-gaming-${{ github.event.release.tag_name }}
           path: |
-            deploy_player_app/chia-gaming-linux-*.tgz
-            deploy_player_app/chia-gaming-linux-*.zip
+            deploy_player_app/chia-gaming-${{ github.event.release.tag_name }}.tgz
+            deploy_player_app/chia-gaming-${{ github.event.release.tag_name }}.zip
 
       - name: Upload hub artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: chia-gaming-hub-linux
+          name: chia-gaming-hub-${{ github.event.release.tag_name }}
           path: |
-            deploy_hub/chia-gaming-hub-linux-*.tgz
-            deploy_hub/chia-gaming-hub-linux-*.zip
+            deploy_hub/chia-gaming-hub-${{ github.event.release.tag_name }}.tgz
+            deploy_hub/chia-gaming-hub-${{ github.event.release.tag_name }}.zip
+            SHA256SUMS-web.txt
+
+      - name: Upload deploy archives to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            deploy_player_app/chia-gaming-"$RELEASE_TAG".tgz \
+            deploy_player_app/chia-gaming-"$RELEASE_TAG".zip \
+            deploy_hub/chia-gaming-hub-"$RELEASE_TAG".tgz \
+            deploy_hub/chia-gaming-hub-"$RELEASE_TAG".zip \
+            SHA256SUMS-web.txt
 
   coverage:
     needs: [fmt, clippy]

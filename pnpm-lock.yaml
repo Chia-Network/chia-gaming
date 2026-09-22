@@ -15,6 +15,9 @@ overrides:
   test-exclude: 8.0.0
 
 patchedDependencies:
+  '@electron/asar@3.4.1':
+    hash: 8836f0f6a301c8a70e52d78f3f6b3e1a55bba0b72a93ae7451c4c9226e0d6de3
+    path: patches/@electron__asar@3.4.1.patch
   '@walletconnect/safe-json@1.0.2':
     hash: 348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44
     path: front-end/patches/@walletconnect__safe-json@1.0.2.patch
@@ -4621,7 +4624,7 @@ snapshots:
 
   '@electron-internal/extract-zip@1.0.5': {}
 
-  '@electron/asar@3.4.1':
+  '@electron/asar@3.4.1(patch_hash=8836f0f6a301c8a70e52d78f3f6b3e1a55bba0b72a93ae7451c4c9226e0d6de3)':
     dependencies:
       commander: 5.1.0
       glob: 13.0.6
@@ -4692,7 +4695,7 @@ snapshots:
 
   '@electron/universal@2.0.3':
     dependencies:
-      '@electron/asar': 3.4.1
+      '@electron/asar': 3.4.1(patch_hash=8836f0f6a301c8a70e52d78f3f6b3e1a55bba0b72a93ae7451c4c9226e0d6de3)
       '@malept/cross-spawn-promise': 2.0.0
       debug: 4.4.3
       dir-compare: 4.2.0
@@ -6284,7 +6287,7 @@ snapshots:
 
   app-builder-lib@26.15.3(dmg-builder@26.15.3)(electron-builder-squirrel-windows@26.15.3):
     dependencies:
-      '@electron/asar': 3.4.1
+      '@electron/asar': 3.4.1(patch_hash=8836f0f6a301c8a70e52d78f3f6b3e1a55bba0b72a93ae7451c4c9226e0d6de3)
       '@electron/fuses': 1.8.0
       '@electron/get': 3.1.0
       '@electron/notarize': 2.5.0
@@ -6813,7 +6816,7 @@ snapshots:
 
   electron-winstaller@5.4.0:
     dependencies:
-      '@electron/asar': 3.4.1
+      '@electron/asar': 3.4.1(patch_hash=8836f0f6a301c8a70e52d78f3f6b3e1a55bba0b72a93ae7451c4c9226e0d6de3)
       debug: 4.4.3
       fs-extra: 7.0.1
       lodash: 4.18.1
