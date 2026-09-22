@@ -168,7 +168,7 @@ export function setup(
     };
   }
   const blockchain = new BlockchainPoller(adapter, 60_000);
-  blockchain.refreshWalletOperationProvider();
+  blockchain.refreshProviderReadiness();
   const controller = new SessionController(
     blockchain,
     'submission-handoff',

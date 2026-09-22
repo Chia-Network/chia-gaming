@@ -431,6 +431,10 @@ pub enum GameSessionEvent {
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
+    /// Rust-authoritative fact that the watched channel coin was first observed.
+    ChannelCoinConfirmed,
+    /// Rust-authoritative fact that channel creation reached its absolute deadline.
+    ChannelCreationTimedOut,
     WatchCoin {
         coin_name: CoinID,
         coin_string: CoinString,

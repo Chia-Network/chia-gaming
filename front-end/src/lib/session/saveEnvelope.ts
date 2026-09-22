@@ -11,10 +11,11 @@ import type {
   ProposalOrigin,
   RegisteredGameType,
 } from './types';
-import type { WalletOperationEntry } from './walletOperationStore';
+import type { ChannelFundingEntry } from './channelFundingStore';
+import type { FeeAttachment } from './feeAttachmentStore';
 
 export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' as const;
-export const DURABLE_APPLICATION_STATE_VERSION = 3n;
+export const DURABLE_APPLICATION_STATE_VERSION = 4n;
 export const MAX_DURABLE_REJECTION_TRANSPORTS = 8;
 
 export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
@@ -184,7 +185,8 @@ export interface DurableApplicationState {
   history: SessionHistorySave;
   session: DurableSessionPhase | null;
   walletContext: WalletProviderScope | null;
-  walletObligations: WalletOperationEntry[];
+  channelFundingOperations: ChannelFundingEntry[];
+  feeAttachments: FeeAttachment[];
   rejectionTransports: DurableRejectionTransport[];
 }
 

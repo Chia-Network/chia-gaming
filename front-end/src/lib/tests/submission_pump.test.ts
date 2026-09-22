@@ -340,11 +340,137 @@ describe('submission pump delivery and runtime replacement', () => {
       await launch;
       controller.processResult(wasmResult());
       await controller.flushPendingWork();
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
 
       expect(spend).toHaveBeenCalledTimes(1);
       expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-fee');
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it.each(['opponent-variant', 'base-variant'])(
+    'cancels the exact fee reservation once when Rust retires after %s lands',
+    async (landedVariant) => {
+      const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+      const beginWalletOffer = jest.fn().mockResolvedValue({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer-fee' },
+        tradeId: `trade-${landedVariant}`,
+      });
+      const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+      const { controller, cradle, submit } = setup(spend, {
+        beginWalletOffer,
+        beginWalletOfferCancellation,
+      });
+      const lease = new ControlledRuntime();
+      try {
+        commitRuntime(controller, lease);
+        submit({
+          ...submission(`retired-${landedVariant}`),
+          fee_request: { target: '22'.repeat(32), amount: '10' },
+        });
+        await lease.launch(`submission:retired-${landedVariant}`);
+        (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
+          submissionDrain([], [`retired-${landedVariant}`]),
+        );
+        controller.processResult(wasmResult());
+        (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
+          submissionDrain([], [`retired-${landedVariant}`]),
+        );
+        controller.processResult(wasmResult());
+        await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
+        expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
+        expect(beginWalletOfferCancellation).toHaveBeenCalledWith(`trade-${landedVariant}`);
+      } finally {
+        controller.cleanup();
+      }
+    },
+  );
+
+  it('retries pending fee cancellation only after provider reconnect readiness', async () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-fee' },
+      tradeId: 'trade-reconnect-cancel',
+    });
+    const beginWalletOfferCancellation = jest
+      .fn()
+      .mockResolvedValueOnce({ status: 'unavailable', detail: 'wallet offline' })
+      .mockResolvedValueOnce({ status: 'cancelled' });
+    const { blockchain, controller, cradle, submit } = setup(spend, {
+      beginWalletOffer,
+      beginWalletOfferCancellation,
+    });
+    const lease = new ControlledRuntime();
+    try {
+      commitRuntime(controller, lease);
+      submit({
+        ...submission('reconnect-cancel'),
+        fee_request: { target: '22'.repeat(32), amount: '10' },
+      });
+      await lease.launch('submission:reconnect-cancel');
+      (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
+        submissionDrain([], ['reconnect-cancel']),
+      );
+      controller.processResult(wasmResult());
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
+      await Promise.resolve();
+      expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
+
+      const provider = blockchain.rpc.getWalletOfferProvider({
+        installationPlayerId: 'submission-handoff',
+        peerSessionId: '00'.repeat(16),
+      });
+      expect(provider).not.toBeNull();
+      blockchain.channelFundingRuntime.providerReconnectReady(provider!);
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 2);
+      await waitFor(() => storageRepository.feeAttachments().length === 0);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('does not block terminal finalization on an in-flight fee cancellation', async () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-fee' },
+      tradeId: 'trade-terminal-nonblocking',
+    });
+    const beginWalletOfferCancellation = jest.fn(
+      () => new Promise<{ status: 'cancelled' }>(() => {}),
+    );
+    const { controller, cradle, submit } = setup(spend, {
+      beginWalletOffer,
+      beginWalletOfferCancellation,
+    });
+    const lease = new ControlledRuntime();
+    try {
+      commitRuntime(controller, lease);
+      submit({
+        ...submission('terminal-nonblocking'),
+        fee_request: { target: '22'.repeat(32), amount: '10' },
+      });
+      await lease.launch('submission:terminal-nonblocking');
+      (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
+        submissionDrain([], ['terminal-nonblocking']),
+      );
+      controller.processResult(wasmResult());
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
+
+      await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+        coinsOfInterest: [],
+      });
+      expect(storageRepository.feeAttachments()).toEqual([
+        expect.objectContaining({
+          providerReservationId: 'trade-terminal-nonblocking',
+          stage: 'cancel-required',
+        }),
+      ]);
     } finally {
       controller.cleanup();
     }
@@ -911,25 +1037,21 @@ describe('submission pump delivery and runtime replacement', () => {
       await controller.flushTransactionSubmissions();
       controller.processResult(wasmResult());
       await controller.flushPendingWork();
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
 
       expect(cradle.reject_submission).toHaveBeenCalledWith(
         'network-rejected-cleanup-fails-attempt-1',
       );
       expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(storageRepository.walletObligations()).toEqual([
-        expect.objectContaining({
-          tradeId: 'trade-cleanup-fails',
-          stage: 'cancel-required',
-          reason: 'fee-submission-retired',
-        }),
-      ]);
+      await waitFor(() => storageRepository.feeAttachments().length === 0);
+      expect(storageRepository.feeAttachments()).toEqual([]);
     } finally {
       controller.cleanup();
     }
   });
 
-  it('starts coordinated fee cleanup only after its persistence release', async () => {
+  it('checkpoints fee cleanup before calling the provider', async () => {
     expectConsoleError('fee source rejected by Rust');
     const spend = jest.fn();
     const beginWalletOffer = jest.fn().mockResolvedValue({
@@ -945,7 +1067,7 @@ describe('submission pump delivery and runtime replacement', () => {
     (cradle.finalize_submission as jest.Mock).mockImplementation(() => {
       throw new Error('fee source rejected by Rust');
     });
-    const lease = new ControlledRuntime(undefined, 'wallet-offer-cancellation:');
+    const lease = new ControlledRuntime();
     try {
       commitRuntime(controller, lease);
       submit({
@@ -953,15 +1075,12 @@ describe('submission pump delivery and runtime replacement', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:finalize-rejected');
-      await waitFor(() => lease.has('wallet-offer-cancellation:trade-finalize-rejected'));
-
-      expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-      await lease.launch('wallet-offer-cancellation:trade-finalize-rejected');
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
       await controller.flushPendingWork();
 
       expect(spend).not.toHaveBeenCalled();
       expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-finalize-rejected');
-      expect(storageRepository.walletObligations()).toEqual([]);
+      expect(storageRepository.feeAttachments()).toEqual([]);
     } finally {
       controller.cleanup();
     }

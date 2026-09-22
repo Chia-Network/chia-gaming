@@ -1,7 +1,7 @@
 import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, InternalBlockchainInterface, WasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import {
   destroySessionController,
@@ -700,7 +700,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     setActiveBlob(blob);
     const cradle = {
@@ -746,7 +746,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     setActiveBlob(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
@@ -786,7 +786,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn([], []),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     attachTestCommitCoordinator(blob);
     const recoverableErrors: string[] = [];
@@ -822,7 +822,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     setActiveBlob(blob);
     const cradle = {
@@ -859,7 +859,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn(sentMessages, sentAcks),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     setActiveBlob(blob);
     const cradle = makeMockCradle();
@@ -898,7 +898,7 @@ describe('transaction submission', () => {
       100n,
       100n,
       makePeerConn([], []),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);

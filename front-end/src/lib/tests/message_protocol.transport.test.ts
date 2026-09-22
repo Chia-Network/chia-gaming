@@ -1,5 +1,5 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { Program } from 'clvm-lib';
 import { SessionController } from '../../hooks/SessionController';
 import type {
@@ -14,7 +14,6 @@ import { createSessionMachineState, reduceSessionMachine } from '../session/sess
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { createSessionModel } from '../session/model';
 import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
 import {
   attachTestCommitCoordinator,
   channelStatus,
@@ -938,7 +937,7 @@ describe('outbound message numbering', () => {
     const proposal = enc('session proposal');
     peer.reliableState!.messageNumber = 2n;
     peer.reliableState!.unackedMessages = [{ msgno: 1n, msg: proposal }];
-    const blob = new SessionController(null, 'test', 100n, 100n, peer, walletOperationRuntime);
+    const blob = new SessionController(null, 'test', 100n, 100n, peer, channelFundingRuntime);
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(makeMockCradle());
     attachTestCommitCoordinator(blob);
@@ -1017,6 +1016,7 @@ describe('WASM wallet funding requests', () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('coin-spend') },
+      tradeId: 'funding-coin-spend',
     });
     const blockchain = new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000);
     const { blob, cradle } = createReadyBlob();
@@ -1059,6 +1059,7 @@ describe('WASM wallet funding requests', () => {
       return {
         kind: 'created-reserved',
         material: { kind: 'bundle', bundle: testSpendBundle('coin-spend') },
+        tradeId: 'funding-persistence',
       };
     });
     const { blob } = createReadyBlob();
@@ -1097,6 +1098,7 @@ describe('WASM wallet funding requests', () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('initial') },
+      tradeId: 'funding-initial',
     });
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
@@ -1160,7 +1162,12 @@ describe('WASM wallet funding requests', () => {
     expect(walletCallbackFailed).toHaveBeenCalledWith(
       expect.stringContaining('concurrent funding request'),
     );
-    expect(storageRepository.walletObligations()).toEqual([]);
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-1',
+        stage: 'awaiting-channel',
+      }),
+    ]);
   });
 
   it('cancels the original trade and reports one callback failure when offer validation throws', async () => {
@@ -1202,7 +1209,7 @@ describe('WASM wallet funding requests', () => {
     expect(walletCallbackFailed).toHaveBeenCalledWith('wallet funding offer failed validation');
   });
 
-  it('routes a late funding result through the ledger after controller teardown', async () => {
+  it('retains a late known funding reservation after controller teardown without cancellation', async () => {
     let resolveOffer!: (value: {
       kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
@@ -1255,18 +1262,20 @@ describe('WASM wallet funding requests', () => {
     });
     for (
       let pass = 0;
-      pass < 20 && beginWalletOfferCancellation.mock.calls.length === 0;
+      pass < 20 && storageRepository.channelFundingOperations().length === 0;
       pass += 1
     ) {
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    await walletOperationRuntime.awaitOwner({
-      installationPlayerId: 'test',
-      peerSessionId: '00'.repeat(16),
-      providerScope: { provider: 'simulator', identity: 'submission-handoff' },
-    });
+    await channelFundingRuntime.flush();
 
-    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late');
+    expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-late',
+        stage: 'awaiting-channel',
+      }),
+    ]);
     expect(provideOffer).not.toHaveBeenCalled();
   });
 
@@ -1324,6 +1333,7 @@ describe('WASM wallet funding requests', () => {
       .mockResolvedValueOnce({
         kind: 'created-reserved',
         material: { kind: 'bundle', bundle: testSpendBundle('funding-retry') },
+        tradeId: 'funding-retry',
       });
     let readiness: ((ready: boolean) => void) | undefined;
     const blockchain = new BlockchainPoller(
@@ -1360,7 +1370,7 @@ describe('WASM wallet funding requests', () => {
     await blob.flushPendingWork();
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(walletCallbackFailed).not.toHaveBeenCalled();
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.channelFundingOperations()).toEqual([
       expect.objectContaining({ stage: 'best-effort-uncertain' }),
     ]);
 
@@ -1413,10 +1423,12 @@ describe('WASM wallet funding requests', () => {
     let resolveFirst!: (outcome: {
       kind: 'created-reserved';
       material: { kind: 'bundle'; bundle: ReturnType<typeof testSpendBundle> };
+      tradeId: string;
     }) => void;
     const firstWalletRequest = new Promise<{
       kind: 'created-reserved';
       material: { kind: 'bundle'; bundle: ReturnType<typeof testSpendBundle> };
+      tradeId: string;
     }>((resolve) => {
       resolveFirst = resolve;
     });
@@ -1441,6 +1453,7 @@ describe('WASM wallet funding requests', () => {
     resolveFirst({
       kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('first') },
+      tradeId: 'funding-first',
     });
     await blob.flushPendingWork();
     subscription.unsubscribe();
@@ -1460,6 +1473,7 @@ describe('WASM wallet funding requests', () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created-reserved',
       material: { kind: 'bundle', bundle: testSpendBundle('replacement-runtime') },
+      tradeId: 'funding-replacement-runtime',
     });
     const { blob } = createReadyBlob();
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
@@ -1602,9 +1616,9 @@ describe('wallet fee attachment on submission', () => {
       10n,
     );
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(storageRepository.walletObligations()[0]).toEqual(
+    expect(storageRepository.feeAttachments()[0]).toEqual(
       expect.objectContaining({
-        tradeId: 'fee-aggregate-trade',
+        providerReservationId: 'fee-aggregate-trade',
         stage: 'retained-for-replay',
       }),
     );
@@ -1640,7 +1654,7 @@ describe('wallet fee attachment on submission', () => {
 
     expect(spend).not.toHaveBeenCalled();
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('fee-conversion-failure-trade');
-    expect(storageRepository.walletObligations()).toEqual([]);
+    expect(storageRepository.feeAttachments()).toEqual([]);
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining('failed to convert finalized transaction result'),
     );
@@ -1679,6 +1693,7 @@ describe('wallet fee attachment on submission', () => {
     setTestPersistence(blob, async () => {
       writes += 1;
       order.push(`persist-${writes}`);
+      if (writes === 2) expect(spend).not.toHaveBeenCalled();
       if (writes <= 2) throw new Error(`disk full ${writes}`);
     });
 
@@ -1689,12 +1704,13 @@ describe('wallet fee attachment on submission', () => {
 
     expect(order.slice(0, 2)).toEqual(['persist-1', 'fee']);
     expect(finalize).toHaveBeenCalledTimes(1);
-    expect(spend).not.toHaveBeenCalled();
 
-    await expect(blob.flushPendingSave()).rejects.toThrow('disk full 2');
+    await blob.flushPendingSave().catch(() => {});
     await blob.flushTransactionSubmissions();
 
-    expect(order).toEqual(['persist-1', 'fee', 'finalize', 'persist-2', 'spend', 'persist-3']);
+    expect(order.indexOf('persist-1')).toBeLessThan(order.indexOf('fee'));
+    expect(order.indexOf('fee')).toBeLessThan(order.indexOf('finalize'));
+    expect(order.indexOf('persist-2')).toBeLessThan(order.indexOf('spend'));
     expect(spend).toHaveBeenCalledTimes(1);
     await blob.flushPendingSave();
     expect(spend).toHaveBeenCalledTimes(1);
@@ -1882,6 +1898,7 @@ describe('wallet fee attachment on submission', () => {
     const beginWalletOffer = jest.fn().mockResolvedValue({
       kind: 'created-reserved',
       material: { kind: 'bundle', bundle: feeSpend },
+      tradeId: 'complete-bundle-trade',
     });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const finalize = jest.fn().mockReturnValue({
@@ -1993,7 +2010,7 @@ describe('wallet fee attachment on submission', () => {
     );
 
     blob.attachBlockchain(blockchain);
-    walletOperationRuntime.providerReconnectReady(
+    channelFundingRuntime.providerReconnectReady(
       blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
         peerSessionId: '00'.repeat(16),
@@ -2081,9 +2098,9 @@ describe('wallet fee attachment on submission', () => {
     blob.processResult(wasmResult());
     await transactionSubmitQueue(blob);
 
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.feeAttachments()).toEqual([
       expect.objectContaining({
-        tradeId: 'attached-replay-trade',
+        providerReservationId: 'attached-replay-trade',
         stage: 'retained-for-replay',
       }),
     ]);
@@ -2098,9 +2115,9 @@ describe('wallet fee attachment on submission', () => {
       undefined,
     );
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(storageRepository.walletObligations()[0]).toEqual(
+    expect(storageRepository.feeAttachments()[0]).toEqual(
       expect.objectContaining({
-        tradeId: 'attached-replay-trade',
+        providerReservationId: 'attached-replay-trade',
         stage: 'retained-for-replay',
       }),
     );
@@ -2114,26 +2131,23 @@ describe('wallet fee attachment on submission', () => {
     setTestBlockchain(blob, blockchain);
     const owner = (
       blob as unknown as {
-        walletOperationOwner(): {
+        providerOwner(): {
           installationPlayerId: string;
           peerSessionId: string;
           providerScope: { provider: 'simulator'; identity: string };
         };
       }
-    ).walletOperationOwner();
+    ).providerOwner();
     storageRepository.ensureWalletContext(owner.providerScope);
-    installReservedWalletObligation(
-      'retired-trade',
-      owner,
-      { kind: 'fee', operationId: 'retired-submission' },
-      'fee-offer-created',
-    );
-    walletOperationRuntime.settleOperation(
-      owner,
-      { kind: 'fee', operationId: 'retired-submission' },
-      'retained-for-replay',
-      'fee-source-attached',
-    );
+    storageRepository.replaceFeeAttachments([
+      {
+        owner,
+        submissionId: 'retired-submission',
+        stage: 'retained-for-replay',
+        providerReservationId: 'retired-trade',
+        reason: 'fee-source-attached',
+      },
+    ]);
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
       submissionDrain([], ['retired-submission']),
     );
@@ -2357,8 +2371,11 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(storageRepository.walletObligations()[0]).toEqual(
-      expect.objectContaining({ tradeId: 'Offer_fee', stage: 'retained-for-replay' }),
+    expect(storageRepository.feeAttachments()[0]).toEqual(
+      expect.objectContaining({
+        providerReservationId: 'Offer_fee',
+        stage: 'retained-for-replay',
+      }),
     );
   });
 

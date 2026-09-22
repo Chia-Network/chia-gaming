@@ -13,7 +13,7 @@ import type {
 } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { storageRepository } from '../session/storageRepository';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
 import { liveSave } from './session_save_envelope.fixtures';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
@@ -63,7 +63,7 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
 export const mockBlockchain = new BlockchainPoller(mockRpc, 60000);
 
 export function setTestBlockchain(blob: SessionController, blockchain: BlockchainPoller): void {
-  blockchain.refreshWalletOperationProvider();
+  blockchain.refreshProviderReadiness();
   blob.blockchain = blockchain;
 }
 
@@ -304,7 +304,7 @@ export function createReadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
-  if (trackedBlobs.length === 0) mockBlockchain.refreshWalletOperationProvider();
+  if (trackedBlobs.length === 0) mockBlockchain.refreshProviderReadiness();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -356,7 +356,7 @@ export function createUnreadyBlob(
   onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
   receivePolicy?: ReadonlySessionReceivePolicy,
 ): TestHarness {
-  if (trackedBlobs.length === 0) mockBlockchain.refreshWalletOperationProvider();
+  if (trackedBlobs.length === 0) mockBlockchain.refreshProviderReadiness();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
   const blob = new SessionController(
@@ -421,18 +421,19 @@ beforeEach(async () => {
   setTestGlobal('localStorage', makeStorage());
   setTestGlobal('sessionStorage', makeStorage());
   setTestGlobal('indexedDB', testIndexedDb);
-  mockBlockchain.detachWalletOperationProvider();
+  mockBlockchain.detachProvider();
   storageRepository._resetForTests();
   await storageRepository.claimApplicationState();
   await storageRepository.clearSession();
   const empty = {
     ...storageRepository.loadState(),
     walletContext: null,
-    walletObligations: [],
+    channelFundingOperations: [],
+    feeAttachments: [],
   };
   storageRepository._replaceApplicationStateForTests(empty);
   await storageRepository.checkpointApplicationState(empty);
-  walletOperationRuntime.resetForTests();
+  channelFundingRuntime.resetForTests();
 });
 
 afterEach(async () => {

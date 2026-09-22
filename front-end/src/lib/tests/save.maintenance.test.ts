@@ -1,7 +1,7 @@
 import { checkLease, isLeaseConflict, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { SESSION_DB_NAME, StorageAuthorityLostError } from '../session/indexedDb';
 import { liveSave } from './session_save_envelope.fixtures';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 import {
   startPendingWalletConnectWipe,
   _resetPendingWalletConnectWipeForTests,
@@ -120,7 +120,7 @@ describe('hard reset', () => {
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator', identity: 'installation' },
     });
-    installReservedWalletObligation(
+    installAwaitingChannelFunding(
       'pre-reset-ledger',
       {
         installationPlayerId: 'installation',
@@ -160,14 +160,18 @@ describe('hard reset', () => {
       }),
       [
         {
-          tradeId: 'stale-reset-ledger',
+          providerReservationId: 'stale-reset-ledger',
           owner: {
             installationPlayerId: 'installation',
             peerSessionId: 'stale-peer',
             providerScope: { provider: 'simulator', identity: 'installation' },
           },
           purpose: { kind: 'funding', operationId: 'stale-operation' },
-          stage: 'reserved',
+          stage: 'awaiting-channel',
+          request: {
+            kind: 'funding',
+            canonical: { amount: '100', fee: '0', conditions: [] },
+          },
           reason: 'held-before-hard-reset',
         },
       ],
@@ -183,7 +187,7 @@ describe('hard reset', () => {
     ).databases();
     expect(databases.map((database) => database.name)).not.toContain(SESSION_DB_NAME);
     expect(storageRepository.loadState().session).toBeNull();
-    expect(storageRepository.walletObligations()).toEqual([]);
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
   it('deletes only owned IndexedDB databases returned by the browser', async () => {

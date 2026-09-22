@@ -6,13 +6,13 @@ import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/Ch
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
-import { WalletOperationRuntime, walletOperationRuntime } from '../session/walletOperationRuntime';
-import { entriesForOwner, recoveryReadiness } from '../session/walletOperationSelectors';
+import { ChannelFundingRuntime, channelFundingRuntime } from '../session/channelFundingRuntime';
+import { entriesForOwner, recoveryReadiness } from '../session/channelFundingSelectors';
 import { storageRepository } from '../session/storageRepository';
-import { walletProviderScopeKey } from '../session/walletOperationStore';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import { providerScopeKey } from '../session/providerKeys';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 
-const walletOperation = {
+const fundingOperation = {
   owner: {
     installationPlayerId: 'installation',
     peerSessionId: 'peer-session',
@@ -39,7 +39,7 @@ function makeRpc(heights: bigint[]): InternalBlockchainInterface {
       getWalletOfferProvider(this: Record<string, any>) {
         return {
           capability: 'best-effort' as const,
-          scope: walletOperation.owner.providerScope,
+          scope: fundingOperation.owner.providerScope,
           beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
           cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
         };
@@ -725,7 +725,7 @@ describe('BlockchainPoller', () => {
         getWalletOfferProvider() {
           return {
             capability: 'best-effort' as const,
-            scope: walletOperation.owner.providerScope,
+            scope: fundingOperation.owner.providerScope,
             beginCreation: () => {
               calls.push('beginWalletOffer');
               return createOffer.promise as any;
@@ -753,8 +753,8 @@ describe('BlockchainPoller', () => {
     await advanceLane();
     const p2 = poller.rpc.getBalance();
     const p3 = poller.rpc
-      .getWalletOfferProvider(walletOperation.owner)!
-      .beginCreation(walletOperation, walletRequest);
+      .getWalletOfferProvider(fundingOperation.owner)!
+      .beginCreation(fundingOperation, walletRequest);
     const p4 = poller.rpc.selectCoins('u', 1n);
     const p5 = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
@@ -1052,7 +1052,7 @@ describe('BlockchainPoller', () => {
   });
 
   it('returns a stale successful wallet offer to durable lifecycle ownership', async () => {
-    const walletRuntime = new WalletOperationRuntime();
+    const fundingRuntime = new ChannelFundingRuntime();
     let connected = true;
     let onConnectionChange: ((next: boolean) => void) | undefined;
     const firstOffer = deferred<{
@@ -1074,7 +1074,7 @@ describe('BlockchainPoller', () => {
     const rpc = {
       getWalletOfferProvider: () => ({
         capability: 'best-effort' as const,
-        scope: walletOperation.owner.providerScope,
+        scope: fundingOperation.owner.providerScope,
         beginCreation: beginWalletOffer,
         cancel: beginWalletOfferCancellation,
       }),
@@ -1086,13 +1086,13 @@ describe('BlockchainPoller', () => {
         };
       },
     } as unknown as InternalBlockchainInterface;
-    const poller = new BlockchainPoller(rpc, 1000, undefined, walletRuntime);
-    walletRuntime.attachProvider(poller.rpc.getWalletOfferProvider()!);
+    const poller = new BlockchainPoller(rpc, 1000, undefined, fundingRuntime);
+    fundingRuntime.attachProvider(poller.rpc.getWalletOfferProvider()!);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
-    const stale = walletRuntime.createOffer(
-      walletOperation.owner,
-      walletOperation.purpose,
+    const stale = fundingRuntime.createOffer(
+      fundingOperation.owner,
+      fundingOperation.purpose,
       { ...walletRequest, uniqueId: 'old' },
       {
         kind: 'funding',
@@ -1118,11 +1118,9 @@ describe('BlockchainPoller', () => {
       material: { kind: 'offer', offer: 'offer-old' },
       tradeId: 'trade-old',
     });
-    walletRuntime.settleOperation(
-      walletOperation.owner,
-      walletOperation.purpose,
-      'cancel-required',
-      'stale-completion',
+    fundingRuntime.channelCreationTimedOut(
+      fundingOperation.owner.installationPlayerId,
+      fundingOperation.owner.peerSessionId,
     );
     for (
       let attempt = 0;
@@ -1133,18 +1131,23 @@ describe('BlockchainPoller', () => {
     }
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-old');
-    expect(entriesForOwner(storageRepository.walletObligations(), walletOperation.owner)).toEqual([
-      expect.objectContaining({ tradeId: 'trade-old', stage: 'cancel-required' }),
+    expect(
+      entriesForOwner(storageRepository.channelFundingOperations(), fundingOperation.owner),
+    ).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-old',
+        stage: 'cancel-required',
+      }),
     ]);
     await Promise.resolve();
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     poller.stop();
     poller.stopBalanceInterest();
-    walletRuntime.resetForTests();
+    fundingRuntime.resetForTests();
   });
 
   it('does not let an inactive constructed poller steal ledger RPC ownership', async () => {
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     const activeRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const inactiveRelease = jest.fn().mockResolvedValue({ status: 'cancelled' });
     const activeRpc = {
@@ -1159,7 +1162,7 @@ describe('BlockchainPoller', () => {
       }),
       onConnectionChange: () => () => {},
     } as unknown as InternalBlockchainInterface;
-    walletOperationRuntime.attachProvider(activeRpc.getWalletOfferProvider()!);
+    channelFundingRuntime.attachProvider(activeRpc.getWalletOfferProvider()!);
     new BlockchainPoller(
       {
         ...makeRpc([1n]),
@@ -1172,27 +1175,22 @@ describe('BlockchainPoller', () => {
       peerSessionId: 'peer-session',
       providerScope: { provider: 'simulator' as const, identity: 'installation' },
     };
-    const purpose = { kind: 'fee' as const, operationId: 'submission' };
+    const purpose = { kind: 'funding' as const, operationId: 'funding' };
 
-    installReservedWalletObligation('trade-active-owner', owner, purpose);
-    walletOperationRuntime.settleOperation(
-      owner,
-      purpose,
-      'cancel-required',
-      'wallet-outcome-finalized',
-    );
-    await walletOperationRuntime.awaitOwner(owner);
+    installAwaitingChannelFunding('trade-active-owner', owner, purpose);
+    channelFundingRuntime.channelCreationTimedOut(owner.installationPlayerId, owner.peerSessionId);
+    await channelFundingRuntime.flush();
 
     expect(activeRelease).toHaveBeenCalledWith('trade-active-owner');
     expect(inactiveRelease).not.toHaveBeenCalled();
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
   });
 
   it('resolves alternating canonical owners without re-dirtying a fixed-point drain', () => {
-    const walletRuntime = new WalletOperationRuntime();
+    const fundingRuntime = new ChannelFundingRuntime();
     const rpc = {
       getWalletOfferProvider: (
-        owner?: Pick<typeof walletOperation.owner, 'installationPlayerId' | 'peerSessionId'>,
+        owner?: Pick<typeof fundingOperation.owner, 'installationPlayerId' | 'peerSessionId'>,
       ) => ({
         capability: 'best-effort' as const,
         scope: {
@@ -1203,12 +1201,12 @@ describe('BlockchainPoller', () => {
         cancel: jest.fn(),
       }),
     } as unknown as InternalBlockchainInterface;
-    const poller = new BlockchainPoller(rpc, 1000, undefined, walletRuntime);
-    poller.refreshWalletOperationProvider();
+    const poller = new BlockchainPoller(rpc, 1000, undefined, fundingRuntime);
+    poller.refreshProviderReadiness();
 
     let dirty = true;
     let drainPasses = 0;
-    const unsubscribe = walletRuntime.subscribe(() => {
+    const unsubscribe = fundingRuntime.subscribe(() => {
       dirty = true;
     });
     while (dirty) {
@@ -1216,13 +1214,13 @@ describe('BlockchainPoller', () => {
       drainPasses += 1;
       if (drainPasses > 3) throw new Error('owner resolution did not reach a fixed point');
       expect(
-        poller.resolveWalletOperationOwner({
+        poller.resolveProviderOwner({
           installationPlayerId: 'player-a',
           peerSessionId: 'session-a',
         })?.providerScope,
       ).toEqual({ provider: 'simulator', identity: 'player-a' });
       expect(
-        poller.resolveWalletOperationOwner({
+        poller.resolveProviderOwner({
           installationPlayerId: 'player-b',
           peerSessionId: 'session-b',
         })?.providerScope,
@@ -1230,35 +1228,35 @@ describe('BlockchainPoller', () => {
     }
 
     expect(drainPasses).toBe(1);
-    expect(walletRuntime.providerScopeKeys()).toEqual(
-      new Set([walletProviderScopeKey({ provider: 'simulator', identity: 'connected-wallet' })]),
+    expect(fundingRuntime.providerScopeKeys()).toEqual(
+      new Set([providerScopeKey({ provider: 'simulator', identity: 'connected-wallet' })]),
     );
 
     dirty = false;
-    poller.notifyWalletOperationReadiness({
+    poller.notifyProviderReadiness({
       installationPlayerId: 'player-a',
       peerSessionId: 'session-a',
     });
     expect(dirty).toBe(true);
-    expect(walletRuntime.providerScopeKeys()).toEqual(
+    expect(fundingRuntime.providerScopeKeys()).toEqual(
       new Set([
-        walletProviderScopeKey({ provider: 'simulator', identity: 'connected-wallet' }),
-        walletProviderScopeKey({ provider: 'simulator', identity: 'player-a' }),
+        providerScopeKey({ provider: 'simulator', identity: 'connected-wallet' }),
+        providerScopeKey({ provider: 'simulator', identity: 'player-a' }),
       ]),
     );
 
     unsubscribe();
-    walletRuntime.resetForTests();
+    fundingRuntime.resetForTests();
   });
 
   it('detaches wallet recovery readiness while the active provider is disconnected', () => {
     jest.useFakeTimers();
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     let connected = true;
     const connectionListeners = new Set<(next: boolean) => void>();
     const sourceProvider = {
       capability: 'best-effort' as const,
-      scope: walletOperation.owner.providerScope,
+      scope: fundingOperation.owner.providerScope,
       beginCreation: jest.fn(),
       cancel: jest.fn(),
     };
@@ -1271,18 +1269,18 @@ describe('BlockchainPoller', () => {
         connectionListeners.delete(listener);
       };
     };
-    installReservedWalletObligation(
+    installAwaitingChannelFunding(
       'trade-provider-readiness',
-      walletOperation.owner,
-      walletOperation.purpose,
+      fundingOperation.owner,
+      fundingOperation.purpose,
     );
 
     try {
       activate(rpc, 60_000);
       expect(
         recoveryReadiness(
-          storageRepository.walletObligations(),
-          walletOperationRuntime.providerScopeKeys(),
+          storageRepository.channelFundingOperations(),
+          channelFundingRuntime.providerScopeKeys(),
         ),
       ).toBe('ready');
 
@@ -1290,8 +1288,8 @@ describe('BlockchainPoller', () => {
       for (const listener of connectionListeners) listener(false);
       expect(
         recoveryReadiness(
-          storageRepository.walletObligations(),
-          walletOperationRuntime.providerScopeKeys(),
+          storageRepository.channelFundingOperations(),
+          channelFundingRuntime.providerScopeKeys(),
         ),
       ).toBe('wallet-unavailable');
 
@@ -1299,13 +1297,13 @@ describe('BlockchainPoller', () => {
       for (const listener of connectionListeners) listener(true);
       expect(
         recoveryReadiness(
-          storageRepository.walletObligations(),
-          walletOperationRuntime.providerScopeKeys(),
+          storageRepository.channelFundingOperations(),
+          channelFundingRuntime.providerScopeKeys(),
         ),
       ).toBe('ready');
     } finally {
       deactivate();
-      walletOperationRuntime.resetForTests();
+      channelFundingRuntime.resetForTests();
       jest.useRealTimers();
     }
   });
@@ -1403,7 +1401,7 @@ describe('BlockchainPoller', () => {
       selectCoins,
       getWalletOfferProvider: () => ({
         capability: 'best-effort' as const,
-        scope: walletOperation.owner.providerScope,
+        scope: fundingOperation.owner.providerScope,
         beginCreation: beginWalletOffer,
         cancel: jest.fn(),
       }),
@@ -1418,8 +1416,8 @@ describe('BlockchainPoller', () => {
     const poller = new BlockchainPoller(rpc, 1000);
     poller.startBalanceInterest(1000, { onBalance: () => {} });
     const walletRequest = poller.rpc.selectCoins('wallet', 1n);
-    const feeRequest = poller.rpc.getWalletOfferProvider(walletOperation.owner)!.beginCreation(
-      { ...walletOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+    const feeRequest = poller.rpc.getWalletOfferProvider(fundingOperation.owner)!.beginCreation(
+      { ...fundingOperation, purpose: { kind: 'fee', operationId: 'fee' } },
       {
         kind: 'fee',
         uniqueId: 'wallet',

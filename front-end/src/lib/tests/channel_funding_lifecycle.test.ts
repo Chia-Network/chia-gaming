@@ -1,11 +1,10 @@
 import 'fake-indexeddb/auto';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
-import type { WalletOperationEntry, WalletOperationOwner } from '../session/walletOperationStore';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import type { ChannelFundingEntry, ChannelFundingOwner } from '../session/channelFundingStore';
 
-const owner: WalletOperationOwner = {
+const owner: ChannelFundingOwner = {
   installationPlayerId: 'player',
   peerSessionId: 'session',
   providerScope: { provider: 'cloud', walletId: 'Wallet_1' },
@@ -23,11 +22,12 @@ const providerRequest = {
   openingFee: 0n,
 };
 
-function installWallet(entries: WalletOperationEntry[]): void {
+function installWallet(entries: ChannelFundingEntry[]): void {
   storageRepository._replaceApplicationStateForTests({
     ...storageRepository.loadState(),
     walletContext: owner.providerScope,
-    walletObligations: entries,
+    channelFundingOperations: entries.filter((entry) => entry.purpose.kind === 'funding'),
+    feeAttachments: entries.filter((entry) => entry.purpose.kind === 'fee'),
   });
 }
 
@@ -41,19 +41,20 @@ async function waitFor(check: () => boolean): Promise<void> {
 describe('aggregate wallet offer lifecycle', () => {
   beforeEach(async () => {
     storageRepository._resetForTests();
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     await storageRepository.claimApplicationState();
     const empty = {
       ...storageRepository.loadState(),
       session: null,
       walletContext: owner.providerScope,
-      walletObligations: [],
+      channelFundingOperations: [],
+      feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
     await storageRepository.checkpointApplicationState(empty);
   });
 
-  afterEach(() => walletOperationRuntime.resetForTests());
+  afterEach(() => channelFundingRuntime.resetForTests());
 
   it.each([
     {
@@ -77,7 +78,6 @@ describe('aggregate wallet offer lifecycle', () => {
         stage: 'best-effort-uncertain' as const,
         disposition: 'active' as const,
         request: recoveryRequest,
-        generation: 1n,
         lastAttemptEpoch: 1n,
         reason: 'response-lost',
         orphanRisk: 'pre-id-response-lost' as const,
@@ -90,7 +90,7 @@ describe('aggregate wallet offer lifecycle', () => {
         owner,
         purpose,
         stage: 'cancel-required' as const,
-        tradeId: 'Offer_reload_required',
+        providerReservationId: 'Offer_reload_required',
         reason: 'cleanup',
       },
       expectedStage: 'cancel-required',
@@ -101,8 +101,7 @@ describe('aggregate wallet offer lifecycle', () => {
         owner,
         purpose,
         stage: 'best-effort-cancellation-uncertain' as const,
-        tradeId: 'Offer_reload_uncertain',
-        generation: 1n,
+        providerReservationId: 'Offer_reload_uncertain',
         lastAttemptEpoch: 1n,
         reason: 'response-lost',
       },
@@ -114,7 +113,7 @@ describe('aggregate wallet offer lifecycle', () => {
         owner,
         purpose,
         stage: 'cancelling' as const,
-        tradeId: 'Offer_reload_cancelling',
+        providerReservationId: 'Offer_reload_cancelling',
         recoveryId: 'SR_reload_cancel',
         reason: 'pending',
       },
@@ -125,11 +124,16 @@ describe('aggregate wallet offer lifecycle', () => {
     await storageRepository.checkpointApplicationState(storageRepository.loadState());
 
     storageRepository._resetForTests();
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     const claimed = await storageRepository.claimApplicationState();
 
-    expect(claimed.walletObligations).toEqual([expect.objectContaining({ stage: expectedStage })]);
-    expect(storageRepository.walletObligations()).toEqual(claimed.walletObligations);
+    expect([...claimed.channelFundingOperations, ...claimed.feeAttachments]).toEqual([
+      expect.objectContaining({ stage: expectedStage }),
+    ]);
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      ...claimed.channelFundingOperations,
+      ...claimed.feeAttachments,
+    ]);
   });
 
   it('checkpoints a Cloud recovery id before exact reconciliation', async () => {
@@ -145,19 +149,19 @@ describe('aggregate wallet offer lifecycle', () => {
       beginCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
       reconcileCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
     };
-    walletOperationRuntime.attachProvider(provider);
+    channelFundingRuntime.attachProvider(provider);
 
-    const creation = walletOperationRuntime.createOffer(
+    const creation = channelFundingRuntime.createOffer(
       owner,
       purpose,
       providerRequest,
       recoveryRequest,
     );
     await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.channelFundingOperations()).toEqual([
       expect.objectContaining({ stage: 'creating', recoveryId: 'SR_exact' }),
     ]);
-    expect((await storageRepository.inspect()).applicationState?.walletObligations).toEqual([
+    expect((await storageRepository.inspect()).applicationState?.channelFundingOperations).toEqual([
       expect.objectContaining({ stage: 'creating', recoveryId: 'SR_exact' }),
     ]);
 
@@ -180,13 +184,13 @@ describe('aggregate wallet offer lifecycle', () => {
       beginCreation,
       cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
     };
-    walletOperationRuntime.attachProvider(provider);
+    channelFundingRuntime.attachProvider(provider);
 
     await expect(
-      walletOperationRuntime.createOffer(owner, purpose, providerRequest, recoveryRequest),
+      channelFundingRuntime.createOffer(owner, purpose, providerRequest, recoveryRequest),
     ).resolves.toMatchObject({ kind: 'unavailable' });
     expect(beginCreation).toHaveBeenCalledTimes(1);
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.channelFundingOperations()).toEqual([
       expect.objectContaining({
         stage: 'best-effort-uncertain',
         orphanRisk: 'pre-id-response-lost',
@@ -195,13 +199,13 @@ describe('aggregate wallet offer lifecycle', () => {
 
     await Promise.resolve();
     expect(beginCreation).toHaveBeenCalledTimes(1);
-    walletOperationRuntime.providerReconnectReady(provider);
+    channelFundingRuntime.providerReconnectReady(provider);
     await waitFor(() => beginCreation.mock.calls.length === 2);
     expect(beginCreation).toHaveBeenCalledTimes(2);
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.channelFundingOperations()).toEqual([
       expect.objectContaining({
-        stage: 'reserved',
-        tradeId: 'replacement',
+        stage: 'awaiting-channel',
+        providerReservationId: 'replacement',
         orphanRisk: 'pre-id-response-lost',
       }),
     ]);
@@ -217,7 +221,7 @@ describe('aggregate wallet offer lifecycle', () => {
         owner,
         purpose,
         stage: 'cancel-required',
-        tradeId: 'Offer_cancel',
+        providerReservationId: 'Offer_cancel',
         reason: 'cleanup',
       },
     ]);
@@ -231,23 +235,23 @@ describe('aggregate wallet offer lifecycle', () => {
         .mockResolvedValue({ status: 'pending', recoveryId: 'SR_cancel' }),
       reconcileCancellation: jest.fn(() => cancellation),
     };
-    walletOperationRuntime.attachProvider(provider);
+    channelFundingRuntime.attachProvider(provider);
     await waitFor(() => provider.reconcileCancellation.mock.calls.length === 1);
 
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.channelFundingOperations()).toEqual([
       expect.objectContaining({
         stage: 'cancelling',
-        tradeId: 'Offer_cancel',
+        providerReservationId: 'Offer_cancel',
         recoveryId: 'SR_cancel',
       }),
     ]);
-    expect((await storageRepository.inspect()).applicationState?.walletObligations).toEqual([
+    expect((await storageRepository.inspect()).applicationState?.channelFundingOperations).toEqual([
       expect.objectContaining({ stage: 'cancelling', recoveryId: 'SR_cancel' }),
     ]);
 
     resolveCancellation({ status: 'cancelled' });
-    await walletOperationRuntime.awaitOwner(owner);
-    expect(storageRepository.walletObligations()).toEqual([]);
+    await channelFundingRuntime.flush();
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
   it('fences a stale response and transfers cleanup after authority reclaim', async () => {
@@ -276,8 +280,8 @@ describe('aggregate wallet offer lifecycle', () => {
     };
     storageRepository._replaceApplicationStateForTests(scoped);
     await storageRepository.checkpointApplicationState(scoped);
-    walletOperationRuntime.attachProvider(provider);
-    const creation = walletOperationRuntime.createOffer(
+    channelFundingRuntime.attachProvider(provider);
+    const creation = channelFundingRuntime.createOffer(
       owner,
       purpose,
       providerRequest,
@@ -295,14 +299,17 @@ describe('aggregate wallet offer lifecycle', () => {
     expect(cancel).not.toHaveBeenCalled();
 
     await storageRepository.claimApplicationState();
-    walletOperationRuntime.attachProvider(provider);
-    expect(storageRepository.walletObligations()).toEqual([
-      expect.objectContaining({ tradeId: 'stale-trade', stage: 'cancel-required' }),
+    channelFundingRuntime.attachProvider(provider);
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'stale-trade',
+        stage: 'cancel-required',
+      }),
     ]);
     await waitFor(() => cancel.mock.calls.length === 1);
-    await walletOperationRuntime.awaitOwner(owner);
+    await channelFundingRuntime.flush();
     expect(cancel).toHaveBeenCalledWith('stale-trade');
-    expect(storageRepository.walletObligations()).toEqual([]);
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
   it('does not call a provider under aggregate scope mismatch', async () => {
@@ -311,41 +318,20 @@ describe('aggregate wallet offer lifecycle', () => {
         owner,
         purpose,
         stage: 'cancel-required',
-        tradeId: 'Offer_original',
+        providerReservationId: 'Offer_original',
         reason: 'cleanup',
       },
     ]);
     const cancel = jest.fn();
-    walletOperationRuntime.attachProvider({
+    channelFundingRuntime.attachProvider({
       capability: 'best-effort',
       scope: { provider: 'cloud', walletId: 'Wallet_2' },
       beginCreation: jest.fn(),
       cancel,
     });
-    walletOperationRuntime.retryCancelRequired(owner);
+    channelFundingRuntime.retryCancelRequired(owner);
     await Promise.resolve();
     expect(cancel).not.toHaveBeenCalled();
-    expect(storageRepository.walletObligations()).toHaveLength(1);
-  });
-
-  it('keeps replay fee ownership until explicit cleanup', () => {
-    installReservedWalletObligation('Offer_fee', owner, {
-      kind: 'fee',
-      operationId: 'submission',
-    });
-    walletOperationRuntime.settleTrade(
-      'Offer_fee',
-      'retained-for-replay',
-      'wallet-delivery-acknowledged',
-    );
-    walletOperationRuntime.retireSession('player', 'session', 'controller-retired');
-    expect(storageRepository.walletObligations()).toEqual([
-      expect.objectContaining({ stage: 'retained-for-replay', tradeId: 'Offer_fee' }),
-    ]);
-
-    walletOperationRuntime.settleTrade('Offer_fee', 'cancel-required', 'submission-retired');
-    expect(storageRepository.walletObligations()).toEqual([
-      expect.objectContaining({ stage: 'cancel-required', tradeId: 'Offer_fee' }),
-    ]);
+    expect(storageRepository.channelFundingOperations()).toHaveLength(1);
   });
 });

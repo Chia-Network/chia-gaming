@@ -3,10 +3,7 @@ import 'fake-indexeddb/auto';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import {
-  WalletOfferCleanupPendingError,
-  type SessionController,
-} from '../../hooks/SessionController';
+import type { SessionController } from '../../hooks/SessionController';
 import {
   initialKrunkGameState,
   krunkStateCodec,
@@ -344,30 +341,6 @@ it('does not stage or tear down before controller terminal quiescence', async ()
 
   expect(captureTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
-});
-
-it('does not stage or tear down while wallet offer cleanup remains unresolved', async () => {
-  const controller = {
-    getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: jest.fn(async () => {
-      throw new WalletOfferCleanupPendingError([
-        { tradeId: 'trade-terminal', source: 'fee-finalization-warning' },
-      ]);
-    }),
-  } as unknown as SessionController;
-  const captureTerminal = jest.fn(() => ({ write: async () => {} }));
-  const teardown = jest.fn();
-
-  await expect(
-    finalizeTerminalSession(finalizationArgs(controller), {
-      captureTerminal,
-      updateMarker: () => {},
-      teardown,
-    }),
-  ).rejects.toMatchObject({ code: 'WALLET_OFFER_CLEANUP_PENDING' });
-
-  expect(captureTerminal).not.toHaveBeenCalled();
-  expect(teardown).not.toHaveBeenCalled();
 });
 
 it('stages and returns the model produced after terminal quiescence', async () => {

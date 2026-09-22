@@ -1,7 +1,8 @@
 import { createSessionModel } from '../session/model';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { storageRepository } from '../session/storageRepository';
 import { canonicalizeFundingRequest } from '../session/fundingRequest';
+import { entriesForOwner } from '../session/channelFundingSelectors';
 import { wasmResult } from './message_protocol.harness';
 import { commitRuntime, ControlledRuntime, setup, submission } from './runtime_capability.harness';
 
@@ -164,8 +165,8 @@ describe('submission controller handoff and quiescence', () => {
     expect((controller as unknown as { cradle: unknown }).cradle).toBeUndefined();
   });
 
-  it('routes a late funding offer through the global ledger after cleanup', async () => {
-    walletOperationRuntime.resetForTests();
+  it('retains a late known funding reservation after cleanup without cancellation', async () => {
+    channelFundingRuntime.resetForTests();
     let resolveOffer!: (value: {
       kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
@@ -204,21 +205,33 @@ describe('submission controller handoff and quiescence', () => {
       material: { kind: 'offer', offer: 'offer1late' },
       tradeId: 'trade-late-funding',
     });
-    await waitForCall(beginWalletOfferCancellation);
     const owner = {
       installationPlayerId: 'submission-handoff',
       peerSessionId: '00'.repeat(16),
       providerScope: { provider: 'simulator' as const, identity: 'submission-handoff' },
     };
-    await walletOperationRuntime.awaitOwner(owner);
+    for (
+      let pass = 0;
+      pass < 20 &&
+      entriesForOwner(storageRepository.channelFundingOperations(), owner).length === 0;
+      pass += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    await channelFundingRuntime.flush();
 
-    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-funding');
-    expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+    expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+    expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-late-funding',
+        stage: 'awaiting-channel',
+      }),
+    ]);
     expect(cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
   });
 
   it('retires a fee creation whose recovery id arrives after controller cleanup', async () => {
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     let finishBegin!: (value: { kind: 'pending'; recoveryId: string }) => void;
     const beginWalletOffer = jest.fn(
       () =>
@@ -253,9 +266,8 @@ describe('submission controller handoff and quiescence', () => {
     controller.cleanup();
     finishBegin({ kind: 'pending', recoveryId: 'SR_late_fee' });
     await waitForCall(reconcileWalletOffer);
-    const owner = storageRepository.walletObligations()[0]!.owner;
-    await walletOperationRuntime.awaitOwner(owner);
-    expect(storageRepository.walletObligations()).toEqual([
+    const owner = storageRepository.feeAttachments()[0]!.owner;
+    expect(storageRepository.feeAttachments()).toEqual([
       expect.objectContaining({
         stage: 'creating',
         disposition: 'cancel-on-create',
@@ -268,13 +280,13 @@ describe('submission controller handoff and quiescence', () => {
       peerSessionId: owner.peerSessionId,
     });
     expect(provider).not.toBeNull();
-    walletOperationRuntime.providerReady(provider!);
-    await walletOperationRuntime.awaitOwner(owner);
+    channelFundingRuntime.providerReady(provider!);
+    await waitForCall(beginWalletOfferCancellation);
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(reconcileWalletOffer).toHaveBeenCalledTimes(2);
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-fee');
-    expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+    expect(storageRepository.feeAttachments()).toEqual([]);
     expect(cradle.finalize_submission).not.toHaveBeenCalled();
     expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
     expect(cradle.reject_submission).not.toHaveBeenCalled();

@@ -37,9 +37,9 @@ setTestGlobal('window', globalThis);
 import 'fake-indexeddb/auto';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
-import { WalletOperationRuntime } from '../session/walletOperationRuntime';
+import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import { storageRepository } from '../session/storageRepository';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import { WalletProviderRegistry } from '../session/walletProviderRegistry';
 
 const testOperation = {
   owner: {
@@ -81,7 +81,8 @@ describe('CloudBlockchainInterface fee support', () => {
     const empty = {
       ...storageRepository.loadState(),
       walletContext: null,
-      walletObligations: [],
+      channelFundingOperations: [],
+      feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
     await storageRepository.checkpointApplicationState(empty);
@@ -608,33 +609,50 @@ describe('CloudBlockchainInterface fee support', () => {
       peerSessionId: 'session',
       providerScope: provider.scope,
     };
-    const purpose = { kind: 'fee' as const, operationId: 'submission' };
-    const coordinator = new WalletOperationRuntime();
-    coordinator.attachProvider(provider);
     storageRepository.ensureWalletContext(owner.providerScope);
-    installReservedWalletObligation('Offer_1', owner, purpose);
-    coordinator.settleOperation(owner, purpose, 'cancel-required', 'retired');
-    await coordinator.awaitOwner(owner);
+    storageRepository.replaceFeeAttachments([
+      {
+        owner,
+        submissionId: 'submission',
+        stage: 'retained-for-replay',
+        providerReservationId: 'Offer_1',
+        reason: 'fee-source-attached',
+      },
+    ]);
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(
+      {
+        isRetired: () => false,
+        getOwner: () => owner,
+        requestCommit: jest.fn(),
+        reportWarning: jest.fn(),
+      },
+      providers,
+    );
+    runtime.retire(owner, 'submission');
+    await runtime.awaitIdle();
 
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.feeAttachments()).toEqual([
       expect.objectContaining({
-        tradeId: 'Offer_1',
+        providerReservationId: 'Offer_1',
         stage: 'cancelling',
         recoveryId: 'SR_cancel_graphql',
       }),
     ]);
-    coordinator.providerReady(provider);
-    await coordinator.awaitOwner(owner);
+    providers.ready(provider);
+    await runtime.awaitIdle();
 
     expect(queries.filter((query) => query.includes('cancelOffer'))).toHaveLength(1);
     expect(queries.filter((query) => query.includes('signatureRequest(id: $id)'))).toHaveLength(2);
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.feeAttachments()).toEqual([
       expect.objectContaining({
-        tradeId: 'Offer_1',
+        providerReservationId: 'Offer_1',
         stage: 'cancelling',
         recoveryId: 'SR_cancel_graphql',
       }),
     ]);
+    runtime.detach();
   });
 
   it('does not complete cancellation while its signature request is pending', async () => {

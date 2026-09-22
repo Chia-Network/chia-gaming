@@ -17,8 +17,8 @@ import {
 import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { selectGamePaneKind } from '../lib/session/gamePane';
-import { walletOperationRuntime } from '../lib/session/walletOperationRuntime';
-import { recoveryReadiness } from '../lib/session/walletOperationSelectors';
+import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
+import { recoveryReadiness } from '../lib/session/channelFundingSelectors';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
@@ -84,7 +84,7 @@ import {
   CHAIN_POLL_INTERVAL_MS,
   type BlockchainPoller,
 } from '../hooks/BlockchainPoller';
-import { RestoreStatus, WalletOfferCleanupPendingError } from '../hooks/SessionController';
+import { RestoreStatus } from '../hooks/SessionController';
 import {
   deferredHubRemapEscalationAction,
   isAvailableForNewSessionPrompt as checkAvailableForNewSessionPrompt,
@@ -1028,17 +1028,20 @@ const Shell = () => {
   const [walletAlert, setWalletAlertRaw] = useState(() => storageRepository.query('walletAlert'));
   const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
     recoveryReadiness(
-      storageRepository.walletObligations(),
-      walletOperationRuntime.providerScopeKeys(),
+      [...storageRepository.channelFundingOperations(), ...storageRepository.feeAttachments()],
+      channelFundingRuntime.providerScopeKeys(),
     ),
   );
   useEffect(
     () =>
-      walletOperationRuntime.subscribe(() =>
+      channelFundingRuntime.subscribe(() =>
         setWalletRecoveryReadiness(
           recoveryReadiness(
-            storageRepository.walletObligations(),
-            walletOperationRuntime.providerScopeKeys(),
+            [
+              ...storageRepository.channelFundingOperations(),
+              ...storageRepository.feeAttachments(),
+            ],
+            channelFundingRuntime.providerScopeKeys(),
           ),
         ),
       ),
@@ -2726,14 +2729,9 @@ const Shell = () => {
           identity,
         });
       } catch (error) {
-        if (error instanceof WalletOfferCleanupPendingError) {
-          setTerminalFinalizationBlocker(error.message);
-          setWalletAlert(true);
-        } else {
-          setTerminalFinalizationBlocker(
-            error instanceof Error ? error.message : 'Session finalization is blocked.',
-          );
-        }
+        setTerminalFinalizationBlocker(
+          error instanceof Error ? error.message : 'Session finalization is blocked.',
+        );
         setSessionError(true);
         return false;
       }
@@ -2787,7 +2785,6 @@ const Shell = () => {
       setSessionError,
       setSessionPhase,
       setTerminalFinalizationBlocker,
-      setWalletAlert,
     ],
   );
 

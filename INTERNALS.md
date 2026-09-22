@@ -516,14 +516,14 @@ submission deliveries and queued jobs and removes tracked effects from
 quiescence. A wallet RPC that returns afterward can only register/cancel its
 trade through the wallet-level ledger; it cannot mutate the dropped cradle.
 
-`WalletOperationRuntime` holds one stable funding inbox per attached session.
-A restored request cannot launch while the runtime still owns a blocking wallet
-operation for that same stable identity.
+`ChannelFundingRuntime` holds one stable funding inbox per attached session.
+A restored request cannot launch while that owner still has a blocking funding
+operation for the same stable identity.
 Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned persistence contracts are `DurableApplicationState` v3,
+The current app-owned persistence contracts are `DurableApplicationState` v4,
 opaque Rust/WASM cradle schema 22, and app IndexedDB v5. Their explicit
 versions are future migration hooks. None has shipped, so strict decoding
 accepts only the current aggregate; it does not migrate, alias, salvage, or
@@ -535,9 +535,11 @@ all internal/persisted JavaScript channel state-number fields are `bigint`.
 Conversion to `number` is restricted to external APIs that require it, and
 number-valued persistence or event decodes are rejected.
 
-Persisted funding and fee offers enter the aggregate's strict
-wallet-obligation slice and are orchestrated by `WalletOperationRuntime`.
-Entries preserve the exact provider trade
+Persisted provider reservations enter two strict aggregate slices with two
+explicit owners: `ChannelFundingRuntime` owns `channelFundingOperations`, while
+`SubmissionPump` and `FeeAttachmentRuntime` own `feeAttachments`. There is no
+generic wallet-operation, settlement, or session cancellation layer. Entries
+preserve the exact provider trade
 ID and exact `(installationPlayerId, peerSessionId, provider/account scope,
 purpose kind, operationId)` owner, so multiple trades for one operation remain independent.
 Provider adapters own external offer lifecycle; the controller and Rust own
@@ -551,8 +553,13 @@ request plus exact recovery ID and active/cancel-on-create disposition, while
 cancellation recovery ID. Funding unavailability remains pending. Controller
 retirement promotes only `reserved` entries and preserves
 `retained-for-replay`.
-An attached fee stays retained while Rust owns exact-byte replay; wallet
-acknowledgement or Rust retirement requests typed cancellation. Cloud
+Funding survives material delivery until Rust emits a typed chain outcome:
+`ChannelCoinConfirmed` forgets the reservation without cancellation, while
+`ChannelCreationTimedOut` cancels the exact `providerReservationId`. An
+unidentified pre-ID timeout cannot synthesize a cancellation ID and instead
+retains cancel-on-create orphan evidence. An attached fee stays retained while
+Rust owns exact-byte replay; wallet acknowledgement does not retire it, and
+Rust submission retirement cancels the exact `providerReservationId`. Cloud
 cancellation is complete only after its signature request reaches terminal
 success. Cloud is recoverable only after begin returns a
 `signatureRequest` recovery ID: pre-ID response loss persists
@@ -578,7 +585,9 @@ root before one whole-root checkpoint. Other mutations reject until authority
 is claimed. Corruption never invokes semantic clear or pruning. IndexedDB v5
 contains coordination and aggregate stores; strict validation rejects unknown
 or missing fields, duplicate trade IDs, invalid discriminants, and non-current
-versions. One generation-fenced mutation coordinator validates authority
+versions. Duplicate identified `providerReservationId` values are forbidden
+within either slice and across both slices; owner scope must match the aggregate
+wallet context. One generation-fenced mutation coordinator validates authority
 atomically with each aggregate write; localStorage is only a UX hint. Old tabs
 and retired runtimes cannot
 overwrite a winning generation, and a clear immediately followed by an
@@ -593,12 +602,14 @@ available; `StorageAuthorityLostError` retires the owner and suppresses pending
 writes/effects. The reset manifest deletes exact owned names and enumerated
 owned prefixes while preserving foreign same-origin databases.
 Aggregate persistence does not gate wallet use, transaction release, or
-`cancelOffer`; a failed write is retried by a later full checkpoint. A failed cancellation stays durable and is
-retried only on restore, wallet reconnect/attachment, or an explicit
-terminal-finalization attempt—never by a timer or immediate retry loop.
-Unresolved cleanup blocks terminal quiescence. Going offline detaches the
-provider RPC without losing cleanup; retirement records the required
-transitions, and matching restore/reconnect attachment drains them.
+`cancelOffer`; a failed write is retried by a later full checkpoint. Failed
+cancellation stays durable and retries only on restore or matching wallet
+reconnect/readiness—never by a timer, immediate loop, or generic terminal sweep.
+Identified cancellation cleanup is nonblocking for terminal capture; only work
+that must still deliver funding material to Rust blocks finalization. Going
+offline detaches the provider RPC without losing cleanup; retirement records
+the required transitions, and matching restore/reconnect attachment drains
+them.
 
 Transaction submission promises span persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal

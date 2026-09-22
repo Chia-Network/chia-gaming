@@ -862,7 +862,7 @@ impl GameSession {
             if observations.iter().any(
                 |observation| matches!(observation, CoinObservation::Created(coin) if coin == channel.channel_coin()),
             ) {
-                self.state.channel_established = true;
+                self.confirm_channel_creation();
                 return;
             }
         }
@@ -872,8 +872,7 @@ impl GameSession {
         if !channel_creation_expiry_reached(height, expiry) {
             return;
         }
-        self.state.channel_expired = true;
-        self.state.is_failed = true;
+        self.expire_channel_creation();
         let snapshot = ChannelStatusSnapshot {
             advisory: Some("channel coin not confirmed in time".to_string()),
             ..ChannelStatusSnapshot::new(ChannelStatus::Failed)
@@ -882,6 +881,27 @@ impl GameSession {
             Self::make_channel_status_notification(&snapshot),
         ));
         self.last_channel_status = Some(snapshot);
+    }
+
+    fn confirm_channel_creation(&mut self) {
+        if self.state.channel_established || self.state.channel_expired {
+            return;
+        }
+        self.state.channel_established = true;
+        self.state
+            .events
+            .push_back(GameSessionEvent::ChannelCoinConfirmed);
+    }
+
+    fn expire_channel_creation(&mut self) {
+        if self.state.channel_established || self.state.channel_expired {
+            return;
+        }
+        self.state.channel_expired = true;
+        self.state.is_failed = true;
+        self.state
+            .events
+            .push_back(GameSessionEvent::ChannelCreationTimedOut);
     }
 
     pub fn push_event(&mut self, event: GameSessionEvent) {
@@ -1650,6 +1670,68 @@ mod sequencing_tests {
             expiry + CHANNEL_EXPIRY_BUFFER,
             expiry,
         ));
+    }
+
+    #[test]
+    fn channel_creation_host_facts_emit_exactly_once() {
+        fn session(seed: u8) -> GameSession {
+            let mut allocator = AllocEncoder::new();
+            let mut rng = ChaCha8Rng::from_seed([seed; 32]);
+            let identity =
+                ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+            GameSession::new_with_keys(
+                GameSessionConfig {
+                    game_types: BTreeMap::new(),
+                    is_initiator: true,
+                    identity,
+                    my_contribution: Amount::new(100),
+                    their_contribution: Amount::new(100),
+                    channel_timeout: Timeout::new(5),
+                    unroll_timeout: Timeout::new(15),
+                    reward_puzzle_hash: PuzzleHash::from_bytes([seed; 32]),
+                    agg_sig_me_additional_data: Hash::from_bytes([seed.wrapping_add(1); 32]),
+                },
+                rng.random(),
+            )
+        }
+
+        let mut confirmed = session(0x31);
+        confirmed.confirm_channel_creation();
+        confirmed.confirm_channel_creation();
+        confirmed.expire_channel_creation();
+        assert_eq!(
+            confirmed
+                .state
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameSessionEvent::ChannelCoinConfirmed))
+                .count(),
+            1
+        );
+        assert!(!confirmed
+            .state
+            .events
+            .iter()
+            .any(|event| matches!(event, GameSessionEvent::ChannelCreationTimedOut)));
+
+        let mut timed_out = session(0x41);
+        timed_out.expire_channel_creation();
+        timed_out.expire_channel_creation();
+        timed_out.confirm_channel_creation();
+        assert_eq!(
+            timed_out
+                .state
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameSessionEvent::ChannelCreationTimedOut))
+                .count(),
+            1
+        );
+        assert!(!timed_out
+            .state
+            .events
+            .iter()
+            .any(|event| matches!(event, GameSessionEvent::ChannelCoinConfirmed)));
     }
 
     #[derive(Default)]

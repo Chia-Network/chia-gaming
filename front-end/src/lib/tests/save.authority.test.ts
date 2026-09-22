@@ -33,7 +33,7 @@ describe('aggregate persistence authority', () => {
     await expect(
       storageRepository.updateCommon({ preferences: { theme: 'dark' } }),
     ).resolves.toBeUndefined();
-    expect(() => storageRepository.reduceWallet({ kind: 'resume' })).toThrow(
+    expect(() => storageRepository.replaceChannelFunding([])).toThrow(
       StorageAuthorityRequiredError,
     );
     expect(() =>

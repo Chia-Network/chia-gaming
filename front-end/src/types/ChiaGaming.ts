@@ -85,6 +85,12 @@ function requireGameSessionEvent(event: unknown): void {
         throw new Error('cradle returned an invalid NeedCoinSpend event');
       }
       return;
+    case 'ChannelCoinConfirmed':
+    case 'ChannelCreationTimedOut':
+      if (payload !== null) {
+        throw new Error(`cradle returned an invalid ${key} event`);
+      }
+      return;
     default:
       throw new Error(`cradle returned an unknown GameSessionEvent: ${key}`);
   }

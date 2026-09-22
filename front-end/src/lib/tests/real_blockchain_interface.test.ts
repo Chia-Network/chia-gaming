@@ -1,6 +1,7 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
 import 'fake-indexeddb/auto';
 import { storageRepository } from '../session/storageRepository';
+import type { WalletOfferProvider } from '../../types/ChiaGaming';
 
 jest.mock('../../hooks/WalletConnectRpc', () => ({
   WalletConnectTransportError: class WalletConnectTransportError extends Error {},
@@ -64,8 +65,8 @@ import {
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
 import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
-import { WalletOperationRuntime } from '../session/walletOperationRuntime';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
+import { WalletProviderRegistry } from '../session/walletProviderRegistry';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
@@ -160,7 +161,8 @@ describe('RealBlockchainInterface', () => {
     const empty = {
       ...storageRepository.loadState(),
       walletContext: null,
-      walletObligations: [],
+      channelFundingOperations: [],
+      feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
     await storageRepository.checkpointApplicationState(empty);
@@ -664,7 +666,7 @@ describe('RealBlockchainInterface', () => {
     ).resolves.toMatchObject({ status: 'acknowledged' });
     expect(mockPushTransactions).toHaveBeenCalledTimes(2);
     expect(mockPushTransactions.mock.calls[1][0]).toEqual(call);
-    expect(storageRepository.walletObligations()).toEqual([]);
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
   it('persists initiator funding offers without unsupported coin-selection fields', async () => {
@@ -736,7 +738,6 @@ describe('RealBlockchainInterface', () => {
   });
 
   it('preserves already-spent cancellation detail and converges the ledger', async () => {
-    const ledger = new WalletOperationRuntime();
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({
       success: false,
@@ -747,7 +748,7 @@ describe('RealBlockchainInterface', () => {
         },
       },
     });
-    ledger.attachProvider({
+    const provider = {
       capability: 'best-effort',
       scope: {
         provider: 'walletconnect',
@@ -756,7 +757,7 @@ describe('RealBlockchainInterface', () => {
       },
       beginCreation: (operation, request) => blockchain.beginWalletOffer(operation, request),
       cancel: (tradeId) => blockchain.beginWalletOfferCancellation(tradeId),
-    });
+    } satisfies WalletOfferProvider;
     const owner = {
       installationPlayerId: 'installation',
       peerSessionId: 'peer-session',
@@ -766,19 +767,37 @@ describe('RealBlockchainInterface', () => {
         chainId: 'chia:testnet11',
       },
     };
-    const purpose = { kind: 'fee' as const, operationId: 'submission' };
-
     storageRepository.ensureWalletContext(owner.providerScope);
-    installReservedWalletObligation('trade-already-spent', owner, purpose);
-    ledger.settleOperation(owner, purpose, 'cancel-required', 'wallet-outcome-finalized');
-    await ledger.awaitOwner(owner);
+    storageRepository.replaceFeeAttachments([
+      {
+        owner,
+        submissionId: 'submission',
+        stage: 'retained-for-replay',
+        providerReservationId: 'trade-already-spent',
+        reason: 'fee-source-attached',
+      },
+    ]);
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(
+      {
+        isRetired: () => false,
+        getOwner: () => owner,
+        requestCommit: jest.fn(),
+        reportWarning: jest.fn(),
+      },
+      providers,
+    );
+    runtime.retire(owner, 'submission');
+    await runtime.awaitIdle();
 
-    expect(storageRepository.walletObligations()).toEqual([]);
+    expect(storageRepository.feeAttachments()).toEqual([]);
     expect(mockCancelOffer).toHaveBeenCalledWith({
       tradeId: 'trade-already-spent',
       secure: false,
       fee: 0n,
     });
+    runtime.detach();
   });
 
   it('does not hide an uncertain cancellation response', async () => {

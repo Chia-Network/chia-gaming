@@ -1248,6 +1248,8 @@ impl SimulationHarness {
                     GameSessionEvent::Log(line) => {
                         self.logs[player_index].push(line.clone());
                     }
+                    GameSessionEvent::ChannelCoinConfirmed
+                    | GameSessionEvent::ChannelCreationTimedOut => {}
                     GameSessionEvent::WatchCoin { .. } => {}
                 }
             }

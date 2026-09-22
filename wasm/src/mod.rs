@@ -1589,6 +1589,12 @@ mod gaming_wasm {
             GameSessionEvent::NeedCoinSpend(req) => json_event_to_js(
                 serde_json::json!({ "NeedCoinSpend": coin_spend_request_to_js(req) }),
             ),
+            GameSessionEvent::ChannelCoinConfirmed => {
+                json_event_to_js(serde_json::json!({ "ChannelCoinConfirmed": null }))
+            }
+            GameSessionEvent::ChannelCreationTimedOut => {
+                json_event_to_js(serde_json::json!({ "ChannelCreationTimedOut": null }))
+            }
             GameSessionEvent::WatchCoin { .. } => Err(types::Error::StrErr(
                 "WatchCoin should be intercepted before JS event serialization".to_string(),
             )),

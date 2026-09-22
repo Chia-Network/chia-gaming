@@ -121,7 +121,8 @@ function common(fields: LegacyFields) {
     },
     session: null,
     walletContext: null,
-    walletObligations: fields.walletObligations ?? [],
+    channelFundingOperations: fields.channelFundingOperations ?? [],
+    feeAttachments: fields.feeAttachments ?? [],
     rejectionTransports: fields.rejectionTransports ?? [],
   };
 }
@@ -380,7 +381,8 @@ export function installSessionEnvelopeTestSetup(): void {
     const empty = {
       ...storageRepository.loadState(),
       walletContext: null,
-      walletObligations: [],
+      channelFundingOperations: [],
+      feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(empty);
     await storageRepository.checkpointApplicationState(empty);

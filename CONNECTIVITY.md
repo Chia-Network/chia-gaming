@@ -435,11 +435,14 @@ The hub does not create a session. It can only advise and relay:
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
 - **Application persistence**: `StorageRepository` atomically claims and reads
-  one salt-prefixed, masked Bencodex `DurableApplicationState` v3, owns ordered
+  one salt-prefixed, masked Bencodex `DurableApplicationState` v4, owns ordered
   root transforms, and checkpoints the whole aggregate. IndexedDB v5 has only
   coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
-  schema 22. Wallet obligations and rejection transports are nested in the
-  same root and have no independent record, version, hydration, or writer.
+  schema 22. Owner-specific channel-funding operations, fee attachments, and
+  rejection transports are nested in the same root and have no independent
+  record, version, hydration, or writer. No predecessor aggregate decoder or
+  migration exists because no app-owned format has shipped; the explicit
+  version remains the future migration hook.
   Preferences are aggregate-owned; localStorage ownership/reset and resume
   markers are only UX hints. Ordinary I/O failure retains the latest in-memory
   root and does not gate effects; typed authority loss retires it and
@@ -477,8 +480,11 @@ The hub does not create a session. It can only advise and relay:
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
   chain id than the existing WASM cradle. (`Shell.tsx`)
 
-- **Wallet operation recovery**: aggregate wallet-obligation entries bind installation,
-  peer-session, and provider/account scope. Pending creation embeds the
+- **Provider reservation recovery**: the aggregate has exactly two owners.
+  `ChannelFundingRuntime` owns channel funding; `SubmissionPump` and
+  `FeeAttachmentRuntime` own fee attachment. Their entries bind installation,
+  peer-session, and provider/account scope, and map each identified external
+  reservation through its exact `providerReservationId`. Pending creation embeds the
   canonical request, exact recovery ID, and active/cancel-on-create disposition;
   pending cancellation preserves its exact IDs. Retired creation is cancelled
   after exact reconciliation; failed cancellation returns to `cancel-required`
@@ -500,6 +506,14 @@ The hub does not create a session. It can only advise and relay:
   attempt for persisted WalletConnect or pre-ID Cloud uncertainty on each later
   reconnect, including after reload; there is no timer or immediate retry loop,
   and the external orphan warning remains visible.
+  Funding remains durable after material delivery until Rust reports
+  `ChannelCoinConfirmed` (forget, no cancel) or `ChannelCreationTimedOut`
+  (cancel the exact identified reservation). Fee material remains retained
+  through replay until Rust retires the submission, then cancels its exact
+  reservation. Unknown pre-ID orphan risk cannot synthesize a cancellation.
+  Failed identified cleanup is durable, readiness-only, and nonblocking for
+  terminal capture. There is no generic wallet-operation, settlement, or
+  session cancellation path.
 
 - **Submission evolution**: Rust broadcasts the no-fee base immediately while
   continuing to seek a fee under the same ID. Base acknowledgement does not stop

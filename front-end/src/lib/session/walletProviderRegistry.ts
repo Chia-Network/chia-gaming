@@ -1,5 +1,5 @@
 import type { WalletOfferProvider, WalletProviderScope } from '../../types/ChiaGaming';
-import { walletProviderScopeKey } from './walletOperationStore';
+import { providerScopeKey } from './providerKeys';
 
 export type WalletProviderRegistryEvent =
   | { kind: 'attached'; provider: WalletOfferProvider; readinessEpoch: number }
@@ -11,7 +11,7 @@ export type WalletProviderRegistryEvent =
  *
  * An epoch advances only when a scope becomes newly usable. Repeated readiness
  * notifications for the same epoch are observable but retain the epoch, which
- * lets WalletOperationRuntime deduplicate replacement attempts durably.
+ * lets ChannelFundingRuntime deduplicate replacement attempts durably.
  */
 export class WalletProviderRegistry {
   private readonly providers = new Map<string, WalletOfferProvider>();
@@ -19,7 +19,7 @@ export class WalletProviderRegistry {
   private readonly listeners = new Set<(event: WalletProviderRegistryEvent) => void>();
 
   attach(provider: WalletOfferProvider): number {
-    const key = walletProviderScopeKey(provider.scope);
+    const key = providerScopeKey(provider.scope);
     const current = this.providers.get(key);
     if (current === provider) return this.epochs.get(key) ?? 0;
     this.providers.set(key, provider);
@@ -30,7 +30,7 @@ export class WalletProviderRegistry {
   }
 
   ready(provider: WalletOfferProvider): number {
-    const key = walletProviderScopeKey(provider.scope);
+    const key = providerScopeKey(provider.scope);
     if (this.providers.get(key) !== provider) return this.epochs.get(key) ?? 0;
     const readinessEpoch = this.epochs.get(key) ?? 1;
     this.epochs.set(key, readinessEpoch);
@@ -39,7 +39,7 @@ export class WalletProviderRegistry {
   }
 
   reconnectReady(provider: WalletOfferProvider): number {
-    const key = walletProviderScopeKey(provider.scope);
+    const key = providerScopeKey(provider.scope);
     if (this.providers.get(key) !== provider) return this.attach(provider);
     const readinessEpoch = (this.epochs.get(key) ?? 0) + 1;
     this.epochs.set(key, readinessEpoch);
@@ -48,22 +48,22 @@ export class WalletProviderRegistry {
   }
 
   detach(provider: WalletOfferProvider): void {
-    const key = walletProviderScopeKey(provider.scope);
+    const key = providerScopeKey(provider.scope);
     if (this.providers.get(key) !== provider) return;
     this.providers.delete(key);
     this.emit({ kind: 'detached', provider, readinessEpoch: this.epochs.get(key) ?? 0 });
   }
 
   provider(scope: WalletProviderScope): WalletOfferProvider | null {
-    return this.providers.get(walletProviderScopeKey(scope)) ?? null;
+    return this.providers.get(providerScopeKey(scope)) ?? null;
   }
 
   hasScope(scope: WalletProviderScope): boolean {
-    return this.providers.has(walletProviderScopeKey(scope));
+    return this.providers.has(providerScopeKey(scope));
   }
 
   readinessEpoch(scope: WalletProviderScope): number {
-    return this.epochs.get(walletProviderScopeKey(scope)) ?? 0;
+    return this.epochs.get(providerScopeKey(scope)) ?? 0;
   }
 
   scopeKeys(): ReadonlySet<string> {
@@ -82,7 +82,7 @@ export class WalletProviderRegistry {
       this.emit({
         kind: 'detached',
         provider,
-        readinessEpoch: this.epochs.get(walletProviderScopeKey(provider.scope)) ?? 0,
+        readinessEpoch: this.epochs.get(providerScopeKey(provider.scope)) ?? 0,
       });
     }
   }

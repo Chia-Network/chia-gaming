@@ -68,11 +68,10 @@ import {
   requireUniqueIds,
   parseStringArray,
 } from './persistencePrimitives';
-import {
-  decodeWalletOperationEntries,
-  decodeWalletProviderScope,
-} from './walletOperationValidation';
-import { walletProviderScopeKey } from './walletOperationStore';
+import { decodeChannelFundingEntries } from './channelFundingValidation';
+import { decodeFeeAttachments } from './feeAttachmentValidation';
+import { providerScopeKey } from './providerKeys';
+import { decodeProviderScope } from './providerValidation';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
 
@@ -84,7 +83,8 @@ const AGGREGATE_FIELDS = new Set([
   'history',
   'session',
   'walletContext',
-  'walletObligations',
+  'channelFundingOperations',
+  'feeAttachments',
   'rejectionTransports',
 ]);
 const SESSION_FIELDS = {
@@ -585,22 +585,36 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
   const walletContext =
     envelope.walletContext === null
       ? null
-      : decodeWalletProviderScope(envelope.walletContext, 'walletContext');
-  const walletObligations = decodeWalletOperationEntries(
-    envelope.walletObligations,
-    'walletObligations',
+      : decodeProviderScope(envelope.walletContext, 'walletContext');
+  const channelFundingOperations = decodeChannelFundingEntries(
+    envelope.channelFundingOperations,
+    'channelFundingOperations',
+    'funding',
   );
-  if (walletObligations.length > 0 && walletContext === null) {
-    throw new Error('Garbled application state: wallet obligations require walletContext');
+  const feeAttachments = decodeFeeAttachments(envelope.feeAttachments);
+  const providerReservationIds = new Set<string>();
+  for (const entry of [...channelFundingOperations, ...feeAttachments]) {
+    if (entry.stage === 'creating' || entry.stage === 'best-effort-uncertain') continue;
+    if (providerReservationIds.has(entry.providerReservationId)) {
+      throw new Error(
+        `Garbled application state: duplicate provider reservation ${entry.providerReservationId}`,
+      );
+    }
+    providerReservationIds.add(entry.providerReservationId);
+  }
+  if (
+    (channelFundingOperations.length > 0 || feeAttachments.length > 0) &&
+    walletContext === null
+  ) {
+    throw new Error('Garbled application state: provider-backed operations require walletContext');
   }
   if (
     walletContext &&
-    walletObligations.some(
-      (entry) =>
-        walletProviderScopeKey(entry.owner.providerScope) !== walletProviderScopeKey(walletContext),
+    [...channelFundingOperations, ...feeAttachments].some(
+      (entry) => providerScopeKey(entry.owner.providerScope) !== providerScopeKey(walletContext),
     )
   ) {
-    throw new Error('Garbled application state: wallet obligation owner/context mismatch');
+    throw new Error('Garbled application state: provider operation owner/context mismatch');
   }
   const rejectionTransports = parseRejectionTransports(envelope.rejectionTransports);
   const common = {
@@ -610,7 +624,8 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
     preferences,
     history,
     walletContext,
-    walletObligations,
+    channelFundingOperations,
+    feeAttachments,
     rejectionTransports,
   } as const;
   let session: DurableSessionPhase | null;

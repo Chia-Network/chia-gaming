@@ -1,0 +1,466 @@
+import type {
+  WalletOfferBeginOutcome,
+  WalletOfferCompletion,
+  WalletOfferProvider,
+} from '../../types/ChiaGaming';
+import { log } from '../../services/log';
+import { StorageAuthorityLostError } from './indexedDb';
+import {
+  feeAttachmentEntryKey,
+  feeAttachmentForSubmission,
+  identifiedFeeAttachment,
+  type FeeAttachment,
+  type FeeAttachmentOwner,
+  type FeeAttachmentRequest,
+  type FeeAttachmentUncertain,
+} from './feeAttachmentStore';
+import { canLosePreIdResponse, isRecoverableProvider } from './providerCapabilities';
+import {
+  advanceProviderCancellation,
+  advanceProviderCreation,
+  checkpointProviderState,
+  coalesceProviderFlight,
+  type ProviderFlight,
+} from './providerExecution';
+import { providerOwnerKey, providerScopeKey } from './providerKeys';
+import { storageRepository } from './storageRepository';
+import {
+  walletProviderRegistry,
+  type WalletProviderRegistry,
+  type WalletProviderRegistryEvent,
+} from './walletProviderRegistry';
+
+export interface FeeAttachmentRuntimePorts {
+  isRetired(): boolean;
+  getOwner(): FeeAttachmentOwner | null;
+  requestCommit(): void;
+  reportWarning(message: string): void;
+}
+
+export class FeeAttachmentRuntime {
+  private readonly flights = new Map<string, ProviderFlight>();
+  private readonly completed = new Map<
+    string,
+    Extract<WalletOfferCompletion, { kind: 'created-reserved' }>
+  >();
+  private readonly transfers = new Map<string, () => void>();
+  private readonly unsubscribe: (() => void)[];
+  private detached = false;
+
+  constructor(
+    private readonly ports: FeeAttachmentRuntimePorts,
+    private readonly providers: WalletProviderRegistry = walletProviderRegistry,
+  ) {
+    this.unsubscribe = [
+      providers.subscribe((event) => this.providerEvent(event)),
+      storageRepository.onLifecycle((_generation, event) => {
+        if (event === 'claim') {
+          this.drainTransfers();
+          this.resume();
+        } else {
+          this.flights.clear();
+          this.completed.clear();
+        }
+      }),
+    ];
+    this.resume();
+  }
+
+  private entries(): FeeAttachment[] {
+    const owner = this.ports.getOwner();
+    const key = owner ? providerOwnerKey(owner) : null;
+    return key
+      ? storageRepository.feeAttachments().filter((entry) => providerOwnerKey(entry.owner) === key)
+      : [];
+  }
+
+  detach(): void {
+    this.detached = true;
+    this.maybeDispose();
+  }
+
+  async reserve(
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    request: FeeAttachmentRequest,
+    isInactive: () => boolean,
+  ): Promise<WalletOfferCompletion> {
+    const completed = this.completed.get(submissionId);
+    if (completed) {
+      this.completed.delete(submissionId);
+      return completed;
+    }
+    storageRepository.ensureWalletContext(owner.providerScope);
+    const provider = this.providers.provider(owner.providerScope);
+    if (!provider) {
+      return { kind: 'unavailable', reason: 'Reconnect the original wallet account to attach fee' };
+    }
+    const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    if (current?.stage === 'best-effort-uncertain') {
+      await this.flights.get(`replace:${submissionId}`)?.promise;
+      const replacement = this.completed.get(submissionId);
+      if (replacement) {
+        this.completed.delete(submissionId);
+        return replacement;
+      }
+      return { kind: 'unavailable', reason: 'Fee replacement waits for wallet readiness' };
+    }
+    if (current && current.stage !== 'creating') {
+      throw new Error('Fee attachment already owns a provider reservation');
+    }
+    return this.flight(`create:${submissionId}`, () =>
+      this.create(provider, owner, submissionId, request, isInactive, false),
+    );
+  }
+
+  retain(owner: FeeAttachmentOwner, submissionId: string): void {
+    const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    if (!current || (current.stage !== 'reserved' && current.stage !== 'retained-for-replay')) {
+      throw new Error('Fee replay retention requires a reserved attachment');
+    }
+    this.replace(current, { ...current, stage: 'retained-for-replay' });
+  }
+
+  cancel(owner: FeeAttachmentOwner, submissionId: string, _reason: string): void {
+    const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    if (!current) return;
+    if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
+      this.replace(current, { ...current, disposition: 'cancel-on-create' });
+      return;
+    }
+    const next =
+      current.stage === 'reserved' || current.stage === 'retained-for-replay'
+        ? ({ ...current, stage: 'cancel-required' } as const)
+        : current;
+    if (next !== current) this.replace(current, next);
+    void this.scheduleCancellation(current.providerReservationId);
+  }
+
+  retire(owner: FeeAttachmentOwner, submissionId: string): void {
+    this.cancel(owner, submissionId, 'fee-submission-retired');
+  }
+
+  async awaitIdle(): Promise<void> {
+    while (this.flights.size) {
+      await Promise.allSettled([...this.flights.values()].map((flight) => flight.promise));
+    }
+  }
+
+  private async create(
+    provider: WalletOfferProvider,
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    request: FeeAttachmentRequest,
+    isInactive: () => boolean,
+    replacement: boolean,
+  ): Promise<WalletOfferCompletion> {
+    const generation = storageRepository.lifecycleGeneration;
+    const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    const recoveryId =
+      !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
+    const operation = { owner, purpose: { kind: 'fee' as const, operationId: submissionId } };
+    let outcome: WalletOfferBeginOutcome;
+    try {
+      outcome = await advanceProviderCreation(generation, provider, operation, request, recoveryId);
+    } catch (error) {
+      if (error instanceof StorageAuthorityLostError) {
+        return { kind: 'unavailable', reason: 'Storage authority changed before fee creation' };
+      }
+      if (recoveryId || !canLosePreIdResponse(provider)) throw error;
+      this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+      return { kind: 'unavailable', reason: String(error) };
+    }
+    if (
+      outcome.kind === 'unavailable' &&
+      !recoveryId &&
+      !replacement &&
+      canLosePreIdResponse(provider)
+    ) {
+      this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+      return outcome;
+    }
+    if (outcome.kind === 'pending') {
+      const pendingRecoveryId = outcome.recoveryId;
+      const pending = () => {
+        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+        this.replace(latest, {
+          owner,
+          submissionId,
+          stage: 'creating',
+          disposition:
+            (latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain') &&
+            latest.disposition === 'cancel-on-create'
+              ? 'cancel-on-create'
+              : isInactive()
+                ? 'cancel-on-create'
+                : 'active',
+          request,
+          recoveryId: pendingRecoveryId,
+          reason: 'fee-creation-pending',
+          ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
+        });
+      };
+      if (!storageRepository.isGenerationCurrent(generation)) {
+        this.transfer(owner, submissionId, pending);
+        return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
+      }
+      pending();
+      outcome = await advanceProviderCreation(
+        generation,
+        provider,
+        operation,
+        request,
+        pendingRecoveryId,
+      );
+      if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
+    }
+    if (!storageRepository.isGenerationCurrent(generation)) {
+      if (outcome.kind === 'created-reserved') {
+        this.transfer(owner, submissionId, () => {
+          this.replace(null, {
+            owner,
+            submissionId,
+            stage: 'cancel-required',
+            providerReservationId: outcome.tradeId,
+            reason: 'stale-fee-create-result',
+          });
+          void this.scheduleCancellation(outcome.tradeId);
+        });
+      }
+      return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
+    }
+    if (outcome.kind === 'failure') {
+      const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+      if (latest) this.replace(latest, null);
+      return outcome;
+    }
+    if (outcome.kind === 'unavailable') return outcome;
+    if (outcome.kind === 'created-ephemeral')
+      throw new Error('Fee provider returned unreserved material');
+    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    const cancel =
+      (latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain') &&
+      latest.disposition === 'cancel-on-create';
+    this.replace(latest, {
+      owner,
+      submissionId,
+      stage: cancel ? 'cancel-required' : 'reserved',
+      providerReservationId: outcome.tradeId,
+      reason: 'fee-offer-created',
+      ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
+    });
+    if (cancel) void this.scheduleCancellation(outcome.tradeId);
+    await checkpointProviderState(generation);
+    if (latest?.orphanRisk) {
+      const warning =
+        'Wallet lost an earlier fee create response; a reservation may remain orphaned.';
+      this.ports.reportWarning(warning);
+      return { ...outcome, warning };
+    }
+    return outcome;
+  }
+
+  private creationUncertain(
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    request: FeeAttachmentRequest,
+    retired: boolean,
+    generation: number,
+  ): void {
+    const apply = () => {
+      if (feeAttachmentForSubmission(this.entries(), owner, submissionId)) return;
+      this.replace(null, {
+        owner,
+        submissionId,
+        stage: 'best-effort-uncertain',
+        disposition: retired ? 'cancel-on-create' : 'active',
+        request,
+        lastAttemptEpoch: BigInt(this.providers.readinessEpoch(owner.providerScope)),
+        reason: 'fee-create-response-unavailable',
+        orphanRisk: 'pre-id-response-lost',
+      });
+    };
+    if (storageRepository.isGenerationCurrent(generation)) apply();
+    else this.transfer(owner, submissionId, apply);
+  }
+
+  private resume(): void {
+    for (const entry of this.entries()) {
+      if (entry.stage === 'creating') this.recover(entry);
+      else if (entry.stage === 'best-effort-uncertain') this.replaceUncertain(entry);
+      else if (
+        entry.stage === 'cancel-required' ||
+        entry.stage === 'cancelling' ||
+        entry.stage === 'best-effort-cancellation-uncertain'
+      ) {
+        void this.scheduleCancellation(entry.providerReservationId);
+      }
+    }
+  }
+
+  private recover(entry: Extract<FeeAttachment, { stage: 'creating' }>): void {
+    const provider = this.providers.provider(entry.owner.providerScope);
+    if (!provider || !isRecoverableProvider(provider)) return;
+    void this.flight(`recover:${entry.submissionId}`, async () => {
+      const outcome = await this.create(
+        provider,
+        entry.owner,
+        entry.submissionId,
+        entry.request,
+        () => entry.disposition === 'cancel-on-create' || this.ports.isRetired(),
+        false,
+      );
+      if (outcome.kind === 'created-reserved') this.completed.set(entry.submissionId, outcome);
+    });
+  }
+
+  private replaceUncertain(entry: FeeAttachmentUncertain): void {
+    const provider = this.providers.provider(entry.owner.providerScope);
+    const epoch = BigInt(this.providers.readinessEpoch(entry.owner.providerScope));
+    if (
+      !provider ||
+      !canLosePreIdResponse(provider) ||
+      epoch === 0n ||
+      epoch <= entry.lastAttemptEpoch
+    )
+      return;
+    this.replace(entry, { ...entry, lastAttemptEpoch: epoch });
+    void this.flight(`replace:${entry.submissionId}`, async () => {
+      const outcome = await this.create(
+        provider,
+        entry.owner,
+        entry.submissionId,
+        entry.request,
+        () => entry.disposition === 'cancel-on-create' || this.ports.isRetired(),
+        true,
+      );
+      if (outcome.kind === 'created-reserved') this.completed.set(entry.submissionId, outcome);
+    });
+  }
+
+  private scheduleCancellation(id: string): Promise<void> {
+    const entry = identifiedFeeAttachment(this.entries(), id);
+    const provider = entry && this.providers.provider(entry.owner.providerScope);
+    if (
+      !entry ||
+      !provider ||
+      !['cancel-required', 'cancelling', 'best-effort-cancellation-uncertain'].includes(entry.stage)
+    ) {
+      return Promise.resolve();
+    }
+    if (entry.stage === 'best-effort-cancellation-uncertain') {
+      const epoch = BigInt(this.providers.readinessEpoch(entry.owner.providerScope));
+      if (!epoch || epoch <= entry.lastAttemptEpoch) return Promise.resolve();
+      this.replace(entry, { ...entry, lastAttemptEpoch: epoch });
+    }
+    return this.flight(`cancel:${id}`, async () => {
+      const generation = storageRepository.lifecycleGeneration;
+      let outcome;
+      try {
+        outcome = await advanceProviderCancellation(
+          generation,
+          provider,
+          id,
+          entry.stage === 'cancelling' ? entry.recoveryId : undefined,
+        );
+        if (outcome.status === 'pending') {
+          const current = identifiedFeeAttachment(this.entries(), id);
+          if (!current) return;
+          this.replace(current, {
+            ...current,
+            stage: 'cancelling',
+            recoveryId: outcome.recoveryId,
+          });
+          outcome = await advanceProviderCancellation(generation, provider, id, outcome.recoveryId);
+        } else if (
+          outcome.status === 'unavailable' &&
+          provider.capability === 'recoverable-after-begin' &&
+          entry.stage !== 'cancelling'
+        ) {
+          this.replace(entry, {
+            ...entry,
+            stage: 'best-effort-cancellation-uncertain',
+            lastAttemptEpoch: BigInt(this.providers.readinessEpoch(entry.owner.providerScope)),
+            reason: 'fee-cancellation-response-unavailable',
+          });
+          return;
+        }
+      } catch (error) {
+        if (!(error instanceof StorageAuthorityLostError))
+          log(`[fee-attachment] cancel failed: ${String(error)}`);
+        return;
+      }
+      if (
+        storageRepository.isGenerationCurrent(generation) &&
+        (outcome.status === 'cancelled' ||
+          outcome.status === 'already-terminal' ||
+          outcome.status === 'rejected')
+      ) {
+        if (outcome.status === 'rejected') {
+          this.ports.reportWarning(`Wallet rejected fee cancellation ${id}: ${outcome.detail}`);
+        }
+        const current = identifiedFeeAttachment(this.entries(), id);
+        if (current) this.replace(current, null);
+      }
+    });
+  }
+
+  private providerEvent(event: WalletProviderRegistryEvent): void {
+    if (event.kind === 'detached') return;
+    const scope = providerScopeKey(event.provider.scope);
+    for (const entry of this.entries()) {
+      if (providerScopeKey(entry.owner.providerScope) !== scope) continue;
+      if (entry.stage === 'creating') this.recover(entry);
+      else if (entry.stage === 'best-effort-uncertain') this.replaceUncertain(entry);
+      else if (
+        entry.stage === 'cancel-required' ||
+        entry.stage === 'cancelling' ||
+        entry.stage === 'best-effort-cancellation-uncertain'
+      ) {
+        void this.scheduleCancellation(entry.providerReservationId);
+      }
+    }
+  }
+
+  private replace(current: FeeAttachment | null, next: FeeAttachment | null): void {
+    if (!storageRepository.hasAuthority()) return;
+    const currentKey = current ? feeAttachmentEntryKey(current) : null;
+    const nextKey = next ? feeAttachmentEntryKey(next) : null;
+    const entries = storageRepository.feeAttachments().filter((entry) => {
+      const key = feeAttachmentEntryKey(entry);
+      return key !== currentKey && key !== nextKey;
+    });
+    if (next) entries.push(structuredClone(next));
+    storageRepository.replaceFeeAttachments(entries);
+    this.ports.requestCommit();
+  }
+
+  private flight<T>(key: string, launch: () => Promise<T>): Promise<T> {
+    return coalesceProviderFlight(this.flights, key, () =>
+      launch().finally(() => this.maybeDispose()),
+    );
+  }
+
+  private transfer(owner: FeeAttachmentOwner, id: string, work: () => void): void {
+    const key = `${providerScopeKey(owner.providerScope)}:${id}`;
+    if (!storageRepository.hasAuthority()) {
+      this.transfers.set(key, () => this.transfer(owner, id, work));
+      return;
+    }
+    storageRepository.ensureWalletContext(owner.providerScope);
+    work();
+  }
+
+  private drainTransfers(): void {
+    const transfers = [...this.transfers.values()];
+    this.transfers.clear();
+    transfers.forEach((transfer) => transfer());
+  }
+
+  private maybeDispose(): void {
+    if (!this.detached || this.flights.size) return;
+    this.unsubscribe.splice(0).forEach((unsubscribe) => unsubscribe());
+    this.completed.clear();
+    this.transfers.clear();
+  }
+}

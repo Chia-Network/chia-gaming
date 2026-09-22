@@ -16,7 +16,7 @@ import {
   StorageAuthorityLostError,
 } from '../session/indexedDb';
 import { activeSave, baseSave } from './session_save_envelope.fixtures';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { freshSessionState } from '../session/sessionStateTransitions';
 import type { DurableApplicationState } from '../session/saveEnvelope';
@@ -60,7 +60,7 @@ describe('session persistence: recovery', () => {
       ...before,
       walletContext: { provider: 'simulator', identity: before.identity.playerId },
     });
-    installReservedWalletObligation(
+    installAwaitingChannelFunding(
       'pre-authority-trade',
       {
         installationPlayerId: before.identity.playerId,
@@ -114,7 +114,9 @@ describe('session persistence: recovery', () => {
 
     expect(claimed.rejectionTransports).toEqual([rejection]);
     expect(storageRepository.loadState().rejectionTransports).toEqual([rejection]);
-    expect(claimed.walletObligations).toEqual(storageRepository.walletObligations());
+    expect([...claimed.channelFundingOperations, ...claimed.feeAttachments]).toEqual(
+      storageRepository.channelFundingOperations(),
+    );
   });
 
   it('reports malformed aggregate boot inspection and leaves the record on disk', async () => {
@@ -359,7 +361,7 @@ describe('session persistence: recovery', () => {
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator', identity: 'installation' },
     });
-    installReservedWalletObligation(
+    installAwaitingChannelFunding(
       'trade-clear',
       {
         installationPlayerId: 'installation',
@@ -373,11 +375,10 @@ describe('session persistence: recovery', () => {
     storageRepository._resetForTests();
 
     await storageRepository.claimApplicationState();
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.channelFundingOperations()).toEqual([
       expect.objectContaining({
-        tradeId: 'trade-clear',
-        stage: 'cancel-required',
-        reason: 'orphaned-reservation-restored',
+        providerReservationId: 'trade-clear',
+        stage: 'awaiting-channel',
       }),
     ]);
   });
@@ -388,15 +389,15 @@ describe('session persistence: recovery', () => {
     const state = {
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator' as const, identity: 'installation' },
-      walletObligations: [
+      feeAttachments: [
         {
-          tradeId: 'trade-independent',
+          providerReservationId: 'trade-independent',
           owner: {
             installationPlayerId: 'installation',
             peerSessionId: 'peer-session',
             providerScope: { provider: 'simulator' as const, identity: 'installation' },
           },
-          purpose: { kind: 'fee', operationId: 'submission' },
+          submissionId: 'submission',
           stage: 'reserved',
           reason: 'created-before-reload',
         },
@@ -407,11 +408,11 @@ describe('session persistence: recovery', () => {
     clearSavedSessionMarker();
 
     expect(await storageRepository.claimApplicationState()).toMatchObject({ session: null });
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.feeAttachments()).toEqual([
       expect.objectContaining({
-        tradeId: 'trade-independent',
+        providerReservationId: 'trade-independent',
         stage: 'cancel-required',
-        reason: 'orphaned-reservation-restored',
+        reason: 'orphaned-fee-reservation-restored',
       }),
     ]);
   });
@@ -422,15 +423,15 @@ describe('session persistence: recovery', () => {
     const state = {
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator' as const, identity: 'installation' },
-      walletObligations: [
+      feeAttachments: [
         {
-          tradeId: 'trade-retained',
+          providerReservationId: 'trade-retained',
           owner: {
             installationPlayerId: 'installation',
             peerSessionId: 'peer-session',
             providerScope: { provider: 'simulator' as const, identity: 'installation' },
           },
-          purpose: { kind: 'fee', operationId: 'submission-7' },
+          submissionId: 'submission-7',
           stage: 'retained-for-replay',
           reason: 'fee-source-attached',
         },
@@ -441,9 +442,9 @@ describe('session persistence: recovery', () => {
 
     await storageRepository.claimApplicationState();
 
-    expect(storageRepository.walletObligations()).toEqual([
+    expect(storageRepository.feeAttachments()).toEqual([
       expect.objectContaining({
-        tradeId: 'trade-retained',
+        providerReservationId: 'trade-retained',
         stage: 'retained-for-replay',
         reason: 'fee-source-attached',
       }),
@@ -454,7 +455,7 @@ describe('session persistence: recovery', () => {
     '%s preserves wallet-obligation siblings',
     async (kind) => {
       const entry = {
-        tradeId: `trade-${kind}`,
+        providerReservationId: `trade-${kind}`,
         owner: {
           installationPlayerId: 'installation',
           peerSessionId: 'peer-session',
@@ -467,7 +468,7 @@ describe('session persistence: recovery', () => {
       const state = {
         ...storageRepository.loadState(),
         walletContext: entry.owner.providerScope,
-        walletObligations: [entry],
+        channelFundingOperations: [entry],
       };
       storageRepository._replaceApplicationStateForTests(state);
       await storageRepository.checkpointApplicationState(state);
@@ -490,7 +491,7 @@ describe('session persistence: recovery', () => {
           rejectionTransports: [rejection],
         }));
       }
-      expect((await readApplicationState())?.walletObligations).toEqual([entry]);
+      expect((await readApplicationState())?.channelFundingOperations).toEqual([entry]);
     },
   );
 

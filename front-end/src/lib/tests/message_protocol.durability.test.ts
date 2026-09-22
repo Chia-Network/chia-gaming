@@ -8,7 +8,7 @@ import { WasmStateInit } from '../../hooks/WasmStateInit';
 import { storageRepository } from '../session/storageRepository';
 import { decodeDurableApplicationState } from '../session/persistence';
 import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 
 import { liveSave } from './session_save_envelope.fixtures';
@@ -216,7 +216,7 @@ describe('durability failures', () => {
       blob,
       new BlockchainPoller({ ...mockRpc, beginWalletOfferCancellation }, 60_000),
     );
-    walletOperationRuntime.attachProvider(
+    channelFundingRuntime.attachProvider(
       blob.blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
         peerSessionId: '00'.repeat(16),
@@ -232,9 +232,9 @@ describe('durability failures', () => {
     storageRepository._replaceApplicationStateForTests({
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator', identity: 'submission-handoff' },
-      walletObligations: [
+      channelFundingOperations: [
         {
-          tradeId: 'trade-unresolved',
+          providerReservationId: 'trade-unresolved',
           owner: {
             installationPlayerId: 'test',
             peerSessionId: '00'.repeat(16),
@@ -249,7 +249,7 @@ describe('durability failures', () => {
         },
       ],
     });
-    walletOperationRuntime.retryCancelRequired();
+    channelFundingRuntime.retryCancelRequired();
 
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full');
     for (
@@ -262,23 +262,25 @@ describe('durability failures', () => {
 
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     expect(blob.getWasmFields()).not.toHaveProperty('durabilityWarning');
-    expect(storageRepository.walletObligations()).toEqual([
-      expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-unresolved',
+        stage: 'cancel-required',
+      }),
     ]);
 
     failPersistence = false;
     finishCleanup();
-    await walletOperationRuntime.awaitOwner({
-      installationPlayerId: 'test',
-      peerSessionId: '00'.repeat(16),
-      providerScope: { provider: 'simulator', identity: 'submission-handoff' },
-    });
+    await channelFundingRuntime.flush();
     await blob.flushPendingWork();
     await blob.flushPendingSave();
 
     expect(checkpoints).toHaveLength(2);
-    expect(storageRepository.walletObligations()).toEqual([
-      expect.objectContaining({ tradeId: 'trade-unresolved', stage: 'cancel-required' }),
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'trade-unresolved',
+        stage: 'cancel-required',
+      }),
     ]);
     expect(blob.getWasmFields()).not.toHaveProperty('durabilityWarning');
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);

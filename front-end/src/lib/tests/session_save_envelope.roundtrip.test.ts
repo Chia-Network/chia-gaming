@@ -72,7 +72,8 @@ describe('durable game envelope round trips', () => {
       original.session?.phase === 'live' ? original.session.presentation.activeGameIds : [],
     );
     expect(restored.state.walletContext).toEqual(original.walletContext);
-    expect(restored.state.walletObligations).toEqual(original.walletObligations);
+    expect(restored.state.channelFundingOperations).toEqual(original.channelFundingOperations);
+    expect(restored.state.feeAttachments).toEqual(original.feeAttachments);
     expect(restored.state.rejectionTransports).toEqual([rejection]);
     restored.state.rejectionTransports[0]!.unackedMessages[0]!.msg[0] = 9;
     expect(original.rejectionTransports[0]!.unackedMessages[0]!.msg[0]).toBe(1);

@@ -1,7 +1,8 @@
+import { expectConsoleError } from '../../../scripts/testSetup';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
 import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import {
   makeMockCradle,
@@ -13,26 +14,27 @@ import {
 } from './message_protocol.harness';
 import { commitRuntime, ControlledRuntime, setup } from './runtime_capability.harness';
 import { storageRepository } from '../session/storageRepository';
-import type { WalletOperationEntry } from '../session/walletOperationStore';
-import { installReservedWalletObligation } from './wallet_operation_test_helpers';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
+import { entriesForOwner } from '../session/channelFundingSelectors';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 
-describe('durable wallet operation record', () => {
+describe('durable channel funding record', () => {
   const owner = {
     installationPlayerId: 'submission-handoff',
     peerSessionId: '00'.repeat(16),
     providerScope: { provider: 'simulator' as const, identity: 'submission-handoff' },
   };
 
-  beforeEach(() => walletOperationRuntime.resetForTests());
+  beforeEach(() => channelFundingRuntime.resetForTests());
 
-  function installAggregateWallet(entries: WalletOperationEntry[]): void {
+  function installAggregateWallet(entries: ChannelFundingEntry[]): void {
     storageRepository._replaceApplicationStateForTests({
       ...storageRepository.loadState(),
       walletContext: owner.providerScope,
-      walletObligations: entries,
+      channelFundingOperations: entries,
+      feeAttachments: [],
     });
-    storageRepository.reduceWallet({ kind: 'restore-aggregate' });
-    walletOperationRuntime.retryCancelRequired();
+    channelFundingRuntime.retryCancelRequired();
   }
 
   it('keeps a Rust funding request idle until an adapter establishes scope', async () => {
@@ -42,7 +44,7 @@ describe('durable wallet operation record', () => {
       100n,
       100n,
       makePeerConn([], []),
-      walletOperationRuntime,
+      channelFundingRuntime,
     );
     const cradle = makeMockCradle();
     controller.rewardPuzzleHash = '11'.repeat(32);
@@ -98,7 +100,7 @@ describe('durable wallet operation record', () => {
       callback: 'provide_coin_spend_bundle' as const,
     },
   ])(
-    'consumes the durable $label funding reservation and permits terminal quiescence',
+    'delivers $label funding material while known reservations await Rust channel facts',
     async ({ outcome, callback }) => {
       const beginWalletOffer = jest.fn().mockResolvedValue(outcome);
       const { controller, cradle } = setup(jest.fn(), { beginWalletOffer });
@@ -122,7 +124,17 @@ describe('durable wallet operation record', () => {
 
         expect(beginWalletOffer).toHaveBeenCalledTimes(1);
         expect(cradle[callback]).toHaveBeenCalledTimes(1);
-        expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+        expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual(
+          outcome.kind === 'created-reserved'
+            ? [
+                expect.objectContaining({
+                  stage: 'awaiting-channel',
+                  providerReservationId: outcome.tradeId,
+                  request: { kind: 'funding', canonical: request },
+                }),
+              ]
+            : [],
+        );
         await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
           coinsOfInterest: [],
         });
@@ -162,7 +174,12 @@ describe('durable wallet operation record', () => {
       expect(reconcileWalletOffer).toHaveBeenCalledTimes(1);
       expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-      expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([
+        expect.objectContaining({
+          stage: 'awaiting-channel',
+          providerReservationId: 'Offer_notification',
+        }),
+      ]);
     } finally {
       controller.cleanup();
     }
@@ -256,7 +273,7 @@ describe('durable wallet operation record', () => {
       expect(beginWalletOffer).toHaveBeenCalledTimes(1);
       expect(reconcileWalletOffer).toHaveBeenCalledTimes(1);
       expect(first.cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
-      expect(storageRepository.walletObligations()).toEqual([
+      expect(storageRepository.channelFundingOperations()).toEqual([
         expect.objectContaining({
           stage: 'creating',
           recoveryId: 'SR_full_reload',
@@ -267,7 +284,7 @@ describe('durable wallet operation record', () => {
     }
 
     storageRepository._resetForTests();
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     await storageRepository.claimApplicationState();
     const restored = setup(jest.fn(), rpcOverrides);
     try {
@@ -286,26 +303,20 @@ describe('durable wallet operation record', () => {
         'SR_full_reload',
       );
       expect(restored.cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
-      expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+      expect(storageRepository.channelFundingOperations()).toEqual([
+        expect.objectContaining({
+          stage: 'awaiting-channel',
+          providerReservationId: 'Offer_full_reload',
+        }),
+      ]);
     } finally {
       restored.controller.cleanup();
     }
   });
 
-  it('blocks replacement funding until a restored reservation is cancelled', async () => {
-    let finishCancel!: () => void;
-    const beginWalletOfferCancellation = jest.fn(
-      () =>
-        new Promise<{ status: 'cancelled' }>((resolve) => {
-          finishCancel = () => resolve({ status: 'cancelled' });
-        }),
-    );
-    const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created-ephemeral',
-      material: { kind: 'bundle', bundle: testSpendBundle('restored-funding') },
-    });
-    const { controller } = setup(jest.fn(), { beginWalletOffer, beginWalletOfferCancellation });
-    const lease = new ControlledRuntime();
+  it('forgets a restored awaiting-channel reservation on typed confirmation without cancellation', async () => {
+    const beginWalletOfferCancellation = jest.fn();
+    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -313,202 +324,91 @@ describe('durable wallet operation record', () => {
     });
     const purpose = { kind: 'funding' as const, operationId: fundingRequestKey(request) };
     try {
-      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
-      controller.flushDeferredWork();
       installAggregateWallet([
         {
-          tradeId: 'trade-restored',
+          providerReservationId: 'trade-restored',
           owner,
           purpose,
-          stage: 'reserved',
+          stage: 'awaiting-channel',
+          request: { kind: 'funding', canonical: request },
           reason: 'created-before-reload',
         },
       ]);
-      commitRuntime(controller, lease);
-      for (let i = 0; i < 20 && beginWalletOfferCancellation.mock.calls.length === 0; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      expect(beginWalletOffer).not.toHaveBeenCalled();
-
-      expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      finishCancel();
-      await walletOperationRuntime.awaitOwner(owner);
+      commitRuntime(controller, new ControlledRuntime());
+      controller.processResult(wasmResult({ events: [{ ChannelCoinConfirmed: null }] }));
       await controller.flushPendingWork();
-      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-restored');
-      expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([]);
+      expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
     } finally {
       controller.cleanup();
     }
   });
 
-  it('reloads a reserved funding identity, cancels it, then re-offers on later Rust readiness', async () => {
+  it('reloads awaiting-channel funding and cancels its exact reservation once on typed timeout', async () => {
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
     const purpose = { kind: 'funding' as const, operationId: fundingRequestKey(request) };
-    const reserved: WalletOperationEntry = {
-      tradeId: 'trade-before-material-delivery',
+    const reserved: ChannelFundingEntry = {
+      providerReservationId: 'trade-before-material-delivery',
       owner,
       purpose,
-      stage: 'reserved',
+      stage: 'awaiting-channel',
+      request: { kind: 'funding', canonical: request },
       reason: 'wallet-reserved-before-delivery',
     };
     const persisted = {
       ...storageRepository.loadState(),
       walletContext: owner.providerScope,
-      walletObligations: [reserved],
+      channelFundingOperations: [reserved],
+      feeAttachments: [],
     };
     storageRepository._replaceApplicationStateForTests(persisted);
     await storageRepository.checkpointApplicationState(persisted);
 
     const durableReservation = (await storageRepository.inspect()).applicationState
-      ?.walletObligations[0];
+      ?.channelFundingOperations[0];
     expect(durableReservation).toEqual(reserved);
     expect(durableReservation).not.toHaveProperty('material');
     expect(durableReservation).not.toHaveProperty('offer');
     expect(durableReservation).not.toHaveProperty('bundle');
 
     storageRepository._resetForTests();
-    walletOperationRuntime.resetForTests();
+    channelFundingRuntime.resetForTests();
     await storageRepository.claimApplicationState();
-    expect(storageRepository.walletObligations()).toEqual([
-      {
-        ...reserved,
-        stage: 'cancel-required',
-        reason: 'orphaned-reservation-restored',
-      },
-    ]);
+    expect(storageRepository.channelFundingOperations()).toEqual([reserved]);
 
     const beginWalletOfferCancellation = jest
       .fn()
       .mockResolvedValue({ status: 'cancelled' as const });
-    const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created-reserved' as const,
-      material: { kind: 'offer' as const, offer: 'offer1aftercleanup' },
-      tradeId: 'trade-after-cleanup',
-    });
-    const { controller, cradle } = setup(jest.fn(), {
-      beginWalletOffer,
-      beginWalletOfferCancellation,
-    });
-    (
-      cradle as typeof cradle & {
-        provide_offer_bech32: jest.Mock;
-      }
-    ).provide_offer_bech32 = jest.fn(() => wasmResult());
+    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
     try {
-      await walletOperationRuntime.awaitOwner(owner);
-      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-before-material-delivery');
-      expect(storageRepository.walletObligations()).toEqual([]);
-
-      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
-      controller.flushDeferredWork();
       commitRuntime(controller, new ControlledRuntime());
+      controller.processResult(
+        wasmResult({
+          events: [{ ChannelCreationTimedOut: null }],
+          disposition: { kind: 'terminal' },
+        }),
+      );
       await controller.flushPendingWork();
-      await storageRepository.flushAggregate();
-
-      expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-      expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1aftercleanup');
-      expect(storageRepository.walletObligations()).toEqual([]);
-      expect((await storageRepository.inspect()).applicationState?.walletObligations).toEqual([]);
-    } finally {
-      controller.cleanup();
-    }
-  });
-
-  it('retains uncertain failure without a tight loop and retries on reattach', async () => {
-    const beginWalletOfferCancellation = jest
-      .fn()
-      .mockResolvedValueOnce({ status: 'unavailable', detail: 'wallet offline' });
-    const { blockchain, controller } = setup(jest.fn(), { beginWalletOfferCancellation });
-    const purpose = { kind: 'fee' as const, operationId: 'submission' };
-    try {
-      installAggregateWallet([
-        {
-          tradeId: 'trade-reconnect',
-          owner,
-          purpose,
-          stage: 'cancel-required',
-          reason: 'wallet-outcome-finalized',
-        },
-      ]);
-      await walletOperationRuntime.awaitOwner(owner);
+      await channelFundingRuntime.flush();
+      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-before-material-delivery');
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(walletOperationRuntime.entriesFor(owner)).toHaveLength(1);
-
-      await Promise.resolve();
-      expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      beginWalletOfferCancellation.mockResolvedValue({ status: 'cancelled' });
-      controller.attachBlockchain(blockchain);
-      await walletOperationRuntime.awaitOwner(owner);
-      expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(2);
-      expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
     } finally {
       controller.cleanup();
     }
   });
 
-  it('treats an already-spent cancellation response as terminal success', async () => {
-    const beginWalletOfferCancellation = jest
-      .fn()
-      .mockResolvedValue({ status: 'already-terminal', detail: 'offer already spent' });
-    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
-    try {
-      installAggregateWallet([
-        {
-          tradeId: 'trade-spent',
-          owner,
-          purpose: { kind: 'fee', operationId: 'spent-submission' },
-          stage: 'cancel-required',
-          reason: 'wallet-outcome-finalized',
-        },
-      ]);
-      await walletOperationRuntime.awaitOwner(owner);
-      expect(walletOperationRuntime.entriesFor(owner)).toEqual([]);
-    } finally {
-      controller.cleanup();
-    }
-  });
-
-  it('keeps terminal teardown blocked after a typed nonterminal cancellation outcome', async () => {
-    const beginWalletOfferCancellation = jest
-      .fn()
-      .mockResolvedValue({ status: 'rejected', detail: 'wallet refused cancellation' });
-    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
-    const lease = new ControlledRuntime();
-    try {
-      installAggregateWallet([
-        {
-          tradeId: 'trade-rejected',
-          owner,
-          purpose: { kind: 'fee', operationId: 'rejected-submission' },
-          stage: 'cancel-required',
-          reason: 'wallet-outcome-finalized',
-        },
-      ]);
-      commitRuntime(controller, lease);
-
-      await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
-        code: 'WALLET_OFFER_CLEANUP_PENDING',
-      });
-      expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(walletOperationRuntime.entriesFor(owner)).toEqual([
-        expect.objectContaining({ tradeId: 'trade-rejected', stage: 'cancel-required' }),
-      ]);
-    } finally {
-      controller.cleanup();
-    }
-  });
-
-  it('keeps terminal teardown blocked when cancellation API is missing', async () => {
+  it('does not block terminal finalization on durable cancellation cleanup', async () => {
     const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: undefined });
     const lease = new ControlledRuntime();
     try {
       installAggregateWallet([
         {
-          tradeId: 'trade-no-api',
+          providerReservationId: 'trade-no-api',
           owner,
           purpose: { kind: 'funding', operationId: 'funding-operation' },
           stage: 'cancel-required',
@@ -516,15 +416,89 @@ describe('durable wallet operation record', () => {
         },
       ]);
       commitRuntime(controller, lease);
-      await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
-        code: 'WALLET_OFFER_CLEANUP_PENDING',
+      await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+        coinsOfInterest: [],
       });
     } finally {
       controller.cleanup();
     }
   });
 
-  it('blocks terminal teardown on the durable owner when another wallet scope is connected', async () => {
+  it('keeps unknown pre-ID timeout recoverable without synthesizing cancellation', async () => {
+    const cancel = jest.fn();
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60n, args: ['launcher'] }],
+    });
+    installAggregateWallet([
+      {
+        owner,
+        purpose: { kind: 'funding', operationId: fundingRequestKey(request) },
+        stage: 'best-effort-uncertain',
+        disposition: 'active',
+        request: { kind: 'funding', canonical: request },
+        lastAttemptEpoch: 1n,
+        orphanRisk: 'pre-id-response-lost',
+        reason: 'walletconnect-response-unavailable',
+      },
+    ]);
+    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: cancel });
+    try {
+      commitRuntime(controller, new ControlledRuntime());
+      controller.processResult(wasmResult({ events: [{ ChannelCreationTimedOut: null }] }));
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+
+      expect(cancel).not.toHaveBeenCalled();
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([
+        expect.objectContaining({
+          stage: 'best-effort-uncertain',
+          disposition: 'cancel-on-create',
+          orphanRisk: 'pre-id-response-lost',
+        }),
+      ]);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('channel timeout does not mutate the fee-attachment slice', async () => {
+    const funding: ChannelFundingEntry = {
+      providerReservationId: 'funding-timeout',
+      owner,
+      purpose: { kind: 'funding', operationId: 'funding-operation' },
+      stage: 'awaiting-channel',
+      request: {
+        kind: 'funding',
+        canonical: { amount: '100', fee: '0', conditions: [] },
+      },
+      reason: 'material-delivered',
+    };
+    const fee = {
+      providerReservationId: 'fee-reservation',
+      owner,
+      submissionId: 'submission-1',
+      stage: 'reserved' as const,
+      reason: 'fee-attached',
+    };
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: owner.providerScope,
+      channelFundingOperations: [funding],
+      feeAttachments: [fee],
+    });
+    channelFundingRuntime.channelCreationTimedOut(owner.installationPlayerId, owner.peerSessionId);
+    expect(storageRepository.feeAttachments()).toEqual([fee]);
+    expect(storageRepository.channelFundingOperations()).toEqual([
+      expect.objectContaining({
+        providerReservationId: 'funding-timeout',
+        stage: 'cancel-required',
+      }),
+    ]);
+  });
+
+  it('does not broadly cancel awaiting funding during terminal cleanup or wallet mismatch', async () => {
     const wrongCancel = jest.fn().mockResolvedValue({ status: 'cancelled' as const });
     const wrongScope = {
       provider: 'walletconnect' as const,
@@ -547,52 +521,66 @@ describe('durable wallet operation record', () => {
     try {
       installAggregateWallet([
         {
-          tradeId: 'trade-original-wallet',
+          providerReservationId: 'trade-original-wallet',
           owner,
           purpose: { kind: 'funding', operationId: 'original-wallet-funding' },
-          stage: 'reserved',
+          stage: 'awaiting-channel',
+          request: {
+            kind: 'funding',
+            canonical: { amount: '100', fee: '0', conditions: [] },
+          },
           reason: 'created-before-wallet-switch',
         },
       ]);
       commitRuntime(controller, lease);
 
-      await expect(controller.quiesceForTerminalFinalization()).rejects.toMatchObject({
-        code: 'WALLET_OFFER_CLEANUP_PENDING',
-        entries: [
-          expect.objectContaining({
-            tradeId: 'trade-original-wallet',
-            owner,
-            stage: 'cancel-required',
-          }),
-        ],
+      await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+        coinsOfInterest: [],
       });
       expect(wrongCancel).not.toHaveBeenCalled();
-      expect(walletOperationRuntime.entriesFor(owner)).toHaveLength(1);
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([
+        expect.objectContaining({
+          providerReservationId: 'trade-original-wallet',
+          stage: 'awaiting-channel',
+        }),
+      ]);
     } finally {
       controller.cleanup();
     }
   });
 
-  it('allows stale cleanup and a newer active trade for one stable operation', () => {
-    storageRepository._replaceApplicationStateForTests({
-      ...storageRepository.loadState(),
-      walletContext: owner.providerScope,
+  it('cancels the exact reservation when Rust rejects delivered funding material', async () => {
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1rejected' },
+      tradeId: 'trade-rejected-material',
     });
-    const purpose = { kind: 'funding' as const, operationId: 'conflicted-operation' };
-    installReservedWalletObligation('trade-retry', owner, purpose);
-    installReservedWalletObligation('trade-stale', owner, purpose);
-    walletOperationRuntime.settleTrade(
-      'trade-stale',
-      'cancel-required',
-      'stale-createOffer-result',
-    );
+    const { controller, cradle } = setup(jest.fn(), {
+      beginWalletOffer,
+      beginWalletOfferCancellation: cancel,
+    });
+    cradle.provide_offer_bech32 = jest.fn(() => {
+      throw new Error('Rust rejected funding material');
+    });
+    const request = canonicalizeFundingRequest({
+      amount: '100',
+      fee: '0',
+      conditions: [{ opcode: 60n, args: ['launcher'] }],
+    });
+    try {
+      expectConsoleError('Rust rejected funding material');
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      commitRuntime(controller, new ControlledRuntime());
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
 
-    expect(walletOperationRuntime.entriesFor(owner)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ tradeId: 'trade-retry', stage: 'reserved' }),
-        expect.objectContaining({ tradeId: 'trade-stale', stage: 'cancel-required' }),
-      ]),
-    );
+      expect(cancel).toHaveBeenCalledWith('trade-rejected-material');
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([]);
+    } finally {
+      controller.cleanup();
+    }
   });
 
   it('scopes terminal obligations by the complete owner tuple', () => {
@@ -601,20 +589,24 @@ describe('durable wallet operation record', () => {
       walletContext: owner.providerScope,
     });
     const otherPeer = { ...owner, peerSessionId: '11'.repeat(16) };
-    installReservedWalletObligation('trade-first-session', owner, {
+    installAwaitingChannelFunding('trade-first-session', owner, {
       kind: 'funding',
       operationId: 'same-operation',
     });
-    installReservedWalletObligation('trade-second-session', otherPeer, {
+    installAwaitingChannelFunding('trade-second-session', otherPeer, {
       kind: 'funding',
       operationId: 'same-operation',
     });
 
-    expect(walletOperationRuntime.entriesFor(owner).map((entry) => entry.tradeId)).toEqual([
-      'trade-first-session',
-    ]);
-    expect(walletOperationRuntime.entriesFor(otherPeer).map((entry) => entry.tradeId)).toEqual([
-      'trade-second-session',
-    ]);
+    expect(
+      entriesForOwner(storageRepository.channelFundingOperations(), owner).map(
+        (entry) => entry.providerReservationId,
+      ),
+    ).toEqual(['trade-first-session']);
+    expect(
+      entriesForOwner(storageRepository.channelFundingOperations(), otherPeer).map(
+        (entry) => entry.providerReservationId,
+      ),
+    ).toEqual(['trade-second-session']);
   });
 });

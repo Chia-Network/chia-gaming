@@ -15,11 +15,10 @@ import {
   AsyncRequestStartGate,
 } from '../lib/AsyncScheduler';
 import {
-  walletOperationRuntime,
-  type WalletOperationRuntime,
-} from '../lib/session/walletOperationRuntime';
-import { walletProviderScopeKey } from '../lib/session/walletOperationStore';
-import type { WalletOperationOwner } from '../lib/session/walletOperationStore';
+  channelFundingRuntime as defaultChannelFundingRuntime,
+  type ChannelFundingRuntime,
+} from '../lib/session/channelFundingRuntime';
+import { providerScopeKey, type ProviderOwner } from '../lib/session/providerKeys';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
@@ -57,7 +56,7 @@ type BalanceCallbacks = {
 
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
-  readonly walletOperations: WalletOperationRuntime;
+  readonly channelFundingRuntime: ChannelFundingRuntime;
   private readonly adapter: InternalBlockchainInterface;
   private sourceWalletProvider: WalletOfferProvider | null = null;
   private sourceWalletProviderKey: string | null = null;
@@ -94,12 +93,12 @@ export class BlockchainPoller {
     blockchain: InternalBlockchainInterface,
     pollIntervalMs: number,
     maxBackoffMs?: number,
-    walletOperations: WalletOperationRuntime = walletOperationRuntime,
+    channelFundingRuntime: ChannelFundingRuntime = defaultChannelFundingRuntime,
   ) {
     this.adapter = blockchain;
     this.pollIntervalMs = pollIntervalMs;
     this.maxBackoffMs = maxBackoffMs ?? 60000;
-    this.walletOperations = walletOperations;
+    this.channelFundingRuntime = channelFundingRuntime;
     this.requestStartGate = new AsyncRequestStartGate(blockchain.requestGapMs ?? 0);
     const queueOptions: AsyncJobQueueOptions = {
       onError: (job, e) => {
@@ -207,7 +206,7 @@ export class BlockchainPoller {
     if (typeof adapter.getWalletOfferProvider !== 'function') return null;
     const source = adapter.getWalletOfferProvider(owner);
     if (!source || !source.scope) return null;
-    const sourceKey = `${source.capability}\0${walletProviderScopeKey(source.scope)}`;
+    const sourceKey = `${source.capability}\0${providerScopeKey(source.scope)}`;
     if (
       this.queuedWalletProvider &&
       (source === this.sourceWalletProvider || sourceKey === this.sourceWalletProviderKey)
@@ -331,35 +330,35 @@ export class BlockchainPoller {
     return run();
   }
 
-  resolveWalletOperationOwner(
-    owner: Pick<WalletOperationOwner, 'installationPlayerId' | 'peerSessionId'>,
-  ): WalletOperationOwner | null {
+  resolveProviderOwner(
+    owner: Pick<ProviderOwner, 'installationPlayerId' | 'peerSessionId'>,
+  ): ProviderOwner | null {
     const provider = this.rpc.getWalletOfferProvider(owner);
     if (!provider) return null;
     return { ...owner, providerScope: provider.scope };
   }
 
-  refreshWalletOperationProvider(): void {
+  refreshProviderReadiness(): void {
     const provider = this.rpc.getWalletOfferProvider();
     if (provider === this.attachedWalletProvider) return;
     if (this.attachedWalletProvider) {
-      this.walletOperations.detachProvider(this.attachedWalletProvider);
+      this.channelFundingRuntime.detachProvider(this.attachedWalletProvider);
     }
     this.attachedWalletProvider = provider;
-    if (provider) this.walletOperations.attachProvider(provider);
+    if (provider) this.channelFundingRuntime.attachProvider(provider);
   }
 
-  detachWalletOperationProvider(): void {
+  detachProvider(): void {
     if (!this.attachedWalletProvider) return;
-    this.walletOperations.detachProvider(this.attachedWalletProvider);
+    this.channelFundingRuntime.detachProvider(this.attachedWalletProvider);
     this.attachedWalletProvider = null;
   }
 
-  notifyWalletOperationReadiness(
-    owner: Pick<WalletOperationOwner, 'installationPlayerId' | 'peerSessionId'>,
+  notifyProviderReadiness(
+    owner: Pick<ProviderOwner, 'installationPlayerId' | 'peerSessionId'>,
   ): void {
     const provider = this.rpc.getWalletOfferProvider(owner);
-    if (provider) this.walletOperations.providerReconnectReady(provider);
+    if (provider) this.channelFundingRuntime.providerReconnectReady(provider);
   }
 
   attachGameSession(cradle: PollingGameSession) {
@@ -438,7 +437,7 @@ export class BlockchainPoller {
   start() {
     if (this.running) return;
     this.running = true;
-    this.refreshWalletOperationProvider();
+    this.refreshProviderReadiness();
     this.firstTick = true;
     this.startedAt = performance.now();
     log(`[blockchain-poller] started, pollMs=${this.pollIntervalMs}`);
@@ -451,10 +450,10 @@ export class BlockchainPoller {
     const unsubscribe = this.adapter.onConnectionChange((connected) => {
       this.connectionActive = connected;
       if (connected) {
-        this.refreshWalletOperationProvider();
+        this.refreshProviderReadiness();
         this.resumePollingIfConnected();
       } else {
-        this.detachWalletOperationProvider();
+        this.detachProvider();
         this.pausePollingForDisconnect();
       }
     });

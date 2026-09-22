@@ -1,7 +1,7 @@
 import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
 import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { walletOperationRuntime } from '../session/walletOperationRuntime';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import {
   createActivePair,
@@ -51,7 +51,7 @@ it(
     poller.stop();
     await pollOnce(poller);
     const provider = fakeBlockchainInfo.getWalletOfferProvider();
-    if (provider) walletOperationRuntime.attachProvider(provider);
+    if (provider) channelFundingRuntime.attachProvider(provider);
 
     const adapters = await createActivePair(poller, 21);
     const controller = adapters[0].blob!;
@@ -112,7 +112,7 @@ it(
       const upgradedBlob = submittedBlobs[1];
       const restored = await injectSessionReload(lane, poller, undefined, async () => {
         const restoredProvider = fakeBlockchainInfo.getWalletOfferProvider();
-        if (restoredProvider) walletOperationRuntime.attachProvider(restoredProvider);
+        if (restoredProvider) channelFundingRuntime.attachProvider(restoredProvider);
       });
       lane = restored.lane;
       assert.equal(restored.save.session.live.gameSessionSchemaVersion, 22n);

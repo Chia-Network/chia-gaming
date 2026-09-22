@@ -364,17 +364,18 @@ cryptographic nonces or signatures (BLS signatures are deterministic).
 IndexedDB v5 holds one `application-state/current` record and one coordination
 store. The application record is a salt-prefixed, obfuscated Bencodex binary
 value; obfuscation deters casual inspection but is not a security boundary.
-The strict `chia-gaming-application-state` v3 root contains common
+The strict `chia-gaming-application-state` v4 root contains common
 identity/preferences/history, an optional `pre-handshake`, `live`, or
-`terminal` session, one canonical wallet context with wallet obligations, and
+`terminal` session, one canonical wallet context with owner-specific
+`channelFundingOperations` and `feeAttachments`, and
 bounded rejection transports. The serialized WASM cradle and unacknowledged
 frames remain raw `Uint8Array` values. localStorage contains only coordination
 and resume/reset hints; it is not preference or application-state authority.
 
 The nested Rust/WASM cradle is opaque schema 22. No app-owned persistence format
-has shipped, so only aggregate v3 decodes: there are no migrations, fallback
+has shipped, so only aggregate v4 decodes: there are no migrations, fallback
 decoders, aliases, or predecessor reads. Unknown or missing fields, a malformed
-session, wallet obligation, rejection transport, hand state, or incompatible
+session, provider reservation, rejection transport, hand state, or incompatible
 version reject the whole root and present Retry Hard Reset. Nothing is deleted,
 pruned, or preferentially salvaged during corruption handling.
 
@@ -383,7 +384,7 @@ the normalized `SessionModel`. Game-owned `handState` must restore through its
 registered package. The optional session discriminant owns its exact payload:
 pre-handshake owns pairing and transport, live adds the opaque cradle and
 presentation, and terminal owns frozen facts and presentation. Rejection
-transports and wallet obligations are nested sibling slices of the same root,
+transports, channel funding, and fee attachments are nested sibling slices of the same root,
 so one capture and one write cannot observe mixed generations.
 The live and terminal `presentation` payload explicitly encodes every durable
 collection, nullable identity, flag, balance, and timer absence. Transient
@@ -392,8 +393,8 @@ The following fields are grouped under those phase-owned payloads:
 
 | Field                                 | Type                                                 | Purpose                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`                             | `bigint`                                             | Aggregate version; currently `3`.                                                                                                                                                                                                                                                                               |
-| `walletContext`                       | `WalletProviderScope \| null`                        | Single canonical provider/account scope for the session and nested wallet obligations.                                                                                                                                                                                                                          |
+| `version`                             | `bigint`                                             | Aggregate version; currently `4`.                                                                                                                                                                                                                                                                               |
+| `walletContext`                       | `WalletProviderScope \| null`                        | Single canonical provider/account scope for the session and nested channel-funding and fee-attachment reservations.                                                                                                                                                                                             |
 | `playerId`                            | `string`                                             | Stable local hub/player identity for this browser state.                                                                                                                                                                                                                                                        |
 | `sessionId`                           | `string?`                                            | Local master secret used to derive a distinct hub iframe/game-channel credential for each canonical hub origin.                                                                                                                                                                                                 |
 | `alias`                               | `string?`                                            | Local hub display alias preference.                                                                                                                                                                                                                                                                             |
@@ -462,8 +463,9 @@ writes complete captures. Claims, authority loss, and hard reset publish a new
 monotonic lifecycle generation so transient runtimes can fence stale
 completions. Ordinary I/O failure leaves the latest in-memory aggregate pending
 and still releases permitted effects; authority loss retires the obsolete
-runtime and releases nothing. `WalletOperationRuntime` owns transient provider
-orchestration over the root's wallet-obligation slice.
+runtime and releases nothing. `ChannelFundingRuntime` and
+`FeeAttachmentRuntime` are the two explicit transient provider-orchestration
+owners over their separate aggregate slices.
 
 Session persistence is executed by `SessionMachineRuntime`, the sole active
 commit coordinator. A capture combines two authoritative sources:
@@ -567,7 +569,7 @@ peer `ReliableCommitCoordinator` facet and provides `snapshotModel()` for the
 authoritative runtime model. Controller capabilities hide the only
 retire-before-launch retry loop from submission and coin-delivery callers.
 
-`WalletOperationRuntime` attaches one stable funding inbox per session and owns
+`ChannelFundingRuntime` attaches one stable funding inbox per session and owns
 the durable operation lifecycle; there is no replaceable demand identity or
 duplicate persisted funding queue. `amount`, `fee`, and optional `max_height` are canonical
 decimal `u64` strings; every condition opcode is a bounded `bigint` `u32`;
@@ -579,7 +581,8 @@ serializes one-shot wallet delivery and reports the typed outcome back to Rust.
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
 not create controller-owned successor or predecessor requests. Persisted
-funding and fee offers enter the aggregate's strict wallet-obligation slice.
+funding and fee offers enter strict, separate `channelFundingOperations` and
+`feeAttachments` slices.
 Every trade owns its exact provider trade ID and exact
 `(installationPlayerId, peerSessionId, provider/account scope, purpose kind,
 operationId)` identity;
@@ -593,9 +596,14 @@ a later `creating` recovery or created trade. Recovery reconciles exact
 post-ID requests instead of starting replacements. Funding unavailability
 remains pending; it is not converted into rejection. Post-creation stages include `reserved`,
 `retained-for-replay`, and `cancel-required`. `creating` also records active
-versus cancel-on-create disposition. An attached fee source remains retained
-while Rust may replay its current exact variant; chain terminality or Rust
-retirement moves it through typed cancellation before removal.
+versus cancel-on-create disposition. Funding remains in `awaiting-channel`
+after material delivery until typed Rust `ChannelCoinConfirmed` forgets it
+without cancellation or `ChannelCreationTimedOut` cancels its exact
+`providerReservationId`. An unknown pre-ID timeout retains cancel-on-create
+orphan evidence and cannot synthesize a cancellation ID. An attached fee
+source remains retained while Rust may replay its current exact variant;
+wallet acknowledgement does not retire it, and Rust submission retirement
+moves its exact `providerReservationId` through typed cancellation before removal.
 Controller retirement promotes only `reserved` entries; replay-retained fee
 sources stay retained until Rust explicitly retires their stable submission.
 Only reservation-creating offer, funding, or fee creation has this deliberate
@@ -603,7 +611,7 @@ duplicate-reservation risk: before a provider returns an ID, a lost response
 can hide a successful external reservation, so one replacement is allowed on
 each later readiness epoch and the orphan warning remains. Broadcasting the
 same finalized spend through WalletConnect `pushTransactions` is instead
-idempotent exact-byte replay; it creates no wallet-operation entry and carries
+idempotent exact-byte replay; it creates no provider-reservation entry and carries
 no orphan-risk provenance.
 Wallet mutation starts only after the aggregate claim is installed. Malformation
 of any nested field rejects the whole root and remains visible on Resume /
@@ -611,19 +619,21 @@ Start Over. A connected provider/account scope that differs from the durable
 owner is shown as a recovery mismatch rather than touching the wrong wallet.
 
 The complete aggregate is written in one IndexedDB transaction. Strict
-validation rejects unknown or missing fields, duplicate trade IDs, invalid
-discriminants, and non-current versions. Persistence failure does not gate
+validation rejects unknown or missing fields, duplicate identified
+`providerReservationId` values within or across both slices, provider scope
+mismatch, invalid discriminants, and non-current versions. Persistence failure does not gate
 offer use, transaction release, or cancellation; the latest in-memory root is
 captured again on later activity. Only the active-blockchain lifecycle attaches
 the cancellation RPC. A failed cancellation stays durable and retries only on
-restore, wallet reconnect/attachment, or an explicit terminal-finalization
-attempt.
-There is no timer or immediate retry loop, and terminal quiescence fails while
-that session has any unresolved ledger entry. Going offline detaches the
-provider RPC without discarding cleanup; retirement records the required
-transitions, and the next matching lifecycle attachment drains them.
+restore or matching wallet reconnect/readiness. There is no timer, immediate
+retry loop, broad terminal sweep, or generic wallet-operation, settlement, or
+session cancellation path. Identified cleanup remains durable but does not
+block terminal capture; only funding material still owed to Rust blocks
+finalization. Going offline detaches the provider RPC without discarding
+cleanup; retirement records the required transitions, and the next matching
+lifecycle attachment drains them.
 
-The app-owned persistence versions are aggregate v3, opaque Rust/WASM cradle
+The app-owned persistence versions are aggregate v4, opaque Rust/WASM cradle
 schema 22, and IndexedDB v5. None has shipped, so only the current aggregate
 decodes.
 
@@ -741,13 +751,13 @@ Acceptance removes
 the proposal and creates factory-ordered game members in `GameSlice`;
 `InsufficientBalance` and proposal cancellation remove only the proposal.
 Accepted games—including Krunk siblings—settle or receive `EndedCancelled`
-independently by `GameID`. The aggregate v3 presentation makes
+independently by `GameID`. The aggregate v4 presentation makes
 `gameInstances` plus `lastDisplayedGameId` the only persisted game protocol
 presentation, stores the canonical `GameProtocolPresentation` discriminant,
 and stores one canonical game-owned `handState` without a pending-candidate
 sidecar.
-This schema does not migrate incompatible records from aggregate current-game
-fields; they are deleted instead.
+This schema does not migrate or decode incompatible predecessor records; they
+remain available only as whole-root corruption evidence until explicit reset.
 
 The current frontend admits at most one uncancelled proposal across local and
 peer origins. An additional incoming proposal is automatically and definitively
@@ -783,8 +793,8 @@ work to a fixed point, then:
 4. Releases the captured outbound messages and acknowledgements in order.
 
 Pre-runtime negotiation uses the reliability owner's explicit flush path with
-the same persist-before-send rule. Wallet operations separately checkpoint a
-new obligation before provider mutation, while `StorageRepository` coalesces
+the same persist-before-send rule. Channel-funding and fee-attachment owners
+separately checkpoint a reservation before provider mutation, while `StorageRepository` coalesces
 preference/history drains outside protocol work. Those repository writes fold
 sibling changes into the last complete session capture; they cannot observe or
 persist a partially drained `SessionMachineRuntime`. See the canonical
@@ -1025,7 +1035,7 @@ pre-reset work cannot recreate the database or cached state afterward.
 `hardReset()`:
 
 1. Signals sibling tabs to stop persisting.
-2. Erases every in-memory wallet operation, including
+2. Erases every in-memory channel-funding operation and fee attachment, including
    `retained-for-replay`; reset is intentionally destructive and does not run
    graceful cancellation.
 3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
@@ -1047,9 +1057,9 @@ the wallet connection without attempting WASM deserialization.
 
 **Authority claiming:** Read-only inspection never claims storage.
 `StorageRepository.claimAndRead` commits the durable epochs and returns the
-exact raw session and wallet-operation snapshot read in that transaction;
-`StorageRepository` and `WalletOperationRuntime` then decode and hydrate their
-records. `localStorage` is updated afterward as a UX hint. Only pending common
+exact raw aggregate read in that transaction; `StorageRepository`,
+`ChannelFundingRuntime`, and `FeeAttachmentRuntime` then decode and attach
+their owner-specific records. `localStorage` is updated afterward as a UX hint. Only pending common
 identity, preference, and history changes survive before claim; phase, terminal,
 clear, rejection, and wallet-ledger mutations reject until authority exists.
 Semantic rejection and preserving-reset transactions remain repository-owned.
@@ -1417,7 +1427,7 @@ Shell manages wallet connections through two abstractions defined in
   the adapter returns both the bech32 offer and its offer ID. Rust decodes and
   validates the offer; if validation requests another funding attempt, the
   controller cancels the rejected persisted offer off chain to release its
-  wallet operation. The wallet chooses the offer inputs, so Cloud no longer
+  channel-funding reservation. The wallet chooses the offer inputs, so Cloud no longer
   selects or pins a funding coin in JavaScript.
 
   `WalletOfferProvider` is a required discriminated capability, not optional
@@ -1440,7 +1450,7 @@ Shell manages wallet connections through two abstractions defined in
   diagnostics retain an explicit orphan-risk warning even if a later attempt is
   accepted.
 
-  The simulator mirrors wallet operation semantics with synthetic trade
+  The simulator mirrors provider-reservation semantics with synthetic trade
   identities. Each synthetic fee offer reserves the exact input identity
   selected for that offer. Submission terminalizes only the synthetic trade
   whose exact bundle identity was acknowledged; another outstanding offer is
@@ -1588,7 +1598,7 @@ host-side coordinator for chain observations. It separates three concerns:
    work on the read lane. On disconnect, active reads are abandoned and queued
    mutations are cleared. An active mutation is allowed to finish; if it was an
    offer-creating call whose result became stale, the poller uses its trade ID
-   to cancel the wallet operation before rejecting the old-generation result.
+   to cancel the exact provider reservation before rejecting the old-generation result.
    A new generation may run immediately even if an unabortable old read never
    resolves. Each request revalidates its connection epoch after the shared
    start gate and after adapter completion, so stale work cannot start late or
@@ -2081,7 +2091,7 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/components/GameSession.tsx`            | Game session UI: header, coin status, game area, overlays                                                                                                       |
 | `front-end/src/hooks/useGameSession.ts`               | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                                           |
 | `front-end/src/lib/session/sessionMachine*.ts`        | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules                    |
-| `front-end/src/lib/session/persistence*.ts`           | Canonical strict aggregate-v3 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`                          |
+| `front-end/src/lib/session/persistence*.ts`           | Canonical strict aggregate-v4 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`                          |
 | `front-end/src/lib/session/sessionSnapshot.ts`        | Canonical `SessionModel` → aggregate presentation snapshot encoder                                                                                              |
 | `front-end/src/lib/gameRegistry.ts`                   | Catalog-key package lookup, generic proposal validation/equality, hand creation, and snapshots                                                                  |
 | `front-end/src/lib/session/incomingProposal.ts`       | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                                            |
@@ -2093,7 +2103,8 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/hooks/blobSingleton.ts`                | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                                         |
 | `front-end/src/services/PeerSession.ts`               | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                                                  |
 | `front-end/src/lib/session/storageRepository.ts`      | Sole aggregate owner: atomic claim/read, generation-fenced transforms, capture, checkpoint, and reset                                                           |
-| `front-end/src/lib/session/walletOperationRuntime.ts` | Transient generation-fenced provider orchestration, material delivery, recovery, and cleanup over nested obligations                                            |
+| `front-end/src/lib/session/channelFundingRuntime.ts`  | Channel-funding-only provider orchestration, material delivery, confirmation/timeout retirement, recovery, and exact cleanup                                    |
+| `front-end/src/lib/session/feeAttachmentRuntime.ts`   | Fee-attachment-only reservation, replay retention, Rust-retirement handling, recovery, and exact cleanup                                                        |
 | `front-end/src/hooks/saveCoordination.ts`             | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                                             |
 | `front-end/src/hooks/saveHardReset.ts`                | Hard-reset and WalletConnect browser-storage cleanup                                                                                                            |
 | `front-end/src/lib/session/indexedDb.ts`              | IndexedDB v5 coordination and strict aggregate record transactions                                                                                              |

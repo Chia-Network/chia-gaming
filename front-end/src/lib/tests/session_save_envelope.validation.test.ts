@@ -1,6 +1,7 @@
 import { decodeDurableApplicationState } from '../session/persistence';
 import type { DurableApplicationState } from '../session/saveEnvelope';
-import type { WalletOperationEntry } from '../session/walletOperationStore';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
+import type { FeeAttachment } from '../session/feeAttachmentStore';
 import { activeSave, baseSave } from './session_save_envelope.fixtures';
 
 const scope = {
@@ -9,25 +10,29 @@ const scope = {
   chainId: 'chia:testnet11',
 };
 
-const obligation: WalletOperationEntry = {
+const obligation: ChannelFundingEntry = {
   owner: {
     installationPlayerId: 'player',
     peerSessionId: 'peer-session',
     providerScope: scope,
   },
   purpose: { kind: 'funding', operationId: 'funding-1' },
-  stage: 'reserved',
-  tradeId: 'trade-1',
+  stage: 'awaiting-channel',
+  providerReservationId: 'trade-1',
+  request: {
+    kind: 'funding',
+    canonical: { amount: '100', fee: '0', conditions: [] },
+  },
   reason: '',
 };
 
-const creatingObligation: WalletOperationEntry = {
+const creatingFee: FeeAttachment = {
   owner: {
     installationPlayerId: 'player',
     peerSessionId: 'peer-session',
     providerScope: scope,
   },
-  purpose: { kind: 'fee', operationId: 'fee-creating' },
+  submissionId: 'fee-creating',
   stage: 'creating',
   disposition: 'active',
   recoveryId: 'recovery-1',
@@ -40,59 +45,147 @@ const creatingObligation: WalletOperationEntry = {
   reason: '',
 };
 
-const uncertainCancellation: WalletOperationEntry = {
+const uncertainCancellation: FeeAttachment = {
   owner: {
     installationPlayerId: 'player',
     peerSessionId: 'peer-session',
     providerScope: scope,
   },
-  purpose: { kind: 'fee', operationId: 'fee-cancelling' },
+  submissionId: 'fee-cancelling',
   stage: 'best-effort-cancellation-uncertain',
-  tradeId: 'trade-cancelling',
-  generation: 2n,
+  providerReservationId: 'trade-cancelling',
   lastAttemptEpoch: 3n,
   reason: 'response-lost',
 };
 
-const walletStageFixtures: WalletOperationEntry[] = [
-  creatingObligation,
+const fundingRequest = {
+  kind: 'funding' as const,
+  canonical: { amount: '100', fee: '0', conditions: [] },
+};
+
+const walletStageFixtures: Array<{
+  slice: 'channelFundingOperations' | 'feeAttachments';
+  entry: ChannelFundingEntry | FeeAttachment;
+}> = [
   {
-    owner: obligation.owner,
-    purpose: { kind: 'fee', operationId: 'fee-uncertain' },
-    stage: 'best-effort-uncertain',
-    disposition: 'active',
-    request: creatingObligation.request,
-    generation: 1n,
-    lastAttemptEpoch: 2n,
-    reason: 'response-lost',
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-creating' },
+      stage: 'creating',
+      disposition: 'active',
+      recoveryId: 'funding-recovery',
+      request: fundingRequest,
+      reason: '',
+    },
   },
-  obligation,
   {
-    ...obligation,
-    purpose: { kind: 'fee', operationId: 'fee-replay' },
-    stage: 'retained-for-replay',
-    tradeId: 'trade-replay',
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-uncertain' },
+      stage: 'best-effort-uncertain',
+      disposition: 'active',
+      request: fundingRequest,
+      lastAttemptEpoch: 2n,
+      reason: '',
+    },
+  },
+  { slice: 'feeAttachments', entry: creatingFee },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-uncertain',
+      stage: 'best-effort-uncertain',
+      disposition: 'active',
+      request: creatingFee.request,
+      lastAttemptEpoch: 2n,
+      reason: 'response-lost',
+    },
+  },
+  { slice: 'channelFundingOperations', entry: obligation },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-reserved',
+      stage: 'reserved',
+      providerReservationId: 'trade-reserved',
+      reason: '',
+    },
   },
   {
-    ...obligation,
-    purpose: { kind: 'funding', operationId: 'funding-cancel' },
-    stage: 'cancel-required',
-    tradeId: 'trade-cancel',
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-replay',
+      stage: 'retained-for-replay',
+      providerReservationId: 'trade-replay',
+      reason: '',
+    },
   },
-  uncertainCancellation,
   {
-    ...obligation,
-    purpose: { kind: 'funding', operationId: 'funding-cancelling' },
-    stage: 'cancelling',
-    tradeId: 'trade-cancelling-exact',
-    recoveryId: 'recovery-cancelling',
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-cancel' },
+      stage: 'cancel-required',
+      providerReservationId: 'trade-cancel',
+      reason: obligation.reason,
+    },
+  },
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-cancellation-uncertain' },
+      stage: 'best-effort-cancellation-uncertain',
+      providerReservationId: 'trade-funding-cancellation-uncertain',
+      lastAttemptEpoch: 3n,
+      reason: '',
+    },
+  },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-cancel-required',
+      stage: 'cancel-required',
+      providerReservationId: 'trade-fee-cancel-required',
+      reason: '',
+    },
+  },
+  { slice: 'feeAttachments', entry: uncertainCancellation },
+  {
+    slice: 'channelFundingOperations',
+    entry: {
+      owner: obligation.owner,
+      purpose: { kind: 'funding', operationId: 'funding-cancelling' },
+      stage: 'cancelling',
+      providerReservationId: 'trade-cancelling-exact',
+      recoveryId: 'recovery-cancelling',
+      reason: obligation.reason,
+    },
+  },
+  {
+    slice: 'feeAttachments',
+    entry: {
+      owner: obligation.owner,
+      submissionId: 'fee-cancelling-exact',
+      stage: 'cancelling',
+      providerReservationId: 'trade-fee-cancelling-exact',
+      recoveryId: 'recovery-fee-cancelling',
+      reason: '',
+    },
   },
 ];
 
 function completeAggregate(): DurableApplicationState {
   return activeSave({
     walletProviderScope: scope,
-    walletObligations: [obligation, creatingObligation, uncertainCancellation],
+    channelFundingOperations: [obligation],
+    feeAttachments: [creatingFee, uncertainCancellation],
     rejectionTransports: [
       {
         kind: 'outbound-reject',
@@ -122,7 +215,7 @@ describe('DurableApplicationState strict validation', () => {
     expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
 
-  it('round-trips session, wallet obligations, and rejection transports exactly', () => {
+  it('round-trips session, split channel funding operations, and rejection transports exactly', () => {
     const state = completeAggregate();
     expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
@@ -131,7 +224,7 @@ describe('DurableApplicationState strict validation', () => {
     ['root version', (state: any) => (state.version = 0n)],
     ['common identity', (state: any) => (state.identity.playerId = 7)],
     ['session payload', (state: any) => (state.session.live.messageNumber = -1n)],
-    ['wallet obligation', (state: any) => (state.walletObligations[0].stage = 'unknown')],
+    ['funding operation', (state: any) => (state.channelFundingOperations[0].stage = 'unknown')],
     ['rejection transport', (state: any) => (state.rejectionTransports[0].sessionId = 'bad')],
   ])('rejects corruption in %s as whole-root corruption', (_label, corrupt) => {
     expectWholeRootRejection(corrupt);
@@ -184,26 +277,20 @@ describe('DurableApplicationState strict validation', () => {
     expectWholeRootRejection((state) => (state.session.terminal.unexpected = true), terminal);
   });
 
-  it.each(walletStageFixtures.map((entry) => [entry.stage, entry] as const))(
-    'rejects an unknown %s wallet-obligation key at the whole-root boundary',
-    (_stage, entry) => {
+  it.each(walletStageFixtures.map(({ slice, entry }) => [entry.stage, slice, entry] as const))(
+    'rejects an unknown %s provider-operation key at the whole-root boundary',
+    (_stage, slice, entry) => {
       const state = activeSave({
         walletProviderScope: scope,
-        walletObligations: [entry],
+        channelFundingOperations: slice === 'channelFundingOperations' ? [entry] : [],
+        feeAttachments: slice === 'feeAttachments' ? [entry] : [],
       });
       expect(decodeDurableApplicationState(state).save).toEqual(state);
-      expectWholeRootRejection(
-        (corrupt) => (corrupt.walletObligations[0].unexpected = true),
-        state,
-      );
+      expectWholeRootRejection((corrupt) => (corrupt[slice][0].unexpected = true), state);
     },
   );
 
-  it('rejects duplicate wallet and rejection identities', () => {
-    const duplicateWallet = completeAggregate();
-    duplicateWallet.walletObligations.push(structuredClone(obligation));
-    expect(() => decodeDurableApplicationState(duplicateWallet)).toThrow(/duplicate/);
-
+  it('rejects duplicate rejection identities', () => {
     const duplicateRejection = completeAggregate();
     duplicateRejection.rejectionTransports.push(
       structuredClone(duplicateRejection.rejectionTransports[0]),
@@ -211,7 +298,63 @@ describe('DurableApplicationState strict validation', () => {
     expect(() => decodeDurableApplicationState(duplicateRejection)).toThrow(/duplicate/);
   });
 
-  it('permits no session with unresolved wallet obligations', () => {
+  it('rejects operations stored in the wrong durable slice', () => {
+    const fundingInFees = completeAggregate();
+    fundingInFees.feeAttachments.push(fundingInFees.channelFundingOperations.pop()!);
+    expect(() => decodeDurableApplicationState(fundingInFees)).toThrow(/invalid/);
+  });
+
+  it.each([
+    ['channel funding', 'channelFundingOperations', obligation],
+    [
+      'fee attachment',
+      'feeAttachments',
+      {
+        owner: obligation.owner,
+        submissionId: 'fee-duplicate',
+        stage: 'reserved',
+        providerReservationId: 'fee-duplicate-reservation',
+        reason: '',
+      } satisfies FeeAttachment,
+    ],
+  ] as const)('rejects duplicate provider reservation ids within %s', (_label, slice, entry) => {
+    const state = activeSave({
+      walletProviderScope: scope,
+      channelFundingOperations: slice === 'channelFundingOperations' ? [entry, entry] : [],
+      feeAttachments: slice === 'feeAttachments' ? [entry, entry] : [],
+    });
+    expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
+  });
+
+  it('rejects duplicate provider reservation ids across durable slices', () => {
+    const state = completeAggregate();
+    state.feeAttachments.push({
+      ...uncertainCancellation,
+      providerReservationId: obligation.providerReservationId,
+    });
+    expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
+  });
+
+  it('rejects an operation whose provider scope differs from the aggregate context', () => {
+    const state = structuredClone(completeAggregate());
+    state.channelFundingOperations[0]!.owner.providerScope = {
+      provider: 'walletconnect',
+      fingerprint: '999',
+      chainId: 'chia:testnet11',
+    };
+    expect(() => decodeDurableApplicationState(state)).toThrow(/owner\/context mismatch/);
+  });
+
+  it('rejects the unreleased v3 walletObligations aggregate without migration', () => {
+    const state: any = completeAggregate();
+    state.version = 3n;
+    state.walletObligations = [...state.channelFundingOperations, ...state.feeAttachments];
+    delete state.channelFundingOperations;
+    delete state.feeAttachments;
+    expect(() => decodeDurableApplicationState(state)).toThrow(/walletObligations/);
+  });
+
+  it('permits no session with unresolved channel funding operations', () => {
     const state = completeAggregate();
     state.session = null;
     expect(decodeDurableApplicationState(state).save).toEqual(state);

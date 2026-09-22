@@ -217,7 +217,12 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(claim).toHaveBeenCalledTimes(1);
     expect(onSessionId).toHaveBeenCalledTimes(1);
     expect(onFreshClaim).toHaveBeenCalledWith(
-      expect.objectContaining({ session: null, walletObligations: [], rejectionTransports: [] }),
+      expect.objectContaining({
+        session: null,
+        channelFundingOperations: [],
+        feeAttachments: [],
+        rejectionTransports: [],
+      }),
       'boot',
     );
     expect(onRestore).not.toHaveBeenCalled();
@@ -431,7 +436,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 
   it.each([
     ['session', (state: any) => (state.session = { phase: 'live' })],
-    ['wallet', (state: any) => (state.walletObligations = [{}])],
+    ['wallet', (state: any) => (state.channelFundingOperations = [{}])],
     ['rejection', (state: any) => (state.rejectionTransports = [{}])],
   ])(
     'uses the same hard-reset UI for malformed %s state without changing disk',

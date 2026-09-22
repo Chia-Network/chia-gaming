@@ -1,5 +1,5 @@
 import { SessionController } from './SessionController';
-import { walletOperationRuntime } from '../lib/session/walletOperationRuntime';
+import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
 import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 import { PeerConnectionResult } from '../types/ChiaGaming';
 import { BlockchainPoller } from './BlockchainPoller';
@@ -214,7 +214,7 @@ export function getOrCreateSessionController(
     myContribution,
     theirContribution,
     peerConn,
-    walletOperationRuntime,
+    channelFundingRuntime,
     sessionBootstrap?.state.walletContext ?? undefined,
   );
   if (sessionBootstrap?.state.session?.phase === 'live') {

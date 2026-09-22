@@ -30,14 +30,10 @@ import {
   randomHex,
   resetStorageCoordinationForTests,
 } from '../../hooks/saveCoordination';
-import {
-  reduceWalletOperation,
-  walletProviderScopeKey,
-  type WalletOperationCommand,
-  type WalletOperationEffect,
-  type WalletOperationEntry,
-} from './walletOperationStore';
+import type { ChannelFundingEntry } from './channelFundingStore';
+import type { FeeAttachment } from './feeAttachmentStore';
 import { diagStack } from '../../services/log';
+import { providerScopeKey } from './providerKeys';
 
 type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
 interface ScheduledPersist {
@@ -56,7 +52,8 @@ function newApplicationState(): DurableApplicationState {
     history: {},
     session: null,
     walletContext: null,
-    walletObligations: [],
+    channelFundingOperations: [],
+    feeAttachments: [],
     rejectionTransports: [],
   };
 }
@@ -350,7 +347,8 @@ class StorageRepository {
       !!(state.preferences.blockchainType || state.preferences.hubUrl) ||
       hasWalletConnectStorage() ||
       state.session !== null ||
-      state.walletObligations.length > 0 ||
+      state.channelFundingOperations.length > 0 ||
+      state.feeAttachments.length > 0 ||
       state.rejectionTransports.length > 0
     );
   }
@@ -463,8 +461,12 @@ class StorageRepository {
     return this.root;
   }
 
-  walletObligations(): WalletOperationEntry[] {
-    return structuredClone(this.root.walletObligations);
+  channelFundingOperations(): ChannelFundingEntry[] {
+    return structuredClone(this.root.channelFundingOperations);
+  }
+
+  feeAttachments(): FeeAttachment[] {
+    return structuredClone(this.root.feeAttachments);
   }
 
   walletContext(): DurableApplicationState['walletContext'] {
@@ -474,7 +476,7 @@ class StorageRepository {
   ensureWalletContext(context: NonNullable<DurableApplicationState['walletContext']>): void {
     if (!this.hasAuthority()) throw this.authorityMutationError();
     if (this.root.walletContext) {
-      if (walletProviderScopeKey(this.root.walletContext) !== walletProviderScopeKey(context)) {
+      if (providerScopeKey(this.root.walletContext) !== providerScopeKey(context)) {
         throw new Error('Internal wallet consistency error: walletContext cannot change');
       }
       return;
@@ -488,23 +490,22 @@ class StorageRepository {
     this.root = structuredClone(state);
   }
 
-  reduceWallet(command: WalletOperationCommand): WalletOperationEffect[] {
+  replaceChannelFunding(entries: readonly ChannelFundingEntry[]): void {
     if (!this.hasAuthority()) throw this.authorityMutationError();
-    const reduction = reduceWalletOperation(this.root.walletObligations, command);
-    if (reduction.effects.some((effect) => effect.kind === 'persist')) {
-      const walletContext = this.root.walletContext;
-      if (!walletContext && reduction.nextState.length > 0) {
-        throw new Error('Internal wallet consistency error: obligations require walletContext');
-      }
-      const next = {
-        ...this.root,
-        walletContext,
-        walletObligations: reduction.nextState,
-      };
-      this.root = next;
-      void this.schedulePersist();
+    if (!this.root.walletContext && entries.length) {
+      throw new Error('Internal wallet consistency error: operations require walletContext');
     }
-    return reduction.effects;
+    this.root = { ...this.root, channelFundingOperations: structuredClone([...entries]) };
+    void this.schedulePersist();
+  }
+
+  replaceFeeAttachments(entries: readonly FeeAttachment[]): void {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    if (!this.root.walletContext && entries.length) {
+      throw new Error('Internal wallet consistency error: fee attachments require walletContext');
+    }
+    this.root = { ...this.root, feeAttachments: structuredClone([...entries]) };
+    void this.schedulePersist();
   }
 
   private async installClaimedApplicationState(
@@ -515,14 +516,24 @@ class StorageRepository {
     const patch = this.preAuthorityCommonPatch;
     this.preAuthorityCommonPatch = {};
     this.root = sessionState.mergeClaimedSession(record, this.root, patch);
-    const restoredWallet = reduceWalletOperation(this.root.walletObligations, {
-      kind: 'restore-aggregate',
-    });
-    this.root = { ...this.root, walletObligations: restoredWallet.nextState };
+    const restoredFees = this.root.feeAttachments.map((entry) =>
+      entry.stage === 'reserved'
+        ? {
+            ...entry,
+            stage: 'cancel-required' as const,
+            reason: 'orphaned-fee-reservation-restored',
+          }
+        : entry,
+    );
+    const feesChanged = restoredFees.some(
+      (entry, index) => entry !== this.root.feeAttachments[index],
+    );
+    this.root = {
+      ...this.root,
+      feeAttachments: restoredFees,
+    };
 
-    const hasPatch =
-      Object.keys(patch).length > 0 ||
-      restoredWallet.effects.some((effect) => effect.kind === 'persist');
+    const hasPatch = Object.keys(patch).length > 0 || feesChanged;
     if (hasPatch) {
       try {
         await this.queueWrite(this.root);
@@ -709,7 +720,8 @@ class StorageRepository {
       if (
         this.root.preferences.blockchainType ||
         this.root.preferences.hubUrl ||
-        this.root.walletObligations.length > 0
+        this.root.channelFundingOperations.length > 0 ||
+        this.root.feeAttachments.length > 0
       ) {
         markSavedSession();
       } else {

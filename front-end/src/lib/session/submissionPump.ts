@@ -9,8 +9,8 @@ import { log } from '../../services/log';
 import { spend_bundle_to_clvm } from '../../util';
 import { jsonStringify } from '../../util/jsonSafe';
 import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
-import type { WalletOperationOwner, WalletOperationPurpose } from './walletOperationStore';
-import type { WalletOperationRuntime } from './walletOperationRuntime';
+import type { ProviderOwner } from './providerKeys';
+import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
 
 type SubmissionOutcome = 'acknowledged' | 'unavailable' | 'rejected' | 'local-failure' | 'skipped';
 
@@ -39,14 +39,13 @@ export interface SubmissionPumpPorts {
   getCradle(): ChiaGame | undefined;
   getBlockchain(): { rpc: InternalBlockchainInterface } | null;
   getRewardPuzzleHash(): string | null;
-  getWalletOwner(): WalletOperationOwner | null;
+  getWalletOwner(): ProviderOwner | null;
   getInstallationPlayerId(): string;
   isRetired(): boolean;
   isPublishingDisabled(): boolean;
   runCommittedMutation<T>(work: () => T): Promise<T>;
   schedulePersistenceGatedEffect(key: string, launcher: () => Promise<void>): Promise<void>;
   requestCommit(): void;
-  scheduleWalletCleanup(): void;
   reportWarning(message: string): void;
   reportLocalFailure(submission: TransactionSubmission, error: unknown): void;
   reportError(error: unknown): void;
@@ -58,11 +57,16 @@ export class SubmissionPump {
   private tail: Promise<void> = Promise.resolve();
   private providerIsReady = false;
   private retired = false;
+  private readonly feeAttachments: FeeAttachmentRuntime;
 
-  constructor(
-    private readonly getWalletOperations: () => WalletOperationRuntime,
-    private readonly ports: SubmissionPumpPorts,
-  ) {}
+  constructor(private readonly ports: SubmissionPumpPorts) {
+    this.feeAttachments = new FeeAttachmentRuntime({
+      isRetired: () => this.retired || this.ports.isRetired(),
+      getOwner: () => this.ports.getWalletOwner(),
+      requestCommit: () => this.ports.requestCommit(),
+      reportWarning: (message) => this.ports.reportWarning(message),
+    });
+  }
 
   submit(submission: TransactionSubmission): void {
     if (this.retired) return;
@@ -124,13 +128,7 @@ export class SubmissionPump {
     }
     const owner = this.ports.getWalletOwner();
     if (!owner) return;
-    this.getWalletOperations().retireOperation(
-      owner,
-      { kind: 'fee', operationId: id },
-      'fee-submission-retired',
-      !this.ports.isRetired(),
-    );
-    if (!this.ports.isRetired()) this.ports.scheduleWalletCleanup();
+    this.feeAttachments.retire(owner, id);
   }
 
   retireAll(): void {
@@ -139,6 +137,7 @@ export class SubmissionPump {
     for (const entry of this.entries.values()) entry.retired = true;
     this.entries.clear();
     this.tail = Promise.resolve();
+    this.feeAttachments.detach();
   }
 
   isQuiescent(): boolean {
@@ -273,8 +272,7 @@ export class SubmissionPump {
       return this.completion('unavailable', true);
     }
 
-    let feeOwner: WalletOperationOwner | undefined;
-    let feePurpose: WalletOperationPurpose | undefined;
+    let feeOwner: ProviderOwner | undefined;
     let feeOfferCreated = false;
     let feeSourceJson: string | undefined;
     let finalizedDisposition: FinalizedSubmission['fee_source_disposition'] | undefined;
@@ -292,7 +290,6 @@ export class SubmissionPump {
           });
         } else {
           feeOwner = owner;
-          feePurpose = this.feePurpose(submission);
           const request = {
             kind: 'fee',
             uniqueId: this.ports.getInstallationPlayerId(),
@@ -302,26 +299,16 @@ export class SubmissionPump {
           if (!/^[0-9a-f]{64}$/.test(request.concurrentSpendCoinId)) {
             throw new Error('Fee target coin id must be lowercase 64-hex');
           }
-          const feeSource = await this.getWalletOperations().createOffer(
-            owner,
-            feePurpose,
-            request,
-            request,
-            () => this.isInactive(submission),
+          const feeSource = await this.feeAttachments.reserve(owner, submission.id, request, () =>
+            this.isInactive(submission),
           );
           if (feeSource.kind === 'created-reserved') {
             if (feeSource.warning) this.ports.reportWarning(feeSource.warning);
             feeOfferCreated = true;
             if (this.isInactive(submission)) {
-              this.getWalletOperations().settleOperation(
-                feeOwner,
-                feePurpose,
-                'cancel-required',
-                'fee-submission-retired',
-              );
+              this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-retired');
               if (!this.ports.isRetired()) {
                 await this.ports.runCommittedMutation(() => {
-                  this.ports.scheduleWalletCleanup();
                   this.ports.requestCommit();
                 });
               }
@@ -341,15 +328,8 @@ export class SubmissionPump {
 
       const execution = await this.ports.runCommittedMutation(() => {
         if (this.isInactive(submission)) {
-          if (feeOfferCreated && feeOwner && feePurpose) {
-            this.getWalletOperations().settleOperation(
-              feeOwner,
-              feePurpose,
-              'cancel-required',
-              'fee-submission-retired',
-              true,
-            );
-            this.ports.scheduleWalletCleanup();
+          if (feeOfferCreated && feeOwner) {
+            this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-retired');
           }
           this.ports.requestCommit();
           return { finalized: null, broadcast: Promise.resolve() };
@@ -358,39 +338,23 @@ export class SubmissionPump {
         if (!cradle) throw new Error('WASM cradle became unavailable before finalization');
         const result = cradle.finalize_submission_attempt(submission.attempt_token, feeSourceJson);
         if ('status' in result && result.status === 'stale') {
-          if (feeOfferCreated && feeOwner && feePurpose) {
-            this.getWalletOperations().settleOperation(
-              feeOwner,
-              feePurpose,
-              'cancel-required',
-              'fee-submission-superseded',
-              true,
-            );
-            this.ports.scheduleWalletCleanup();
+          if (feeOfferCreated && feeOwner) {
+            this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-superseded');
           }
           this.ports.requestCommit();
           return { finalized: null, broadcast: Promise.resolve() };
         }
         const finalized = result as FinalizedSubmission;
         finalizedDisposition = finalized.fee_source_disposition;
-        if (feeOfferCreated && feeOwner && feePurpose) {
+        if (feeOfferCreated && feeOwner) {
           if (finalized.fee_source_disposition === 'attached') {
-            this.getWalletOperations().settleOperation(
-              feeOwner,
-              feePurpose,
-              'retained-for-replay',
-              'fee-source-attached',
-              true,
-            );
+            this.feeAttachments.retain(feeOwner, submission.id);
           } else {
-            this.getWalletOperations().settleOperation(
+            this.feeAttachments.cancel(
               feeOwner,
-              feePurpose,
-              'cancel-required',
+              submission.id,
               'fee-source-unused-at-finalization',
-              true,
             );
-            this.ports.scheduleWalletCleanup();
           }
         }
         this.ports.requestCommit();
@@ -455,16 +419,9 @@ export class SubmissionPump {
       return this.completion(outcome.status, outcome.status === 'unavailable');
     } catch (error) {
       if (this.isInactive(submission)) return this.completion('skipped', false);
-      if (feeOfferCreated && feeOwner && feePurpose && finalizedDisposition !== 'attached') {
+      if (feeOfferCreated && feeOwner && finalizedDisposition !== 'attached') {
         await this.ports.runCommittedMutation(() => {
-          this.getWalletOperations().settleOperation(
-            feeOwner!,
-            feePurpose!,
-            'cancel-required',
-            'fee-finalization-rejected',
-            true,
-          );
-          this.ports.scheduleWalletCleanup();
+          this.feeAttachments.cancel(feeOwner!, submission.id, 'fee-finalization-rejected');
           this.ports.requestCommit();
         });
       }
@@ -510,10 +467,6 @@ export class SubmissionPump {
     if (!this.ports.isRetired() && !(error instanceof SessionRuntimeRetiredError)) {
       this.ports.reportError(error);
     }
-  }
-
-  private feePurpose(submission: TransactionSubmission): WalletOperationPurpose {
-    return { kind: 'fee', operationId: submission.id };
   }
 
   private completion(outcome: SubmissionOutcome, requiresFreshSync: boolean): SubmissionCompletion {

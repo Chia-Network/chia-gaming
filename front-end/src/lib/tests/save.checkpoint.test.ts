@@ -1,6 +1,6 @@
 import { indexedDbStoragePort, readApplicationState } from '../session/indexedDb';
 import { storageRepository } from '../session/storageRepository';
-import type { WalletOperationEntry } from '../session/walletOperationStore';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
 import { captureDurableApplicationState } from '../session/sessionMachinePersist';
 import { decodeDurableApplicationState } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
@@ -9,15 +9,19 @@ import type { SessionController } from '../../hooks/SessionController';
 import { activeSave } from './session_save_envelope.fixtures';
 import './save.harness';
 
-const entry: WalletOperationEntry = {
+const entry: ChannelFundingEntry = {
   owner: {
     installationPlayerId: 'player',
     peerSessionId: 'peer-session',
     providerScope: { provider: 'simulator', identity: 'player' },
   },
   purpose: { kind: 'funding', operationId: 'funding' },
-  stage: 'reserved',
-  tradeId: 'trade',
+  stage: 'awaiting-channel',
+  providerReservationId: 'trade',
+  request: {
+    kind: 'funding',
+    canonical: { amount: '100', fee: '0', conditions: [] },
+  },
   reason: '',
 };
 
@@ -25,7 +29,7 @@ function withWallet(state: ReturnType<typeof activeSave>): ReturnType<typeof act
   return {
     ...state,
     walletContext: entry.owner.providerScope,
-    walletObligations: [entry],
+    channelFundingOperations: [entry],
   };
 }
 
@@ -54,7 +58,7 @@ describe('aggregate checkpoints', () => {
     const stored = await readApplicationState();
     expect(stored?.session).toEqual(state.session);
     expect(stored?.walletContext).toEqual(entry.owner.providerScope);
-    expect(stored?.walletObligations).toEqual([entry]);
+    expect(stored?.channelFundingOperations).toEqual([entry]);
   });
 
   it('a later whole-root checkpoint cannot retain stale wallet or session fields', async () => {
@@ -65,7 +69,7 @@ describe('aggregate checkpoints', () => {
     await storageRepository.checkpointApplicationState(replacement);
     const stored = await readApplicationState();
     expect(stored?.session).toEqual(replacement.session);
-    expect(stored?.walletObligations).toEqual([]);
+    expect(stored?.channelFundingOperations).toEqual([]);
   });
 
   it('semantic clear keeps unresolved obligations in the same aggregate', async () => {
@@ -75,8 +79,10 @@ describe('aggregate checkpoints', () => {
     await storageRepository.clearSession();
     const stored = await readApplicationState();
     expect(stored?.session).toBeNull();
-    expect(stored?.walletObligations).toHaveLength(1);
-    expect(stored?.walletObligations[0]).toMatchObject({ tradeId: entry.tradeId });
+    expect(stored?.channelFundingOperations).toHaveLength(1);
+    expect(stored?.channelFundingOperations[0]).toMatchObject({
+      providerReservationId: entry.providerReservationId,
+    });
   });
 
   it('preserves concurrent session, wallet, and rejection root transforms', async () => {
@@ -98,7 +104,7 @@ describe('aggregate checkpoints', () => {
       transform: (state) => ({
         ...state,
         walletContext: entry.owner.providerScope,
-        walletObligations: [entry],
+        channelFundingOperations: [entry],
         rejectionTransports: [rejection],
       }),
     })!;
@@ -110,7 +116,7 @@ describe('aggregate checkpoints', () => {
     expect(stored?.session?.phase === 'live' && stored.session.pairing.token).toBe(
       'captured-session',
     );
-    expect(stored?.walletObligations).toEqual([entry]);
+    expect(stored?.channelFundingOperations).toEqual([entry]);
     expect(stored?.rejectionTransports).toEqual([rejection]);
   });
 
@@ -207,7 +213,7 @@ describe('aggregate checkpoints', () => {
       key: 'alias',
       value: 'Latest Alice',
     });
-    storageRepository.reduceWallet({ kind: 'install', entry });
+    storageRepository.replaceChannelFunding([entry]);
     release();
     await liveWrite;
     await Promise.all([preferenceWrite, storageRepository.flushAggregate()]);
@@ -218,6 +224,6 @@ describe('aggregate checkpoints', () => {
     expect(final?.session).toEqual(duringLiveWrite.session);
     expect(final?.preferences.alias).toBe('Latest Alice');
     expect(final?.walletContext).toEqual(entry.owner.providerScope);
-    expect(final?.walletObligations).toEqual([entry]);
+    expect(final?.channelFundingOperations).toEqual([entry]);
   });
 });
