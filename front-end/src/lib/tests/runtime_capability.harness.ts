@@ -50,6 +50,8 @@ export class ControlledRuntime {
     }
   }
 
+  activatePersistence(): void {}
+
   requestCommit(): void {}
 
   flush(): Promise<void> {

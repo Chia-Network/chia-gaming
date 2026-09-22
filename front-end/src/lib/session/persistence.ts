@@ -631,8 +631,8 @@ function validatePresentationInvariants(
         : 'Garbled save: currentHandOrigin requires a current hand',
     );
   }
-  if (phase === 'live' && hasCurrentHand && save.handState === null) {
-    throw new Error('Garbled save: live current hand is missing handState');
+  if (currentHandIds.length > 0 && save.handState === null) {
+    throw new Error('Garbled save: current hand is missing handState');
   }
   if (save.handState !== null) {
     if (currentHandIds.length === 0) {

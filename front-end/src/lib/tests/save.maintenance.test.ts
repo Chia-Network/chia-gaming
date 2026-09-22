@@ -175,66 +175,50 @@ describe('hard reset', () => {
     expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
-  it('deletes only owned IndexedDB databases returned by the browser', async () => {
-    const deleteDatabase = jest.fn((_name: string) => {
-      const request: {
-        onsuccess?: () => void;
-        onerror?: () => void;
-        onblocked?: () => void;
-        error?: unknown;
-      } = {};
-      setTimeout(() => request.onsuccess?.(), 0);
-      return request;
-    });
-    setTestGlobal('indexedDB', {
-      open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest
-        .fn()
-        .mockResolvedValue([
-          { name: 'chia-gaming-historical' },
-          { name: 'foreign-app-state' },
-          { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
-          { name: undefined },
-        ]),
-      deleteDatabase,
-    });
+  it('deletes only the exact IndexedDB manifest and preserves foreign lookalikes', async () => {
+    const foreignNames = ['foreign-walletconnect-settings', 'WALLET_CONNECT_foreign_app'];
+    await Promise.all(
+      foreignNames.map(
+        (name) =>
+          new Promise<void>((resolve, reject) => {
+            const request = indexedDB.open(name);
+            request.onsuccess = () => {
+              request.result.close();
+              resolve();
+            };
+            request.onerror = () => reject(request.error);
+          }),
+      ),
+    );
+    const deleteDatabase = jest.spyOn(indexedDB, 'deleteDatabase');
+    try {
+      await storageRepository.hardReset();
 
-    await storageRepository.hardReset();
-
-    expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
-    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
-    expect(deleteDatabase).not.toHaveBeenCalledWith('app-state');
-    expect(deleteDatabase).not.toHaveBeenCalledWith('chia-gaming-historical');
-    expect(deleteDatabase).not.toHaveBeenCalledWith('foreign-app-state');
-    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
-    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
-  });
-
-  it('deletes known IndexedDB databases when enumeration is unavailable (e.g. Safari)', async () => {
-    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const deleteDatabase = jest.fn((_name: string) => {
-      const request: {
-        onsuccess?: () => void;
-        onerror?: () => void;
-        onblocked?: () => void;
-        error?: unknown;
-      } = {};
-      setTimeout(() => request.onsuccess?.(), 0);
-      return request;
-    });
-    // No `databases` function: mimics browsers that can't enumerate.
-    setTestGlobal('indexedDB', {
-      open: testIndexedDb.open.bind(testIndexedDb),
-      deleteDatabase,
-    });
-
-    await storageRepository.hardReset();
-
-    expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
-    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
-    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
-    expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
-    spy.mockRestore();
+      expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
+      expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
+      expect(deleteDatabase).toHaveBeenCalledWith('walletconnect');
+      expect(deleteDatabase).toHaveBeenCalledWith('walletconnect-v2');
+      expect(deleteDatabase).not.toHaveBeenCalledWith('foreign-walletconnect-settings');
+      expect(deleteDatabase).not.toHaveBeenCalledWith('WALLET_CONNECT_foreign_app');
+      expect(deleteDatabase).toHaveBeenCalledTimes(4);
+      const databases = await (
+        indexedDB as IDBFactory & { databases: () => Promise<Array<{ name?: string }>> }
+      ).databases();
+      expect(databases.map(({ name }) => name)).toEqual(expect.arrayContaining(foreignNames));
+    } finally {
+      deleteDatabase.mockRestore();
+      await Promise.all(
+        foreignNames.map(
+          (name) =>
+            new Promise<void>((resolve) => {
+              const request = indexedDB.deleteDatabase(name);
+              request.onsuccess = () => resolve();
+              request.onerror = () => resolve();
+              request.onblocked = () => resolve();
+            }),
+        ),
+      );
+    }
   });
 
   it('reports browser-key deletion failures and keeps the pending wipe marker', async () => {
@@ -253,7 +237,6 @@ describe('hard reset', () => {
     setTestGlobal('sessionStorage', session);
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockRejectedValue(new Error('database list failed')),
       deleteDatabase: jest.fn((_name: string) => {
         const request: {
           onsuccess?: () => void;
@@ -272,7 +255,6 @@ describe('hard reset', () => {
       failures: expect.arrayContaining([
         expect.objectContaining({ database: 'localStorage', reason: 'error' }),
         expect.objectContaining({ database: 'sessionStorage', reason: 'error' }),
-        expect.objectContaining({ database: '<enumeration>', reason: 'error' }),
       ]),
     });
     expect(localStorage.getItem('appState_pendingWipe')).toBe('1');
@@ -281,48 +263,6 @@ describe('hard reset', () => {
     expect(reload).not.toHaveBeenCalled();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
-  });
-
-  it('deletes known databases before waiting on enumeration', async () => {
-    let markDeletionStarted!: () => void;
-    const deletionStarted = new Promise<void>((resolve) => {
-      markDeletionStarted = resolve;
-    });
-    const deleteDatabase = jest.fn((_name: string) => {
-      markDeletionStarted();
-      const request: {
-        onsuccess?: () => void;
-        onerror?: () => void;
-        onblocked?: () => void;
-        error?: unknown;
-      } = {};
-      setTimeout(() => request.onsuccess?.(), 0);
-      return request;
-    });
-    let releaseEnumeration: ((value: Array<{ name?: string }>) => void) | undefined;
-    setTestGlobal('indexedDB', {
-      open: testIndexedDb.open.bind(testIndexedDb),
-      databases: () =>
-        new Promise((resolve) => {
-          releaseEnumeration = resolve;
-        }),
-      deleteDatabase,
-    });
-
-    const done = storageRepository.hardReset();
-    await deletionStarted;
-    // Known wipes must be requested without waiting for databases().
-    expect(deleteDatabase).toHaveBeenCalledWith(SESSION_DB_NAME);
-    expect(deleteDatabase).toHaveBeenCalledWith('WALLET_CONNECT_V2_INDEXED_DB');
-
-    // Let known deleteDatabase requests settle so enumeration can start.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(releaseEnumeration).toBeDefined();
-    expect(localStorage.getItem('appState_pendingWipe')).toBe('1');
-    releaseEnumeration!([{ name: 'extra-unknown-db' }]);
-    await done;
-    expect(localStorage.getItem('appState_pendingWipe')).toBeNull();
-    expect(deleteDatabase).not.toHaveBeenCalledWith('extra-unknown-db');
   });
 
   it('returns unsuccessful when a database deletion is blocked by an open connection', async () => {
@@ -340,7 +280,6 @@ describe('hard reset', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
       deleteDatabase,
     });
 
@@ -359,7 +298,6 @@ describe('hard reset', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([]),
       deleteDatabase: succeedingDelete,
     });
     await expect(storageRepository.hardReset()).resolves.toEqual({ success: true });
@@ -380,12 +318,6 @@ describe('deferred WalletConnect wipe', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest
-        .fn()
-        .mockResolvedValue([
-          { name: 'WALLET_CONNECT_V2_INDEXED_DB' },
-          { name: 'chia-gaming-session' },
-        ]),
       deleteDatabase,
     });
 
@@ -418,7 +350,6 @@ describe('deferred WalletConnect wipe', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
       deleteDatabase: blockedDelete,
     });
 
@@ -432,7 +363,6 @@ describe('deferred WalletConnect wipe', () => {
     succeedingDelete.mockClear();
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
       deleteDatabase: succeedingDelete,
     });
 
@@ -458,7 +388,6 @@ describe('deferred WalletConnect wipe', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([]),
       deleteDatabase,
     });
     _resetPendingWalletConnectWipeForTests();
@@ -499,7 +428,6 @@ describe('deferred WalletConnect wipe', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([]),
       deleteDatabase: blockedDelete,
     });
 
@@ -532,7 +460,6 @@ describe('deferred WalletConnect wipe', () => {
     });
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([]),
       deleteDatabase: succeedingDelete,
     });
     _resetPendingWalletConnectWipeForTests();
@@ -549,7 +476,6 @@ describe('deferred WalletConnect wipe', () => {
     const deleteDatabase = jest.fn();
     setTestGlobal('indexedDB', {
       open: testIndexedDb.open.bind(testIndexedDb),
-      databases: jest.fn().mockResolvedValue([{ name: 'WALLET_CONNECT_V2_INDEXED_DB' }]),
       deleteDatabase,
     });
 

@@ -231,8 +231,14 @@ export class ChannelFundingRuntime {
       if (exactRecovery || !canLosePreIdResponse(provider)) throw error;
       if (!replacement) {
         const retired = isRetired();
-        // prettier-ignore
-        this.recordUncertainty(owner, purpose, recoveryRequest, retired, generation);
+        if (retired) {
+          log(
+            `[channel-funding-runtime] retired creation lost its pre-id response; external reservation risk operation=${channelFundingKey(owner, purpose)}`,
+          );
+        } else {
+          // prettier-ignore
+          this.recordUncertainty(owner, purpose, recoveryRequest, false, generation);
+        }
       }
       return { kind: 'unavailable', reason: String(error) };
     }
@@ -243,8 +249,14 @@ export class ChannelFundingRuntime {
       canLosePreIdResponse(provider)
     ) {
       const retired = isRetired();
-      // prettier-ignore
-      this.recordUncertainty(owner, purpose, recoveryRequest, retired, generation);
+      if (retired) {
+        log(
+          `[channel-funding-runtime] retired creation returned unavailable before reservation identification; external reservation risk operation=${channelFundingKey(owner, purpose)}`,
+        );
+      } else {
+        // prettier-ignore
+        this.recordUncertainty(owner, purpose, recoveryRequest, false, generation);
+      }
       return completion as WalletOfferCompletion;
     }
     if (completion.kind === 'pending') {
@@ -255,19 +267,22 @@ export class ChannelFundingRuntime {
         );
         return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
       }
-      if (recovery?.stage === 'best-effort-uncertain') {
-        this.replace(recovery, { ...recovery, stage: 'creating', recoveryId });
-      } else {
-        this.replace(recovery, {
-          owner,
-          purpose,
-          stage: 'creating',
-          disposition: isRetired() ? 'cancel-on-create' : 'active',
-          recoveryId,
-          request: recoveryRequest,
-          reason: 'wallet-offer-creation-pending',
-          ...(recovery?.orphanRisk ? { orphanRisk: recovery.orphanRisk } : {}),
-        });
+      const retired = isRetired();
+      if (!retired) {
+        if (recovery?.stage === 'best-effort-uncertain') {
+          this.replace(recovery, { ...recovery, stage: 'creating', recoveryId });
+        } else {
+          this.replace(recovery, {
+            owner,
+            purpose,
+            stage: 'creating',
+            disposition: 'active',
+            recoveryId,
+            request: recoveryRequest,
+            reason: 'wallet-offer-creation-pending',
+            ...(recovery?.orphanRisk ? { orphanRisk: recovery.orphanRisk } : {}),
+          });
+        }
       }
       if (!storageRepository.isGenerationCurrent(generation)) {
         return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
@@ -292,12 +307,36 @@ export class ChannelFundingRuntime {
       if (completion.kind === 'pending') {
         throw new Error('Provider reconciliation remained pending');
       }
+      if (retired) {
+        if (completion.kind === 'created-reserved') {
+          this.cancelLateReservation(
+            provider,
+            completion.tradeId,
+            channelFundingKey(owner, purpose),
+          );
+        } else if (completion.kind === 'unavailable') {
+          log(
+            `[channel-funding-runtime] retired creation reconciliation unavailable; external reservation risk operation=${channelFundingKey(owner, purpose)} recovery_id=${recoveryId}`,
+          );
+        }
+        return { kind: 'unavailable', reason: 'Funding consumer retired during wallet creation' };
+      }
     }
-    if (!storageRepository.isGenerationCurrent(generation)) {
-      if (completion.kind === 'created-reserved' && hardResetEpoch === this.hardResetEpoch) {
+    const generationCurrent = storageRepository.isGenerationCurrent(generation);
+    const retired = isRetired();
+    if (!generationCurrent || retired) {
+      if (
+        completion.kind === 'created-reserved' &&
+        (generationCurrent || hardResetEpoch === this.hardResetEpoch)
+      ) {
         this.cancelLateReservation(provider, completion.tradeId, channelFundingKey(owner, purpose));
       }
-      return { kind: 'unavailable', reason: 'Storage authority changed during wallet creation' };
+      return {
+        kind: 'unavailable',
+        reason: generationCurrent
+          ? 'Funding consumer retired during wallet creation'
+          : 'Storage authority changed during wallet creation',
+      };
     }
     const current = entryForOperation(this.entries(), owner, purpose);
     if (completion.kind === 'created-reserved') {

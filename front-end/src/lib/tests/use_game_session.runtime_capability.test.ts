@@ -6,6 +6,9 @@ import { useGameSession } from '../../hooks/useGameSession';
 import type { SessionController } from '../../hooks/SessionController';
 import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { GameSessionParams, WasmEvent } from '../../types/ChiaGaming';
+import { SessionController as ConcreteSessionController } from '../../hooks/SessionController';
+import { storageRepository } from '../session/storageRepository';
+import { makeMockCradle, mockWasmConnection } from './message_protocol.harness';
 
 class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -88,6 +91,47 @@ describe('useGameSession committed runtime', () => {
     });
     expect(getRuntime()).toBe(runtime);
     act(() => renderer?.unmount());
+  });
+
+  it('keeps pre-cradle writes immediate and activates live persistence when the cradle installs', async () => {
+    const attachRuntime = jest.spyOn(storageRepository, 'attachRuntime');
+    const write = jest.spyOn(storageRepository, 'write');
+    const controller = new ConcreteSessionController(null, 'test', 100n, 100n, {
+      sendMessage: () => true,
+      sendAck: () => true,
+    });
+    const params = {
+      iStarted: false,
+      myContribution: 100n,
+      theirContribution: 100n,
+      perGameAmount: 10n,
+      pairingToken: 'pairing',
+    } as GameSessionParams;
+    function Harness() {
+      useGameSession(params, controller, () => {});
+      return null;
+    }
+
+    let renderer: ReactTestRenderer | undefined;
+    act(() => {
+      renderer = create(createElement(Harness));
+    });
+    expect(controller.getCommittedSessionRuntime()).not.toBeNull();
+    expect(attachRuntime).not.toHaveBeenCalled();
+
+    await storageRepository.updatePreference({ key: 'alias', value: 'before-cradle' });
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(attachRuntime).not.toHaveBeenCalled();
+
+    controller.rewardPuzzleHash = '11'.repeat(32);
+    controller.loadWasm(mockWasmConnection);
+    act(() => controller.setGameSession(makeMockCradle()));
+    expect(attachRuntime).toHaveBeenCalledTimes(1);
+
+    act(() => renderer?.unmount());
+    controller.cleanup();
+    attachRuntime.mockRestore();
+    write.mockRestore();
   });
 
   it('keeps the same runtime through Strict Effects setup-cleanup-setup replay', () => {

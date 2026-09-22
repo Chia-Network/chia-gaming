@@ -31,7 +31,10 @@ import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
 } from '../session/terminalFinalization';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { liveSave } from './session_save_envelope.fixtures';
+import { bestEffortWalletRpc, setup } from './runtime_capability.harness';
+import { submissionDrain, wasmResult } from './message_protocol.harness';
 
 const testIndexedDb = indexedDB;
 const walletProviderScope = { provider: 'simulator' as const, identity: 'player' };
@@ -158,6 +161,7 @@ function makeController(events: string[]): SessionController {
         coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
       };
     },
+    sealPersistenceForTerminalFinalization: () => events.push('controller-seal'),
   } as unknown as SessionController;
 }
 
@@ -253,6 +257,7 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
 
   expect(events).toEqual([
     'controller-quiesce',
+    'controller-seal',
     'stage-terminal',
     'write-start',
     'write-complete',
@@ -298,6 +303,94 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   expect(restored).not.toHaveProperty('pairing');
 });
 
+it('keeps terminal root authoritative when fee cancellation completes during its write', async () => {
+  let finishCancellation!: () => void;
+  const cancellationGate = new Promise<void>((resolve) => {
+    finishCancellation = resolve;
+  });
+  const cancel = jest.fn(async () => {
+    await cancellationGate;
+    return { status: 'cancelled' as const };
+  });
+  const scope = { provider: 'simulator' as const, identity: 'submission-handoff' };
+  const { controller, cradle } = setup(jest.fn(), bestEffortWalletRpc(undefined, cancel), scope);
+  controller.pairingToken = 'terminal-race-token';
+  const owner = {
+    installationPlayerId: 'submission-handoff',
+    peerSessionId: controller.getGameSessionId(),
+    providerScope: scope,
+  };
+  const seeded = storageRepository.patchApplicationState((root) => ({
+    ...root,
+    walletContext: scope,
+    feeAttachments: [
+      {
+        owner,
+        submissionId: 'terminal-race-fee',
+        stage: 'retained-for-replay' as const,
+        providerReservationId: 'terminal-race-trade',
+        reason: 'fee-source-attached',
+      },
+    ],
+  }));
+  await storageRepository.write(seeded);
+
+  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+    controller,
+    iStarted: true,
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  runtime.activate();
+  await runtime.flush();
+
+  (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
+    submissionDrain([], ['terminal-race-fee']),
+  );
+  controller.processResult(wasmResult());
+  for (let pass = 0; pass < 30 && cancel.mock.calls.length === 0; pass += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(cancel).toHaveBeenCalledWith('terminal-race-trade');
+  await runtime.flush();
+
+  let releaseTerminalWrite!: () => void;
+  const terminalWriteGate = new Promise<void>((resolve) => {
+    releaseTerminalWrite = resolve;
+  });
+  let terminalCommitted!: () => void;
+  const reachedTerminalWrite = new Promise<void>((resolve) => {
+    terminalCommitted = resolve;
+  });
+  storageRepository.holdNextCheckpointAfterCommitForTests(terminalWriteGate, terminalCommitted);
+  const writes = jest.spyOn(storageRepository, 'write');
+
+  const finalization = finalizeTerminalSession(finalizationArgs(controller), {
+    persistTerminal: persistTerminalSnapshot,
+    updateMarker: markSavedSession,
+    teardown: (terminalController) => terminalController.cleanupAfterTerminalFlush(),
+  });
+  await reachedTerminalWrite;
+  finishCancellation();
+  for (let pass = 0; pass < 30 && storageRepository.feeAttachments().length !== 0; pass += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  expect(storageRepository.feeAttachments()).toEqual([]);
+  releaseTerminalWrite();
+  await finalization;
+  await storageRepository.inspect();
+
+  const phases = writes.mock.calls.map(([snapshot]) => snapshot.session?.phase ?? null);
+  const terminalIndex = phases.indexOf('terminal');
+  expect(terminalIndex).toBeGreaterThanOrEqual(0);
+  expect(phases.slice(terminalIndex)).not.toContain('live');
+  expect((await readApplicationState())?.session?.phase).toBe('terminal');
+});
+
 it('does not stage or tear down before controller terminal quiescence', async () => {
   let releaseQuiescence!: (snapshot: {
     model: SessionModel;
@@ -312,6 +405,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
     quiesceForTerminalFinalization: jest.fn(() => quiescenceGate),
+    sealPersistenceForTerminalFinalization: jest.fn(),
   } as unknown as SessionController;
   const persistTerminal = jest.fn(async () => {});
   const teardown = jest.fn();
@@ -324,6 +418,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   await Promise.resolve();
 
   expect(controller.quiesceForTerminalFinalization).toHaveBeenCalledTimes(1);
+  expect(controller.sealPersistenceForTerminalFinalization).not.toHaveBeenCalled();
   expect(persistTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 
@@ -333,6 +428,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   });
   await finalization;
 
+  expect(controller.sealPersistenceForTerminalFinalization).toHaveBeenCalledTimes(1);
   expect(persistTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
 });
@@ -376,6 +472,7 @@ it('stages and returns the model produced after terminal quiescence', async () =
         },
       ],
     })),
+    sealPersistenceForTerminalFinalization: jest.fn(),
   } as unknown as SessionController;
   const persistTerminal = jest.fn(async () => {});
 
@@ -745,6 +842,7 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
       model: structuredClone(timeoutModel),
       coinsOfInterest: [],
     }),
+    sealPersistenceForTerminalFinalization: jest.fn(),
   } as unknown as SessionController;
   const persistTerminal = jest.fn(async () => {});
 
@@ -827,6 +925,7 @@ it('returns the terminal result and tears down after an ordinary write failure',
         coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
       };
     },
+    sealPersistenceForTerminalFinalization: () => events.push('controller-seal'),
     reportDurabilityError,
   } as unknown as SessionController;
   const teardown = jest.fn(() => events.push('teardown'));
@@ -842,7 +941,7 @@ it('returns the terminal result and tears down after an ordinary write failure',
   const terminal = await finalizeTerminalSession(finalizationArgs(controller), dependencies);
 
   expect(terminal.model).toEqual(model);
-  expect(events).toEqual(['controller-quiesce', 'marker', 'teardown']);
+  expect(events).toEqual(['controller-quiesce', 'controller-seal', 'marker', 'teardown']);
   expect(teardown).toHaveBeenCalledTimes(1);
   expect(reportDurabilityError).toHaveBeenCalledTimes(1);
   expect(reportDurabilityError).toHaveBeenCalledWith(
@@ -861,7 +960,7 @@ it('returns the terminal result and tears down after an ordinary write failure',
     storageRepository.patchApplicationState(() => storageRepository.loadState()),
   );
 
-  expect(events).toEqual(['controller-quiesce', 'marker', 'teardown']);
+  expect(events).toEqual(['controller-quiesce', 'controller-seal', 'marker', 'teardown']);
   expect(teardown).toHaveBeenCalledTimes(1);
   expect(reportDurabilityError).toHaveBeenCalledTimes(1);
   storageRepository._resetForTests();
@@ -885,6 +984,7 @@ it.each([
       model: structuredClone(model),
       coinsOfInterest: [],
     }),
+    sealPersistenceForTerminalFinalization: jest.fn(),
     reportDurabilityError: jest.fn(),
   } as unknown as SessionController;
   const updateMarker = jest.fn();

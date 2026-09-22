@@ -154,6 +154,92 @@ describe('FeeAttachmentRuntime lifecycle', () => {
     runtime.detach();
   });
 
+  it('attempts reclaimed creation uncertainty once without a new readiness epoch', async () => {
+    install([
+      {
+        owner,
+        submissionId: 'reclaimed-create',
+        stage: 'best-effort-uncertain',
+        disposition: 'active',
+        request,
+        lastAttemptEpoch: 99n,
+        reason: 'response-lost',
+        orphanRisk: 'pre-id-response-lost',
+      },
+    ]);
+    await storageRepository.write(structuredClone(storageRepository.loadState()));
+    const beginCreation = jest
+      .fn()
+      .mockResolvedValue({ kind: 'unavailable', reason: 'wallet unavailable' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation,
+      cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+
+    await runtime.awaitIdle();
+    expect(beginCreation).toHaveBeenCalledTimes(1);
+    providers.ready(provider);
+    await runtime.awaitIdle();
+    expect(beginCreation).toHaveBeenCalledTimes(1);
+
+    storageRepository.loseAuthority('takeover');
+    await storageRepository.claimApplicationState();
+    await runtime.awaitIdle();
+    expect(beginCreation).toHaveBeenCalledTimes(2);
+
+    providers.ready(provider);
+    await runtime.awaitIdle();
+    expect(beginCreation).toHaveBeenCalledTimes(2);
+    runtime.detach();
+  });
+
+  it('attempts reclaimed cancellation uncertainty once without a new readiness epoch', async () => {
+    install([
+      {
+        owner,
+        submissionId: 'reclaimed-cancel',
+        stage: 'best-effort-cancellation-uncertain',
+        providerReservationId: 'reclaimed-trade',
+        lastAttemptEpoch: 99n,
+        reason: 'response-lost',
+      },
+    ]);
+    await storageRepository.write(structuredClone(storageRepository.loadState()));
+    const cancel = jest
+      .fn()
+      .mockResolvedValue({ status: 'unavailable', reason: 'wallet unavailable' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(),
+      cancel,
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+
+    await runtime.awaitIdle();
+    expect(cancel).toHaveBeenCalledTimes(1);
+    providers.ready(provider);
+    await runtime.awaitIdle();
+    expect(cancel).toHaveBeenCalledTimes(1);
+
+    storageRepository.loseAuthority('takeover');
+    await storageRepository.claimApplicationState();
+    await runtime.awaitIdle();
+    expect(cancel).toHaveBeenCalledTimes(2);
+
+    providers.ready(provider);
+    await runtime.awaitIdle();
+    expect(cancel).toHaveBeenCalledTimes(2);
+    runtime.detach();
+  });
+
   it('cancels a stale fee result without mutating the aggregate reclaimed after takeover', async () => {
     let resolveCreation!: (value: {
       kind: 'created-reserved';

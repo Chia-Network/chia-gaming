@@ -362,6 +362,8 @@ describe('session machine causal sequences', () => {
         },
       },
     );
+    runtime.activate();
+    runtime.activatePersistence();
 
     runtime.dispatch({
       type: 'wasm-notification',
@@ -722,6 +724,8 @@ describe('session machine controller command failures', () => {
         persisted.push(runtime.getState());
       },
     });
+    runtime.activate();
+    runtime.activatePersistence();
     runtime.setRender((state) => rendered.push(state));
     return { controller, initial, persisted, rendered, runtime };
   }
@@ -801,6 +805,8 @@ describe('session machine controller command failures', () => {
       },
       persist: async () => persisted.push(runtime.getState()),
     });
+    runtime.activate();
+    runtime.activatePersistence();
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
     await runtime.persist();
@@ -986,6 +992,8 @@ describe('session machine local game action boundary', () => {
       },
       persist: async () => persisted.push(runtime.getState()),
     });
+    runtime.activate();
+    runtime.activatePersistence();
     runtime.setRender((state) => rendered.push(state));
     runtime.dispatch({
       type: 'notification-accepted-group',

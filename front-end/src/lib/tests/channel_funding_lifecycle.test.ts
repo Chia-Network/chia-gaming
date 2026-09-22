@@ -189,6 +189,47 @@ describe('aggregate wallet offer lifecycle', () => {
     await expect(creation).resolves.toEqual({ kind: 'unavailable', reason: 'offline' });
   });
 
+  it('reconciles a late recovery id locally without installing it for a retired consumer', async () => {
+    let resolveBegin!: (value: { kind: 'pending'; recoveryId: string }) => void;
+    let retired = false;
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise<{ kind: 'pending'; recoveryId: string }>((resolve) => {
+            resolveBegin = resolve;
+          }),
+      ),
+      reconcileCreation: jest
+        .fn()
+        .mockResolvedValue({ kind: 'unavailable', reason: 'wallet disconnected' }),
+      beginCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+      reconcileCancellation: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    channelFundingRuntime.attachProvider(provider);
+
+    const creation = channelFundingRuntime.createOffer(
+      owner,
+      purpose,
+      providerRequest,
+      recoveryRequest,
+      () => retired,
+    );
+    await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+    retired = true;
+    resolveBegin({ kind: 'pending', recoveryId: 'SR_retired' });
+
+    await expect(creation).resolves.toMatchObject({ kind: 'unavailable' });
+    expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+    expect(provider.reconcileCreation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'SR_retired',
+    );
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
+  });
+
   it('flushes the attached runtime before each provider mutation', async () => {
     const order: string[] = [];
     let resolveReconcile!: (value: { kind: 'unavailable'; reason: string }) => void;

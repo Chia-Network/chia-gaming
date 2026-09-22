@@ -456,8 +456,9 @@ The hub does not create a session. It can only advise and relay:
   Any malformed nested field rejects the whole root and displays Retry Hard
   Reset; no wallet/rejection/session slice is salvaged. Local dashboard/game presentation does not
   wait for hub or wallet reconnection; only dependent controls remain gated.
-  Hard reset deletes the owned manifest/prefixes, preserves foreign databases,
-  and reloads only after confirmed success.
+  Hard reset deletes only the four exact owned app / WalletConnect database
+  names, preserves foreign databases and lookalikes, and reloads only after
+  confirmed success.
 - **Game dashboard banner**: Selector-driven channel / lifecycle /
   balance strip from `SessionModel`
   (`selectGameDashboardView`, `selectStatusBarBalances`).

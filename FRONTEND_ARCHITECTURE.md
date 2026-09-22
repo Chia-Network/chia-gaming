@@ -494,9 +494,11 @@ same serialized runtime transaction and resolves or rejects its promise when
 that work executes, including when an active commit temporarily queues it.
 
 Runtime construction itself is inert. The committed React layout effect first
-installs the render callback and then calls `activate()`, which attaches an
-exclusive, retire-aware `SessionMachineRuntime`; its cleanup only calls
-`clearRender()`. React cleanup therefore cannot retire protocol ownership.
+installs the render callback and then calls `activate()`. The controller attaches
+that committed, retire-aware `SessionMachineRuntime` as the persistence and
+reliable-commit owner only after serializable WASM fields are available; before
+then explicit pre-runtime boundaries persist reliable work. React cleanup only
+calls `clearRender()` and therefore cannot retire protocol ownership.
 Replacement of the committed runtime and `SessionController` cleanup—including
 terminal cleanup—own retirement. Retirement discards queued events and
 fire-and-forget controller work, rejects queued result promises and
@@ -984,10 +986,10 @@ pre-reset work cannot recreate the database or cached state afterward.
    graceful cancellation.
 3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
-4. Deletes every exact name in the owned app / WalletConnect manifest even
-   without enumeration, then enumerates only to discover additional names
-   matching owned prefixes. Foreign same-origin databases are preserved.
-   `onsuccess` confirms
+4. Deletes only the exact owned app / WalletConnect manifest:
+   `chia-gaming-session`, `WALLET_CONNECT_V2_INDEXED_DB`, `walletconnect`, and
+   `walletconnect-v2`. Foreign same-origin databases, including names that merely
+   resemble WalletConnect databases, are preserved. `onsuccess` confirms
    deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
    keeps recovery UI open with **Retry Hard Reset**, and leaves a minimal
    generalized pending-wipe marker for retry or next boot. Reload occurs only

@@ -41,6 +41,8 @@ class ControlledRuntime {
     }
   }
 
+  activatePersistence(): void {}
+
   requestCommit(): void {}
   flush(): Promise<void> {
     if (this.controller) {

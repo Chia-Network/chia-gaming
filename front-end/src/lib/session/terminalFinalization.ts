@@ -50,6 +50,7 @@ export function finalizeTerminalSession(
 
   const finalization = (async () => {
     const snapshot = await args.controller.quiesceForTerminalFinalization();
+    args.controller.sealPersistenceForTerminalFinalization();
     const model = structuredClone(snapshot.model);
     const coins = selectDashboardCoins(model, snapshot.coinsOfInterest);
     const capture: TerminalCapture = {

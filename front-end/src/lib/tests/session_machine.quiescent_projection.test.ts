@@ -68,6 +68,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       },
       persist,
     });
+    runtime.activate();
+    runtime.activatePersistence();
     (mockController.flushDeferredWork as jest.Mock).mockImplementation(() => {
       if (notificationPending) {
         notificationPending = false;
@@ -116,6 +118,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       },
       persist: async () => {},
     });
+    runtime.activate();
+    runtime.activatePersistence();
     const rendered: ReturnType<typeof initialState>[] = [];
     runtime.setRender((state) => rendered.push(state));
 
@@ -139,6 +143,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       },
       persist: async () => {},
     });
+    runtime.activate();
+    runtime.activatePersistence();
     const render = jest.fn();
     runtime.setRender(render);
     runtime.dispatch({ type: 'accept-review', id: '7' });
@@ -164,6 +170,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
         order.push('persist');
       },
     });
+    runtime.activate();
+    runtime.activatePersistence();
     runtime.setRender(() => order.push('render'));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
@@ -189,6 +197,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
         if (attempt++ === 0) throw new Error('disk full');
       },
     });
+    runtime.activate();
+    runtime.activatePersistence();
     runtime.setRender(render);
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
@@ -230,6 +240,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
         if (writes.length === 1) await firstWrite;
       },
     });
+    runtime.activate();
+    runtime.activatePersistence();
     runtime.setRender((state) => renders.push(state.model.betweenHand.compose.gameTimeout));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
@@ -303,6 +315,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       getRestoreError: () => null,
       onError: jest.fn(),
     });
+    runtime.activate();
+    runtime.activatePersistence();
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     jest.runOnlyPendingTimers();
@@ -343,6 +357,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
       onError: jest.fn(),
       persist,
     });
+    runtime.activate();
+    runtime.activatePersistence();
     const rendered: ReturnType<typeof initialState>[] = [];
     runtime.setRender((state) => rendered.push(state));
 
@@ -410,6 +426,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
         throw new Error('disk remains unavailable');
       },
     });
+    runtime.activate();
+    runtime.activatePersistence();
     const rendered: Array<{ timeout: bigint; warningVisible: boolean }> = [];
     runtime.setRender((state) =>
       rendered.push({
@@ -475,6 +493,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
         order.push(`persist-${state.model.betweenHand.compose.gameTimeout}`);
       },
     });
+    runtime.activate();
+    runtime.activatePersistence();
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await runtime.persist();

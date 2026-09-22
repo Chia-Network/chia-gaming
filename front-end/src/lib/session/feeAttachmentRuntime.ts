@@ -66,10 +66,10 @@ export class FeeAttachmentRuntime {
         } else {
           this.flights.clear();
           this.completed.clear();
+          this.restoredUncertain.clear();
+          this.knownUncertain.clear();
           if (event === 'hard-reset') {
             this.hardResetEpoch += 1;
-            this.restoredUncertain.clear();
-            this.knownUncertain.clear();
           }
         }
       }),
@@ -180,7 +180,13 @@ export class FeeAttachmentRuntime {
         return { kind: 'unavailable', reason: 'Storage authority changed before fee creation' };
       }
       if (recoveryId || !canLosePreIdResponse(provider)) throw error;
-      this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+      if (this.ports.isRetired()) {
+        log(
+          `[fee-attachment] retired creation lost its pre-id response; reservation may remain orphaned submission_id=${submissionId}`,
+        );
+      } else {
+        this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+      }
       return { kind: 'unavailable', reason: String(error) };
     }
     if (
@@ -189,7 +195,13 @@ export class FeeAttachmentRuntime {
       !replacement &&
       canLosePreIdResponse(provider)
     ) {
-      this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+      if (this.ports.isRetired()) {
+        log(
+          `[fee-attachment] retired creation returned unavailable before reservation identification; reservation may remain orphaned submission_id=${submissionId}`,
+        );
+      } else {
+        this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+      }
       return outcome;
     }
     if (outcome.kind === 'pending') {
@@ -219,7 +231,8 @@ export class FeeAttachmentRuntime {
         );
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
-      pending();
+      const consumerRetired = this.ports.isRetired();
+      if (!consumerRetired) pending();
       outcome = await advanceProviderCreation(
         generation,
         provider,
@@ -228,12 +241,32 @@ export class FeeAttachmentRuntime {
         pendingRecoveryId,
       );
       if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
+      if (consumerRetired) {
+        if (outcome.kind === 'created-reserved') {
+          this.cancelLateReservation(provider, outcome.tradeId, submissionId);
+        } else if (outcome.kind === 'unavailable') {
+          log(
+            `[fee-attachment] retired creation reconciliation unavailable; reservation may remain orphaned submission_id=${submissionId} recovery_id=${pendingRecoveryId}`,
+          );
+        }
+        return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+      }
     }
-    if (!storageRepository.isGenerationCurrent(generation)) {
-      if (outcome.kind === 'created-reserved' && hardResetEpoch === this.hardResetEpoch) {
+    const generationCurrent = storageRepository.isGenerationCurrent(generation);
+    const consumerRetired = this.ports.isRetired();
+    if (!generationCurrent || consumerRetired) {
+      if (
+        outcome.kind === 'created-reserved' &&
+        (generationCurrent || hardResetEpoch === this.hardResetEpoch)
+      ) {
         this.cancelLateReservation(provider, outcome.tradeId, submissionId);
       }
-      return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
+      return {
+        kind: 'unavailable',
+        reason: generationCurrent
+          ? 'Fee consumer retired during wallet creation'
+          : 'Storage authority changed during fee creation',
+      };
     }
     if (outcome.kind === 'failure') {
       const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);

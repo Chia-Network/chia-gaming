@@ -10,6 +10,7 @@ import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordinat
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
+import { calpokerStateCodec } from './game_state_helpers';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -67,8 +68,12 @@ describe('Shell production restore composition', () => {
   let requestTrust: jest.Mock;
   let unhandledRejections: unknown[];
   let onUnhandledRejection: (reason: unknown) => void;
+  const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+  const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
   beforeEach(async () => {
+    globalThis.requestAnimationFrame = () => 0;
+    globalThis.cancelAnimationFrame = () => {};
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: storage(),
@@ -129,6 +134,8 @@ describe('Shell production restore composition', () => {
     Reflect.deleteProperty(globalThis, 'window');
     Reflect.deleteProperty(globalThis, 'document');
     Reflect.deleteProperty(globalThis, 'navigator');
+    globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+    globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
@@ -146,6 +153,15 @@ describe('Shell production restore composition', () => {
       lastDisplayedGameId: 'game-1',
       activeGameType: 'calpoker',
       gameInstances: { 'game-1': TERMINAL_INSTANCE },
+      handState: calpokerStateCodec.encode({
+        perPlayerStake: 20n,
+        playerHand: [],
+        opponentHand: [],
+        moveNumber: 0n,
+        isPlayerTurn: true,
+        iStarted: false,
+        settlementOutcome: null,
+      }),
     });
     await storageRepository.write(storageRepository.patchApplicationState(() => save));
     markSavedSession();
@@ -164,9 +180,8 @@ describe('Shell production restore composition', () => {
     await waitForText(renderer!, 'Resolved Clean');
 
     expect(
-      renderer!.root.findByProps({ 'data-testid': 'finished-session-fallback' }),
+      renderer!.root.findByProps({ 'data-testid': 'finished-session-game-view' }),
     ).toBeDefined();
-    expect(renderer!.root.findByProps({ children: 'Settled cleanly' })).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' })).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Connecting…' })).toBeDefined();

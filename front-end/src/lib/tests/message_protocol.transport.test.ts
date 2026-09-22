@@ -1226,7 +1226,7 @@ describe('WASM wallet funding requests', () => {
     expect(walletCallbackFailed).toHaveBeenCalledWith('wallet funding offer failed validation');
   });
 
-  it('retains a late known funding reservation after controller teardown without cancellation', async () => {
+  it('cancels a late known funding reservation after controller teardown without installing it', async () => {
     let resolveOffer!: (value: {
       kind: 'created-reserved';
       material: { kind: 'offer'; offer: string };
@@ -1286,13 +1286,9 @@ describe('WASM wallet funding requests', () => {
     }
     await channelFundingRuntime.flush();
 
-    expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-    expect(storageRepository.channelFundingOperations()).toEqual([
-      expect.objectContaining({
-        providerReservationId: 'trade-late',
-        stage: 'awaiting-channel',
-      }),
-    ]);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late');
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
     expect(provideOffer).not.toHaveBeenCalled();
   });
 

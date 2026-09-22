@@ -248,6 +248,7 @@ export class SessionController implements PollingGameSession {
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
   private committedSessionRuntime: SessionMachineRuntime | null = null;
+  private persistenceSessionRuntime: SessionMachineRuntime | null = null;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
@@ -405,8 +406,8 @@ export class SessionController implements PollingGameSession {
     this.reliableTransport = transport;
     this.reliableState = transport.state;
     this.reliableTransport.attachConsumer(this.reliableConsumer);
-    if (this.committedSessionRuntime) {
-      this.reliableTransport.attachCommitCoordinator(this.committedSessionRuntime);
+    if (this.persistenceSessionRuntime) {
+      this.reliableTransport.attachCommitCoordinator(this.persistenceSessionRuntime);
     }
   }
 
@@ -422,8 +423,20 @@ export class SessionController implements PollingGameSession {
     if (this.committedSessionRuntime === runtime) return;
     const previous = this.committedSessionRuntime;
     this.committedSessionRuntime = runtime;
-    this.reliableTransport.attachCommitCoordinator(runtime);
+    if (previous && this.persistenceSessionRuntime === previous) {
+      this.reliableTransport.detachCommitCoordinator(previous);
+      this.persistenceSessionRuntime = null;
+    }
     previous?.retire();
+    this.activateCommittedSessionRuntimePersistence();
+  }
+
+  private activateCommittedSessionRuntimePersistence(): void {
+    const runtime = this.committedSessionRuntime;
+    if (!runtime || this.persistenceSessionRuntime === runtime || !this.getWasmFields()) return;
+    runtime.activatePersistence();
+    this.persistenceSessionRuntime = runtime;
+    this.reliableTransport.attachCommitCoordinator(runtime);
     this.scheduleFunding();
     for (const delivery of this.pendingCoinSolutionDeliveries.values()) {
       this.scheduleCoinSolutionDelivery(delivery);
@@ -509,6 +522,7 @@ export class SessionController implements PollingGameSession {
             pending.purpose,
             providerRequestFromRecovery(pending.owner!, recovery),
             recovery,
+            () => this.retired,
           );
           await this.handleFundingOutcome(pending, outcome, generation);
         } finally {
@@ -751,7 +765,10 @@ export class SessionController implements PollingGameSession {
     this.pendingEffects.clear();
     const runtime = this.committedSessionRuntime;
     this.committedSessionRuntime = null;
-    if (runtime) this.reliableTransport.detachCommitCoordinator(runtime);
+    if (runtime && this.persistenceSessionRuntime === runtime) {
+      this.reliableTransport.detachCommitCoordinator(runtime);
+      this.persistenceSessionRuntime = null;
+    }
     runtime?.retire();
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
@@ -938,6 +955,7 @@ export class SessionController implements PollingGameSession {
 
   setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
+    this.activateCommittedSessionRuntimePersistence();
     this.syncFeeConfiguration();
     this.syncPendingCoinSolutionRequests();
     if (this.pendingPeerFailure) {
@@ -1428,6 +1446,17 @@ export class SessionController implements PollingGameSession {
     throw new Error(
       `SessionController terminal quiescence did not settle after ${maxPasses} persistence passes`,
     );
+  }
+
+  sealPersistenceForTerminalFinalization(): void {
+    const runtime = this.committedSessionRuntime;
+    if (!runtime || this.persistenceSessionRuntime !== runtime) {
+      throw new Error('SessionController terminal persistence sealing requires an active runtime');
+    }
+    this.reliableTransport.detachCommitCoordinator(runtime);
+    this.persistenceSessionRuntime = null;
+    this.committedSessionRuntime = null;
+    runtime.retire();
   }
 
   async flushPendingWork(): Promise<void> {
@@ -1956,8 +1985,8 @@ export class SessionController implements PollingGameSession {
   }
 
   async flushPendingSave(): Promise<void> {
-    if (this.committedSessionRuntime) {
-      await this.committedSessionRuntime.flush();
+    if (this.persistenceSessionRuntime) {
+      await this.persistenceSessionRuntime.flush();
       return;
     }
     // Rust intentionally omits transient cradle events from serialization.

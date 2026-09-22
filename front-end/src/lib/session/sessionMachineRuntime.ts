@@ -69,6 +69,13 @@ export class SessionRuntimeRetiredError extends Error {
   }
 }
 
+class SessionSnapshotUnavailableError extends Error {
+  constructor() {
+    super('Active SessionMachineRuntime cannot persist before WASM fields are serializable');
+    this.name = 'SessionSnapshotUnavailableError';
+  }
+}
+
 function createDeferred(): Deferred {
   let resolvePromise!: () => void;
   let rejectPromise!: (error: unknown) => void;
@@ -138,12 +145,14 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private durabilityDirty = false;
   private durabilityDegraded = false;
   private projectionPending = false;
+  private projecting = false;
   private commitTimer: ReturnType<typeof setTimeout> | null = null;
   private commitPromise: Promise<void> = Promise.resolve();
   private readonly persistOverride?: (state: SessionMachineState) => Promise<void>;
   private readonly onError: (error: unknown) => void;
   private detachStorageRuntime: (() => void) | null = null;
   private activated = false;
+  private persistenceActivated = false;
   private retired = false;
 
   constructor(initial: SessionMachineState, dependencies: SessionMachineRuntimeDependencies) {
@@ -179,7 +188,6 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (this.activated || this.retired) return;
     this.activated = true;
     this.controller.commitSessionRuntime(this);
-    if (!this.retired) this.detachStorageRuntime = storageRepository.attachRuntime(this);
     if (this.retired || !this.bindControllerEvents) return;
     const subscription = this.controller.getObservable().subscribe({
       next: (event: WasmEvent) => this.dispatchControllerEvent(event),
@@ -188,6 +196,16 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.restoreStatusUnsubscribe = this.controller.onRestoreStatusChange(() => {
       this.dispatchHostProjection();
     });
+  }
+
+  activatePersistence(): void {
+    if (this.persistenceActivated || this.retired) return;
+    if (!this.activated) {
+      throw new Error('SessionMachineRuntime persistence activation requires composition');
+    }
+    this.persistenceActivated = true;
+    this.detachStorageRuntime = storageRepository.attachRuntime(this);
+    this.scheduleCommit(false);
   }
 
   setRender(render: (state: SessionMachineState) => void): void {
@@ -497,6 +515,24 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     if (this.retired) return;
     if (markDirty) this.durabilityDirty = true;
     if (!this.durabilityDirty && !this.projectionPending) return;
+    if (!this.persistenceActivated) {
+      if (!this.committing && !this.draining && !this.projecting) {
+        this.projecting = true;
+        try {
+          while (this.projectionPending) {
+            this.projectionPending = false;
+            try {
+              this.render(this.state);
+            } catch (error) {
+              this.onError(error);
+            }
+          }
+        } finally {
+          this.projecting = false;
+        }
+      }
+      return;
+    }
     if (this.committing || this.draining || this.commitTimer !== null) return;
     this.commitTimer = setTimeout(() => {
       this.commitTimer = null;
@@ -560,7 +596,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
           getRestoreStatus: this.getRestoreStatus,
           getRestoreError: this.getRestoreError,
         });
-        write = snapshot ? storageRepository.write(snapshot) : Promise.resolve();
+        if (!snapshot) throw new SessionSnapshotUnavailableError();
+        write = storageRepository.write(snapshot);
       }
     } catch (error) {
       write = Promise.reject(error);
@@ -580,6 +617,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       }
     };
     let writeFailed = false;
+    let snapshotInvariantFailed = false;
     let activityDirtyBeforeFailure = false;
     this.commitPromise = write
       .then(
@@ -613,6 +651,13 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
         },
         (error) => {
           if (this.retired) throw error;
+          if (error instanceof SessionSnapshotUnavailableError) {
+            writeFailed = true;
+            snapshotInvariantFailed = true;
+            this.durabilityDirty = true;
+            this.projectionPending ||= shouldProject;
+            throw error;
+          }
           if (error instanceof StorageAuthorityLostError) {
             this.retire();
             throw error;
@@ -650,9 +695,15 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
             () => {
               for (const task of work) task.run();
             },
-            !writeFailed || activityDirtyBeforeFailure || queuedActivity,
+            !snapshotInvariantFailed &&
+              (!writeFailed || activityDirtyBeforeFailure || queuedActivity),
           );
-          if (writeFailed && !activityDirtyBeforeFailure && !queuedActivity) {
+          if (
+            !snapshotInvariantFailed &&
+            writeFailed &&
+            !activityDirtyBeforeFailure &&
+            !queuedActivity
+          ) {
             this.projectionPending = false;
             try {
               this.render(this.state);
@@ -660,7 +711,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
               this.onError(error);
             }
           }
-        } else if (!writeFailed || activityDirtyBeforeFailure) {
+        } else if (!snapshotInvariantFailed && (!writeFailed || activityDirtyBeforeFailure)) {
           this.scheduleCommit(false);
         }
       });
@@ -669,6 +720,10 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
 
   async flush(): Promise<void> {
     if (this.retired) return;
+    if (!this.persistenceActivated) {
+      this.scheduleCommit(false);
+      return;
+    }
     if (this.commitTimer !== null) {
       clearTimeout(this.commitTimer);
       this.commitTimer = null;

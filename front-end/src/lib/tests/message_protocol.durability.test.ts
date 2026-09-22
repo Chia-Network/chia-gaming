@@ -48,6 +48,39 @@ async function readRawApplicationState(): Promise<Uint8Array> {
 }
 
 describe('WASM command persistence', () => {
+  it('does not acknowledge reliable durability until cradle installation activates persistence', async () => {
+    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
+    const sentAcks: number[] = [];
+    const blob = new SessionController(
+      null,
+      'test',
+      100n,
+      100n,
+      makePeerConn(sentMessages, sentAcks),
+    );
+    setActiveBlob(blob);
+    const save = jest.fn(async () => {});
+    setTestPersistence(blob, save);
+    const outbound = enc('pre-cradle-outbound');
+
+    blob.processResult(wasmResult({ events: [{ OutboundMessage: outbound }] }));
+    await expect(blob.flushPendingSave()).rejects.toThrow(
+      'Active-session persistence requires SessionMachineRuntime coordination',
+    );
+    expect(save).not.toHaveBeenCalled();
+    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(blob.unackedMessages).toEqual([{ msgno: 1n, msg: outbound }]);
+
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
+    await blob.flushPendingSave();
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(sentAcks).toEqual([]);
+  });
+
   it('coalesces successful eventless mutations and ignores read-only polling', async () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);

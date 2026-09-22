@@ -28,11 +28,6 @@ export const OWNED_SESSION_STORAGE_EXACT_KEYS = [
   'appState_pendingWipe',
 ] as const;
 
-function isWalletConnectIndexedDbName(name: string): boolean {
-  const lower = name.toLowerCase();
-  return lower.includes('walletconnect') || name.startsWith('WALLET_CONNECT_');
-}
-
 export interface HardResetFailure {
   database: string;
   reason: 'blocked' | 'error';
@@ -237,43 +232,6 @@ async function clearAllIndexedDbForHardReset(): Promise<HardResetResult> {
       OWNED_INDEXED_DB_EXACT_NAMES.map((name) => deleteIndexedDb(name, 'hard reset')),
     )
   ).filter((failure): failure is HardResetFailure => failure !== null);
-
-  const dynamicDatabaseLookup = indexedDB as IDBFactory & {
-    databases?: () => Promise<Array<{ name?: string }>>;
-  };
-  if (typeof dynamicDatabaseLookup.databases !== 'function') {
-    console.error(
-      '[save] hard reset cannot enumerate IndexedDB databases: indexedDB.databases unavailable; known DB names already deleted',
-    );
-    return failures.length === 0 ? { success: true } : { success: false, failures };
-  }
-
-  try {
-    const databases = await dynamicDatabaseLookup.databases();
-    const known = new Set<string>(OWNED_INDEXED_DB_EXACT_NAMES);
-    const enumeratedFailures = (
-      await Promise.all(
-        databases
-          .map((db) => db.name)
-          .filter(
-            (name): name is string =>
-              typeof name === 'string' &&
-              name.length > 0 &&
-              !known.has(name) &&
-              isWalletConnectIndexedDbName(name),
-          )
-          .map((name) => deleteIndexedDb(name, 'hard reset')),
-      )
-    ).filter((failure): failure is HardResetFailure => failure !== null);
-    failures.push(...enumeratedFailures);
-  } catch (error) {
-    console.error('[save] failed to enumerate IndexedDB during hard reset:', error);
-    failures.push({
-      database: '<enumeration>',
-      reason: 'error',
-      detail: error instanceof Error ? error.message : String(error),
-    });
-  }
   return failures.length === 0 ? { success: true } : { success: false, failures };
 }
 

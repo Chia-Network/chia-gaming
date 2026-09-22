@@ -116,8 +116,9 @@ The live `SessionMachineRuntime` is the only dirty/coalescing scheduler. It owns
 protocol/controller/UI/transport drains and folds preference, history, funding,
 fee, and rejection mutations into the same quiescent snapshot. Channel-funding
 and fee-attachment owners still checkpoint a reservation before mutating the
-provider. Before a runtime exists, reliable negotiation, rejection, and other
-explicit product boundaries build and write a whole-root snapshot immediately.
+provider. Before a committed runtime has serializable WASM fields and becomes
+the persistence owner, reliable negotiation, rejection, and other explicit
+product boundaries build and write a whole-root snapshot immediately.
 `StorageRepository` owns the in-memory aggregate, storage authority, and exact
 serialized whole-root writes; it does not schedule, debounce, or capture state.
 
@@ -882,8 +883,9 @@ generic wallet-operation, settlement, or session cancellation owner.
 
 `SessionMachineRuntime` is constructed inert, so render-time construction
 cannot claim protocol ownership. Its committed React layout effect installs the
-render callback and activates the runtime; React cleanup clears only
-that render callback. Protocol retirement belongs to `SessionController`
+render callback and activates runtime processing; the controller attaches
+persistence and reliable-commit ownership only after serializable WASM fields
+exist. React cleanup clears only that render callback. Protocol retirement belongs to `SessionController`
 cleanup, including terminal cleanup and replacement of the committed runtime.
 The controller retains the committed runtime across presentation unmounts, so a
 renderer remount resumes the same accumulated model rather than reconstructing
@@ -993,9 +995,10 @@ invalid discriminants, and non-current versions. IndexedDB v5 coordination
 stores durable owner, write, and reset epochs; each aggregate mutation checks
 that authority atomically with its write. `localStorage` ownership and resume
 markers are UX hints only. Hard reset advances the durable reset epoch before
-deleting the app and external WalletConnect databases and intentionally erases
-every obligation. Blocked or failed deletion remains on recovery UI with Retry;
-foreign same-origin databases are preserved.
+deleting only the exact app and external WalletConnect database manifest and
+intentionally erases every obligation. Blocked or failed deletion remains on
+recovery UI with Retry; foreign same-origin databases and lookalikes are
+preserved.
 
 Ordinary IndexedDB I/O failure never gates use, transaction release, or
 cancellation; the in-memory aggregate remains pending for a later checkpoint.

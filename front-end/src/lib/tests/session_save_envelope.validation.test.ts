@@ -2,7 +2,7 @@ import { decodeDurableApplicationState } from '../session/persistence';
 import type { DurableApplicationState } from '../session/saveEnvelope';
 import type { ChannelFundingEntry } from '../session/channelFundingStore';
 import type { FeeAttachment } from '../session/feeAttachmentStore';
-import { activeSave, baseSave } from './session_save_envelope.fixtures';
+import { activeSave, baseSave, TERMINAL_INSTANCE } from './session_save_envelope.fixtures';
 
 const scope = {
   provider: 'walletconnect' as const,
@@ -259,7 +259,7 @@ describe('DurableApplicationState strict validation', () => {
     [
       'a live hand without package state',
       (state: any) => (state.session.presentation.handState = null),
-      /live current hand is missing handState/,
+      /current hand is missing handState/,
     ],
     [
       'package-owned hand state that cannot restore',
@@ -270,6 +270,21 @@ describe('DurableApplicationState strict validation', () => {
     const state: any = structuredClone(activeSave());
     corrupt(state);
     expect(() => decodeDurableApplicationState(state)).toThrow(error);
+  });
+
+  it('rejects a terminal current hand without package state', () => {
+    const state = baseSave({
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [],
+      currentHandGameIds: ['game-1'],
+      currentHandOrigin: 'local',
+      lastDisplayedGameId: 'game-1',
+      activeGameType: 'calpoker',
+      gameInstances: { 'game-1': TERMINAL_INSTANCE },
+      handState: null,
+    });
+
+    expect(() => decodeDurableApplicationState(state)).toThrow(/current hand is missing handState/);
   });
 
   it.each([

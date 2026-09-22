@@ -16,7 +16,7 @@ import {
 } from '../session/model';
 import { type DurableApplicationState } from '../session/saveEnvelope';
 import { initialKrunkGameState } from '@games/krunk/ui/serialize';
-import { krunkStateCodec } from './game_state_helpers';
+import { calpokerStateCodec, krunkStateCodec } from './game_state_helpers';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
@@ -293,6 +293,10 @@ describe('session model proposal and normalization contracts', () => {
         channelStatus: channelStatusPayloadFromModel(model.channel.status),
         coinsOfInterest: [],
         betweenHandLastHandProposal: snapshot.betweenHandLastHandProposal,
+        handState: krunkStateCodec.encode({
+          perPlayerStake: 100n,
+          members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
+        }),
       }),
     ).model;
 
@@ -411,6 +415,15 @@ describe('session model proposal and normalization contracts', () => {
         channelStatus: channelStatusPayloadFromModel(abandonedStatus),
         coinsOfInterest: [],
         betweenHandLastHandProposal: staleSnapshot.betweenHandLastHandProposal,
+        handState: calpokerStateCodec.encode({
+          perPlayerStake: 40n,
+          playerHand: [],
+          opponentHand: [],
+          moveNumber: 0n,
+          isPlayerTurn: true,
+          iStarted: false,
+          settlementOutcome: null,
+        }),
       }),
     ).model;
 

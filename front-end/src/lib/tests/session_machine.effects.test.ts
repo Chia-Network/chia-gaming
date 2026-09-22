@@ -51,6 +51,7 @@ describe('session machine behavior sequences', () => {
       persist,
     });
     runtime.activate();
+    runtime.activatePersistence();
     if (!coordinator) throw new Error('runtime did not commit');
     return { runtime, coordinator, controller };
   }
@@ -85,7 +86,7 @@ describe('session machine behavior sequences', () => {
 
     expect(retire).not.toHaveBeenCalled();
     await controller.flushPendingSave();
-    expect(flush).toHaveBeenCalledTimes(1);
+    expect(flush).not.toHaveBeenCalled();
     controller.cleanup();
     expect(retire).toHaveBeenCalledTimes(1);
   });
@@ -147,7 +148,7 @@ describe('session machine behavior sequences', () => {
     expect(firstRetire).toHaveBeenCalledTimes(1);
 
     await controller.flushPendingSave();
-    expect(secondFlush).toHaveBeenCalledTimes(1);
+    expect(secondFlush).not.toHaveBeenCalled();
 
     controller.cleanup();
     expect(secondRetire).toHaveBeenCalledTimes(1);
@@ -265,6 +266,45 @@ describe('session machine behavior sequences', () => {
     expect(launcher).not.toHaveBeenCalled();
     expect(controller.reportDurabilityError).not.toHaveBeenCalled();
     expect(controller.clearDurabilityError).not.toHaveBeenCalled();
+  });
+
+  it('keeps reliable durability and external effects pending when an active snapshot is null', async () => {
+    const completeReliableCommit = jest.fn();
+    const controller = {
+      commitSessionRuntime: (runtime: SessionMachineRuntime) => runtime.activatePersistence(),
+      flushDeferredWork: jest.fn(),
+      getWasmFields: () => null,
+      prepareReliableCommit: () => ({
+        generation: 1,
+        outboundCount: 1,
+        ackCount: 1,
+        remoteNumber: 1n,
+      }),
+      completeReliableCommit,
+    } as unknown as SessionController;
+    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: jest.fn(),
+    });
+    runtime.activate();
+    const launcher = jest.fn(async () => {});
+    const effect = runtime.releaseAfterPersistence('requires-snapshot', launcher);
+
+    await expect(runtime.flush()).rejects.toThrow(
+      'cannot persist before WASM fields are serializable',
+    );
+    await expect(runtime.flush()).rejects.toThrow(
+      'cannot persist before WASM fields are serializable',
+    );
+    expect(completeReliableCommit).not.toHaveBeenCalled();
+    expect(launcher).not.toHaveBeenCalled();
+
+    runtime.retire();
+    await expect(effect).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
   });
 
   it('clears degraded durability after a full retry without replaying released effects', async () => {
