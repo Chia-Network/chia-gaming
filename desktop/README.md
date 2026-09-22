@@ -261,17 +261,19 @@ and codesign rejects that as "detritus".
 
 ## Release signing
 
-CI signs opportunistically. A complete Apple credential set enables Developer
-ID signing followed by notarization and stapling. A complete Azure credential
-set signs and verifies the Windows application and installer. Partial
+CI signs only when explicitly enabled. `ENABLE_APPLE_SIGNING=true` plus a
+complete Apple credential set enables Developer ID signing followed by
+notarization and stapling. `ENABLE_WINDOWS_SIGNING=true` in the
+`windows-code-signing` environment plus a complete Azure credential set signs
+and verifies the Windows application and installer. Once enabled, partial
 credential sets fail rather than silently degrading.
 
-When no credential set is configured, CI intentionally produces unsigned beta
-installers. The macOS package is still checked for both arm64 and x86_64 slices
-and for a valid post-fuse bundle signature. Users should expect Gatekeeper or
-SmartScreen warnings, and the GitHub release notes must identify the installers
-as unsigned. Linux packages are distributed with SHA-256 checksums but are not
-repository-signed.
+When the opt-in variable is absent, CI intentionally produces unsigned
+installers even if stale credentials remain configured. The macOS package is
+still checked for both arm64 and x86_64 slices and for a valid post-fuse bundle
+signature. Users should expect Gatekeeper or SmartScreen warnings, and the
+GitHub release notes must identify the installers as unsigned. Linux packages
+are distributed with SHA-256 checksums but are not repository-signed.
 
 ## Known gaps
 
