@@ -574,6 +574,36 @@ describe('RealBlockchainInterface', () => {
     expect(logLines.some((line) => line.includes('getCoinRecordsByNames error'))).toBe(false);
   });
 
+  it('preserves the last successful coin record across a transient lookup failure', async () => {
+    const name = 'previously-live-coin-id';
+    const liveRecord: CoinRecord = {
+      coin: {
+        parentCoinInfo: 'parent',
+        puzzleHash: 'puzzle',
+        amount: 100n,
+      },
+      confirmedBlockIndex: 10n,
+      spentBlockIndex: 0n,
+      spent: false,
+      coinbase: false,
+      timestamp: 123n,
+    };
+    const spentRecord: CoinRecord = {
+      ...liveRecord,
+      spentBlockIndex: 15n,
+      spent: true,
+    };
+    mockGetCoinRecordsByNames
+      .mockResolvedValueOnce({ coinRecords: [liveRecord] })
+      .mockRejectedValueOnce(new Error('Internal Error'))
+      .mockResolvedValueOnce({ coinRecords: [spentRecord] });
+
+    const blockchain = new RealBlockchainInterface();
+    await expect(blockchain.getCoinRecordsByNames([name])).resolves.toEqual([liveRecord]);
+    await expect(blockchain.getCoinRecordsByNames([name])).resolves.toEqual([liveRecord]);
+    await expect(blockchain.getCoinRecordsByNames([name])).resolves.toEqual([spentRecord]);
+  });
+
   it('keeps exact pushTransactions rebroadcast idempotent and outside orphan state', async () => {
     const parentCoinInfo = '11'.repeat(32);
     const puzzleHash = '22'.repeat(32);
@@ -657,7 +687,7 @@ describe('RealBlockchainInterface', () => {
     const fundingCoinId = 'ab'.repeat(32);
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { trade_id: 'trade-id' },
+      tradeRecord: { tradeId: 'trade-id' },
     });
 
     await expect(
@@ -696,7 +726,7 @@ describe('RealBlockchainInterface', () => {
       }),
     ).resolves.toEqual({
       kind: 'unavailable',
-      reason: expect.stringMatching(/tradeRecord\.trade_id/),
+      reason: expect.stringMatching(/tradeRecord\.tradeId/),
     });
 
     expect(mockCreateOfferForIds).toHaveBeenCalledWith(
@@ -825,7 +855,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { trade_id: 'receiver-trade-id' },
+      tradeRecord: { tradeId: 'receiver-trade-id' },
     });
 
     await expect(
@@ -850,7 +880,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { trade_id: 'reserve-fee-trade' },
+      tradeRecord: { tradeId: 'reserve-fee-trade' },
     });
 
     await blockchain.beginWalletOffer(offerOperation, {
@@ -874,7 +904,7 @@ describe('RealBlockchainInterface', () => {
     mockSelectCoins.mockRejectedValue(new Error('Internal error'));
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { trade_id: 'selected-trade' },
+      tradeRecord: { tradeId: 'selected-trade' },
     });
 
     await expect(
@@ -899,7 +929,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { trade_id: 'fee-trade' },
+      tradeRecord: { tradeId: 'fee-trade' },
     });
 
     const bindCoinId = 'ab'.repeat(32);
@@ -943,7 +973,7 @@ describe('RealBlockchainInterface', () => {
       ),
     ).resolves.toEqual({
       kind: 'unavailable',
-      reason: expect.stringMatching(/tradeRecord\.trade_id/),
+      reason: expect.stringMatching(/tradeRecord\.tradeId/),
     });
   });
 
@@ -991,7 +1021,7 @@ describe('RealBlockchainInterface', () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({
       offer: 'offer1signed',
-      tradeRecord: { trade_id: 'fee-parent-trade' },
+      tradeRecord: { tradeId: 'fee-parent-trade' },
     });
     await expect(
       blockchain.beginWalletOffer(

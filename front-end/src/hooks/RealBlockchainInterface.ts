@@ -282,6 +282,14 @@ function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {
   );
 }
 
+function walletOfferTradeId(response: unknown): string | null {
+  if (!response || typeof response !== 'object') return null;
+  const tradeRecord = (response as Record<string, unknown>).tradeRecord;
+  if (!tradeRecord || typeof tradeRecord !== 'object') return null;
+  const tradeId = (tradeRecord as Record<string, unknown>).tradeId;
+  return typeof tradeId === 'string' && tradeId ? tradeId : null;
+}
+
 export function classifyWalletConnectSubmitError(err: unknown): WalletSubmitOutcome {
   const detail = collectErrorText(err);
   if (err instanceof WalletConnectTransportError) {
@@ -350,6 +358,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
+  private coinRecordCache = new Map<string, CoinRecord>();
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
@@ -552,7 +561,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         ],
       });
       const offer = (response as any)?.offer;
-      const tradeId = (response as any)?.tradeRecord?.trade_id;
+      const tradeId = walletOfferTradeId(response);
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
         if (walletOfferMutationMayHaveSucceeded(response)) {
           return {
@@ -565,7 +574,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (typeof tradeId !== 'string' || !tradeId) {
         return {
           kind: 'unavailable',
-          reason: 'wallet returned a persisted fee offer without tradeRecord.trade_id',
+          reason: 'wallet returned a persisted fee offer without tradeRecord.tradeId',
         };
       }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
@@ -719,7 +728,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offerStr = (response as any)?.offer;
       if (typeof offerStr === 'string' && offerStr.startsWith('offer')) {
         log('[wc-blockchain] createOfferForIds returned bech32 offer string path');
-        const tradeId = (response as any)?.tradeRecord?.trade_id;
+        const tradeId = walletOfferTradeId(response);
         if (typeof tradeId === 'string' && tradeId) {
           return {
             kind: 'created-reserved',
@@ -729,7 +738,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         }
         return {
           kind: 'unavailable',
-          reason: 'wallet returned a persisted funding offer without tradeRecord.trade_id',
+          reason: 'wallet returned a persisted funding offer without tradeRecord.tradeId',
         };
       }
       if (walletOfferMutationMayHaveSucceeded(response)) {
@@ -809,18 +818,26 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           allowUnsynced: true,
         });
         if ((resp as any)?.error) {
+          const cached = this.coinRecordCache.get(name);
+          if (cached) records.push(cached);
           continue;
         }
         const r = resp.coinRecords ?? [];
         if (r.length > 0) {
           log(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
+          this.coinRecordCache.set(name, r[0]);
+        } else {
+          this.coinRecordCache.delete(name);
         }
         records.push(...r);
       } catch {
         // WalletConnect may collapse the wallet's expected missing-coin result
         // and unrelated daemon failures into the same opaque "Internal Error".
-        // Polling is repeated, so treat this name as absent for this snapshot
-        // without logging an unactionable error.
+        // Preserve a last-known record so a transient failure cannot turn a
+        // previously live coin into an authoritative disappearance. Unknown
+        // names remain absent and polling retries them without noisy logging.
+        const cached = this.coinRecordCache.get(name);
+        if (cached) records.push(cached);
         continue;
       }
     }
