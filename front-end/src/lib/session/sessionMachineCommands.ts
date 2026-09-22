@@ -1,7 +1,8 @@
 import { applyHandProposalToComposeDraft } from './composeDraft';
 import { handProposalsEqual } from '../gameRegistry';
+import { isUncancelledProposal } from './proposalPolicy';
 import { selectProposalByLifecycle } from './selectors';
-import { isUncancelledProposal, proposalOrigin } from './sessionMachineProposals';
+import { proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEvent,
   SessionMachineState,

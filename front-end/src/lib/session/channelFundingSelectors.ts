@@ -92,21 +92,3 @@ export function recoveryReadiness(
     ? 'scope-mismatch'
     : 'ready';
 }
-
-export function scopeStatus(
-  entries: ReadonlyArray<Pick<ChannelFundingEntry, 'owner'>>,
-  scopeKeys: ReadonlySet<string>,
-  installationPlayerId: string,
-  peerSessionId: string,
-): { kind: 'ready' } | { kind: 'unavailable' } | { kind: 'mismatch' } {
-  const relevant = entries.filter(
-    (entry) =>
-      entry.owner.installationPlayerId === installationPlayerId &&
-      entry.owner.peerSessionId === peerSessionId,
-  );
-  if (relevant.length === 0) return { kind: 'ready' };
-  if (scopeKeys.size === 0) return { kind: 'unavailable' };
-  return relevant.every((entry) => scopeKeys.has(providerScopeKey(entry.owner.providerScope)))
-    ? { kind: 'ready' }
-    : { kind: 'mismatch' };
-}

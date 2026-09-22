@@ -3,9 +3,9 @@
 For the conceptual overview, see `OVERVIEW.md`. For the frontend component
 hierarchy, notification routing, hub relay protocol, session persistence,
 peer message reliability, and reconnect reconciliation, see
-`FRONTEND_ARCHITECTURE.md`. For the authoritative settlement outcome glossary
-(off-chain accept + on-chain #1–#11), see
-[`NAMING_AUDIT.md` — Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux).
+`FRONTEND_ARCHITECTURE.md`. The authoritative settlement outcome glossary
+(off-chain accept + on-chain #1–#11) is in
+[Game Outcome Notifications](#game-outcome-notifications-terminal).
 The frontend restores the latest successful fixed-point durable-residue
 checkpoint with a fresh RNG seed; that boundary supplies implicit crash
 rollback. See
@@ -37,8 +37,10 @@ separately mutable state. Local turns, non-terminal `GameStatus`, coin
 enrichment, settlement, and whole-group removal therefore update the owning
 instance or group atomically. The current aggregate persists only
 `gameInstances` plus `lastDisplayedGameId` for protocol presentation. There are no aggregate
-current-game presentation fields and no migration from older records:
-incompatible records reject the whole root.
+current-game presentation fields. An incompatible record therefore cannot
+restore a partial notification model: it rejects the whole root under the
+canonical
+[unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
 
 **Important naming note:** this document sometimes uses conceptual UX labels
 like "OpponentMoved" for readability. The canonical wire model in Rust is
@@ -52,7 +54,8 @@ like "OpponentMoved" for readability. The canonical wire model in Rust is
 GameStatusKind, ... }`
 - **settlements (terminal):** `GameNotification::GameSettled { id, outcome,
 our_share, coin_id }` — off-chain `accept_settlement` plus on-chain glossary
-  outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)
+  outcomes #1–#11; see
+  [Game Outcome Notifications](#game-outcome-notifications-terminal)
 
 Settlements no longer use `EndedWeTimedOut`, `EndedOpponentTimedOut`, or other
 `Ended*` slash/timeout status kinds. Slash and cheat paths are settled outcomes
@@ -176,24 +179,24 @@ tests. It is distinct from peer handler ownership and from the on-chain coin
 lifecycle; see [Peer Handlers vs States](OVERVIEW.md#peer-handlers-vs-states)
 for how those lenses relate.
 
-| `ChannelStatus`                  | When                                   | Meaning                                                                                                                                                                        |
-| -------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Handshaking`                    | Handshake in progress                  | Channel negotiation messages are being exchanged (steps A–D)                                                                                                                   |
-| `WaitingForHeightToOffer`        | Handshake waiting on block height gate | Wallet spend inputs are ready, but the protocol is waiting for the configured height to submit the offer                                                                       |
-| `WaitingForHeightToAccept`       | Receiver waiting on block height gate  | Receiver is waiting for the configured height gate before accepting/submitting the channel transaction                                                                         |
-| `OurWalletMakingOffer`           | Initiator waiting on local wallet      | Our wallet is building the channel-creation offer spend                                                                                                                        |
-| `OurWalletMakingOfferAcceptance` | Receiver waiting on local wallet       | Our wallet is finishing/funding the channel-creation acceptance spend                                                                                                          |
-| `OfferSent`                      | Our half of the spend sent to peer     | We have sent our offer/spend to the other side; they could create the channel coin                                                                                             |
-| `TransactionPending`             | Full spend bundle assembled            | We have the complete channel-creation transaction in hand, waiting for on-chain confirmation                                                                                   |
-| `Active`                         | Channel operational                    | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields. |
-| `ShuttingDown`                   | Clean shutdown initiated               | Cooperative channel closure has been initiated (advisory protocol, not yet on-chain)                                                                                           |
+| `ChannelStatus`                  | When                                   | Meaning                                                                                                                                                                             |
+| -------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Handshaking`                    | Handshake in progress                  | Channel negotiation messages are being exchanged (steps A–D)                                                                                                                        |
+| `WaitingForHeightToOffer`        | Handshake waiting on block height gate | Wallet spend inputs are ready, but the protocol is waiting for the configured height to submit the offer                                                                            |
+| `WaitingForHeightToAccept`       | Receiver waiting on block height gate  | Receiver is waiting for the configured height gate before accepting/submitting the channel transaction                                                                              |
+| `OurWalletMakingOffer`           | Initiator waiting on local wallet      | Our wallet is building the channel-creation offer spend                                                                                                                             |
+| `OurWalletMakingOfferAcceptance` | Receiver waiting on local wallet       | Our wallet is finishing/funding the channel-creation acceptance spend                                                                                                               |
+| `OfferSent`                      | Our half of the spend sent to peer     | We have sent our offer/spend to the other side; they could create the channel coin                                                                                                  |
+| `TransactionPending`             | Full spend bundle assembled            | We have the complete channel-creation transaction in hand, waiting for on-chain confirmation                                                                                        |
+| `Active`                         | Channel operational                    | Channel is live and games can be played. Emitted repeatedly as balances change (potato firings). Includes `our_balance`, `their_balance`, `game_allocated`, and `coin` fields.      |
+| `ShuttingDown`                   | Clean shutdown initiated               | Cooperative channel closure has been initiated (advisory protocol, not yet on-chain)                                                                                                |
 | `ShutdownTransactionPending`     | Clean shutdown spend assembled         | A clean shutdown transaction has been formed. Normally the local side may submit it; with `zero_payout: true`, the peer is given the remaining signature half and owns publication. |
-| `GoingOnChain`                   | Explicit on-chain transition initiated | Local side has initiated transition from off-chain potato flow to on-chain resolution                                                                                          |
-| `Unrolling`                      | Unroll detected on-chain               | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                                                |
-| `ResolvedClean`                  | Clean shutdown completed               | Channel closed cooperatively; balances reflect the final split                                                                                                                 |
-| `ResolvedUnrolled`               | Unroll completed (non-stale)           | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately                                                              |
-| `ResolvedStale`                  | Stale unroll completed                 | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                                                          |
-| `Failed`                         | Unrecoverable error                    | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                                                             |
+| `GoingOnChain`                   | Explicit on-chain transition initiated | Local side has initiated transition from off-chain potato flow to on-chain resolution                                                                                               |
+| `Unrolling`                      | Unroll detected on-chain               | The channel coin has been spent to an unroll coin (by either player). `advisory` describes the reason if known.                                                                     |
+| `ResolvedClean`                  | Clean shutdown completed               | Channel closed cooperatively; balances reflect the final split                                                                                                                      |
+| `ResolvedUnrolled`               | Unroll completed (non-stale)           | The unroll was at the latest state; per-game `GameSettled` / on-chain turn status notifications follow separately                                                                   |
+| `ResolvedStale`                  | Stale unroll completed                 | The opponent tried to unroll with an older state; per-game outcomes follow separately                                                                                               |
+| `Failed`                         | Unrecoverable error                    | The channel or unroll coin is in an unrecoverable state; `advisory` has the reason                                                                                                  |
 
 `ShuttingDown` reflects that the dedicated `CleanShutdown` message has been
 sent and the local phase is awaiting `CleanShutdownComplete`. If ordinary
@@ -356,18 +359,18 @@ games). The original ordinal is retained when a sibling finishes, so the
 remaining row stays identifiable as `Hand 1` or `Hand 2`. Finished games are
 removed from the status rows instead of leaving their last state displayed.
 
-| Hand label     | Meaning                                                                                                                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `No hand`      | No accepted hand is currently active.                                                                                                                                                      |
-| `Active`       | The channel is going on-chain/unrolling before a concrete game coin is being tracked.                                                                                                     |
-| `Your turn`    | A game coin is on-chain and the protocol says our side is the mover.                                                                                                                      |
-| `Their turn`   | A game coin is on-chain and the protocol says the opponent is the mover.                                                                                                                  |
-| `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path.                                                                                     |
+| Hand label     | Meaning                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------- |
+| `No hand`      | No accepted hand is currently active.                                                                 |
+| `Active`       | The channel is going on-chain/unrolling before a concrete game coin is being tracked.                 |
+| `Your turn`    | A game coin is on-chain and the protocol says our side is the mover.                                  |
+| `Their turn`   | A game coin is on-chain and the protocol says the opponent is the mover.                              |
+| `Playing move` | Our on-chain move is being submitted, confirmed, or replayed as part of the on-chain resolution path. |
 
 Terminal game results are still derived from `GameSettled.outcome` via
 `SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (see
-[Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)) for the mounted
-game result, but are no longer retained in the dashboard status rows.
+[Game Outcome Notifications](#game-outcome-notifications-terminal)) for the
+mounted game result, but are no longer retained in the dashboard status rows.
 
 | Detail (examples)                                               | Meaning                                                   |
 | --------------------------------------------------------------- | --------------------------------------------------------- |
@@ -391,26 +394,26 @@ enqueue a second game-scoped pop-up.
 
 These fire during active gameplay (after a game proposal has been accepted).
 
-| Conceptual UX label       | Actual wire shape                                                                       | When                                                                                   | Meaning                                                                                                                                                                                                                                                                                                                             |
-| ------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| OpponentMoved             | `GameStatus { status: MyTurn, other_params: { readable, mover_share } }`                | Opponent made a move                                                                   | It is now our turn; `mover_share` is our share on timeout from the opponent's move                                                                                                                                                                                                                                                  |
-| OpponentPlayedIllegalMove | `GameStatus { status: IllegalMoveDetected, ... }`                                       | Opponent's on-chain move detected as illegal                                           | Emitted before slash resolution                                                                                                                                                                                                                                                                                                     |
-| GameMessage               | `GameStatus { status: MyTurn/TheirTurn, other_params: { readable } }`                   | Informational game message                                                             | Decoded advisory/readable message payload                                                                                                                                                                                                                                                                                           |
-| MoveRejected              | `MoveRejected { id, tag, message }`                                                     | A local my-turn handler rejects user input                                             | Synchronous recoverable game-scoped rejection. Rust validates local move authority and runs the handler before queueing; a tagged rejection queues neither the readable nor a prepared move, and no peer batch is sent.                                                                                                                |
-| LocalActionApplied        | `LocalActionApplied { id, action }`                                                     | A local move, settlement acceptance, or diagnostic cheat is actually applied           | Host-only protocol-presentation bookkeeping. It may move the keyed host presentation off our turn, but never promotes game-owned state or grants game permission; game packages never receive it.                                                                                                                                     |
-| GameOnChain               | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }`          | Game transitions on-chain                                                              | On-chain phase begins for this game. `Replaying` means a cached off-chain send-move exists for this game id and will be spent as an on-chain redo (same criterion as `take_cached_move_for_game`).                                                                                                                                  |
+| Conceptual UX label       | Actual wire shape                                                                       | When                                                                                   | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpponentMoved             | `GameStatus { status: MyTurn, other_params: { readable, mover_share } }`                | Opponent made a move                                                                   | It is now our turn; `mover_share` is our share on timeout from the opponent's move                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| OpponentPlayedIllegalMove | `GameStatus { status: IllegalMoveDetected, ... }`                                       | Opponent's on-chain move detected as illegal                                           | Emitted before slash resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| GameMessage               | `GameStatus { status: MyTurn/TheirTurn, other_params: { readable } }`                   | Informational game message                                                             | Decoded advisory/readable message payload                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| MoveRejected              | `MoveRejected { id, tag, message }`                                                     | A local my-turn handler rejects user input                                             | Synchronous recoverable game-scoped rejection. Rust validates local move authority and runs the handler before queueing; a tagged rejection queues neither the readable nor a prepared move, and no peer batch is sent.                                                                                                                                                                                                                                                                                                                              |
+| LocalActionApplied        | `LocalActionApplied { id, action }`                                                     | A local move, settlement acceptance, or diagnostic cheat is actually applied           | Host-only protocol-presentation bookkeeping. It may move the keyed host presentation off our turn, but never promotes game-owned state or grants game permission; game packages never receive it.                                                                                                                                                                                                                                                                                                                                                    |
+| GameOnChain               | `GameStatus { status: OnChainMyTurn / OnChainTheirTurn / Replaying, coin_id }`          | Game transitions on-chain                                                              | On-chain phase begins for this game. `Replaying` means a cached off-chain send-move exists for this game id and will be spent as an on-chain redo (same criterion as `take_cached_move_for_game`).                                                                                                                                                                                                                                                                                                                                                   |
 | PlayingMove               | `GameStatus { status: PlayingMove, coin_id }`                                           | The host accepted an on-chain move for publication and we are waiting for confirmation | Transient pending-move status. In the browser, the preceding spend has entered the serialized wallet RPC submission lane; this does not claim that the asynchronous RPC succeeded, reached a full-node mempool, or confirmed on chain. In the simulator, the synchronous host boundary has already submitted it to the simulator mempool before delivering this notification. Followed by `OnChainTheirTurn { moved_by_us: true }` when the spend lands. Distinct from `Replaying`, which is a cached off-chain redo action being replayed on-chain. |
-| WeMoved                   | `GameStatus { status: OnChainTheirTurn, other_params: { moved_by_us: true }, coin_id }` | Our on-chain move confirms                                                             | New game coin is tracked in `coin_id`                                                                                                                                                                                                                                                                                               |
+| WeMoved                   | `GameStatus { status: OnChainTheirTurn, other_params: { moved_by_us: true }, coin_id }` | Our on-chain move confirms                                                             | New game coin is tracked in `coin_id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 ---
 
 ## Proposal Notifications
 
-| Notification                                                                                   | When                                         | Meaning                                                                                                                                                                                                                           |
-| ---------------------------------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ProposalMade { id, sender_is_player_a, timeout, game_type, parameters }` | Scalar proposal received from opponent | Fires exactly once for the receiver. `id` is an endpoint-local `LocalProposalId`; parameters and requested terms are preserved exactly. |
-| `ProposalAcceptedGroup { id, members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }` | Proposal accepted by either side | `id` is the consumed endpoint-local proposal ID. Generated game members are in exact factory order and retain the factory-approved A/B contribution split. |
-| `ProposalCancelled { id, reason }` | Proposal cancelled or invalidated | `id` is endpoint-local. Receiver-side rejection is locally definitive and intentionally emits no Rust cancellation echo when its queued wire cancel drains. |
+| Notification                                                                                                   | When                                   | Meaning                                                                                                                                                     |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ProposalMade { id, sender_is_player_a, timeout, game_type, parameters }`                                      | Scalar proposal received from opponent | Fires exactly once for the receiver. `id` is an endpoint-local `LocalProposalId`; parameters and requested terms are preserved exactly.                     |
+| `ProposalAcceptedGroup { id, members: [{ id, player_a_contribution, player_b_contribution, our_turn }, ...] }` | Proposal accepted by either side       | `id` is the consumed endpoint-local proposal ID. Generated game members are in exact factory order and retain the factory-approved A/B contribution split.  |
+| `ProposalCancelled { id, reason }`                                                                             | Proposal cancelled or invalidated      | `id` is endpoint-local. Receiver-side rejection is locally definitive and intentionally emits no Rust cancellation echo when its queued wire cancel drains. |
 
 ### Cancellation Reasons (`CancelReason`)
 
@@ -418,16 +421,16 @@ These fire during active gameplay (after a game proposal has been accepted).
 cancellation happened. The reason determines both the frontend's behavior and
 whether the user is notified.
 
-| `CancelReason`         | Emitted when                                                                                                                                                                                                                                                                                                                                 | Frontend behavior                                                                                                                                                         |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale.                                                                                                                                                                          | **Local/silent.** Terms stashed in `pendingRetryHandProposal` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
-| `PeerProposalPending`  | JS called `propose` while an unresolved peer proposal already exists. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect. | **Local/silent.** Same retry stash as `SupersededByIncoming`. |
-| `GameActive`           | Reserved for future use. The JS-side guard prevents this from occurring in practice.                                                                                                                                                                                                                                                         | **Local/silent.** Clears retry state.                                                                                                                                     |
-| `CancelledByPeer`      | The peer sent `BatchAction::CancelProposal` for our proposal. This also reports the peer-side follow-up for failed accept attempts such as insufficient balance. | **User-facing notice:** the proposal did not proceed on the peer side. |
-| `CancelledByUs`        | Our own emitted proposal cancellation drained. Receiver-side rejection does not use this echo. | **Silent.** We initiated the cancellation. |
-| `CleanShutdown`        | The channel is shutting down cooperatively. All outstanding proposals are cancelled.                                                                                                                                                                                                                                                         | **Silent.** The shutdown UI handles this.                                                                                                                                 |
-| `WentOnChain`          | The channel transitioned to on-chain resolution. Proposals not reflected in the unroll are cancelled.                                                                                                                                                                                                                                        | **Silent.** The on-chain UI handles this.                                                                                                                                 |
-| `ChannelError`         | An unrecoverable channel error occurred. All proposals are cancelled as cleanup.                                                                                                                                                                                                                                                             | **Silent.** The error UI handles this.                                                                                                                                    |
+| `CancelReason`         | Emitted when                                                                                                                                                        | Frontend behavior                                                                                                                                                             |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SupersededByIncoming` | A peer proposal arrived in a batch while our own proposal was queued locally. WASM removes our queued proposal because the state it was built against is now stale. | **Local/silent.** Terms stashed in `pendingRetryHandProposal` for automatic re-submission (see [Proposal Collision Handling](GAME_LIFECYCLE.md#proposal-collision-handling)). |
+| `PeerProposalPending`  | JS called `propose` while an unresolved peer proposal already exists. WASM rejects immediately to avoid silently cancelling the peer's proposal as a side effect.   | **Local/silent.** Same retry stash as `SupersededByIncoming`.                                                                                                                 |
+| `GameActive`           | Reserved for future use. The JS-side guard prevents this from occurring in practice.                                                                                | **Local/silent.** Clears retry state.                                                                                                                                         |
+| `CancelledByPeer`      | The peer sent `BatchAction::CancelProposal` for our proposal. This also reports the peer-side follow-up for failed accept attempts such as insufficient balance.    | **User-facing notice:** the proposal did not proceed on the peer side.                                                                                                        |
+| `CancelledByUs`        | Our own emitted proposal cancellation drained. Receiver-side rejection does not use this echo.                                                                      | **Silent.** We initiated the cancellation.                                                                                                                                    |
+| `CleanShutdown`        | The channel is shutting down cooperatively. All outstanding proposals are cancelled.                                                                                | **Silent.** The shutdown UI handles this.                                                                                                                                     |
+| `WentOnChain`          | The channel transitioned to on-chain resolution. Proposals not reflected in the unroll are cancelled.                                                               | **Silent.** The on-chain UI handles this.                                                                                                                                     |
+| `ChannelError`         | An unrecoverable channel error occurred. All proposals are cancelled as cleanup.                                                                                    | **Silent.** The error UI handles this.                                                                                                                                        |
 
 The `is_local()` method on `CancelReason` returns `true` for
 `SupersededByIncoming`, `PeerProposalPending`, and `GameActive`. The frontend
@@ -446,7 +449,7 @@ Settlements use a **single** notification type. Non-settlement terminals
 ### `GameSettled` (all settlements)
 
 Every off-chain `AcceptSettlement` and every on-chain settled outcome (#1–#11
-in the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)) emits:
+in the table below) emits:
 
 ```text
 GameSettled { id, outcome: SettlementOutcome, our_share, coin_id? }
@@ -469,7 +472,7 @@ Display labels come from `SETTLEMENT_OUTCOME_LABELS` in
 | #1 Settled cleanly                | `settled_cleanly`                | Settled cleanly                |
 | #2 Opponent timed out             | `opponent_timed_out`             | Opponent timed out             |
 | #3 Forfeited skipped reveal       | `forfeited_skipped_reveal`       | Forfeited                      |
-| #4 Lost                          | `lost`                           | Lost                           |
+| #4 Lost                           | `lost`                           | Lost                           |
 | #5 Forfeited we accepted          | `forfeited_we_accepted`          | Forfeited                      |
 | #6 We accepted                    | `we_accepted`                    | Accepted                       |
 | #7 Attempt to move failed         | `attempt_to_move_failed`         | Attempt to move failed         |
@@ -490,18 +493,18 @@ timelock, the on-chain **timeout claim** mechanism, `opponent_timed_out`, and
 The Rust backend chooses `outcome` from on-chain context. This replaces the
 old five-case Forfeit / Claim / Terminal / Fold / Move-too-late table:
 
-| Case                             | Trigger (our turn unless noted)                     | `GameSettled.outcome`                                           |
-| -------------------------------- | --------------------------------------------------- | --------------------------------------------------------------- |
-| Voluntary off-chain accept       | `AcceptSettlement` batch ack or receive             | `accept_settlement`                                             |
-| Terminal clean close             | Game already over; timeout claim pays us            | `settled_cleanly`                                               |
-| Opponent timeout path            | Opponent's turn; their timeout claim confirms       | `opponent_timed_out`                                            |
-| Skip losing reveal/move          | Our computed move would give opponent 100%          | `forfeited_skipped_reveal`                                      |
-| Opponent terminal at 0%          | Their terminal move completed the game and left us at 0% | `lost`                                                       |
-| Accept at 0%                     | Explicit `AcceptSettlement` while share == 0        | `forfeited_we_accepted`                                         |
-| Intentional accept / auto-accept | Share > 0; timeout claim pays us                    | `we_accepted`                                                   |
-| Move too late                    | Pending move overtaken by opponent timeout claim    | `attempt_to_move_failed`                                        |
-| Clock expired, no move           | We never chose a move                               | `timed_out_waiting_for_our_move`                                |
-| Slash / cheat                    | Illegal-move dispute resolved on-chain              | `slashed_opponent` / `opponent_slashed_us` / `opponent_cheated` |
+| Case                             | Trigger (our turn unless noted)                          | `GameSettled.outcome`                                           |
+| -------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------- |
+| Voluntary off-chain accept       | `AcceptSettlement` batch ack or receive                  | `accept_settlement`                                             |
+| Terminal clean close             | Game already over; timeout claim pays us                 | `settled_cleanly`                                               |
+| Opponent timeout path            | Opponent's turn; their timeout claim confirms            | `opponent_timed_out`                                            |
+| Skip losing reveal/move          | Our computed move would give opponent 100%               | `forfeited_skipped_reveal`                                      |
+| Opponent terminal at 0%          | Their terminal move completed the game and left us at 0% | `lost`                                                          |
+| Accept at 0%                     | Explicit `AcceptSettlement` while share == 0             | `forfeited_we_accepted`                                         |
+| Intentional accept / auto-accept | Share > 0; timeout claim pays us                         | `we_accepted`                                                   |
+| Move too late                    | Pending move overtaken by opponent timeout claim         | `attempt_to_move_failed`                                        |
+| Clock expired, no move           | We never chose a move                                    | `timed_out_waiting_for_our_move`                                |
+| Slash / cheat                    | Illegal-move dispute resolved on-chain                   | `slashed_opponent` / `opponent_slashed_us` / `opponent_cheated` |
 
 Auto-accept (terminal game or `our_share == game_amount`) queues
 `AcceptSettlement` and eventually settles as `we_accepted` or `settled_cleanly`
@@ -509,11 +512,11 @@ when the timeout claim confirms. See `ON_CHAIN.md` for mechanism details.
 
 ### Other terminal notifications
 
-| Notification        | Wire shape                                                           | When                                                     |
-| ------------------- | -------------------------------------------------------------------- | -------------------------------------------------------- |
+| Notification        | Wire shape                                                           | When                                                            |
+| ------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------- |
 | InsufficientBalance | `InsufficientBalance { id, our_balance_short, their_balance_short }` | Proposal acceptance attempted with insufficient aggregate funds |
-| EndedCancelled      | `GameStatus { status: EndedCancelled, ... }`                         | In-flight accept lost during stale unroll                |
-| GameError           | `GameStatus { status: EndedError, reason }`                          | Unrecoverable game-level issue                           |
+| EndedCancelled      | `GameStatus { status: EndedCancelled, ... }`                         | In-flight accept lost during stale unroll                       |
+| GameError           | `GameStatus { status: EndedError, reason }`                          | Unrecoverable game-level issue                                  |
 
 `InsufficientBalance` and `ProposalCancelled` are proposal outcomes keyed by
 endpoint-local proposal ID. `EndedCancelled` is different: acceptance already

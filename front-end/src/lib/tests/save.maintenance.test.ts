@@ -617,5 +617,3 @@ describe('hub alert', () => {
     expect(storageRepository.query('hubAlert')).toBe(false);
   });
 });
-
-describe('game saves', () => {});

@@ -48,6 +48,7 @@ import {
   type ReliableMessageConsumer,
 } from '../services/PeerSession';
 import type { SessionModel } from '../lib/session/types';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
 import {
   SessionRuntimeRetiredError,
   type SessionMachineRuntime,
@@ -1444,16 +1445,31 @@ export class SessionController implements PollingGameSession {
 
   async quiesceForTerminalFinalization(): Promise<TerminalQuiescentSnapshot> {
     const maxPasses = 20;
+    let checkpointFailed = false;
+    const flushTerminalCheckpoint = async (flush: () => Promise<void>): Promise<void> => {
+      if (checkpointFailed) return;
+      try {
+        await flush();
+      } catch (error) {
+        if (
+          error instanceof StorageAuthorityLostError ||
+          error instanceof StorageAuthorityRequiredError
+        ) {
+          throw error;
+        }
+        checkpointFailed = true;
+      }
+    };
     for (let pass = 0; pass < maxPasses; pass += 1) {
       this.flushDeferredWork();
-      await this.flushPendingSave();
+      await flushTerminalCheckpoint(() => this.flushPendingSave());
 
       await Promise.allSettled([...this.pendingEffects]);
       await this.flushTransactionSubmissions();
-      await this.reliableTransport.flushPending();
+      await flushTerminalCheckpoint(() => this.reliableTransport.flushPending());
 
       this.flushDeferredWork();
-      await this.flushPendingSave();
+      await flushTerminalCheckpoint(() => this.flushPendingSave());
 
       if (
         this.pendingEffects.size === 0 &&

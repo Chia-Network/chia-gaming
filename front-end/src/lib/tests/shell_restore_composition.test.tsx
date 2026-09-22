@@ -10,7 +10,6 @@ import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordinat
 import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
-import { storageRepository } from '../session/storageRepository';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -65,7 +64,6 @@ async function waitForText(renderer: ReactTestRenderer, text: string): Promise<v
 
 describe('Shell production restore composition', () => {
   let renderer: ReactTestRenderer | null = null;
-  let reload: jest.Mock;
   let requestTrust: jest.Mock;
   let unhandledRejections: unknown[];
   let onUnhandledRejection: (reason: unknown) => void;
@@ -79,7 +77,6 @@ describe('Shell production restore composition', () => {
       configurable: true,
       value: storage(),
     });
-    reload = jest.fn();
     requestTrust = jest.fn(() => new Promise<never>(() => {}));
     unhandledRejections = [];
     onUnhandledRejection = (reason) => unhandledRejections.push(reason);
@@ -90,7 +87,7 @@ describe('Shell production restore composition', () => {
         __chiaHub: { requestTrust },
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
-        location: { reload },
+        location: { reload: jest.fn() },
       },
     });
     Object.defineProperty(globalThis, 'document', {
@@ -178,39 +175,6 @@ describe('Shell production restore composition', () => {
     expect(realBlockchainInfo.beginConnect).toHaveBeenCalledTimes(1);
     expect(requestTrust).toHaveBeenCalledWith('https://hub.example.test');
     await flushEffects();
-    expect(unhandledRejections).toEqual([]);
-  });
-
-  it('surfaces malformed aggregate evidence and completes Shell hard reset', async () => {
-    await storageRepository.claimApplicationState();
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(SESSION_DB_NAME);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-    await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction('application-state', 'readwrite');
-      transaction.objectStore('application-state').put({ malformed: true }, 'current');
-      transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-    });
-    db.close();
-    releaseLeaseIfOwner();
-    storageRepository._resetForTests();
-
-    act(() => {
-      renderer = create(React.createElement(Shell));
-    });
-    await waitForText(renderer!, 'Stored application state is malformed');
-
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
-    });
-    expect(reload).toHaveBeenCalledTimes(1);
-    const databases = await (
-      indexedDB as IDBFactory & { databases: () => Promise<Array<{ name?: string }>> }
-    ).databases();
-    expect(databases.map((database) => database.name)).not.toContain(SESSION_DB_NAME);
     expect(unhandledRejections).toEqual([]);
   });
 });

@@ -131,42 +131,60 @@ export function commitRuntime(controller: SessionController, runtime: Controlled
   controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
 }
 
+export function bestEffortWalletRpc(
+  beginCreation?: jest.Mock,
+  cancel?: jest.Mock,
+): Partial<InternalBlockchainInterface> {
+  return {
+    getWalletOfferProvider: () => ({
+      capability: 'best-effort',
+      scope: { provider: 'simulator', identity: 'submission-handoff' },
+      beginCreation:
+        beginCreation ??
+        jest.fn(async () => ({
+          kind: 'unavailable' as const,
+          reason: 'creation unavailable',
+        })),
+      cancel:
+        cancel ??
+        jest.fn(async () => ({
+          status: 'unavailable' as const,
+          detail: 'cancellation unavailable',
+        })),
+    }),
+  };
+}
+
+export function recoverableWalletRpc(
+  beginCreation: jest.Mock,
+  reconcileCreation: jest.Mock,
+  beginCancellation: jest.Mock = jest.fn(async () => ({
+    status: 'unavailable' as const,
+    detail: 'cancellation unavailable',
+  })),
+  reconcileCancellation: jest.Mock = jest.fn(async () => ({
+    status: 'unavailable' as const,
+    detail: 'cancellation unavailable',
+  })),
+): Partial<InternalBlockchainInterface> {
+  return {
+    getWalletOfferProvider: () => ({
+      capability: 'recoverable',
+      scope: { provider: 'simulator', identity: 'submission-handoff' },
+      beginCreation,
+      reconcileCreation,
+      beginCancellation,
+      reconcileCancellation,
+    }),
+  };
+}
+
 export function setup(
   spend: jest.Mock,
   rpcOverrides: Partial<InternalBlockchainInterface> = {},
   walletProviderScope?: WalletProviderScope,
 ) {
-  const legacy = rpcOverrides as Record<string, any>;
   const adapter = { ...mockRpc, spend, ...rpcOverrides } as InternalBlockchainInterface;
-  if (!rpcOverrides.getWalletOfferProvider) {
-    adapter.getWalletOfferProvider = () => {
-      const scope = { provider: 'simulator' as const, identity: 'submission-handoff' };
-      if (legacy.reconcileWalletOffer) {
-        return {
-          capability: 'recoverable' as const,
-          scope,
-          beginCreation: legacy.beginWalletOffer,
-          reconcileCreation: legacy.reconcileWalletOffer,
-          beginCancellation:
-            legacy.beginWalletOfferCancellation ??
-            (async () => ({ status: 'unavailable' as const, detail: 'cancellation unavailable' })),
-          reconcileCancellation:
-            legacy.reconcileWalletOfferCancellation ??
-            (async () => ({ status: 'unavailable' as const, detail: 'cancellation unavailable' })),
-        };
-      }
-      return {
-        capability: 'best-effort' as const,
-        scope,
-        beginCreation:
-          legacy.beginWalletOffer ??
-          (async () => ({ kind: 'unavailable' as const, reason: 'creation unavailable' })),
-        cancel:
-          legacy.beginWalletOfferCancellation ??
-          (async () => ({ status: 'unavailable' as const, detail: 'cancellation unavailable' })),
-      };
-    };
-  }
   const blockchain = new BlockchainPoller(adapter, 60_000);
   blockchain.refreshProviderReadiness();
   const controller = new SessionController(

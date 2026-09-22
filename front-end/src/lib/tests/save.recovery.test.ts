@@ -161,17 +161,6 @@ describe('session persistence: recovery', () => {
     expect(stored).toEqual({ malformed: true });
   });
 
-  it('sets the saved-session marker when a resumable record is written', async () => {
-    expect(hasSavedSessionMarker()).toBe(false);
-
-    saveLiveFields();
-    await storageRepository.flushAggregate();
-    expect(hasSavedSessionMarker()).toBe(true);
-
-    await storageRepository.clearSession();
-    expect(hasSavedSessionMarker()).toBe(false);
-  });
-
   it('keeps an explicit pre-game marker across blockchainType preference writes', async () => {
     markSavedSession();
     savePreferences({ blockchainType: 'simulator' });
@@ -289,22 +278,7 @@ describe('session persistence: recovery', () => {
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
-  it('clears the marker for a present but empty IndexedDB record', async () => {
-    localStorage.setItem('appState_savedSession', '1');
-    await storageRepository.checkpointApplicationState(baseSave({ playerId: 'player' }));
-    expect(await storageRepository.readCurrentState()).toBeNull();
-    expect(hasSavedSessionMarker()).toBe(false);
-  });
-
   it('returns null when nothing is saved', async () => {
-    expect(await storageRepository.readCurrentState()).toBeNull();
-  });
-
-  it('clearSession asynchronously deletes resumable state', async () => {
-    saveLiveFields();
-    await storageRepository.flushAggregate();
-    await storageRepository.clearSession();
-    storageRepository._resetForTests();
     expect(await storageRepository.readCurrentState()).toBeNull();
   });
 

@@ -736,9 +736,16 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       },
     );
 
-    const srId = created.createOffer?.signatureRequest?.id;
-    if (!srId) {
-      throw new Error('createOffer did not return a signatureRequest');
+    const createOffer = created.createOffer;
+    if (!createOffer) {
+      throw new Error('createOffer mutation returned no result');
+    }
+    const signatureRequest = createOffer.signatureRequest;
+    const srId = signatureRequest?.id;
+    if (typeof srId !== 'string' || !srId) {
+      throw new SignatureRequestUnavailableError(
+        'createOffer succeeded without a signatureRequest ID',
+      );
     }
 
     return { kind: 'pending', recoveryId: srId };
@@ -759,7 +766,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         });
       } catch (error) {
         const reason = cloudErrorDetail(error);
-        return error instanceof CloudWalletTransportError
+        return error instanceof CloudWalletTransportError ||
+          error instanceof SignatureRequestUnavailableError
           ? { kind: 'unavailable', reason }
           : { kind: 'failure', reason };
       }
@@ -780,7 +788,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       );
     } catch (error) {
       const reason = cloudErrorDetail(error);
-      if (error instanceof CloudWalletTransportError) {
+      if (
+        error instanceof CloudWalletTransportError ||
+        error instanceof SignatureRequestUnavailableError
+      ) {
         return { kind: 'unavailable', reason };
       }
       return { kind: 'failure', reason };

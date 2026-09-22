@@ -185,6 +185,33 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(input.extraConditions).toEqual([`ff40ffa0${protocolCoinId}80`]);
   });
 
+  it.each([
+    [
+      'funding',
+      { kind: 'funding' as const, uniqueId: 'uid', offer: { '1': -1000n } },
+      { createOffer: { signatureRequest: null } },
+    ],
+    [
+      'fee',
+      {
+        kind: 'fee' as const,
+        uniqueId: 'uid',
+        fee: 500n,
+        concurrentSpendCoinId: 'ab'.repeat(32),
+      },
+      { createOffer: { signatureRequest: { id: '', status: 'PENDING' } } },
+    ],
+  ])('keeps identity-less successful %s creation uncertain', async (_label, request, response) => {
+    mockGraphql((query) => (query.includes('createOffer') ? response : {}));
+
+    await expect(
+      new CloudBlockchainInterface().beginWalletOffer(testOperation, request),
+    ).resolves.toEqual({
+      kind: 'unavailable',
+      reason: expect.stringMatching(/without a signatureRequest ID/),
+    });
+  });
+
   it('reports fee-spend transport failure as unavailable', async () => {
     setTestGlobal('fetch', jest.fn().mockRejectedValue(new TypeError('network disconnected')));
     const iface = new CloudBlockchainInterface();

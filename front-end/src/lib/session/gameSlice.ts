@@ -76,10 +76,6 @@ function newInstance(id: string, amount: string, turnState: GameTurnState): Game
   };
 }
 
-export function gameSliceInstanceFromModel(instance: GameInstanceModel): GameSliceInstance {
-  return instance;
-}
-
 export function gameInstanceModelFromSlice(instance: GameSliceInstance): GameInstanceViewModel {
   return gameInstanceView(instance);
 }

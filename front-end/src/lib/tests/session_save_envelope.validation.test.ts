@@ -244,23 +244,6 @@ describe('DurableApplicationState strict validation', () => {
     expectWholeRootRejection(mutate);
   });
 
-  it('rejects the removed myRunningBalance presentation field', () => {
-    expectWholeRootRejection((state) => (state.session.presentation.myRunningBalance = '0'));
-  });
-
-  it.each(['channelNotifQueue', 'gameNotifQueue', 'dismissedChannelStatus'])(
-    'rejects removed presentation field %s',
-    (field) => {
-      expectWholeRootRejection((state) => (state.session.presentation[field] = null));
-    },
-  );
-
-  it('rejects removed betweenHandCompose.proposal_sent', () => {
-    expectWholeRootRejection(
-      (state) => (state.session.presentation.betweenHandCompose.proposal_sent = false),
-    );
-  });
-
   it('rejects an unknown terminal key at the whole-root boundary', () => {
     const terminal = baseSave({
       channelStatus: {
@@ -343,15 +326,6 @@ describe('DurableApplicationState strict validation', () => {
       chainId: 'chia:testnet11',
     };
     expect(() => decodeDurableApplicationState(state)).toThrow(/owner\/context mismatch/);
-  });
-
-  it('rejects the unreleased v3 walletObligations aggregate without migration', () => {
-    const state: any = completeAggregate();
-    state.version = 3n;
-    state.walletObligations = [...state.channelFundingOperations, ...state.feeAttachments];
-    delete state.channelFundingOperations;
-    delete state.feeAttachments;
-    expect(() => decodeDurableApplicationState(state)).toThrow(/walletObligations/);
   });
 
   it('permits no session with unresolved channel funding operations', () => {

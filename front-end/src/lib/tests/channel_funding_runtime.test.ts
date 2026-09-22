@@ -12,7 +12,13 @@ import {
   testSpendBundle,
   wasmResult,
 } from './message_protocol.harness';
-import { commitRuntime, ControlledRuntime, setup } from './runtime_capability.harness';
+import {
+  bestEffortWalletRpc,
+  commitRuntime,
+  ControlledRuntime,
+  recoverableWalletRpc,
+  setup,
+} from './runtime_capability.harness';
 import { storageRepository } from '../session/storageRepository';
 import type { ChannelFundingEntry } from '../session/channelFundingStore';
 import { entriesForOwner } from '../session/channelFundingSelectors';
@@ -67,7 +73,10 @@ describe('durable channel funding record', () => {
       material: { kind: 'bundle', bundle: testSpendBundle('restore-before-adapter') },
     });
     const blockchain = new BlockchainPoller(
-      { ...mockRpc, beginWalletOffer } as InternalBlockchainInterface,
+      {
+        ...mockRpc,
+        ...bestEffortWalletRpc(beginWalletOffer),
+      } as InternalBlockchainInterface,
       60_000,
     );
     controller.attachBlockchain(blockchain);
@@ -103,7 +112,7 @@ describe('durable channel funding record', () => {
     'delivers $label funding material while known reservations await Rust channel facts',
     async ({ outcome, callback }) => {
       const beginWalletOffer = jest.fn().mockResolvedValue(outcome);
-      const { controller, cradle } = setup(jest.fn(), { beginWalletOffer });
+      const { controller, cradle } = setup(jest.fn(), bestEffortWalletRpc(beginWalletOffer));
       if (callback === 'provide_offer_bech32') {
         (
           cradle as typeof cradle & {
@@ -154,11 +163,10 @@ describe('durable channel funding record', () => {
       tradeId: 'Offer_notification',
     });
     const beginWalletOfferCancellation = jest.fn();
-    const { controller, cradle } = setup(jest.fn(), {
-      beginWalletOffer,
-      reconcileWalletOffer,
-      beginWalletOfferCancellation,
-    });
+    const { controller, cradle } = setup(
+      jest.fn(),
+      recoverableWalletRpc(beginWalletOffer, reconcileWalletOffer, beginWalletOfferCancellation),
+    );
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -192,10 +200,10 @@ describe('durable channel funding record', () => {
       material: { kind: 'bundle', bundle: testSpendBundle('ledger-only-funding') },
       tradeId: 'Offer_ledger_only',
     });
-    const { controller, cradle } = setup(jest.fn(), {
-      beginWalletOffer,
-      reconcileWalletOffer,
-    });
+    const { controller, cradle } = setup(
+      jest.fn(),
+      recoverableWalletRpc(beginWalletOffer, reconcileWalletOffer),
+    );
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -316,7 +324,10 @@ describe('durable channel funding record', () => {
 
   it('forgets a restored awaiting-channel reservation on typed confirmation without cancellation', async () => {
     const beginWalletOfferCancellation = jest.fn();
-    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
+    const { controller } = setup(
+      jest.fn(),
+      bestEffortWalletRpc(undefined, beginWalletOfferCancellation),
+    );
     const request = canonicalizeFundingRequest({
       amount: '100',
       fee: '0',
@@ -383,7 +394,10 @@ describe('durable channel funding record', () => {
     const beginWalletOfferCancellation = jest
       .fn()
       .mockResolvedValue({ status: 'cancelled' as const });
-    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation });
+    const { controller } = setup(
+      jest.fn(),
+      bestEffortWalletRpc(undefined, beginWalletOfferCancellation),
+    );
     try {
       commitRuntime(controller, new ControlledRuntime());
       controller.processResult(
@@ -403,7 +417,7 @@ describe('durable channel funding record', () => {
   });
 
   it('does not block terminal finalization on durable cancellation cleanup', async () => {
-    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: undefined });
+    const { controller } = setup(jest.fn(), bestEffortWalletRpc());
     const lease = new ControlledRuntime();
     try {
       installAggregateWallet([
@@ -443,7 +457,7 @@ describe('durable channel funding record', () => {
         reason: 'walletconnect-response-unavailable',
       },
     ]);
-    const { controller } = setup(jest.fn(), { beginWalletOfferCancellation: cancel });
+    const { controller } = setup(jest.fn(), bestEffortWalletRpc(undefined, cancel));
     try {
       commitRuntime(controller, new ControlledRuntime());
       controller.processResult(wasmResult({ events: [{ ChannelCreationTimedOut: null }] }));
@@ -556,10 +570,7 @@ describe('durable channel funding record', () => {
       material: { kind: 'offer', offer: 'offer1rejected' },
       tradeId: 'trade-rejected-material',
     });
-    const { controller, cradle } = setup(jest.fn(), {
-      beginWalletOffer,
-      beginWalletOfferCancellation: cancel,
-    });
+    const { controller, cradle } = setup(jest.fn(), bestEffortWalletRpc(beginWalletOffer, cancel));
     cradle.provide_offer_bech32 = jest.fn(() => {
       throw new Error('Rust rejected funding material');
     });
@@ -590,10 +601,7 @@ describe('durable channel funding record', () => {
       material: { kind: 'offer', offer: 'offer1accepted' },
       tradeId: 'trade-accepted-material',
     });
-    const { controller, cradle } = setup(jest.fn(), {
-      beginWalletOffer,
-      beginWalletOfferCancellation: cancel,
-    });
+    const { controller, cradle } = setup(jest.fn(), bestEffortWalletRpc(beginWalletOffer, cancel));
     cradle.provide_offer_bech32 = jest.fn(() => wasmResult({ events: [{} as never] }));
     cradle.wallet_callback_failed = jest.fn(() => wasmResult());
     const request = canonicalizeFundingRequest({

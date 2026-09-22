@@ -5,7 +5,6 @@ import type {
   SessionMachineTransition,
 } from './sessionMachineTypes';
 import { isUncancelledProposal } from './proposalPolicy';
-export { isUncancelledProposal, isUncancelledProposalLifecycle } from './proposalPolicy';
 import type { PendingProposalLifecycle, PendingProposalModel, ProposalOrigin } from './types';
 
 export type ProposalEvent = Extract<

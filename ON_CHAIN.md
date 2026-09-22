@@ -162,7 +162,7 @@ the spend created:
 - **Our timeout claim confirmed** (spend pays our reward puzzle hash): settlement
   confirmed in our favor — `GameSettled` with an outcome such as `we_accepted`,
   `settled_cleanly`, `slashed_opponent`, or a forfeit variant when `our_share`
-  is zero (see [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)).
+  is zero (see [Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)).
 - **Opponent moved/claimed** (spend pays *their* reward puzzle hash): in the
 common case our eager claim simply never confirms because the opponent spent
 the coin first (a normal move advances the game; a timeout claim against our
@@ -453,7 +453,7 @@ When our share of a game is zero, there is no reason to wait for on-chain
 timeouts, submit transactions, or perform redo moves — those operations cost
 time and transaction fees for no reward.  In these cases the system immediately
 emits `GameSettled { our_share: 0, outcome: … }` (a forfeit outcome from the
-[settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)) and removes the
+[Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)) and removes the
 game from tracking.
 
 Conversely, when our share is the full game amount or the game is terminal with

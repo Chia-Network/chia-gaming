@@ -3,10 +3,10 @@ import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
 import { parsePendingProposals } from '../session/persistenceBetweenHands';
+import { isUncancelledProposal } from '../session/proposalPolicy';
 import { snapshotFromSessionModel } from '../session/sessionSnapshot';
 import type { PendingProposalModel } from '../session/types';
 import { selectIncomingProposal } from '../session/selectors';
-import { isUncancelledProposal } from '../session/sessionMachineProposals';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
 import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 

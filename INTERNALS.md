@@ -166,7 +166,7 @@ Focused coverage lives in `src/transaction_manager.rs`, including
 `height_only_rollback_replay_survives_drain_failure_and_restore`,
 `restored_equal_or_higher_tip_reorg_replays_exact_current_variant_per_epoch`,
 `conflicting_spend_prunes_once_expected_output_is_watched`, and
-`requeue_submitted_discards_expired_transactions`. The browser/simulator restore
+`chain_snapshot_ready_discards_expired_transactions`. The browser/simulator restore
 boundary is covered by the offline equal-tip replacement case in
 `front-end/src/lib/tests/load_wasm.unroll_reload.test.ts`.
 
@@ -523,13 +523,11 @@ Rust creates the canonical request, the external wallet constructs the funding
 offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
-The current app-owned persistence contracts are `DurableApplicationState` v4,
-opaque Rust/WASM cradle schema 22, and app IndexedDB v5. Their explicit
-versions are future migration hooks. None has shipped, so strict decoding
-accepts only the current aggregate; it does not migrate, alias, salvage, or
-fallback-decode predecessors. Deployed Cloud/WalletConnect RPC, Chia offer
-compression and Coinset JSON, peer/on-chain protocols, and signed-unroll
-recognition remain compatibility-sensitive external contracts.
+The current app-owned contracts are `DurableApplicationState` v4, opaque
+Rust/WASM cradle schema 22, and app IndexedDB v5. Internally, that means a
+non-current version is an unsupported root, not an alternate restore path; see
+the canonical
+[unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
 Rust snapshots convert `usize` state numbers through checked `u64`; WASM and
 all internal/persisted JavaScript channel state-number fields are `bigint`.
 Conversion to `number` is restricted to external APIs that require it, and

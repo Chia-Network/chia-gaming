@@ -45,6 +45,7 @@ export class ChannelFundingRuntime {
   private readonly pendingAuthorityTransfers = new Map<string, () => void>();
   private readonly listeners = new Set<() => void>();
   private lifecycleUnsubscribe: (() => void) | null = null;
+  private minimumTransferGeneration = 0;
   constructor(
     private readonly providerRegistry: WalletProviderRegistry = new WalletProviderRegistry(),
   ) {
@@ -54,11 +55,17 @@ export class ChannelFundingRuntime {
 
   private subscribeLifecycle(): void {
     this.lifecycleUnsubscribe?.();
-    this.lifecycleUnsubscribe = storageRepository.onLifecycle((_generation, event) => {
+    this.lifecycleUnsubscribe = storageRepository.onLifecycle((generation, event) => {
       if (event === 'claim') {
         this.drainAuthorityTransfers();
         this.resumeAll();
-      } else this.retireTransientWork();
+      } else {
+        this.retireTransientWork();
+        if (event === 'hard-reset') {
+          this.minimumTransferGeneration = generation;
+          this.pendingAuthorityTransfers.clear();
+        }
+      }
     });
   }
 
@@ -247,7 +254,7 @@ export class ChannelFundingRuntime {
     if (completion.kind === 'pending') {
       const recoveryId = completion.recoveryId;
       if (!storageRepository.isGenerationCurrent(generation)) {
-        this.transferToCurrent(owner, () => {
+        this.transferToCurrent(owner, generation, () => {
           const current = entryForOperation(this.entries(), owner, purpose);
           if (current?.stage === 'creating') return;
           if (current?.stage === 'best-effort-uncertain') {
@@ -307,7 +314,7 @@ export class ChannelFundingRuntime {
     if (!storageRepository.isGenerationCurrent(generation)) {
       if (completion.kind === 'created-reserved') {
         const reservedCompletion = completion;
-        this.transferToCurrent(owner, () => {
+        this.transferToCurrent(owner, generation, () => {
           this.replace(null, {
             owner,
             purpose,
@@ -385,7 +392,7 @@ export class ChannelFundingRuntime {
       });
     };
     if (!storageRepository.isGenerationCurrent(generation)) {
-      this.transferToCurrent(owner, install);
+      this.transferToCurrent(owner, generation, install);
       return;
     }
     install();
@@ -681,10 +688,17 @@ export class ChannelFundingRuntime {
     const entry = this.entries().find((candidate) => channelFundingEntryKey(candidate) === channelFundingTradeKey(providerReservationId)); return entry && entry.stage !== 'creating' && entry.stage !== 'best-effort-uncertain' ? entry : null;
   }
 
-  private transferToCurrent(owner: ChannelFundingOwner, apply: () => void): void {
+  private transferToCurrent(
+    owner: ChannelFundingOwner,
+    sourceGeneration: number,
+    apply: () => void,
+  ): void {
+    if (sourceGeneration < this.minimumTransferGeneration) return;
     const key = `transfer:${providerOwnerKey(owner)}`;
     if (!storageRepository.hasAuthority()) {
-      this.pendingAuthorityTransfers.set(key, () => this.transferToCurrent(owner, apply));
+      this.pendingAuthorityTransfers.set(key, () =>
+        this.transferToCurrent(owner, sourceGeneration, apply),
+      );
       return;
     }
     const generation = storageRepository.lifecycleGeneration;
@@ -730,6 +744,7 @@ export class ChannelFundingRuntime {
     this.providerRegistry.clear();
     this.retireTransientWork();
     this.pendingAuthorityTransfers.clear();
+    this.minimumTransferGeneration = 0;
     this.listeners.clear();
   }
 }

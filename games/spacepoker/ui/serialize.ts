@@ -213,10 +213,7 @@ export function isSpacepokerHandState(value: unknown): value is SpacepokerHandSt
   );
 }
 
-function initialState(
-  init: GameHandInitialization,
-  unitSizeMojos: bigint,
-): SpacepokerHandState {
+function initialState(init: GameHandInitialization, unitSizeMojos: bigint): SpacepokerHandState {
   const member = init.members[0]!;
   if (
     member.playerAContribution <= 0n ||
@@ -282,7 +279,7 @@ type SpacepokerReadableEvent =
   | { type: 'opponent-moved'; readable: Program }
   | { type: 'game-message'; readable: Program };
 
-function reduceSpacepokerSettlementStateCore(
+export function reduceSpacepokerSettlementState(
   current: SpacepokerHandState,
   outcome: SettlementOutcome,
 ): SpacepokerHandState {
@@ -370,13 +367,6 @@ function reduceSpacepokerSettlementStateCore(
     outcome: null,
     terminalState: 'settled',
   };
-}
-
-export function reduceSpacepokerSettlementState(
-  current: SpacepokerHandState,
-  outcome: SettlementOutcome,
-): SpacepokerHandState {
-  return reduceSpacepokerSettlementStateCore(current, outcome);
 }
 
 function bigints(program: Program): bigint[] {
@@ -551,7 +541,9 @@ function reduceSpacepokerHandState(
   event: GameUpdate,
 ): SpacepokerHandState {
   if (event.type === 'hand-ended') {
-    const settled = event.outcome ? reduceSpacepokerSettlementState(current, event.outcome) : current;
+    const settled = event.outcome
+      ? reduceSpacepokerSettlementState(current, event.outcome)
+      : current;
     return {
       ...settled,
       gameState: { ...settled.gameState, myTurn: false },

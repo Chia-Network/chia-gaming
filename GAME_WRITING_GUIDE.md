@@ -171,18 +171,18 @@ exactly these 11 fields:
 
 The fields mean:
 
-| Field | Required value |
-| --- | --- |
-| `proposer_contribution`, `accepter_contribution` | Factory-approved mojo contributions for this member. |
-| `proposer_goes_first` | Canonical nil or `1`. |
-| `initial_move` | The first committed move as a CLVM atom; use nil when there is no pre-existing move. |
-| `initial_max_move_size` | Maximum byte length accepted for that move. |
-| `initial_state` | Initial validator state; normally canonical nil, or another CLVM value when the first transition genuinely needs pre-existing state. |
-| `initial_mover_share` | Mover's timeout payout in mojos, between zero and the member's total amount. |
-| `my_turn_handler` | Off-chain program for the player who starts. |
-| `their_turn_handler` | Off-chain program for the waiting player. |
-| `validation_programs` | Proper, nonempty list of all validator programs. The first is initially current; later order is irrelevant because programs are selected by tree hash. |
-| `readable_parameters` | Opaque per-member CLVM initialization value reported to the host. |
+| Field                                            | Required value                                                                                                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `proposer_contribution`, `accepter_contribution` | Factory-approved mojo contributions for this member.                                                                                                   |
+| `proposer_goes_first`                            | Canonical nil or `1`.                                                                                                                                  |
+| `initial_move`                                   | The first committed move as a CLVM atom; use nil when there is no pre-existing move.                                                                   |
+| `initial_max_move_size`                          | Maximum byte length accepted for that move.                                                                                                            |
+| `initial_state`                                  | Initial validator state; normally canonical nil, or another CLVM value when the first transition genuinely needs pre-existing state.                   |
+| `initial_mover_share`                            | Mover's timeout payout in mojos, between zero and the member's total amount.                                                                           |
+| `my_turn_handler`                                | Off-chain program for the player who starts.                                                                                                           |
+| `their_turn_handler`                             | Off-chain program for the waiting player.                                                                                                              |
+| `validation_programs`                            | Proper, nonempty list of all validator programs. The first is initially current; later order is irrelevant because programs are selected by tree hash. |
+| `readable_parameters`                            | Opaque per-member CLVM initialization value reported to the host.                                                                                      |
 
 The handler fields are program values, not names. Curry secrets or
 role-specific data into them when needed. California Poker validates a positive
@@ -845,8 +845,10 @@ protocol IDs.
 Single-member games use index 0. The host treats `getState()` as opaque
 Bencodex-compatible data and saves `{ gameType, state }` generically. Game-owned
 persisted state stores member order/indices, not protocol IDs.
-Games do not provide envelope serializers, versions, compatibility decoders, or
-migrations.
+Games therefore implement one exact current-state validator in `restoreHand`,
+not an envelope/version layer. The host owns incompatible-root handling under
+the canonical
+[unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
 
 Every playable package must support a frozen mount and `restoreHand`. A finished
 session always attempts a cold read-only remount when a valid
@@ -898,10 +900,7 @@ type GameMountView = {
   hand: ConcretePackageHand;
   myName?: string;
   opponentName?: string;
-} & (
-  | { frozen: false; port: LiveGamePort; appendGameLog(line: string): void }
-  | { frozen: true }
-);
+} & ({ frozen: false; port: LiveGamePort; appendGameLog(line: string): void } | { frozen: true });
 ```
 
 Keep `play.tsx` thin. California Poker's registration is essentially:
@@ -1008,10 +1007,7 @@ const commitState = (reducer: (state: HandState) => HandState) => {
   live.port.dispatch({ type: 'state-changed' });
 };
 
-const commitMove = (
-  reducer: (state: HandState) => HandState,
-  readable: Program | null,
-) => {
+const commitMove = (reducer: (state: HandState) => HandState, readable: Program | null) => {
   const live = requireLiveGameMount(viewRef.current);
   live.hand.update(reducer);
   live.port.dispatch({ type: 'make-move', memberIndex: 0, readable });
@@ -1063,10 +1059,7 @@ useEffect(() => {
   const key = `opening:${state.moveNumber}`;
   if (submittedRef.current === key) return;
   submittedRef.current = key;
-  commitMove(
-    (current) => ({ ...current, moveNumber: 1n, isPlayerTurn: false }),
-    null,
-  );
+  commitMove((current) => ({ ...current, moveNumber: 1n, isPlayerTurn: false }), null);
 }, [view.frozen, state.isPlayerTurn, state.moveNumber, commitMove]);
 ```
 
@@ -1115,6 +1108,7 @@ asserts that
 `members[0].playerAContribution === members[0].playerBContribution`, then stores
 that contribution and `members[0].ourTurn`. Assert your expected member count,
 contribution topology, and decoded parameters in `createHand`.
+
 - `move-readable` addresses one member of the hand. `readable` is the
   deserialized CLVM readable returned by the opponent-move handler.
   `moverShare` is a mojo-denominated `bigint`.
@@ -1180,7 +1174,6 @@ type SettlementOutcome =
   | 'slashed_opponent'
   | 'opponent_slashed_us'
   | 'opponent_cheated';
-
 ```
 
 The player app separately owns reward coin IDs, normalized reward amounts,

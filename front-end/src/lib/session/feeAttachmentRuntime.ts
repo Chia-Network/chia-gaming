@@ -37,6 +37,8 @@ export interface FeeAttachmentRuntimePorts {
   reportWarning(message: string): void;
 }
 
+const processKnownUncertainty = new WeakMap<WalletProviderRegistry, Set<string>>();
+
 export class FeeAttachmentRuntime {
   private readonly flights = new Map<string, ProviderFlight>();
   private readonly completed = new Map<
@@ -44,25 +46,38 @@ export class FeeAttachmentRuntime {
     Extract<WalletOfferCompletion, { kind: 'created-reserved' }>
   >();
   private readonly transfers = new Map<string, () => void>();
+  private readonly restoredUncertain = new Set<string>();
+  private readonly knownUncertain: Set<string>;
   private readonly unsubscribe: (() => void)[];
   private detached = false;
+  private minimumTransferGeneration = 0;
 
   constructor(
     private readonly ports: FeeAttachmentRuntimePorts,
     private readonly providers: WalletProviderRegistry = walletProviderRegistry,
   ) {
+    this.knownUncertain = processKnownUncertainty.get(providers) ?? new Set<string>();
+    processKnownUncertainty.set(providers, this.knownUncertain);
     this.unsubscribe = [
       providers.subscribe((event) => this.providerEvent(event)),
-      storageRepository.onLifecycle((_generation, event) => {
+      storageRepository.onLifecycle((generation, event) => {
         if (event === 'claim') {
+          this.markRestoredUncertain();
           this.drainTransfers();
           this.resume();
         } else {
           this.flights.clear();
           this.completed.clear();
+          if (event === 'hard-reset') {
+            this.minimumTransferGeneration = generation;
+            this.transfers.clear();
+            this.restoredUncertain.clear();
+            this.knownUncertain.clear();
+          }
         }
       }),
     ];
+    this.markRestoredUncertain();
     this.resume();
   }
 
@@ -201,7 +216,7 @@ export class FeeAttachmentRuntime {
         });
       };
       if (!storageRepository.isGenerationCurrent(generation)) {
-        this.transfer(owner, submissionId, pending);
+        this.transfer(owner, submissionId, generation, pending);
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
       pending();
@@ -216,7 +231,7 @@ export class FeeAttachmentRuntime {
     }
     if (!storageRepository.isGenerationCurrent(generation)) {
       if (outcome.kind === 'created-reserved') {
-        this.transfer(owner, submissionId, () => {
+        this.transfer(owner, submissionId, generation, () => {
           this.replace(null, {
             owner,
             submissionId,
@@ -269,7 +284,7 @@ export class FeeAttachmentRuntime {
   ): void {
     const apply = () => {
       if (feeAttachmentForSubmission(this.entries(), owner, submissionId)) return;
-      this.replace(null, {
+      const uncertain: FeeAttachmentUncertain = {
         owner,
         submissionId,
         stage: 'best-effort-uncertain',
@@ -278,10 +293,12 @@ export class FeeAttachmentRuntime {
         lastAttemptEpoch: BigInt(this.providers.readinessEpoch(owner.providerScope)),
         reason: 'fee-create-response-unavailable',
         orphanRisk: 'pre-id-response-lost',
-      });
+      };
+      this.knownUncertain.add(feeAttachmentEntryKey(uncertain));
+      this.replace(null, uncertain);
     };
     if (storageRepository.isGenerationCurrent(generation)) apply();
-    else this.transfer(owner, submissionId, apply);
+    else this.transfer(owner, submissionId, generation, apply);
   }
 
   private resume(): void {
@@ -317,13 +334,11 @@ export class FeeAttachmentRuntime {
   private replaceUncertain(entry: FeeAttachmentUncertain): void {
     const provider = this.providers.provider(entry.owner.providerScope);
     const epoch = BigInt(this.providers.readinessEpoch(entry.owner.providerScope));
-    if (
-      !provider ||
-      !canLosePreIdResponse(provider) ||
-      epoch === 0n ||
-      epoch <= entry.lastAttemptEpoch
-    )
-      return;
+    const key = feeAttachmentEntryKey(entry);
+    const restored = this.restoredUncertain.has(key);
+    if (!provider || !canLosePreIdResponse(provider) || epoch === 0n) return;
+    if (!restored && epoch <= entry.lastAttemptEpoch) return;
+    this.restoredUncertain.delete(key);
     this.replace(entry, { ...entry, lastAttemptEpoch: epoch });
     void this.flight(`replace:${entry.submissionId}`, async () => {
       const outcome = await this.create(
@@ -350,7 +365,10 @@ export class FeeAttachmentRuntime {
     }
     if (entry.stage === 'best-effort-cancellation-uncertain') {
       const epoch = BigInt(this.providers.readinessEpoch(entry.owner.providerScope));
-      if (!epoch || epoch <= entry.lastAttemptEpoch) return Promise.resolve();
+      const key = feeAttachmentEntryKey(entry);
+      const restored = this.restoredUncertain.has(key);
+      if (!epoch || (!restored && epoch <= entry.lastAttemptEpoch)) return Promise.resolve();
+      this.restoredUncertain.delete(key);
       this.replace(entry, { ...entry, lastAttemptEpoch: epoch });
     }
     return this.flight(`cancel:${id}`, async () => {
@@ -377,12 +395,14 @@ export class FeeAttachmentRuntime {
           provider.capability === 'recoverable-after-begin' &&
           entry.stage !== 'cancelling'
         ) {
-          this.replace(entry, {
+          const uncertain = {
             ...entry,
             stage: 'best-effort-cancellation-uncertain',
             lastAttemptEpoch: BigInt(this.providers.readinessEpoch(entry.owner.providerScope)),
             reason: 'fee-cancellation-response-unavailable',
-          });
+          } as const;
+          this.knownUncertain.add(feeAttachmentEntryKey(uncertain));
+          this.replace(entry, uncertain);
           return;
         }
       } catch (error) {
@@ -426,6 +446,15 @@ export class FeeAttachmentRuntime {
     if (!storageRepository.hasAuthority()) return;
     const currentKey = current ? feeAttachmentEntryKey(current) : null;
     const nextKey = next ? feeAttachmentEntryKey(next) : null;
+    if (
+      currentKey &&
+      (current?.stage === 'best-effort-uncertain' ||
+        current?.stage === 'best-effort-cancellation-uncertain') &&
+      next?.stage !== 'best-effort-uncertain' &&
+      next?.stage !== 'best-effort-cancellation-uncertain'
+    ) {
+      this.knownUncertain.delete(currentKey);
+    }
     const entries = storageRepository.feeAttachments().filter((entry) => {
       const key = feeAttachmentEntryKey(entry);
       return key !== currentKey && key !== nextKey;
@@ -436,15 +465,24 @@ export class FeeAttachmentRuntime {
   }
 
   private flight<T>(key: string, launch: () => Promise<T>): Promise<T> {
-    return coalesceProviderFlight(this.flights, key, () =>
-      launch().finally(() => this.maybeDispose()),
+    const promise = coalesceProviderFlight(this.flights, key, launch);
+    void promise.then(
+      () => this.maybeDispose(),
+      () => this.maybeDispose(),
     );
+    return promise;
   }
 
-  private transfer(owner: FeeAttachmentOwner, id: string, work: () => void): void {
+  private transfer(
+    owner: FeeAttachmentOwner,
+    id: string,
+    sourceGeneration: number,
+    work: () => void,
+  ): void {
+    if (sourceGeneration < this.minimumTransferGeneration) return;
     const key = `${providerScopeKey(owner.providerScope)}:${id}`;
     if (!storageRepository.hasAuthority()) {
-      this.transfers.set(key, () => this.transfer(owner, id, work));
+      this.transfers.set(key, () => this.transfer(owner, id, sourceGeneration, work));
       return;
     }
     storageRepository.ensureWalletContext(owner.providerScope);
@@ -457,10 +495,26 @@ export class FeeAttachmentRuntime {
     transfers.forEach((transfer) => transfer());
   }
 
+  private markRestoredUncertain(): void {
+    for (const entry of this.entries()) {
+      if (
+        entry.stage === 'best-effort-uncertain' ||
+        entry.stage === 'best-effort-cancellation-uncertain'
+      ) {
+        const key = feeAttachmentEntryKey(entry);
+        if (!this.knownUncertain.has(key)) {
+          this.knownUncertain.add(key);
+          this.restoredUncertain.add(key);
+        }
+      }
+    }
+  }
+
   private maybeDispose(): void {
     if (!this.detached || this.flights.size) return;
     this.unsubscribe.splice(0).forEach((unsubscribe) => unsubscribe());
     this.completed.clear();
     this.transfers.clear();
+    this.restoredUncertain.clear();
   }
 }

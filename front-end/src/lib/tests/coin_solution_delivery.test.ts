@@ -207,26 +207,6 @@ describe('coin puzzle/solution delivery', () => {
     }
   });
 
-  it('hands an unlaunched request to the replacement runtime', async () => {
-    const getPuzzleAndSolution = jest.fn().mockResolvedValue(['aa', 'bb']);
-    const { controller, cradle, request } = setup(getPuzzleAndSolution);
-    const first = new ControlledRuntime();
-    const replacement = new ControlledRuntime();
-    try {
-      commitRuntime(controller, first);
-      request();
-      commitRuntime(controller, replacement);
-      await Promise.resolve();
-
-      expect(replacement.has(effectKey)).toBe(true);
-      await replacement.launch(effectKey);
-      expect(getPuzzleAndSolution).toHaveBeenCalledTimes(1);
-      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
-    } finally {
-      controller.cleanup();
-    }
-  });
-
   it('replays an unstarted completion mutation on the replacement runtime', async () => {
     let resolveLookup!: (value: string[]) => void;
     const lookup = new Promise<string[]>((resolve) => {

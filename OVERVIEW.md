@@ -5,16 +5,15 @@ codebase — a system for playing two-player games over Chia state channels.
 For detailed coverage of specific areas, see [Further Reading](#further-reading)
 at the end of this document.
 
-**Early beta status:** The project works, but bugs are still likely. No player
-app or hub persistence format has been released. Explicit browser aggregate,
-IndexedDB, and WASM versions are retained as future migration hooks, while
-app-owned state decodes only the current format today. Compatibility remains
-mandatory for deployed wallet APIs and Chia, on-chain, and peer protocol contracts.
+**Early beta status:** The project works, but bugs are still likely. Its
+unreleased-format policy is stated in
+[Unreleased app-owned formats](#unreleased-app-owned-formats).
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Design Philosophy: Fail Fast](#design-philosophy-fail-fast)
+- [Unreleased app-owned formats](#unreleased-app-owned-formats)
 - [Persistence transactionality](#persistence-transactionality)
 - [State Channels: The Core Idea](#state-channels-the-core-idea)
 - [Coin Hierarchy](#coin-hierarchy)
@@ -81,6 +80,23 @@ validation program is nil) can only happen if a caller is buggy — so the move
 handler asserts rather than silently discarding the move. Discarding it would
 hide the bug and leave the broken caller in place to cause subtler problems
 later.
+
+---
+
+## Unreleased app-owned formats
+
+Before the initial beta, no player-app or hub persistence format is a released
+compatibility contract. App-owned browser envelopes, IndexedDB layouts, WASM
+cradles, and game-owned saved state therefore decode only their current format:
+incompatible changes advance the relevant version, with no migration,
+predecessor fallback, alias, or dual read for formats that never shipped.
+Explicit versions remain in place as centralized migration hooks for the first
+released predecessor.
+
+This policy does not relax deployed external compatibility. Wallet and Cloud
+RPCs, Chia offer compression and bech32 handling, Coinset JSON, peer and
+on-chain protocols, and historical signed-unroll recognition remain
+compatibility-sensitive contracts.
 
 ---
 
@@ -918,16 +934,10 @@ protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
 The browser aggregate is strict `DurableApplicationState` v4, its opaque
-Rust/WASM cradle is schema 22, and the app IndexedDB is schema 5. These
-explicit versions remain future migration hooks. No app or hub persistence
-format has shipped, so only the current aggregate is decoded: there are no
-predecessor decoders, aliases, migrations, or fallback reads. Whole-root
-corruption is preserved for diagnosis and requires explicit hard reset, even
-when the malformed field is nested wallet or rejection evidence. This does not
-relax deployed compatibility:
-Cloud Wallet GraphQL, WalletConnect RPC, Chia bech32m offer compression
-dictionaries, Coinset JSON, peer/on-chain protocols, and historical signed
-unroll recognition remain compatibility-sensitive external contracts.
+Rust/WASM cradle is schema 22, and the app IndexedDB is schema 5. Under the
+[unreleased-format policy](#unreleased-app-owned-formats), any incompatible or
+malformed field rejects the whole root. The unchanged evidence remains
+available for diagnosis until explicit hard reset.
 Rust snapshots convert checked `usize` state numbers to `u64`; the WASM
 boundary exposes every present channel state-number field as JavaScript
 `bigint`. Internal host and persisted forms stay `bigint`, with `number`
@@ -1186,7 +1196,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | `GameAction`                         | `session_phases/types.rs`                    | Local actions: game moves/settlements, scalar queued proposal intents, clean shutdown, and test-only cheat support                                                                                                  |
 | `GameSessionState`                   | `game_session.rs`                            | Per-session mutable state: queues, flags, `peer_disconnected`                                                                                                                                                       |
 | `OnChainGameState`                   | `channel_state/types/on_chain_game_state.rs` | Per-game-coin tracking: `our_turn`, `puzzle_hash`, `timeout_claim_armed`, `timeout_claim`, `pending_slash_amount`, `game_timeout`                                                                                   |
-| `SettlementOutcome`                  | `session_phases/effects.rs`                  | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)                                           |
+| `SettlementOutcome`                  | `session_phases/effects.rs`                  | Settlement glossary ids (snake_case wire): off-chain `accept_settlement` plus on-chain outcomes #1–#11; see [Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)                   |
 | `GameNotification`                   | `session_phases/effects.rs`                  | Notifications to the UI: `ChannelStatus`, proposal variants, `InsufficientBalance`, gameplay `GameStatus { status: GameStatusKind, ... }`, and unified settlement `GameSettled { id, outcome, our_share, coin_id }` |
 | `Effect`                             | `session_phases/effects.rs`                  | All side effects returned by handler methods (notifications, transactions, coin registrations)                                                                                                                      |
 | `PeerLifecyclePhase`                 | `game_session.rs`                            | Trait implemented by all lifecycle phases — uniform interface for messages, coin events, game actions                                                                                                               |

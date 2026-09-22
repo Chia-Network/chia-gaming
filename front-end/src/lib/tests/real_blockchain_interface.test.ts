@@ -1,4 +1,3 @@
-import { expectConsoleError } from '../../../scripts/testSetup';
 import 'fake-indexeddb/auto';
 import { storageRepository } from '../session/storageRepository';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
@@ -700,10 +699,9 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
-  it('rejects a persisted offer response without a trade ID', async () => {
+  it('keeps a persisted funding offer without a trade ID uncertain', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
-    expectConsoleError('createOfferForIds error');
 
     await expect(
       blockchain.beginWalletOffer(offerOperation, {
@@ -713,7 +711,7 @@ describe('RealBlockchainInterface', () => {
         coinIds: ['ab'.repeat(32)],
       }),
     ).resolves.toEqual({
-      kind: 'failure',
+      kind: 'unavailable',
       reason: expect.stringMatching(/tradeRecord\.tradeId/),
     });
 
@@ -942,6 +940,26 @@ describe('RealBlockchainInterface', () => {
         { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
         { opcode: 52n, args: { amount: 10n } },
       ],
+    });
+  });
+
+  it('keeps a persisted fee offer without a trade ID uncertain', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'test',
+          fee: 10n,
+          concurrentSpendCoinId: 'cd'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({
+      kind: 'unavailable',
+      reason: expect.stringMatching(/tradeRecord\.tradeId/),
     });
   });
 

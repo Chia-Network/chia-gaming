@@ -7,6 +7,7 @@ import {
   type DurableApplicationState,
   type DurableRejectionTransport,
 } from '../lib/session/saveEnvelope';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
 import { storageRepository } from '../lib/session/storageRepository';
 import { captureDurableApplicationState } from '../lib/session/sessionMachinePersist';
 import type { HubConnection } from '../services/HubConnection';
@@ -320,7 +321,17 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
       const tombstones = structuredClone(descriptors);
       for (const tombstone of tombstones) {
         if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
-          await repositoryStore.delete(tombstone.peerId, tombstone.sessionId);
+          try {
+            await repositoryStore.delete(tombstone.peerId, tombstone.sessionId);
+          } catch (error) {
+            if (
+              error instanceof StorageAuthorityLostError ||
+              error instanceof StorageAuthorityRequiredError
+            ) {
+              throw error;
+            }
+            console.error('[rejection] failed to retire tombstone', error);
+          }
           continue;
         }
         const peer = new PeerSession(

@@ -3,8 +3,17 @@ import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { storageRepository } from '../session/storageRepository';
 import { canonicalizeFundingRequest } from '../session/fundingRequest';
 import { entriesForOwner } from '../session/channelFundingSelectors';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../session/indexedDb';
+import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { wasmResult } from './message_protocol.harness';
-import { commitRuntime, ControlledRuntime, setup, submission } from './runtime_capability.harness';
+import {
+  bestEffortWalletRpc,
+  commitRuntime,
+  ControlledRuntime,
+  recoverableWalletRpc,
+  setup,
+  submission,
+} from './runtime_capability.harness';
 
 async function waitForCall(mock: jest.Mock, count = 1): Promise<void> {
   for (let pass = 0; pass < 30 && mock.mock.calls.length < count; pass += 1) {
@@ -41,7 +50,6 @@ describe('submission controller handoff and quiescence', () => {
 
       expect(spend).toHaveBeenCalledTimes(1);
       expect(quiesced).toBe(false);
-      expect((controller as any).submissionPump.isQuiescent()).toBe(false);
 
       resolveSpend({ status: 'acknowledged' });
       await launch;
@@ -71,6 +79,62 @@ describe('submission controller handoff and quiescence', () => {
       expect(snapshot.model).not.toBe(replacementModel);
       expect(firstSnapshot).toHaveBeenCalledTimes(1);
       expect(replacementSnapshot).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('captures and tears down terminal state after one ordinary checkpoint failure', async () => {
+    const { controller } = setup(jest.fn());
+    const authoritativeModel = createSessionModel({ restore: { status: 'restored' } });
+    const runtime = new ControlledRuntime(undefined, undefined, () => authoritativeModel);
+    const failure = new Error('terminal checkpoint failed');
+    const reportDurabilityError = jest.spyOn(controller, 'reportDurabilityError');
+    const flush = jest.spyOn(runtime, 'flush').mockImplementation(async () => {
+      controller.reportDurabilityError(failure);
+      throw failure;
+    });
+    const captureTerminal = jest.fn(() => ({ write: jest.fn().mockResolvedValue(undefined) }));
+    const teardown = jest.fn((terminalController) =>
+      terminalController.cleanupAfterTerminalFlush(),
+    );
+    try {
+      commitRuntime(controller, runtime);
+
+      const result = await finalizeTerminalSession(
+        {
+          controller,
+          identity: { myName: 'Alice', opponentName: 'Bob', iStarted: true },
+        },
+        {
+          captureTerminal,
+          updateMarker: jest.fn(),
+          teardown,
+        },
+      );
+
+      expect(result.model).toEqual(authoritativeModel);
+      expect(captureTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({ model: authoritativeModel }),
+      );
+      expect(teardown).toHaveBeenCalledWith(controller);
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(reportDurabilityError).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it.each([
+    ['lost', new StorageAuthorityLostError()],
+    ['required', new StorageAuthorityRequiredError()],
+  ])('propagates storage authority %s from terminal quiescence', async (_kind, failure) => {
+    const { controller } = setup(jest.fn());
+    const runtime = new ControlledRuntime();
+    jest.spyOn(runtime, 'flush').mockRejectedValue(failure);
+    try {
+      commitRuntime(controller, runtime);
+      await expect(controller.quiesceForTerminalFinalization()).rejects.toBe(failure);
     } finally {
       controller.cleanup();
     }
@@ -125,13 +189,6 @@ describe('submission controller handoff and quiescence', () => {
     await expect(controller.flushTransactionSubmissions()).resolves.toBeUndefined();
     await expect(controller.flushPendingWork()).resolves.toBeUndefined();
     expect(spend).not.toHaveBeenCalled();
-    expect(
-      (
-        controller as unknown as {
-          submissionPump: { isQuiescent(): boolean };
-        }
-      ).submissionPump.isQuiescent(),
-    ).toBe(true);
     finishEffect();
   });
 
@@ -160,8 +217,8 @@ describe('submission controller handoff and quiescence', () => {
 
     resolveSpend({ status: 'acknowledged' });
     for (let pass = 0; pass < 20; pass += 1) await Promise.resolve();
-    expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
-    expect(cradle.reject_submission).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalled();
+    expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
     expect((controller as unknown as { cradle: unknown }).cradle).toBeUndefined();
   });
 
@@ -183,10 +240,10 @@ describe('submission controller handoff and quiescence', () => {
         }),
     );
     const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
-    const { controller, cradle } = setup(jest.fn(), {
-      beginWalletOffer,
-      beginWalletOfferCancellation,
-    });
+    const { controller, cradle } = setup(
+      jest.fn(),
+      bestEffortWalletRpc(beginWalletOffer, beginWalletOfferCancellation),
+    );
     const runtime = new ControlledRuntime();
     const request = canonicalizeFundingRequest({
       amount: '100',
@@ -230,7 +287,7 @@ describe('submission controller handoff and quiescence', () => {
     expect(cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
   });
 
-  it('retires a fee creation whose recovery id arrives after controller cleanup', async () => {
+  it('leaves a late fee recovery id for a replacement owner after controller cleanup', async () => {
     channelFundingRuntime.resetForTests();
     let finishBegin!: (value: { kind: 'pending'; recoveryId: string }) => void;
     const beginWalletOffer = jest.fn(
@@ -248,11 +305,10 @@ describe('submission controller handoff and quiescence', () => {
         tradeId: 'trade-late-fee',
       });
     const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
-    const { blockchain, controller, cradle, submit } = setup(jest.fn(), {
-      beginWalletOffer,
-      reconcileWalletOffer,
-      beginWalletOfferCancellation,
-    });
+    const { blockchain, controller, cradle, submit } = setup(
+      jest.fn(),
+      recoverableWalletRpc(beginWalletOffer, reconcileWalletOffer, beginWalletOfferCancellation),
+    );
     const runtime = new ControlledRuntime();
     commitRuntime(controller, runtime);
     submit({
@@ -281,14 +337,20 @@ describe('submission controller handoff and quiescence', () => {
     });
     expect(provider).not.toBeNull();
     channelFundingRuntime.providerReady(provider!);
-    await waitForCall(beginWalletOfferCancellation);
+    await Promise.resolve();
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    expect(reconcileWalletOffer).toHaveBeenCalledTimes(2);
-    expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-fee');
-    expect(storageRepository.feeAttachments()).toEqual([]);
-    expect(cradle.finalize_submission).not.toHaveBeenCalled();
-    expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
-    expect(cradle.reject_submission).not.toHaveBeenCalled();
+    expect(reconcileWalletOffer).toHaveBeenCalledTimes(1);
+    expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+    expect(storageRepository.feeAttachments()).toEqual([
+      expect.objectContaining({
+        stage: 'creating',
+        disposition: 'cancel-on-create',
+        recoveryId: 'SR_late_fee',
+      }),
+    ]);
+    expect(cradle.finalize_submission_attempt).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalled();
+    expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
   });
 });

@@ -13,8 +13,9 @@ import { pendingProposalFromProposalMade } from './incomingProposal';
 import { parseGameStatusTerminalInfo, terminalInfoFromGameSettled } from './gameSessionEvents';
 import { channelStatusModelFromPayload } from './normalization';
 import { isTerminalGameStatus, type NonTerminalGameStatusPayload } from './presentation';
+import { isUncancelledProposal } from './proposalPolicy';
 import { selectPendingProposal, selectProposalByLifecycle } from './selectors';
-import { isUncancelledProposal, proposalOrigin } from './sessionMachineProposals';
+import { proposalOrigin } from './sessionMachineProposals';
 import type {
   SessionMachineEffect,
   SessionMachineEvent,

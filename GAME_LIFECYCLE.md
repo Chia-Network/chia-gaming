@@ -258,7 +258,7 @@ this as **Fold**, but Fold is a game-local UX label only — not a protocol or
 session status name. On-chain, the same intent is carried by a **timeout
 claim** spend after the timelock (see [ON_CHAIN.md](ON_CHAIN.md)); the
 mechanism is "timeout claim", the intent is settlement. Other on-chain settled
-outcomes (#1–#11 in the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux))
+outcomes (#1–#11 in the [Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal))
 also arrive as `GameSettled`, not as separate slash/timeout notification
 families.
 

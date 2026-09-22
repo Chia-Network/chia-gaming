@@ -4,6 +4,20 @@ import { storageRepository } from '../session/storageRepository';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import type { ChannelFundingEntry, ChannelFundingOwner } from '../session/channelFundingStore';
 
+function makeStorage(): Storage {
+  const values = new Map<string, string>();
+  return {
+    get length() {
+      return values.size;
+    },
+    key: (index) => [...values.keys()][index] ?? null,
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => void values.set(key, String(value)),
+    removeItem: (key) => void values.delete(key),
+    clear: () => values.clear(),
+  };
+}
+
 const owner: ChannelFundingOwner = {
   installationPlayerId: 'player',
   peerSessionId: 'session',
@@ -40,6 +54,10 @@ async function waitFor(check: () => boolean): Promise<void> {
 
 describe('aggregate wallet offer lifecycle', () => {
   beforeEach(async () => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: makeStorage(),
+    });
     storageRepository._resetForTests();
     channelFundingRuntime.resetForTests();
     await storageRepository.claimApplicationState();
@@ -310,6 +328,47 @@ describe('aggregate wallet offer lifecycle', () => {
     await channelFundingRuntime.flush();
     expect(cancel).toHaveBeenCalledWith('stale-trade');
     expect(storageRepository.channelFundingOperations()).toEqual([]);
+  });
+
+  it('discards a late creation completion across hard reset', async () => {
+    let resolveCreation!: (value: {
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }) => void;
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveCreation = resolve;
+          }),
+      ),
+      cancel: jest.fn().mockResolvedValue({ status: 'cancelled' }),
+    };
+    channelFundingRuntime.attachProvider(provider);
+    const creation = channelFundingRuntime.createOffer(
+      owner,
+      purpose,
+      providerRequest,
+      recoveryRequest,
+    );
+    await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+
+    const reset = storageRepository.hardReset();
+    await waitFor(() => !storageRepository.hasAuthority());
+    resolveCreation({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1reset' },
+      tradeId: 'reset-trade',
+    });
+    await expect(creation).resolves.toMatchObject({ kind: 'unavailable' });
+    await expect(reset).resolves.toEqual({ success: true });
+    await storageRepository.claimApplicationState();
+
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
+    expect(provider.cancel).not.toHaveBeenCalled();
   });
 
   it('does not call a provider under aggregate scope mismatch', async () => {

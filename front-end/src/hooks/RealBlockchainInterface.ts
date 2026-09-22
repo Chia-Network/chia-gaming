@@ -285,6 +285,15 @@ function isExactDuplicateTransaction(detail: string): boolean {
   );
 }
 
+function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {
+  if (!response || typeof response !== 'object') return false;
+  const candidate = response as { success?: unknown; offer?: unknown };
+  return (
+    candidate.success === true ||
+    (typeof candidate.offer === 'string' && candidate.offer.startsWith('offer'))
+  );
+}
+
 export function classifyWalletConnectSubmitError(err: unknown): WalletSubmitOutcome {
   const detail = collectErrorText(err);
   if (err instanceof WalletConnectTransportError) {
@@ -557,10 +566,19 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       const offer = (response as any)?.offer;
       const tradeId = (response as any)?.tradeRecord?.tradeId;
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
+        if (walletOfferMutationMayHaveSucceeded(response)) {
+          return {
+            kind: 'unavailable',
+            reason: 'wallet reported fee offer creation success without reservation identity',
+          };
+        }
         throw new Error('wallet returned no signed offer for the fee');
       }
       if (typeof tradeId !== 'string' || !tradeId) {
-        throw new Error('wallet returned a persisted fee offer without tradeRecord.tradeId');
+        return {
+          kind: 'unavailable',
+          reason: 'wallet returned a persisted fee offer without tradeRecord.tradeId',
+        };
       }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
       return { kind: 'created-reserved', material: { kind: 'offer', offer }, tradeId };
@@ -721,7 +739,16 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             tradeId,
           };
         }
-        throw new Error('wallet returned a persisted funding offer without tradeRecord.tradeId');
+        return {
+          kind: 'unavailable',
+          reason: 'wallet returned a persisted funding offer without tradeRecord.tradeId',
+        };
+      }
+      if (walletOfferMutationMayHaveSucceeded(response)) {
+        return {
+          kind: 'unavailable',
+          reason: 'wallet reported offer creation success without reservation identity',
+        };
       }
       throw new Error(`wallet returned non-offer payload type=${typeof response}`);
     } catch (e) {

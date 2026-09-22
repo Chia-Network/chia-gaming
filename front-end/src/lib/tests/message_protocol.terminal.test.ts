@@ -808,7 +808,6 @@ describe('transaction submission', () => {
 
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(recoverableErrors).toEqual([]);
-    expect((blob as any).submissionPump.isQuiescent()).toBe(true);
     blob.cleanup();
   });
 
@@ -940,8 +939,8 @@ describe('transaction submission', () => {
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
     expect(finalizeSubmission).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith(submission.id);
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(submission.id);
     blob.detachBlockchain(blockchain);
   });
 
@@ -1036,8 +1035,8 @@ describe('transaction submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(spend).toHaveBeenCalledTimes(2);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
-    expect(cradle.acknowledge_submission).not.toHaveBeenCalledWith('awaiting');
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith('urgent');
+    expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalledWith('awaiting');
 
     blob.reportNewBlock(2n);
     blob.reportChainSnapshotReady(2n);
@@ -1045,7 +1044,7 @@ describe('transaction submission', () => {
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(3);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('awaiting');
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith('awaiting');
   });
 
   it('retains a locally failed submission and advances to the urgent next submission', async () => {
@@ -1094,8 +1093,8 @@ describe('transaction submission', () => {
     blob.processResult(wasmResult());
     await transactionSubmitQueue(blob);
 
-    expect(cradle.reject_submission).not.toHaveBeenCalled();
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('urgent');
+    expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith('urgent');
     expect(spend).toHaveBeenCalledTimes(1);
     expect(errors).toEqual([
       expect.stringMatching(/local-failure.*retained for retry.*finalization exploded/i),
@@ -1133,8 +1132,8 @@ describe('transaction submission', () => {
     blob.processResult(wasmResult());
     await transactionSubmitQueue(blob);
 
-    expect(cradle.reject_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.reject_submission).toHaveBeenCalledWith('rejected');
+    expect(cradle.reject_submission_attempt).toHaveBeenCalledTimes(1);
+    expect(cradle.reject_submission_attempt).toHaveBeenCalledWith('rejected');
     expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
     expect(errors).toEqual([expect.stringMatching(/Wallet rejected transaction rejected/)]);
     expect(errors[0]).toMatch(/effectively zero/i);
@@ -1228,9 +1227,9 @@ describe('transaction submission', () => {
 
     await transactionSubmitQueue(blob);
     expect(spend).toHaveBeenCalledTimes(2);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledWith('4');
-    expect(cradle.reject_submission).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith('4');
+    expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
   });
 

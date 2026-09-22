@@ -10,6 +10,11 @@ pub(super) struct ReplayEpoch {
 
 impl ReplayEpoch {
     pub(super) fn validate(&self, retained_ids: &HashSet<u64>) -> Result<(), String> {
+        if self.rollback_height.is_none() && !self.replayed_submission_ids.is_empty() {
+            return Err(
+                "replay epoch has replayed submissions without rollback height".to_string(),
+            );
+        }
         if let Some(id) = self
             .replayed_submission_ids
             .iter()

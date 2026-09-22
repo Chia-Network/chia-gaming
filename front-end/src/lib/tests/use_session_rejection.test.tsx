@@ -6,6 +6,7 @@ import type { HubConnection } from '../../services/HubConnection';
 import { PeerSession } from '../../services/PeerSession';
 import { storageRepository } from '../session/storageRepository';
 import type { DurableRejectionTransport } from '../session/saveEnvelope';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../session/indexedDb';
 
 function mockHub(): HubConnection & { sendToPeer: jest.Mock } {
   return {
@@ -54,6 +55,75 @@ describe('useSessionRejection authority owner', () => {
     expect(hub.sendToPeer).toHaveBeenCalledTimes(1);
     expect((hub.sendToPeer.mock.calls[0][1] as Uint8Array)[0]).toBe(0x01);
   });
+
+  it('restores a later rejection after acknowledged tombstone cleanup fails', async () => {
+    const hub = mockHub();
+    const acknowledged: DurableRejectionTransport = {
+      kind: 'outbound-reject',
+      peerId: 'peer-acknowledged',
+      sessionId: '00'.repeat(16),
+      createdAt: 1,
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      unackedMessages: [],
+    };
+    const pending: DurableRejectionTransport = {
+      kind: 'outbound-reject',
+      peerId: 'peer-pending',
+      sessionId: '11'.repeat(16),
+      createdAt: 2,
+      messageNumber: 2n,
+      remoteNumber: 1n,
+      unackedMessages: [{ msgno: 1n, msg: new Uint8Array([0x64, 0x65]) }],
+    };
+    const cleanupFailure = new Error('delete failed');
+    jest.spyOn(storageRepository, 'prepareApplicationStateCapture').mockReturnValueOnce({
+      state: storageRepository.loadState(),
+      write: jest.fn().mockRejectedValue(cleanupFailure),
+    });
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+    act(() => {
+      renderer = create(createElement(Harness));
+    });
+
+    await act(async () => {
+      await api.restore(hub, [acknowledged, pending]);
+    });
+
+    expect(error).toHaveBeenCalledWith('[rejection] failed to retire tombstone', cleanupFailure);
+    expect(hub.sendToPeer).toHaveBeenCalledTimes(1);
+    expect((hub.sendToPeer.mock.calls[0][1] as Uint8Array)[0]).toBe(0x01);
+  });
+
+  it.each([
+    ['lost', new StorageAuthorityLostError()],
+    ['required', new StorageAuthorityRequiredError()],
+  ])(
+    'propagates storage authority %s during acknowledged tombstone cleanup',
+    async (_kind, failure) => {
+      const hub = mockHub();
+      const acknowledged: DurableRejectionTransport = {
+        kind: 'outbound-reject',
+        peerId: 'peer-acknowledged',
+        sessionId: '22'.repeat(16),
+        createdAt: 1,
+        messageNumber: 2n,
+        remoteNumber: 1n,
+        unackedMessages: [],
+      };
+      jest.spyOn(storageRepository, 'prepareApplicationStateCapture').mockReturnValueOnce({
+        state: storageRepository.loadState(),
+        write: jest.fn().mockRejectedValue(failure),
+      });
+      act(() => {
+        renderer = create(createElement(Harness));
+      });
+
+      await act(async () => {
+        await expect(api.restore(hub, [acknowledged])).rejects.toBe(failure);
+      });
+    },
+  );
 
   it('releases primary authority before persistence and launches once after handoff', async () => {
     const hub = mockHub();

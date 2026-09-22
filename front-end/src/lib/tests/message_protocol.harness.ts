@@ -211,32 +211,6 @@ export function makeMockCradle(
     provide_coin_spend_bundle: jest.fn(() => wasmResult()),
     cradle: 0,
   } as unknown as ChiaGame;
-  // Test-only aliases keep older assertion helpers readable while the
-  // production ChiaGame/WASM surface remains token-only.
-  const legacy = cradle as unknown as Record<string, unknown>;
-  Object.defineProperties(legacy, {
-    finalize_submission: {
-      enumerable: true,
-      get: () => cradle.finalize_submission_attempt,
-      set: (value) => {
-        legacy.finalize_submission_attempt = value;
-      },
-    },
-    acknowledge_submission: {
-      enumerable: true,
-      get: () => cradle.acknowledge_submission_attempt,
-      set: (value) => {
-        legacy.acknowledge_submission_attempt = value;
-      },
-    },
-    reject_submission: {
-      enumerable: true,
-      get: () => cradle.reject_submission_attempt,
-      set: (value) => {
-        legacy.reject_submission_attempt = value;
-      },
-    },
-  });
   return cradle;
 }
 

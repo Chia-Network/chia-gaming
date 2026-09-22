@@ -15,7 +15,7 @@ For game lifecycle details, see `GAME_LIFECYCLE.md`.
 - [Cascade Rules](#cascade-rules)
 - [User Actions](#user-actions)
 - [Session Lifecycle](#session-lifecycle)
-- [Hub Availability Protocol](#hub-availability-protocol)
+- [Hub Busy Protocol](#hub-busy-protocol)
 - [Implementation Status](#implementation-status)
 
 ---
@@ -440,9 +440,10 @@ The hub does not create a session. It can only advise and relay:
   coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
   schema 22. Owner-specific channel-funding operations, fee attachments, and
   rejection transports are nested in the same root and have no independent
-  record, version, hydration, or writer. No predecessor aggregate decoder or
-  migration exists because no app-owned format has shipped; the explicit
-  version remains the future migration hook.
+  record, version, hydration, or writer. A non-current version therefore blocks
+  connectivity restore for the whole root rather than selecting a predecessor
+  path; see the canonical
+  [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
   Preferences are aggregate-owned; localStorage ownership/reset and resume
   markers are only UX hints. Ordinary I/O failure retains the latest in-memory
   root and does not gate effects; typed authority loss retires it and
@@ -665,8 +666,9 @@ use the `ended` banner rail.
 ### Settlement labels
 
 The session banner and dashboard derive display text from
-`SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (sourced from
-the [settlement glossary](NAMING_AUDIT.md#settlement-glossary-ux)). Examples:
+`SETTLEMENT_OUTCOME_LABELS` in `front-end/src/lib/settlement.ts` (documented in
+[Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)).
+Examples:
 
 | `outcome` (wire)                    | Display label                  |
 | ----------------------------------- | ------------------------------ |

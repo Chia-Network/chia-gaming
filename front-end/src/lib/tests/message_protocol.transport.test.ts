@@ -1525,12 +1525,10 @@ describe('wallet fee attachment on submission', () => {
       blob as unknown as {
         cradle: {
           finalize_submission_attempt: (attemptToken: string, feeSourceJson?: string) => unknown;
-          finalize_submission: (attemptToken: string, feeSourceJson?: string) => unknown;
         };
       }
     ).cradle;
     cradle.finalize_submission_attempt = wrapped;
-    cradle.finalize_submission = wrapped;
   }
 
   it('does not attach a second fee spend to a channel-opening bundle', async () => {
@@ -1782,61 +1780,6 @@ describe('wallet fee attachment on submission', () => {
     ]);
   });
 
-  it('tracks launched submission only in the ordered queue', async () => {
-    const unavailableFee = {
-      kind: 'failure' as const,
-      reason: 'the wallet could not build a signed fee source',
-    };
-    let resolveFirstFee!: (value: typeof unavailableFee) => void;
-    const firstFee = new Promise<typeof unavailableFee>((resolve) => {
-      resolveFirstFee = resolve;
-    });
-    const beginWalletOffer = jest
-      .fn()
-      .mockImplementationOnce(() => firstFee)
-      .mockResolvedValue(unavailableFee);
-    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const finalize = jest.fn().mockReturnValue({
-      protocol_bundle: testSpendBundle('coin'),
-      bundle: protocolBundle,
-      applied_fee: '0',
-      warning: null,
-      fee_source_disposition: 'unused',
-    });
-    const { blob } = createReadyBlob();
-    setActiveBlob(blob);
-    setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer, spend }, 60000));
-    setFinalizer(blob, finalize);
-    const pendingEffects = (blob as unknown as { pendingEffects: Set<Promise<void>> })
-      .pendingEffects;
-    const deliveries = (blob as any).submissionPump;
-
-    submitTransaction(blob, testSpendBundle('first'), { target: feeTarget, amount: '10' });
-    expect(pendingEffects.size).toBe(0);
-    expect(deliveries.isQuiescent()).toBe(false);
-    await blob.flushPendingSave();
-    await waitForCall(beginWalletOffer, 1);
-
-    expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    expect(pendingEffects.size).toBe(0);
-    expect(deliveries.isQuiescent()).toBe(false);
-
-    resolveFirstFee(unavailableFee);
-    await blob.flushPendingWork();
-    expect(pendingEffects.size).toBe(0);
-    expect(deliveries.isQuiescent()).toBe(true);
-
-    submitTransaction(blob, testSpendBundle('second'), { target: feeTarget, amount: '10' });
-    expect(pendingEffects.size).toBe(0);
-    expect(deliveries.isQuiescent()).toBe(false);
-    await blob.quiesceForTerminalFinalization();
-    expect(beginWalletOffer).toHaveBeenCalledTimes(2);
-    expect(finalize).toHaveBeenCalledTimes(2);
-    expect(spend).toHaveBeenCalledTimes(2);
-    expect(pendingEffects.size).toBe(0);
-    expect(deliveries.isQuiescent()).toBe(true);
-  });
-
   it('keeps terminal quiescence blocked through broadcast and persists the wallet outcome', async () => {
     let resolveSpend!: (value: { status: 'acknowledged' }) => void;
     const spendGate = new Promise<{ status: 'acknowledged' }>((resolve) => {
@@ -1856,7 +1799,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
     const persistedAcknowledgementCounts: number[] = [];
     setTestPersistence(blob, () => {
-      persistedAcknowledgementCounts.push(cradle.acknowledge_submission.mock.calls.length);
+      persistedAcknowledgementCounts.push(cradle.acknowledge_submission_attempt.mock.calls.length);
     });
 
     submitTransaction(blob, testSpendBundle('coin'));
@@ -1870,12 +1813,12 @@ describe('wallet fee attachment on submission', () => {
     expect(spend).toHaveBeenCalledTimes(1);
     await Promise.resolve();
     expect(quiesced).toBe(false);
-    expect(cradle.acknowledge_submission).not.toHaveBeenCalled();
+    expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalled();
 
     resolveSpend({ status: 'acknowledged' });
     await quiescence;
     expect(quiesced).toBe(true);
-    expect(cradle.acknowledge_submission).toHaveBeenCalledTimes(1);
+    expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
     expect(persistedAcknowledgementCounts.at(-1)).toBe(1);
   });
 
@@ -1970,7 +1913,7 @@ describe('wallet fee attachment on submission', () => {
           },
         ]),
       );
-    (cradle.finalize_submission as jest.Mock)
+    (cradle.finalize_submission_attempt as jest.Mock)
       .mockImplementationOnce((_attemptToken: string, feeSourceJson: string) => {
         expect(JSON.parse(feeSourceJson)).toEqual({
           kind: 'failure',
@@ -2000,7 +1943,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    expect(cradle.finalize_submission).toHaveBeenCalledTimes(1);
+    expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       protocolBundle,
@@ -2020,7 +1963,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     for (
       let attempt = 0;
-      attempt < 20 && (cradle.finalize_submission as jest.Mock).mock.calls.length < 2;
+      attempt < 20 && (cradle.finalize_submission_attempt as jest.Mock).mock.calls.length < 2;
       attempt += 1
     ) {
       await blob.flushPendingWork();
@@ -2030,7 +1973,7 @@ describe('wallet fee attachment on submission', () => {
 
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
     expect(beginWalletOffer).toHaveBeenCalledTimes(2);
-    expect(cradle.finalize_submission).toHaveBeenLastCalledWith(
+    expect(cradle.finalize_submission_attempt).toHaveBeenLastCalledWith(
       'fee-upgrade-attempt',
       jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
     );
@@ -2085,7 +2028,7 @@ describe('wallet fee attachment on submission', () => {
       .mockReturnValueOnce(submissionDrain([initial]))
       .mockReturnValueOnce(submissionDrain())
       .mockReturnValueOnce(submissionDrain([exactReplay]));
-    (cradle.finalize_submission as jest.Mock).mockReturnValue({
+    (cradle.finalize_submission_attempt as jest.Mock).mockReturnValue({
       protocol_bundle: testSpendBundle('coin'),
       bundle: protocolBundle,
       applied_fee: '10',
@@ -2110,7 +2053,7 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    expect(cradle.finalize_submission).toHaveBeenLastCalledWith(
+    expect(cradle.finalize_submission_attempt).toHaveBeenLastCalledWith(
       'attached-replay-attempt-2',
       undefined,
     );

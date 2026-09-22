@@ -73,7 +73,7 @@ export function channelFundingKey(
 ): string {
   return tupleKey([providerOwnerKey(owner), purpose.operationId]);
 }
-export function channelFundingRecoveryKey(
+function channelFundingRecoveryKey(
   owner: ChannelFundingOwner,
   purpose: ChannelFundingPurpose,
 ): ChannelFundingEntryKey {
