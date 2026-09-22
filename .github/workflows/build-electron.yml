@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
@@ -270,6 +270,27 @@ jobs:
             xcrun stapler staple "$dmg"
             xcrun stapler validate "$dmg"
           done
+          for zip in desktop/release/*.zip; do
+            xcrun notarytool submit \
+              --wait \
+              --apple-id "$APPLE_NOTARIZE_USERNAME" \
+              --password "$APPLE_NOTARIZE_PASSWORD" \
+              --team-id "$APPLE_TEAM_ID" \
+              "$zip"
+            staple_dir="$RUNNER_TEMP/chia-gaming-mac-staple"
+            rm -rf "$staple_dir"
+            mkdir -p "$staple_dir"
+            ditto -x -k "$zip" "$staple_dir"
+            app_path="$(find "$staple_dir" -maxdepth 1 -name '*.app' -print -quit)"
+            if [[ -z "$app_path" ]]; then
+              echo "::error::Notarized ZIP did not contain a macOS application"
+              exit 1
+            fi
+            xcrun stapler staple "$app_path"
+            xcrun stapler validate "$app_path"
+            rm "$zip"
+            ditto -c -k --sequesterRsrc --keepParent "$app_path" "$zip"
+          done
 
       - name: Generate installer checksums
         shell: bash
@@ -286,14 +307,17 @@ jobs:
             echo "::error::No installer files found"
             exit 1
           fi
-          checksum_file="desktop/release/SHA256SUMS-${{ matrix.platform }}.txt"
-          for file in "${files[@]}"; do
-            if command -v sha256sum >/dev/null 2>&1; then
-              sha256sum "$file"
-            else
-              shasum -a 256 "$file"
-            fi
-          done > "$checksum_file"
+          checksum_file="SHA256SUMS-${{ matrix.platform }}.txt"
+          (
+            cd desktop/release
+            for file in "${files[@]##*/}"; do
+              if command -v sha256sum >/dev/null 2>&1; then
+                sha256sum "$file"
+              else
+                shasum -a 256 "$file"
+              fi
+            done
+          ) > "desktop/release/$checksum_file"
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -309,20 +333,26 @@ jobs:
             desktop/release/*.deb
             desktop/release/SHA256SUMS-*.txt
 
+  publish:
+    name: Publish Electron installers
+    if: github.event_name == 'release'
+    needs: [build]
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chia-gaming-electron-*
+          path: release
+          merge-multiple: true
+
       - name: Upload installers to GitHub release
-        if: github.event_name == 'release'
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          shopt -s nullglob
-          files=(
-            desktop/release/*.dmg
-            desktop/release/*.zip
-            desktop/release/*.exe
-            desktop/release/*.AppImage
-            desktop/release/*.deb
-            desktop/release/SHA256SUMS-*.txt
-          )
-          gh release upload "$RELEASE_TAG" "${files[@]}"
+          files=(release/*)
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber

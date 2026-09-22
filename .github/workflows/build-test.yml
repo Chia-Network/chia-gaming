@@ -169,7 +169,8 @@ jobs:
             deploy_player_app/chia-gaming-"$RELEASE_TAG".zip \
             deploy_hub/chia-gaming-hub-"$RELEASE_TAG".tgz \
             deploy_hub/chia-gaming-hub-"$RELEASE_TAG".zip \
-            SHA256SUMS-web.txt
+            SHA256SUMS-web.txt \
+            --clobber
 
   coverage:
     needs: [fmt, clippy]
