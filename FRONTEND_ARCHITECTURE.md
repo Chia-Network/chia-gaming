@@ -1602,14 +1602,17 @@ snapshot only after terminal quiescence repeatedly drains controller events,
 persistence, reliable transport, and end-to-end transaction submission
 promises. Those promises cover persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement or rejection, and fee-offer cleanup. The
-terminal presentation is taken from the authoritative runtime model returned
-after that quiescence, not from a pre-drain React projection. Terminal capture
-installs the aggregate in the repository root before attempting IndexedDB. An
+controller takes the terminal presentation from the authoritative runtime model
+and synchronously detaches and retires that runtime in the same continuation,
+so no queued mutation can enter between capture and sealing. It retains an
+immutable clone for an exact retry after storage authority is recovered.
+Terminal capture installs the aggregate in the repository root before attempting IndexedDB. An
 ordinary write failure uses the existing one-per-episode durability warning,
 then still freezes presentation, destroys the controller, and releases the peer
 relay/hub busy state. The in-memory terminal root remains dirty for a later
 aggregate checkpoint without replaying finalization. Storage authority loss or
-missing authority still rejects and fences publication by the obsolete owner;
+missing authority rejects without publishing a marker, result, or teardown;
+the same controller supplies its retained terminal snapshot to a later retry.
 unresolved protocol and wallet obligations remain quiescence blockers.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a

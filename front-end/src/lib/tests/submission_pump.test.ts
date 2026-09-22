@@ -328,6 +328,57 @@ describe('submission pump delivery and runtime replacement', () => {
     }
   });
 
+  it('cancels a fee reservation returned after only its submission retires', async () => {
+    let resolveFee!: (value: {
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }) => void;
+    const spend = jest.fn();
+    const beginWalletOffer = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFee = resolve;
+        }),
+    );
+    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const { controller, cradle, submit } = setup(
+      spend,
+      bestEffortWalletRpc(beginWalletOffer, beginWalletOfferCancellation),
+    );
+    const lease = new ControlledRuntime();
+    try {
+      commitRuntime(controller, lease);
+      submit({
+        ...submission('retired-during-fee-create'),
+        fee_request: { target: '22'.repeat(32), amount: '10' },
+      });
+      const launch = lease.launch('submission:retired-during-fee-create');
+      await waitFor(() => beginWalletOffer.mock.calls.length === 1);
+
+      (
+        controller as unknown as {
+          handleRetiredSubmissionIds(ids: string[]): void;
+        }
+      ).handleRetiredSubmissionIds(['retired-during-fee-create']);
+      resolveFee({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer-retired-during-create' },
+        tradeId: 'trade-retired-during-create',
+      });
+
+      await launch;
+      await controller.flushPendingWork();
+      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
+      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-retired-during-create');
+      expect(storageRepository.feeAttachments()).toEqual([]);
+      expect(cradle.finalize_submission_attempt).not.toHaveBeenCalled();
+      expect(spend).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+    }
+  });
+
   it.each(['opponent-variant', 'base-variant'])(
     'cancels the exact fee reservation once when Rust retires after %s lands',
     async (landedVariant) => {
@@ -433,13 +484,16 @@ describe('submission pump delivery and runtime replacement', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:terminal-nonblocking');
+      await waitFor(() =>
+        storageRepository.feeAttachments().some((entry) => entry.stage === 'retained-for-replay'),
+      );
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
         submissionDrain([], ['terminal-nonblocking']),
       );
       controller.processResult(wasmResult());
       await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
 
-      await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+      await expect(controller.quiesceAndSealForTerminalFinalization()).resolves.toMatchObject({
         coinsOfInterest: [],
       });
       expect(storageRepository.feeAttachments()).toEqual([

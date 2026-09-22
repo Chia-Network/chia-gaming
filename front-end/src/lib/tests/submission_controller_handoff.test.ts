@@ -36,7 +36,7 @@ describe('submission controller handoff and quiescence', () => {
       commitRuntime(controller, runtime);
       submit(submission('slow-wallet'));
       let quiesced = false;
-      const quiescence = controller.quiesceForTerminalFinalization().then(() => {
+      const quiescence = controller.quiesceAndSealForTerminalFinalization().then(() => {
         quiesced = true;
       });
       await Promise.resolve();
@@ -74,7 +74,7 @@ describe('submission controller handoff and quiescence', () => {
     try {
       commitRuntime(controller, first);
 
-      const snapshot = await controller.quiesceForTerminalFinalization();
+      const snapshot = await controller.quiesceAndSealForTerminalFinalization();
       expect(snapshot).toEqual({ model: replacementModel, coinsOfInterest: [] });
       expect(snapshot.model).not.toBe(replacementModel);
       expect(firstSnapshot).toHaveBeenCalledTimes(1);
@@ -134,7 +134,7 @@ describe('submission controller handoff and quiescence', () => {
     jest.spyOn(runtime, 'flush').mockRejectedValue(failure);
     try {
       commitRuntime(controller, runtime);
-      await expect(controller.quiesceForTerminalFinalization()).rejects.toBe(failure);
+      await expect(controller.quiesceAndSealForTerminalFinalization()).rejects.toBe(failure);
     } finally {
       controller.cleanup();
     }
@@ -143,7 +143,7 @@ describe('submission controller handoff and quiescence', () => {
   it('fails terminal quiescence explicitly without an active runtime', async () => {
     const { controller } = setup(jest.fn());
     try {
-      await expect(controller.quiesceForTerminalFinalization()).rejects.toThrow(
+      await expect(controller.quiesceAndSealForTerminalFinalization()).rejects.toThrow(
         'terminal finalization requires an active runtime',
       );
     } finally {
@@ -159,7 +159,7 @@ describe('submission controller handoff and quiescence', () => {
     });
     try {
       commitRuntime(controller, runtime);
-      await expect(controller.quiesceForTerminalFinalization()).rejects.toThrow(
+      await expect(controller.quiesceAndSealForTerminalFinalization()).rejects.toThrow(
         'coin query failed',
       );
     } finally {

@@ -1105,8 +1105,11 @@ acknowledgement or rejection. Rust retirement separately moves the exact
 provider reservation ID into durable best-effort fee cancellation; that cleanup
 may outlive terminal capture. Terminal finalization repeatedly drains controller
 events, persistence, submission promises, and reliable transport to quiescence
-before taking the terminal snapshot from the post-quiescence authoritative
-runtime model and retiring protocol ownership.
+before atomically taking the terminal snapshot from the post-quiescence
+authoritative runtime model and retiring protocol ownership in the same
+synchronous controller continuation. The controller retains that immutable
+snapshot across a terminal-write authority failure so a later authority
+recovery retries the exact capture without reviving the runtime.
 
 These ownership and persistence boundaries change no peer wire schema.
 

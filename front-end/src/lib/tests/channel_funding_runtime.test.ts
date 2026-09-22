@@ -144,7 +144,7 @@ describe('durable channel funding record', () => {
               ]
             : [],
         );
-        await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+        await expect(controller.quiesceAndSealForTerminalFinalization()).resolves.toMatchObject({
           coinsOfInterest: [],
         });
       } finally {
@@ -430,7 +430,7 @@ describe('durable channel funding record', () => {
         },
       ]);
       commitRuntime(controller, lease);
-      await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+      await expect(controller.quiesceAndSealForTerminalFinalization()).resolves.toMatchObject({
         coinsOfInterest: [],
       });
     } finally {
@@ -548,7 +548,7 @@ describe('durable channel funding record', () => {
       ]);
       commitRuntime(controller, lease);
 
-      await expect(controller.quiesceForTerminalFinalization()).resolves.toMatchObject({
+      await expect(controller.quiesceAndSealForTerminalFinalization()).resolves.toMatchObject({
         coinsOfInterest: [],
       });
       expect(wrongCancel).not.toHaveBeenCalled();

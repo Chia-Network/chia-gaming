@@ -1817,7 +1817,7 @@ describe('wallet fee attachment on submission', () => {
 
     submitTransaction(blob, testSpendBundle('coin'));
     let quiesced = false;
-    const quiescence = blob.quiesceForTerminalFinalization().then(() => {
+    const quiescence = blob.quiesceAndSealForTerminalFinalization().then(() => {
       quiesced = true;
     });
     for (let i = 0; i < 10 && spend.mock.calls.length === 0; i += 1) {

@@ -154,14 +154,13 @@ function makeController(events: string[]): SessionController {
   return {
     handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
     getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: async () => {
-      events.push('controller-quiesce');
+    quiesceAndSealForTerminalFinalization: async () => {
+      events.push('controller-quiesce-and-seal');
       return {
         model: structuredClone(model),
         coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
       };
     },
-    sealPersistenceForTerminalFinalization: () => events.push('controller-seal'),
   } as unknown as SessionController;
 }
 
@@ -256,8 +255,7 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   await first;
 
   expect(events).toEqual([
-    'controller-quiesce',
-    'controller-seal',
+    'controller-quiesce-and-seal',
     'stage-terminal',
     'write-start',
     'write-complete',
@@ -404,8 +402,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   });
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: jest.fn(() => quiescenceGate),
-    sealPersistenceForTerminalFinalization: jest.fn(),
+    quiesceAndSealForTerminalFinalization: jest.fn(() => quiescenceGate),
   } as unknown as SessionController;
   const persistTerminal = jest.fn(async () => {});
   const teardown = jest.fn();
@@ -417,8 +414,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   });
   await Promise.resolve();
 
-  expect(controller.quiesceForTerminalFinalization).toHaveBeenCalledTimes(1);
-  expect(controller.sealPersistenceForTerminalFinalization).not.toHaveBeenCalled();
+  expect(controller.quiesceAndSealForTerminalFinalization).toHaveBeenCalledTimes(1);
   expect(persistTerminal).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
 
@@ -428,9 +424,45 @@ it('does not stage or tear down before controller terminal quiescence', async ()
   });
   await finalization;
 
-  expect(controller.sealPersistenceForTerminalFinalization).toHaveBeenCalledTimes(1);
   expect(persistTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
+});
+
+it('seals the concrete runtime before a microtask queued during snapshot can mutate it', async () => {
+  const { controller } = setup(jest.fn());
+  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+    controller,
+    iStarted: true,
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  runtime.activate();
+  await runtime.flush();
+  const snapshotModel = jest.spyOn(runtime, 'snapshotModel');
+  snapshotModel.mockImplementationOnce(() => {
+    const snapshot = structuredClone(runtime.getState().model);
+    queueMicrotask(() => runtime.dispatch({ type: 'set-first-game-accepted', accepted: true }));
+    return snapshot;
+  });
+
+  try {
+    const first = await controller.quiesceAndSealForTerminalFinalization();
+    await Promise.resolve();
+
+    expect(first.model).toEqual(model);
+    expect(runtime.getState().coordination.firstGameAccepted).toBe(false);
+    expect(controller.getCommittedSessionRuntime()).toBeNull();
+
+    first.model.channel.status.ourBalance = 'mutated-return-value';
+    const retry = await controller.quiesceAndSealForTerminalFinalization();
+    expect(retry.model.channel.status.ourBalance).toBe('60');
+  } finally {
+    controller.cleanup();
+  }
 });
 
 it('stages and returns the model produced after terminal quiescence', async () => {
@@ -461,7 +493,7 @@ it('stages and returns the model produced after terminal quiescence', async () =
   });
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: jest.fn(async () => ({
+    quiesceAndSealForTerminalFinalization: jest.fn(async () => ({
       model: structuredClone(authoritativeModel),
       coinsOfInterest: [
         {
@@ -472,7 +504,6 @@ it('stages and returns the model produced after terminal quiescence', async () =
         },
       ],
     })),
-    sealPersistenceForTerminalFinalization: jest.fn(),
   } as unknown as SessionController;
   const persistTerminal = jest.fn(async () => {});
 
@@ -838,11 +869,10 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   const controller = {
     handState: acceptedHandState,
     getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: async () => ({
+    quiesceAndSealForTerminalFinalization: async () => ({
       model: structuredClone(timeoutModel),
       coinsOfInterest: [],
     }),
-    sealPersistenceForTerminalFinalization: jest.fn(),
   } as unknown as SessionController;
   const persistTerminal = jest.fn(async () => {});
 
@@ -918,14 +948,13 @@ it('returns the terminal result and tears down after an ordinary write failure',
   const reportDurabilityError = jest.fn();
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: async () => {
-      events.push('controller-quiesce');
+    quiesceAndSealForTerminalFinalization: async () => {
+      events.push('controller-quiesce-and-seal');
       return {
         model: structuredClone(model),
         coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
       };
     },
-    sealPersistenceForTerminalFinalization: () => events.push('controller-seal'),
     reportDurabilityError,
   } as unknown as SessionController;
   const teardown = jest.fn(() => events.push('teardown'));
@@ -941,7 +970,7 @@ it('returns the terminal result and tears down after an ordinary write failure',
   const terminal = await finalizeTerminalSession(finalizationArgs(controller), dependencies);
 
   expect(terminal.model).toEqual(model);
-  expect(events).toEqual(['controller-quiesce', 'controller-seal', 'marker', 'teardown']);
+  expect(events).toEqual(['controller-quiesce-and-seal', 'marker', 'teardown']);
   expect(teardown).toHaveBeenCalledTimes(1);
   expect(reportDurabilityError).toHaveBeenCalledTimes(1);
   expect(reportDurabilityError).toHaveBeenCalledWith(
@@ -960,7 +989,7 @@ it('returns the terminal result and tears down after an ordinary write failure',
     storageRepository.patchApplicationState(() => storageRepository.loadState()),
   );
 
-  expect(events).toEqual(['controller-quiesce', 'controller-seal', 'marker', 'teardown']);
+  expect(events).toEqual(['controller-quiesce-and-seal', 'marker', 'teardown']);
   expect(teardown).toHaveBeenCalledTimes(1);
   expect(reportDurabilityError).toHaveBeenCalledTimes(1);
   storageRepository._resetForTests();
@@ -980,11 +1009,10 @@ it.each([
 ])('propagates storage authority %s without publishing a terminal result', async (_kind, error) => {
   const controller = {
     getWalletProviderScope: () => walletProviderScope,
-    quiesceForTerminalFinalization: async () => ({
+    quiesceAndSealForTerminalFinalization: async () => ({
       model: structuredClone(model),
       coinsOfInterest: [],
     }),
-    sealPersistenceForTerminalFinalization: jest.fn(),
     reportDurabilityError: jest.fn(),
   } as unknown as SessionController;
   const updateMarker = jest.fn();
@@ -1004,4 +1032,53 @@ it.each([
   expect(controller.reportDurabilityError).not.toHaveBeenCalled();
   expect(updateMarker).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
+});
+
+it('retries the exact concrete-controller snapshot after repository authority recovery', async () => {
+  const { controller } = setup(jest.fn());
+  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+    controller,
+    iStarted: true,
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  runtime.activate();
+  await runtime.flush();
+  const captures: TerminalCapture[] = [];
+  let attempts = 0;
+  const dependencies: TerminalFinalizationDependencies = {
+    persistTerminal: async (capture) => {
+      captures.push(capture);
+      attempts += 1;
+      if (attempts === 1) throw new StorageAuthorityRequiredError();
+      await persistTerminalSnapshot(capture);
+    },
+    updateMarker: jest.fn(),
+    teardown: jest.fn(),
+  };
+
+  try {
+    await expect(
+      finalizeTerminalSession(finalizationArgs(controller), dependencies),
+    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
+    expect(controller.getCommittedSessionRuntime()).toBeNull();
+
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+    const result = await finalizeTerminalSession(finalizationArgs(controller), dependencies);
+
+    expect(captures).toHaveLength(2);
+    expect(captures[1].model).toEqual(captures[0].model);
+    expect(captures[1].model).not.toBe(captures[0].model);
+    expect(captures[1].coinsOfInterest).toEqual(captures[0].coinsOfInterest);
+    expect(result.model).toEqual(captures[0].model);
+    expect(dependencies.updateMarker).toHaveBeenCalledTimes(1);
+    expect(dependencies.teardown).toHaveBeenCalledTimes(1);
+  } finally {
+    controller.cleanup();
+  }
 });

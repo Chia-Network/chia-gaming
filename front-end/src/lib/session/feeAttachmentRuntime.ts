@@ -49,6 +49,7 @@ export class FeeAttachmentRuntime {
   private readonly knownUncertain: Set<string>;
   private readonly unsubscribe: (() => void)[];
   private detached = false;
+  private authorityRetired = false;
   private hardResetEpoch = 0;
 
   constructor(
@@ -61,16 +62,19 @@ export class FeeAttachmentRuntime {
       providers.subscribe((event) => this.providerEvent(event)),
       storageRepository.onLifecycle((_generation, event) => {
         if (event === 'claim') {
+          if (this.authorityRetired) return;
           this.markRestoredUncertain();
           this.resume();
         } else {
-          this.flights.clear();
+          this.authorityRetired = true;
+          this.detached = true;
           this.completed.clear();
           this.restoredUncertain.clear();
           this.knownUncertain.clear();
           if (event === 'hard-reset') {
             this.hardResetEpoch += 1;
           }
+          this.maybeDispose();
         }
       }),
     ];
@@ -97,9 +101,16 @@ export class FeeAttachmentRuntime {
     request: FeeAttachmentRequest,
     isInactive: () => boolean,
   ): Promise<WalletOfferCompletion> {
+    if (this.authorityRetired) {
+      return { kind: 'unavailable', reason: 'Fee runtime lost storage authority' };
+    }
+    const consumerDead = () => this.authorityRetired || this.ports.isRetired() || isInactive();
     const completed = this.completed.get(submissionId);
     if (completed) {
       this.completed.delete(submissionId);
+      if (consumerDead()) {
+        return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+      }
       return completed;
     }
     storageRepository.ensureWalletContext(owner.providerScope);
@@ -113,6 +124,9 @@ export class FeeAttachmentRuntime {
       const replacement = this.completed.get(submissionId);
       if (replacement) {
         this.completed.delete(submissionId);
+        if (consumerDead()) {
+          return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+        }
         return replacement;
       }
       return { kind: 'unavailable', reason: 'Fee replacement waits for wallet readiness' };
@@ -126,6 +140,7 @@ export class FeeAttachmentRuntime {
   }
 
   retain(owner: FeeAttachmentOwner, submissionId: string): void {
+    if (this.authorityRetired) return;
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (!current || (current.stage !== 'reserved' && current.stage !== 'retained-for-replay')) {
       throw new Error('Fee replay retention requires a reserved attachment');
@@ -134,6 +149,7 @@ export class FeeAttachmentRuntime {
   }
 
   cancel(owner: FeeAttachmentOwner, submissionId: string, _reason: string): void {
+    if (this.authorityRetired) return;
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (!current) return;
     if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
@@ -168,6 +184,7 @@ export class FeeAttachmentRuntime {
   ): Promise<WalletOfferCompletion> {
     const generation = storageRepository.lifecycleGeneration;
     const hardResetEpoch = this.hardResetEpoch;
+    const consumerDead = () => this.authorityRetired || this.ports.isRetired() || isInactive();
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     const recoveryId =
       !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
@@ -180,12 +197,12 @@ export class FeeAttachmentRuntime {
         return { kind: 'unavailable', reason: 'Storage authority changed before fee creation' };
       }
       if (recoveryId || !canLosePreIdResponse(provider)) throw error;
-      if (this.ports.isRetired()) {
+      if (consumerDead()) {
         log(
-          `[fee-attachment] retired creation lost its pre-id response; reservation may remain orphaned submission_id=${submissionId}`,
+          `[fee-attachment] dead fee consumer lost its pre-id response; reservation may remain orphaned submission_id=${submissionId}`,
         );
       } else {
-        this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+        this.creationUncertain(owner, submissionId, request, consumerDead, generation);
       }
       return { kind: 'unavailable', reason: String(error) };
     }
@@ -195,18 +212,19 @@ export class FeeAttachmentRuntime {
       !replacement &&
       canLosePreIdResponse(provider)
     ) {
-      if (this.ports.isRetired()) {
+      if (consumerDead()) {
         log(
-          `[fee-attachment] retired creation returned unavailable before reservation identification; reservation may remain orphaned submission_id=${submissionId}`,
+          `[fee-attachment] dead fee consumer returned unavailable before reservation identification; reservation may remain orphaned submission_id=${submissionId}`,
         );
       } else {
-        this.creationUncertain(owner, submissionId, request, isInactive(), generation);
+        this.creationUncertain(owner, submissionId, request, consumerDead, generation);
       }
       return outcome;
     }
     if (outcome.kind === 'pending') {
       const pendingRecoveryId = outcome.recoveryId;
       const pending = () => {
+        if (consumerDead()) return;
         const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
         this.replace(latest, {
           owner,
@@ -216,9 +234,7 @@ export class FeeAttachmentRuntime {
             (latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain') &&
             latest.disposition === 'cancel-on-create'
               ? 'cancel-on-create'
-              : isInactive()
-                ? 'cancel-on-create'
-                : 'active',
+              : 'active',
           request,
           recoveryId: pendingRecoveryId,
           reason: 'fee-creation-pending',
@@ -231,8 +247,8 @@ export class FeeAttachmentRuntime {
         );
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
-      const consumerRetired = this.ports.isRetired();
-      if (!consumerRetired) pending();
+      const pendingConsumerDead = consumerDead();
+      if (!pendingConsumerDead) pending();
       outcome = await advanceProviderCreation(
         generation,
         provider,
@@ -241,20 +257,28 @@ export class FeeAttachmentRuntime {
         pendingRecoveryId,
       );
       if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
-      if (consumerRetired) {
+      if (consumerDead()) {
+        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+        if (storageRepository.isGenerationCurrent(generation) && latest) {
+          this.replace(latest, null);
+        }
         if (outcome.kind === 'created-reserved') {
           this.cancelLateReservation(provider, outcome.tradeId, submissionId);
         } else if (outcome.kind === 'unavailable') {
           log(
-            `[fee-attachment] retired creation reconciliation unavailable; reservation may remain orphaned submission_id=${submissionId} recovery_id=${pendingRecoveryId}`,
+            `[fee-attachment] dead consumer creation reconciliation unavailable; reservation may remain orphaned submission_id=${submissionId} recovery_id=${pendingRecoveryId}`,
           );
         }
         return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
       }
     }
     const generationCurrent = storageRepository.isGenerationCurrent(generation);
-    const consumerRetired = this.ports.isRetired();
-    if (!generationCurrent || consumerRetired) {
+    const dead = consumerDead();
+    if (!generationCurrent || dead) {
+      if (generationCurrent && dead) {
+        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+        if (latest) this.replace(latest, null);
+      }
       if (
         outcome.kind === 'created-reserved' &&
         (generationCurrent || hardResetEpoch === this.hardResetEpoch)
@@ -290,6 +314,18 @@ export class FeeAttachmentRuntime {
     });
     if (cancel) void this.scheduleCancellation(outcome.tradeId);
     await checkpointProviderState(generation);
+    if (consumerDead()) {
+      const installed = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+      const cancellationStarted =
+        installed?.stage === 'cancel-required' ||
+        installed?.stage === 'cancelling' ||
+        installed?.stage === 'best-effort-cancellation-uncertain';
+      if (!cancellationStarted) {
+        if (installed) this.replace(installed, null);
+        this.cancelLateReservation(provider, outcome.tradeId, submissionId);
+      }
+      return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+    }
     if (latest?.orphanRisk) {
       const warning =
         'Wallet lost an earlier fee create response; a reservation may remain orphaned.';
@@ -303,16 +339,17 @@ export class FeeAttachmentRuntime {
     owner: FeeAttachmentOwner,
     submissionId: string,
     request: FeeAttachmentRequest,
-    retired: boolean,
+    consumerDead: () => boolean,
     generation: number,
   ): void {
     const apply = () => {
+      if (consumerDead()) return;
       if (feeAttachmentForSubmission(this.entries(), owner, submissionId)) return;
       const uncertain: FeeAttachmentUncertain = {
         owner,
         submissionId,
         stage: 'best-effort-uncertain',
-        disposition: retired ? 'cancel-on-create' : 'active',
+        disposition: 'active',
         request,
         lastAttemptEpoch: BigInt(this.providers.readinessEpoch(owner.providerScope)),
         reason: 'fee-create-response-unavailable',
@@ -325,6 +362,7 @@ export class FeeAttachmentRuntime {
   }
 
   private resume(): void {
+    if (this.authorityRetired) return;
     for (const entry of this.entries()) {
       if (entry.stage === 'creating') this.recover(entry);
       else if (entry.stage === 'best-effort-uncertain') this.replaceUncertain(entry);
@@ -339,22 +377,30 @@ export class FeeAttachmentRuntime {
   }
 
   private recover(entry: Extract<FeeAttachment, { stage: 'creating' }>): void {
+    if (this.authorityRetired) return;
     const provider = this.providers.provider(entry.owner.providerScope);
     if (!provider || !isRecoverableProvider(provider)) return;
     void this.flight(`recover:${entry.submissionId}`, async () => {
+      const consumerDead = () =>
+        this.authorityRetired ||
+        this.ports.isRetired() ||
+        this.recoveredConsumerDead(entry.owner, entry.submissionId);
       const outcome = await this.create(
         provider,
         entry.owner,
         entry.submissionId,
         entry.request,
-        () => entry.disposition === 'cancel-on-create' || this.ports.isRetired(),
+        consumerDead,
         false,
       );
-      if (outcome.kind === 'created-reserved') this.completed.set(entry.submissionId, outcome);
+      if (outcome.kind === 'created-reserved' && !consumerDead()) {
+        this.completed.set(entry.submissionId, outcome);
+      }
     });
   }
 
   private replaceUncertain(entry: FeeAttachmentUncertain): void {
+    if (this.authorityRetired) return;
     const provider = this.providers.provider(entry.owner.providerScope);
     const epoch = BigInt(this.providers.readinessEpoch(entry.owner.providerScope));
     const key = feeAttachmentEntryKey(entry);
@@ -364,19 +410,26 @@ export class FeeAttachmentRuntime {
     this.restoredUncertain.delete(key);
     this.replace(entry, { ...entry, lastAttemptEpoch: epoch });
     void this.flight(`replace:${entry.submissionId}`, async () => {
+      const consumerDead = () =>
+        this.authorityRetired ||
+        this.ports.isRetired() ||
+        this.recoveredConsumerDead(entry.owner, entry.submissionId);
       const outcome = await this.create(
         provider,
         entry.owner,
         entry.submissionId,
         entry.request,
-        () => entry.disposition === 'cancel-on-create' || this.ports.isRetired(),
+        consumerDead,
         true,
       );
-      if (outcome.kind === 'created-reserved') this.completed.set(entry.submissionId, outcome);
+      if (outcome.kind === 'created-reserved' && !consumerDead()) {
+        this.completed.set(entry.submissionId, outcome);
+      }
     });
   }
 
   private scheduleCancellation(id: string): Promise<void> {
+    if (this.authorityRetired) return Promise.resolve();
     const entry = identifiedFeeAttachment(this.entries(), id);
     const provider = entry && this.providers.provider(entry.owner.providerScope);
     if (
@@ -449,7 +502,7 @@ export class FeeAttachmentRuntime {
   }
 
   private providerEvent(event: WalletProviderRegistryEvent): void {
-    if (event.kind === 'detached') return;
+    if (this.authorityRetired || event.kind === 'detached') return;
     const scope = providerScopeKey(event.provider.scope);
     for (const entry of this.entries()) {
       if (providerScopeKey(entry.owner.providerScope) !== scope) continue;
@@ -466,7 +519,7 @@ export class FeeAttachmentRuntime {
   }
 
   private replace(current: FeeAttachment | null, next: FeeAttachment | null): void {
-    if (!storageRepository.hasAuthority()) return;
+    if (this.authorityRetired || !storageRepository.hasAuthority()) return;
     const currentKey = current ? feeAttachmentEntryKey(current) : null;
     const nextKey = next ? feeAttachmentEntryKey(next) : null;
     if (
@@ -520,6 +573,18 @@ export class FeeAttachmentRuntime {
             `[fee-attachment] stale reservation cancellation failed submission_id=${submissionId} provider_reservation_id=${id}: ${String(error)}`,
           ),
       );
+  }
+
+  private recoveredConsumerDead(owner: FeeAttachmentOwner, submissionId: string): boolean {
+    const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    return (
+      !current ||
+      current.stage === 'cancel-required' ||
+      current.stage === 'cancelling' ||
+      current.stage === 'best-effort-cancellation-uncertain' ||
+      ((current.stage === 'creating' || current.stage === 'best-effort-uncertain') &&
+        current.disposition === 'cancel-on-create')
+    );
   }
 
   private markRestoredUncertain(): void {
