@@ -596,8 +596,11 @@ the wipe. Reload occurs only after confirmed deletion success. Blocked or
 failed deletion stays on recovery UI with Retry and records a minimal
 pending-wipe fallback for the next boot.
 Ordinary IndexedDB I/O degradation keeps the in-memory aggregate pending and
-available; `StorageAuthorityLostError` retires the owner and suppresses pending
-writes/effects. The reset manifest deletes exact owned names and enumerated
+available; `StorageAuthorityLostError` and `StorageAuthorityRequiredError` mean
+the old owner is dead, retire its controller, and suppress pending
+writes/effects. A new claimant restores only the latest flushed durable whole
+root rather than receiving a terminal snapshot or transient work from the old
+generation. The reset manifest deletes exact owned names and enumerated
 owned prefixes while preserving foreign same-origin databases.
 Aggregate persistence does not gate wallet use, transaction release, or
 `cancelOffer`; a failed write is retried by a later full checkpoint. Failed
@@ -617,8 +620,13 @@ post-quiescence authoritative runtime model. Terminal capture installs that
 record in the repository root before its write. An ordinary write failure
 reports degraded durability but still retires protocol ownership; a later
 aggregate checkpoint can persist the pending terminal root without replaying
-finalization. Authority loss still fences the obsolete owner, and unresolved
-wallet or protocol obligations still block quiescence.
+finalization. Once sealed, every incoming runtime is immediately retired until
+controller cleanup. Either authority error kills the obsolete owner without a
+terminal result, marker, or teardown; a new claimant rehydrates the latest
+flushed durable live root and independently finalizes. Unresolved reservation
+creation or identification, funding material still owed to Rust, and other
+protocol obligations block capture. Identified funding or fee cancellation
+residue stays durable and may survive capture.
 
 The live transport checkpoint includes the cooperative terminal handoff's Rust
 command identity, exact reliable frame bytes and message number, sent state, and

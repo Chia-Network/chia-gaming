@@ -4,7 +4,7 @@ import type {
   WalletOfferProvider,
 } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
-import { StorageAuthorityLostError } from './indexedDb';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
 import {
   feeAttachmentEntryKey,
   feeAttachmentForSubmission,
@@ -313,7 +313,20 @@ export class FeeAttachmentRuntime {
       ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
     });
     if (cancel) void this.scheduleCancellation(outcome.tradeId);
-    await checkpointProviderState(generation);
+    try {
+      await checkpointProviderState(generation);
+    } catch (error) {
+      if (
+        error instanceof StorageAuthorityLostError ||
+        error instanceof StorageAuthorityRequiredError
+      ) {
+        if (hardResetEpoch === this.hardResetEpoch) {
+          this.cancelLateReservation(provider, outcome.tradeId, submissionId);
+        }
+        return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
+      }
+      throw error;
+    }
     if (consumerDead()) {
       const installed = feeAttachmentForSubmission(this.entries(), owner, submissionId);
       const cancellationStarted =

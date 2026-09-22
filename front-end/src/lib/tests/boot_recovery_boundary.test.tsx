@@ -18,6 +18,9 @@ import {
   SESSION_DB_NAME,
 } from '../session/indexedDb';
 import { baseSave, liveSave } from './session_save_envelope.fixtures';
+import { SessionController } from '../../hooks/SessionController';
+import { ControlledRuntime, commitRuntime } from './runtime_capability.harness';
+import { rehydrateDurableApplicationState } from '../session/persistence';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -83,6 +86,7 @@ function ShellBootHarness(props: {
   ) => ReturnType<BootRecoveryBoundaryDependencies['onRestore']>;
   onSessionId?: (sessionId: string) => void;
   onFreshClaim?: BootRecoveryBoundaryDependencies['onFreshClaim'];
+  onAuthorityLost?: () => void;
 }) {
   const [presentation, setPresentation] = useState<string | null>(null);
   const [walletReady] = useState(false);
@@ -98,7 +102,10 @@ function ShellBootHarness(props: {
         void props.externalWallet;
       }),
     onFreshClaim: props.onFreshClaim ?? (() => {}),
-    onAuthorityLost: () => setPresentation(null),
+    onAuthorityLost: () => {
+      props.onAuthorityLost?.();
+      setPresentation(null);
+    },
     beforeHardReset: () => {},
     reload: props.reload,
   });
@@ -658,6 +665,51 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     await waitForRender(renderer!, 'Fresh dashboard');
     expect(renderer!.root.findByProps({ children: 'Fresh dashboard' })).toBeDefined();
     await storageRepository.checkpointDomainMutations();
+  });
+
+  it('kills the old controller and rehydrates the durable live root after takeover', async () => {
+    const durableLive = liveSave({
+      pairingToken: 'terminal-owner-death-pair',
+      serializedGameSession: new Uint8Array([5, 4, 3]),
+    });
+    const oldController = new SessionController(null, 'old-owner', 100n, 100n, {
+      sendMessage: () => true,
+      sendAck: () => true,
+    });
+    const oldRuntime = new ControlledRuntime();
+    commitRuntime(oldController, oldRuntime);
+    const onRestore = jest.fn((save) => {
+      const bootstrap = rehydrateDurableApplicationState(save);
+      expect(bootstrap.state.session?.phase).toBe('live');
+      expect(
+        bootstrap.state.session?.phase === 'live' &&
+          bootstrap.state.session.live.serializedGameSession,
+      ).toEqual(new Uint8Array([5, 4, 3]));
+    });
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          onRestore,
+          onAuthorityLost: () => oldController.cleanup(),
+        }),
+      );
+    });
+    await waitForRender(renderer!, 'Fresh dashboard');
+    await storageRepository.write(storageRepository.patchApplicationState(() => durableLive));
+
+    act(() => storageRepository.loseAuthority('takeover'));
+    await waitForRender(renderer!, 'Tab conflict');
+    expect(oldController.getCommittedSessionRuntime()).toBeNull();
+
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Take over' }).props.onClick();
+    });
+
+    expect(onRestore).toHaveBeenCalledTimes(1);
   });
 
   it('suppresses fresh-claim callbacks when authority is lost before snapshot delivery', async () => {

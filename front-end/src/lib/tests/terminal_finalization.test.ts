@@ -456,13 +456,87 @@ it('seals the concrete runtime before a microtask queued during snapshot can mut
     expect(first.model).toEqual(model);
     expect(runtime.getState().coordination.firstGameAccepted).toBe(false);
     expect(controller.getCommittedSessionRuntime()).toBeNull();
-
-    first.model.channel.status.ourBalance = 'mutated-return-value';
-    const retry = await controller.quiesceAndSealForTerminalFinalization();
-    expect(retry.model.channel.status.ourBalance).toBe('60');
   } finally {
     controller.cleanup();
   }
+});
+
+it('rejects a remounted runtime while the sealed terminal model is being written', async () => {
+  const { controller } = setup(jest.fn());
+  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+    controller,
+    iStarted: true,
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  runtime.activate();
+  await runtime.flush();
+
+  let releaseWrite!: () => void;
+  let writeStarted!: () => void;
+  const writeGate = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  const enteredWrite = new Promise<void>((resolve) => {
+    writeStarted = resolve;
+  });
+  const persistTerminal = jest.fn(async () => {
+    writeStarted();
+    await writeGate;
+  });
+  const finalization = finalizeTerminalSession(finalizationArgs(controller), {
+    persistTerminal,
+    updateMarker: jest.fn(),
+    teardown: jest.fn(),
+  });
+  await enteredWrite;
+
+  const remountedModel = createSessionModel({
+    channel: {
+      ...model.channel,
+      status: { ...model.channel.status, ourBalance: '999' },
+    },
+  });
+  const remountedRuntime = new SessionMachineRuntime(createSessionMachineState(remountedModel), {
+    controller,
+    iStarted: true,
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  remountedRuntime.activate();
+  remountedRuntime.dispatch({ type: 'set-first-game-accepted', accepted: true });
+
+  expect(controller.getCommittedSessionRuntime()).toBeNull();
+  expect(remountedRuntime.getState().coordination.firstGameAccepted).toBe(false);
+  expect(persistTerminal).toHaveBeenCalledWith(
+    expect.objectContaining({
+      model: expect.objectContaining({
+        channel: expect.objectContaining({
+          status: expect.objectContaining({ ourBalance: '60' }),
+        }),
+      }),
+    }),
+  );
+
+  releaseWrite();
+  await expect(finalization).resolves.toEqual(
+    expect.objectContaining({
+      model: expect.objectContaining({
+        channel: expect.objectContaining({
+          status: expect.objectContaining({ ourBalance: '60' }),
+        }),
+      }),
+    }),
+  );
+  controller.cleanup();
 });
 
 it('stages and returns the model produced after terminal quiescence', async () => {
@@ -1032,53 +1106,4 @@ it.each([
   expect(controller.reportDurabilityError).not.toHaveBeenCalled();
   expect(updateMarker).not.toHaveBeenCalled();
   expect(teardown).not.toHaveBeenCalled();
-});
-
-it('retries the exact concrete-controller snapshot after repository authority recovery', async () => {
-  const { controller } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
-    controller,
-    iStarted: true,
-    restoring: false,
-    getRestoreStatus: () => 'idle',
-    getRestoreError: () => null,
-    onError: (error) => {
-      throw error;
-    },
-  });
-  runtime.activate();
-  await runtime.flush();
-  const captures: TerminalCapture[] = [];
-  let attempts = 0;
-  const dependencies: TerminalFinalizationDependencies = {
-    persistTerminal: async (capture) => {
-      captures.push(capture);
-      attempts += 1;
-      if (attempts === 1) throw new StorageAuthorityRequiredError();
-      await persistTerminalSnapshot(capture);
-    },
-    updateMarker: jest.fn(),
-    teardown: jest.fn(),
-  };
-
-  try {
-    await expect(
-      finalizeTerminalSession(finalizationArgs(controller), dependencies),
-    ).rejects.toBeInstanceOf(StorageAuthorityRequiredError);
-    expect(controller.getCommittedSessionRuntime()).toBeNull();
-
-    storageRepository._resetForTests();
-    await storageRepository.claimApplicationState();
-    const result = await finalizeTerminalSession(finalizationArgs(controller), dependencies);
-
-    expect(captures).toHaveLength(2);
-    expect(captures[1].model).toEqual(captures[0].model);
-    expect(captures[1].model).not.toBe(captures[0].model);
-    expect(captures[1].coinsOfInterest).toEqual(captures[0].coinsOfInterest);
-    expect(result.model).toEqual(captures[0].model);
-    expect(dependencies.updateMarker).toHaveBeenCalledTimes(1);
-    expect(dependencies.teardown).toHaveBeenCalledTimes(1);
-  } finally {
-    controller.cleanup();
-  }
 });

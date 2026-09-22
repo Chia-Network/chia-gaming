@@ -254,7 +254,7 @@ export class SessionController implements PollingGameSession {
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private terminalFinalizationRetryListeners = new Set<() => void>();
-  private terminalQuiescentSnapshot: TerminalQuiescentSnapshot | null = null;
+  private terminalSealed = false;
   private readonly submissionPump: SubmissionPump;
   private readonly pendingCoinSolutionDeliveries = new Map<string, PendingCoinSolutionDelivery>();
   private puzzleSolutionReadinessUnsubscribe: (() => void) | null = null;
@@ -417,12 +417,11 @@ export class SessionController implements PollingGameSession {
   }
 
   commitSessionRuntime(runtime: SessionMachineRuntime): void {
-    if (this.retired) {
+    if (this.retired || this.terminalSealed) {
       runtime.retire();
       return;
     }
     if (this.committedSessionRuntime === runtime) return;
-    this.terminalQuiescentSnapshot = null;
     const previous = this.committedSessionRuntime;
     this.committedSessionRuntime = runtime;
     if (previous && this.persistenceSessionRuntime === previous) {
@@ -755,7 +754,6 @@ export class SessionController implements PollingGameSession {
   private cleanupInternal() {
     if (this.retired) return;
     const retainRejectedTransport = this.reliableState.disposition === 'outbound-reject';
-    this.terminalQuiescentSnapshot = null;
     this.pendingFunding = null;
     this.retired = true;
     this.channelFundingUnsubscribe?.();
@@ -1407,9 +1405,6 @@ export class SessionController implements PollingGameSession {
   }
 
   async quiesceAndSealForTerminalFinalization(): Promise<TerminalQuiescentSnapshot> {
-    if (this.terminalQuiescentSnapshot) {
-      return structuredClone(this.terminalQuiescentSnapshot);
-    }
     const maxPasses = 20;
     let checkpointFailed = false;
     const flushRuntime = async (runtime: SessionMachineRuntime): Promise<void> => {
@@ -1427,9 +1422,6 @@ export class SessionController implements PollingGameSession {
       }
     };
     for (let pass = 0; pass < maxPasses; pass += 1) {
-      if (this.terminalQuiescentSnapshot) {
-        return structuredClone(this.terminalQuiescentSnapshot);
-      }
       const runtime = this.committedSessionRuntime;
       if (!runtime) {
         throw new Error('SessionController terminal finalization requires an active runtime');
@@ -1454,12 +1446,12 @@ export class SessionController implements PollingGameSession {
             'SessionController terminal persistence sealing requires an active runtime',
           );
         }
+        this.terminalSealed = true;
         this.reliableTransport.detachCommitCoordinator(runtime);
         this.persistenceSessionRuntime = null;
         this.committedSessionRuntime = null;
         runtime.retire();
-        this.terminalQuiescentSnapshot = structuredClone({ model, coinsOfInterest });
-        return structuredClone(this.terminalQuiescentSnapshot);
+        return { model, coinsOfInterest };
       }
     }
     throw new Error(

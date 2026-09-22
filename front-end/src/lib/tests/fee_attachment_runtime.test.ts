@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import type { FeeAttachment, FeeAttachmentOwner } from '../session/feeAttachmentStore';
+import { StorageAuthorityLostError } from '../session/indexedDb';
 import { storageRepository } from '../session/storageRepository';
 import { WalletProviderRegistry } from '../session/walletProviderRegistry';
 
@@ -314,6 +315,112 @@ describe('FeeAttachmentRuntime lifecycle', () => {
     await storageRepository.claimApplicationState();
     await runtime.awaitIdle();
     expect(storageRepository.feeAttachments()).toEqual([]);
+    runtime.detach();
+  });
+
+  it('cancels through the originating provider when authority is lost during the installed reservation checkpoint', async () => {
+    let resolveCreation!: (value: {
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }) => void;
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveCreation = resolve;
+          }),
+      ),
+      cancel,
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    const reservation = runtime.reserve(owner, 'checkpoint-takeover', request, () => false);
+    await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+
+    storageRepository.attachRuntime({
+      requestCommit: jest.fn(),
+      flush: async () => {
+        expect(storageRepository.feeAttachments()[0]?.providerReservationId).toBe(
+          'checkpoint-takeover-trade',
+        );
+        storageRepository.loseAuthority('takeover');
+        throw new StorageAuthorityLostError();
+      },
+    });
+    resolveCreation({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1checkpoint' },
+      tradeId: 'checkpoint-takeover-trade',
+    });
+
+    await expect(reservation).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'Storage authority changed during fee creation',
+    });
+    await waitFor(() => cancel.mock.calls.length === 1);
+    expect(cancel).toHaveBeenCalledWith('checkpoint-takeover-trade');
+
+    await storageRepository.claimApplicationState();
+    expect(storageRepository.feeAttachments()).toEqual([]);
+    runtime.detach();
+  });
+
+  it('does not cancel an installed reservation when hard reset wins its checkpoint', async () => {
+    let resolveCreation!: (value: {
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }) => void;
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveCreation = resolve;
+          }),
+      ),
+      cancel,
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    const reservation = runtime.reserve(owner, 'checkpoint-reset', request, () => false);
+    await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+
+    let resetCompleted = false;
+    storageRepository.attachRuntime({
+      requestCommit: jest.fn(),
+      flush: async () => {
+        expect(storageRepository.feeAttachments()[0]?.providerReservationId).toBe(
+          'checkpoint-reset-trade',
+        );
+        await expect(storageRepository.hardReset()).resolves.toEqual({ success: true });
+        resetCompleted = true;
+        throw new StorageAuthorityLostError();
+      },
+    });
+    resolveCreation({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1checkpointreset' },
+      tradeId: 'checkpoint-reset-trade',
+    });
+
+    await expect(reservation).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'Storage authority changed during fee creation',
+    });
+    expect(resetCompleted).toBe(true);
+    await storageRepository.claimApplicationState();
+
+    expect(storageRepository.feeAttachments()).toEqual([]);
+    expect(cancel).not.toHaveBeenCalled();
     runtime.detach();
   });
 

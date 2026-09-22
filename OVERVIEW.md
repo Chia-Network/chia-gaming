@@ -1002,12 +1002,16 @@ preserved.
 
 Ordinary IndexedDB I/O failure never gates use, transaction release, or
 cancellation; the in-memory aggregate remains pending for a later checkpoint.
-`StorageAuthorityLostError` instead retires the obsolete owner and suppresses
-its pending writes/effects. Failed cancellation retries only on restore or
-wallet reconnect/readiness—never by a timer or immediate loop. This is
+`StorageAuthorityLostError` and `StorageAuthorityRequiredError` instead mean
+the old owner is dead: Shell destroys its controller and suppresses its pending
+writes/effects. A new claimant independently rehydrates the latest flushed
+durable whole root; no controller snapshot or transient work crosses the
+authority generation. Failed cancellation retries only on restore or wallet
+reconnect/readiness—never by a timer or immediate loop. This is
 readiness-only, durable, nonblocking cleanup. Terminal finalization is blocked
-while funding material is still owed to Rust, but identified funding or fee
-cancellation remains durable and does not block terminal session capture.
+while reservation creation or identification is unresolved, or while funding
+material is still owed to Rust. Identified funding or fee cancellation residue
+remains durable and does not block terminal session capture.
 Going offline detaches the provider RPC without
 discarding cleanup; retirement records the required transitions, and matching
 restore/reconnect attachment drains them.
@@ -1107,9 +1111,12 @@ may outlive terminal capture. Terminal finalization repeatedly drains controller
 events, persistence, submission promises, and reliable transport to quiescence
 before atomically taking the terminal snapshot from the post-quiescence
 authoritative runtime model and retiring protocol ownership in the same
-synchronous controller continuation. The controller retains that immutable
-snapshot across a terminal-write authority failure so a later authority
-recovery retries the exact capture without reviving the runtime.
+synchronous controller continuation. Once sealed, the controller rejects and
+retires every incoming runtime until cleanup, so a renderer remount cannot
+resurrect protocol ownership during the terminal write. An authority error
+publishes no terminal result, marker, or teardown; the old owner dies and a new
+claimant restores the latest flushed durable live root before independently
+finalizing.
 
 These ownership and persistence boundaries change no peer wire schema.
 

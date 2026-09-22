@@ -128,6 +128,7 @@ import {
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../lib/session/receivePolicy';
 import { sessionModelForReactProps } from '../lib/session/finishedSessionDisplay';
 import { finalizeTerminalSession } from '../lib/session/terminalFinalization';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
 import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import {
   appendDiagnosticEntry,
@@ -2727,6 +2728,12 @@ const Shell = () => {
           identity,
         });
       } catch (error) {
+        if (
+          error instanceof StorageAuthorityLostError ||
+          error instanceof StorageAuthorityRequiredError
+        ) {
+          destroySessionController();
+        }
         setTerminalFinalizationBlocker(
           error instanceof Error ? error.message : 'Session finalization is blocked.',
         );

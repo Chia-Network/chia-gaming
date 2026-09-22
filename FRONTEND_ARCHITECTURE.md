@@ -1604,16 +1604,22 @@ promises. Those promises cover persistence-gated launch, ordered wallet
 delivery, Rust acknowledgement or rejection, and fee-offer cleanup. The
 controller takes the terminal presentation from the authoritative runtime model
 and synchronously detaches and retires that runtime in the same continuation,
-so no queued mutation can enter between capture and sealing. It retains an
-immutable clone for an exact retry after storage authority is recovered.
+so no queued mutation can enter between capture and sealing. The sealed
+controller rejects and retires every incoming runtime until controller cleanup,
+so a renderer remount cannot reclaim protocol ownership during the terminal
+write.
 Terminal capture installs the aggregate in the repository root before attempting IndexedDB. An
 ordinary write failure uses the existing one-per-episode durability warning,
 then still freezes presentation, destroys the controller, and releases the peer
 relay/hub busy state. The in-memory terminal root remains dirty for a later
 aggregate checkpoint without replaying finalization. Storage authority loss or
 missing authority rejects without publishing a marker, result, or teardown;
-the same controller supplies its retained terminal snapshot to a later retry.
-unresolved protocol and wallet obligations remain quiescence blockers.
+both errors mean the old owner dies. A new claimant rehydrates the latest
+flushed durable whole root and independently finalizes, with no snapshot or
+transient work transferred across generations. Unresolved reservation creation
+or identification, funding material still owed to Rust, and other unresolved
+protocol work remain capture blockers. Identified funding or fee cancellation
+residue remains durable and may survive terminal capture.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes
