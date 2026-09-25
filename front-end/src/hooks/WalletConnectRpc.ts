@@ -3,6 +3,10 @@ import {
   CreateOfferForIdsRequest,
   CreateOfferForIdsResponse,
 } from '../types/rpc/CreateOfferForIds';
+import {
+  CreateFeeTransactionRequest,
+  CreateFeeTransactionResponse,
+} from '../types/rpc/CreateFeeTransaction';
 import { GetNextAddressRequest, GetNextAddressResponse } from '../types/rpc/GetNextAddress';
 import { GetWalletBalanceRequest, GetWalletBalanceResponse } from '../types/rpc/GetWalletBalance';
 import { GetHeightInfoRequest, GetHeightInfoResponse } from '../types/rpc/GetHeightInfo';
@@ -345,6 +349,10 @@ async function createOfferForIds(data: CreateOfferForIdsRequest) {
   return await request<CreateOfferForIdsResponse>(ChiaMethod.CreateOfferForIds, data);
 }
 
+async function createFeeTransaction(data: CreateFeeTransactionRequest) {
+  return await request<CreateFeeTransactionResponse>(ChiaMethod.CreateFeeTransaction, data);
+}
+
 async function cancelOffer(data: { tradeId: string; secure: boolean; fee: bigint }) {
   return await request<
     {
@@ -389,6 +397,7 @@ export const rpc = {
   selectCoins,
   getHeightInfo,
   createOfferForIds,
+  createFeeTransaction,
   cancelOffer,
   pushTransactions,
   createNewRemoteWallet,

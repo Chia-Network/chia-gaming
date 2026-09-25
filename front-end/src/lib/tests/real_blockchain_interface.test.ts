@@ -7,6 +7,7 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
   WalletConnectResponseError: class WalletConnectResponseError extends Error {},
   rpc: {
     createOfferForIds: jest.fn(),
+    createFeeTransaction: jest.fn(),
     cancelOffer: jest.fn(),
     createNewRemoteWallet: jest.fn(),
     getNextAddress: jest.fn(),
@@ -89,6 +90,7 @@ const offerOperation = {
 };
 
 const mockCreateOfferForIds = rpc.createOfferForIds as jest.Mock;
+const mockCreateFeeTransaction = rpc.createFeeTransaction as jest.Mock;
 const mockCancelOffer = rpc.cancelOffer as jest.Mock;
 const mockCreateNewRemoteWallet = rpc.createNewRemoteWallet as jest.Mock;
 const mockGetNextAddress = rpc.getNextAddress as jest.Mock;
@@ -131,6 +133,7 @@ describe('RealBlockchainInterface', () => {
   beforeEach(async () => {
     setTestGlobal('localStorage', makeStorage());
     mockCreateOfferForIds.mockReset();
+    mockCreateFeeTransaction.mockReset();
     mockCancelOffer.mockReset();
     mockCreateNewRemoteWallet.mockReset();
     mockGetNextAddress.mockReset();
@@ -925,11 +928,22 @@ describe('RealBlockchainInterface', () => {
     );
   });
 
-  it('persists a wallet-signed fee offer to reserve its selected input', async () => {
+  function feeTransactionRecord(overrides: Record<string, unknown> = {}) {
+    return {
+      amount: 0n,
+      fee_amount: 10n,
+      spend_bundle: { coin_spends: [], aggregated_signature: '0xc0' },
+      removals: [],
+      additions: [],
+      ...overrides,
+    };
+  }
+
+  it('creates an unreserved fee bundle bound to the protocol coin', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockResolvedValue({
-      offer: 'offer1signed',
-      tradeRecord: { tradeId: 'fee-trade' },
+    mockCreateFeeTransaction.mockResolvedValue({
+      transactions: [feeTransactionRecord()],
+      unsignedTransactions: [],
     });
 
     const bindCoinId = 'ab'.repeat(32);
@@ -939,27 +953,25 @@ describe('RealBlockchainInterface', () => {
         { kind: 'fee', uniqueId: 'test', fee: 10n, concurrentSpendCoinId: bindCoinId },
       ),
     ).resolves.toEqual({
-      kind: 'created-reserved',
-      material: { kind: 'offer', offer: 'offer1signed' },
-      tradeId: 'fee-trade',
+      kind: 'created-ephemeral',
+      material: { kind: 'bundle', bundle: { coin_spends: [], aggregated_signature: '0xc0' } },
     });
 
     expect(mockSelectCoins).not.toHaveBeenCalled();
-    expect(mockCreateOfferForIds).toHaveBeenCalledWith({
-      offer: { '1': -10n },
-      driverDict: {},
-      validateOnly: false,
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+    expect(mockCreateFeeTransaction).toHaveBeenCalledWith({
+      fee: 10n,
       allowUnsynced: true,
-      extraConditions: [
-        { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
-        { opcode: 52n, args: { amount: 10n } },
-      ],
+      extraConditions: [{ opcode: 64n, args: { coin_id: `0x${bindCoinId}` } }],
     });
   });
 
-  it('keeps a persisted fee offer without a trade ID uncertain', async () => {
+  it('rejects a fee transaction that does not reserve the requested fee', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
+    mockCreateFeeTransaction.mockResolvedValue({
+      transactions: [feeTransactionRecord({ fee_amount: 5n })],
+      unsignedTransactions: [],
+    });
 
     await expect(
       blockchain.beginWalletOffer(
@@ -972,14 +984,37 @@ describe('RealBlockchainInterface', () => {
         },
       ),
     ).resolves.toEqual({
-      kind: 'unavailable',
-      reason: expect.stringMatching(/tradeRecord\.tradeId/),
+      kind: 'failure',
+      reason: expect.stringMatching(/reserved 5 mojos, expected 10/),
     });
   });
 
-  it('reports wallet rejection when it cannot build a fee offer', async () => {
+  it('rejects a fee transaction response without a single spend bundle', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockRejectedValue(new Error('wallet not synced'));
+    mockCreateFeeTransaction.mockResolvedValue({
+      transactions: [],
+      unsignedTransactions: [],
+    });
+
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        {
+          kind: 'fee',
+          uniqueId: 'test',
+          fee: 10n,
+          concurrentSpendCoinId: 'cd'.repeat(32),
+        },
+      ),
+    ).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringMatching(/no single fee transaction/),
+    });
+  });
+
+  it('reports wallet rejection when it cannot build a fee transaction', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateFeeTransaction.mockRejectedValue(new Error('wallet not synced'));
     await expect(
       blockchain.beginWalletOffer(
         { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
@@ -996,9 +1031,9 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
-  it('reports fee-offer transport failure as unavailable', async () => {
+  it('reports fee transaction transport failure as unavailable', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockRejectedValue(
+    mockCreateFeeTransaction.mockRejectedValue(
       new WalletConnectTransportError('WalletConnect relayer disconnected'),
     );
     await expect(
@@ -1019,9 +1054,9 @@ describe('RealBlockchainInterface', () => {
 
   it('does not preselect or pin a fee parent coin', async () => {
     const blockchain = new RealBlockchainInterface();
-    mockCreateOfferForIds.mockResolvedValue({
-      offer: 'offer1signed',
-      tradeRecord: { tradeId: 'fee-parent-trade' },
+    mockCreateFeeTransaction.mockResolvedValue({
+      transactions: [feeTransactionRecord()],
+      unsignedTransactions: [],
     });
     await expect(
       blockchain.beginWalletOffer(
@@ -1034,9 +1069,8 @@ describe('RealBlockchainInterface', () => {
         },
       ),
     ).resolves.toEqual({
-      kind: 'created-reserved',
-      material: { kind: 'offer', offer: 'offer1signed' },
-      tradeId: 'fee-parent-trade',
+      kind: 'created-ephemeral',
+      material: { kind: 'bundle', bundle: { coin_spends: [], aggregated_signature: '0xc0' } },
     });
     expect(mockSelectCoins).not.toHaveBeenCalled();
   });
@@ -1055,7 +1089,7 @@ describe('RealBlockchainInterface', () => {
       ),
     ).resolves.toEqual({ kind: 'failure', reason: 'fee must be positive' });
     expect(mockSelectCoins).not.toHaveBeenCalled();
-    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+    expect(mockCreateFeeTransaction).not.toHaveBeenCalled();
   });
 
   it('uses the provided change puzzle hash in the transaction record', async () => {

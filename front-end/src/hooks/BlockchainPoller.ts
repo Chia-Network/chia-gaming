@@ -206,7 +206,7 @@ export class BlockchainPoller {
     if (typeof adapter.getWalletOfferProvider !== 'function') return null;
     const source = adapter.getWalletOfferProvider(owner);
     if (!source || !source.scope) return null;
-    const sourceKey = `${source.capability}\0${providerScopeKey(source.scope)}`;
+    const sourceKey = `${source.capability}\0${source.feeMaterial}\0${providerScopeKey(source.scope)}`;
     if (
       this.queuedWalletProvider &&
       (source === this.sourceWalletProvider || sourceKey === this.sourceWalletProviderKey)
@@ -218,6 +218,7 @@ export class BlockchainPoller {
     if (source.capability === 'recoverable' || source.capability === 'recoverable-after-begin') {
       this.queuedWalletProvider = {
         capability: source.capability,
+        feeMaterial: source.feeMaterial,
         scope: source.scope,
         beginCreation: (operation, request) =>
           this.enqueueMutation(
@@ -243,6 +244,7 @@ export class BlockchainPoller {
     } else if (source.capability === 'best-effort') {
       this.queuedWalletProvider = {
         capability: 'best-effort',
+        feeMaterial: source.feeMaterial,
         scope: source.scope,
         beginCreation: (operation, request) =>
           this.enqueueMutation(
@@ -256,6 +258,7 @@ export class BlockchainPoller {
     } else {
       this.queuedWalletProvider = {
         capability: 'terminal',
+        feeMaterial: source.feeMaterial,
         scope: source.scope,
         beginCreation: (operation, request) =>
           this.enqueueMutation(

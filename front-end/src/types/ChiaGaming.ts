@@ -635,6 +635,10 @@ export type WalletOfferCancellationBeginOutcome =
 
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
+  // How this provider supplies fee material: a persisted offer that reserves a
+  // coin (and must be cancelled if unused), or an unreserved signed bundle that
+  // reserves nothing and needs no ledger entry or cancellation.
+  readonly feeMaterial: 'reserved-offer' | 'unreserved-bundle';
 }
 
 export interface BestEffortWalletOfferProvider extends WalletOfferProviderBase {
@@ -642,7 +646,7 @@ export interface BestEffortWalletOfferProvider extends WalletOfferProviderBase {
   beginCreation(
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
+  ): Promise<WalletOfferCompletion>;
   cancel(tradeId: string): Promise<WalletOfferCancellationOutcome>;
 }
 

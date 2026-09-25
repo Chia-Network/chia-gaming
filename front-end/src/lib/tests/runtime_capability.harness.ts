@@ -151,12 +151,38 @@ export function bestEffortWalletRpc(
   return {
     getWalletOfferProvider: () => ({
       capability: 'best-effort',
+      feeMaterial: 'reserved-offer',
       scope: { provider: 'simulator', identity: 'submission-handoff' },
       beginCreation:
         beginCreation ??
         jest.fn(async () => ({
           kind: 'unavailable' as const,
           reason: 'creation unavailable',
+        })),
+      cancel:
+        cancel ??
+        jest.fn(async () => ({
+          status: 'unavailable' as const,
+          detail: 'cancellation unavailable',
+        })),
+    }),
+  };
+}
+
+export function unreservedWalletRpc(
+  beginCreation?: jest.Mock,
+  cancel?: jest.Mock,
+): Partial<InternalBlockchainInterface> {
+  return {
+    getWalletOfferProvider: () => ({
+      capability: 'best-effort',
+      feeMaterial: 'unreserved-bundle',
+      scope: { provider: 'simulator', identity: 'submission-handoff' },
+      beginCreation:
+        beginCreation ??
+        jest.fn(async () => ({
+          kind: 'created-ephemeral' as const,
+          material: { kind: 'bundle' as const, bundle: {} },
         })),
       cancel:
         cancel ??
@@ -183,6 +209,7 @@ export function recoverableWalletRpc(
   return {
     getWalletOfferProvider: () => ({
       capability: 'recoverable',
+      feeMaterial: 'reserved-offer',
       scope: { provider: 'simulator', identity: 'submission-handoff' },
       beginCreation,
       reconcileCreation,

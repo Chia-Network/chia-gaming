@@ -665,8 +665,10 @@ initiator wallet -> OFFER_MOD(initiator contribution + fee)
 
 The aggregate input/output difference is exactly both declared opening fees.
 The locally named `channel-opening` submission already contains them, so the
-host must not attach its ordinary separate fee offer. Both WalletConnect and
+host must not attach its ordinary separate fee. Both WalletConnect and
 Cloud Wallet funding offers retain the corresponding OFFER_MOD settlement hop.
+(For ordinary submissions the WalletConnect fee is a `chia_createFeeTransaction`
+bundle rather than an OFFER_MOD offer; Cloud Wallet fees stay offer-based.)
 
 Channel activation is driven by a local channel-coin observation outside this
 wire protocol. D and activation may be observed in either order, but transition
