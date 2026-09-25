@@ -163,15 +163,14 @@ as the web archive name and Electron application version.
 4. Confirm every asset uses the tag version and smoke-test the native packages
    on clean target systems.
 
-Apple and Windows signing are explicitly enabled. `ENABLE_APPLE_SIGNING=true`
-plus the complete Apple credential set produces Developer ID signed, notarized,
-and stapled macOS installers. `ENABLE_WINDOWS_SIGNING=true` in the
-`windows-code-signing` environment plus the complete Azure credential set signs
-and verifies Windows executables. Without those opt-in variables, CI deliberately
-produces unsigned installers even if stale credentials remain configured. Once
-signing is enabled, a partial credential set fails the workflow. When unsigned
-installers are published, state that prominently in the release notes: macOS
-Gatekeeper and Windows SmartScreen will warn users.
+Apple and Windows signing are automatic when their complete credential sets are
+available. Complete Apple credentials produce Developer ID signed, notarized,
+and stapled macOS installers. Complete Azure credentials in the
+`windows-code-signing` environment sign and verify Windows executables. No
+credentials deliberately produces unsigned installers, while a partial
+credential set fails the workflow. When unsigned installers are published,
+state that prominently in the release notes: macOS Gatekeeper and Windows
+SmartScreen will warn users.
 
 For example:
 
