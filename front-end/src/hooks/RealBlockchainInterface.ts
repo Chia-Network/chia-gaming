@@ -284,9 +284,15 @@ function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {
 
 function walletOfferTradeId(response: unknown): string | null {
   if (!response || typeof response !== 'object') return null;
-  const tradeRecord = (response as Record<string, unknown>).tradeRecord;
+  const record = response as Record<string, unknown>;
+  // `chia_createOfferForIds` is configured with `preserveNestedDataKeys` in the
+  // wallet, so its response is only shallow-camelCased: the top-level key becomes
+  // `tradeRecord` but the nested trade id stays snake_case (`trade_id`). Accept
+  // either casing at both levels so the reservation identity is not lost.
+  const tradeRecord = record.tradeRecord ?? record.trade_record;
   if (!tradeRecord || typeof tradeRecord !== 'object') return null;
-  const tradeId = (tradeRecord as Record<string, unknown>).tradeId;
+  const tradeRecordFields = tradeRecord as Record<string, unknown>;
+  const tradeId = tradeRecordFields.tradeId ?? tradeRecordFields.trade_id;
   return typeof tradeId === 'string' && tradeId ? tradeId : null;
 }
 

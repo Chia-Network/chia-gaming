@@ -716,6 +716,30 @@ describe('RealBlockchainInterface', () => {
     });
   });
 
+  it('reads the funding trade ID from a snake_case trade_record', async () => {
+    // The wallet responds to `chia_createOfferForIds` with only shallow
+    // camelCasing (`preserveNestedDataKeys`), so the nested id arrives as
+    // `trade_record.trade_id`. The reservation identity must survive that.
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockResolvedValue({
+      offer: 'offer1signed',
+      trade_record: { trade_id: 'snake-trade' },
+    });
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+        coinIds: ['ab'.repeat(32)],
+      }),
+    ).resolves.toEqual({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1signed' },
+      tradeId: 'snake-trade',
+    });
+  });
+
   it('keeps a persisted funding offer without a trade ID uncertain', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCreateOfferForIds.mockResolvedValue({ offer: 'offer1signed' });
