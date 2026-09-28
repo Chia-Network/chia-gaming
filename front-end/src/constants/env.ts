@@ -33,23 +33,36 @@ export const TESTNET_GENESIS_CHALLENGE =
 export const GENESIS_CHALLENGE_OVERRIDE: string | undefined =
   _win.__CHIA_GAMING_GENESIS_CHALLENGE__ || _env.CHIA_GAMING_GENESIS_CHALLENGE || undefined;
 
-/** Cloud Wallet API origin (authorize, token, graphql). */
-export const CLOUD_WALLET_API_URL: string =
-  _win.__CLOUD_WALLET_API_URL__ ||
-  _env.CHIA_GAMING_CLOUD_WALLET_API_URL ||
-  'https://api-dev-testnet11.cw.chia.net';
+export interface CloudWalletEndpoints {
+  /** API origin (authorize, token, graphql). */
+  apiUrl: string;
+  /** UI origin (consent, signature-request approve popup). */
+  uiUrl: string;
+  /** OAuth client_id registered for Chia Gaming. */
+  clientId: string;
+}
 
-/** Cloud Wallet UI origin (consent, signature-request approve popup). */
-export const CLOUD_WALLET_UI_URL: string =
-  _win.__CLOUD_WALLET_UI_URL__ ||
-  _env.CHIA_GAMING_CLOUD_WALLET_UI_URL ||
-  'https://dev-testnet11.cw.chia.net';
+export const MAINNET_CLOUD_WALLET: CloudWalletEndpoints = {
+  apiUrl: 'https://api.vault.chia.net',
+  uiUrl: 'https://vault.chia.net',
+  clientId: 'vzgg2w46rv9qwrehkf7fqwrg',
+};
 
-/** OAuth client_id registered for Chia Gaming. */
-export const CLOUD_WALLET_CLIENT_ID: string =
-  _win.__CLOUD_WALLET_CLIENT_ID__ ||
-  _env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID ||
-  'w70zx0oc40vkue0gdp0xcfv3';
+export const TESTNET_CLOUD_WALLET: CloudWalletEndpoints = {
+  apiUrl: 'https://api.vault.chiatest.net',
+  uiUrl: 'https://vault.chiatest.net',
+  clientId: 't65ikzv2xf838al5tk5v4fee',
+};
+
+/**
+ * Optional hard overrides for the Cloud Wallet endpoints, for local
+ * development. When set they win over the per-network defaults.
+ */
+export const CLOUD_WALLET_OVERRIDE: Partial<CloudWalletEndpoints> = {
+  apiUrl: _win.__CLOUD_WALLET_API_URL__ || _env.CHIA_GAMING_CLOUD_WALLET_API_URL || undefined,
+  uiUrl: _win.__CLOUD_WALLET_UI_URL__ || _env.CHIA_GAMING_CLOUD_WALLET_UI_URL || undefined,
+  clientId: _win.__CLOUD_WALLET_CLIENT_ID__ || _env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID || undefined,
+};
 
 /** Fixed OAuth redirect path on the gaming origin. */
 export const CLOUD_WALLET_OAUTH_CALLBACK_PATH = '/oauth/callback';

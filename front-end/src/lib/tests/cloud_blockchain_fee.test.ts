@@ -317,7 +317,7 @@ describe('CloudBlockchainInterface fee support', () => {
     });
     for (const signatureRequestId of ['', '2', 'Request_12', 'xSignatureRequest_12']) {
       listener?.({
-        origin: 'https://dev-testnet11.cw.chia.net',
+        origin: 'https://vault.chia.net',
         source: popup,
         data: {
           type: 'chia-cloud-wallet/signature-request',
@@ -330,7 +330,7 @@ describe('CloudBlockchainInterface fee support', () => {
     }
 
     listener?.({
-      origin: 'https://dev-testnet11.cw.chia.net',
+      origin: 'https://vault.chia.net',
       source: popup,
       data: {
         type: 'chia-cloud-wallet/signature-request',
@@ -371,7 +371,7 @@ describe('CloudBlockchainInterface fee support', () => {
     const completion = iface.reconcileWalletOffer(testOperation, request, '34');
     await Promise.resolve();
     listener?.({
-      origin: 'https://dev-testnet11.cw.chia.net',
+      origin: 'https://vault.chia.net',
       source: popup,
       data: {
         type: 'chia-cloud-wallet/signature-request',

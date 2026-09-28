@@ -85,7 +85,7 @@ Optional JSON file at `<userData>/config.json`, where `<userData>` is
 | Key                  | Default                                                                                                | Meaning                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `hubOrigins`         | `["http://localhost:3003", "http://127.0.0.1:3003"]`                                                   | Hub origins the app may load and connect to                             |
-| `cloudWalletOrigins` | `["http://127.0.0.1:3000", "http://127.0.0.1:3001", "http://localhost:3000", "http://localhost:3001"]` | Cloud Wallet API and UI origins for OAuth, GraphQL, and approval popups |
+| `cloudWalletOrigins` | `["https://api.vault.chia.net", "https://vault.chia.net", "https://api.vault.chiatest.net", "https://vault.chiatest.net"]` | Cloud Wallet API and UI origins for OAuth, GraphQL, and approval popups |
 
 Anything invalid is reported in an error dialog and the app exits rather than
 starting with a half-applied policy.

@@ -1359,16 +1359,14 @@ Shell manages wallet connections through two abstractions defined in
   each `{ type: 'string' | 'bigint', label, default }`) indicating the backend
   needs extra user input before connecting, plus an optional `title`/
   `description` for the setup modal. Examples: the simulator's initial balance
-  (`bigint`), and Cloud Wallet's OAuth `clientId` / API URL / UI URL (`string`)
-  plus a transaction fee (`bigint`, in mojos). Cloud Wallet sets `skipQr: true`
-  and completes OAuth inside `finalize()` after persisting the entered config via
-  `cloudWalletConfig.ts` (kept separate from the OAuth tokens in
-  `cloudWalletAuth.ts`). The fee field is not part of `cloudWalletConfig`: it
-  writes through to the global `defaultFee` preference (`setDefaultFee`), the
-  same value the Wallet tab edits, so `CloudBlockchainInterface.getFee()` reads
-  one source of truth. All OAuth/GraphQL calls resolve the client id and
-  endpoints at call time through `getCloudWallet*` getters, so UI-entered config
-  takes effect without a rebuild.
+  (`bigint`). Cloud Wallet sets `skipQr: true` with an empty `fields` record, so
+  the modal is a sign-in prompt whose Connect click opens the OAuth popup from
+  `finalize()`. Its OAuth client id and API/UI URLs are fixed per build and
+  chosen by the selected network at call time in `cloudWalletConfig.ts`
+  (mainnet: `https://api.vault.chia.net`, `https://vault.chia.net`; testnet:
+  `https://api.vault.chiatest.net`, `https://vault.chiatest.net`).
+  `CloudBlockchainInterface.getFee()` reads the global `defaultFee` preference,
+  the same value the Wallet tab edits.
 
   Cloud Wallet funding uses persisted `createOffer` requests, matching the
   WalletConnect funding contract: `offered` contains the requested funding
@@ -1478,7 +1476,7 @@ and poll interval; the rest of the flow is generic.
 3. If `setup.fields` is present, Shell shows the generic `ConnectionSetupModal`
    overlay so the user can provide the required values, then `handleFinalize(values)`
    calls `setup.finalize(values)`. This path is used by both the simulator and
-   Cloud Wallet (the latter is `skipQr` yet still collects OAuth config first).
+   Cloud Wallet (the latter is `skipQr` with no fields, and still asks the user to confirm sign-in first).
 4. If `setup.skipQr` is set with no fields (a restored WC/Cloud session), Shell
    awaits `setup.finalize()` without showing a QR panel or modal. A failed
    restore discards the stored Cloud Wallet tokens only for
@@ -1490,8 +1488,8 @@ and poll interval; the rest of the flow is generic.
 5. If `setup.skipQr` is set _with_ fields (Cloud Wallet, no stored auth), Shell
    shows `ConnectionSetupModal` and does **not** call `finalize()` from silent
    `handleConnect` or `performResume`. Auto-finalize would open an OAuth popup
-   or fail when no client id is configured; the user must submit the form (or
-   use an explicit Reconnect).
+   without a user gesture; the user must click Connect (or use an explicit
+   Reconnect).
 6. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
    renders the QR code and awaits `setup.finalize()`, which resolves when the
    wallet scans.
@@ -1512,7 +1510,7 @@ simulator balance modal is skipped, consistent with the principle that a reload
 should be invisible to the user. Cloud Wallet without stored auth is the
 exception: `beginConnect` returns `skipQr` plus `fields`, so silent reconnect
 and `performResume` keep `ConnectionSetupModal` (with a wallet alert) rather
-than calling `finalize()` with no values.
+than calling `finalize()` without a user click.
 
 **Session persistence:** Wallet connection updates
 `DurableApplicationState.preferences.blockchainType` through

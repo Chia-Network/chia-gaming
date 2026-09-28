@@ -31,13 +31,7 @@ import {
   SIGNATURE_REQUEST_MESSAGE_TYPE,
   type TokenProvider,
 } from './cloudWalletOAuth';
-import {
-  getCloudWalletApiUrl,
-  getCloudWalletClientId,
-  getCloudWalletUiUrl,
-  loadCloudWalletConfig,
-  saveCloudWalletConfig,
-} from './cloudWalletConfig';
+import { getCloudWalletUiUrl } from './cloudWalletConfig';
 import {
   clearCloudWalletAuth,
   loadCloudWalletAuth,
@@ -978,38 +972,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       };
     }
 
-    const stored = loadCloudWalletConfig();
     return {
       qrUri: 'cloud-wallet://oauth',
       skipQr: true,
       title: 'Cloud Wallet',
-      description: 'Enter your Cloud Wallet OAuth settings, then sign in via the popup.',
-      fields: {
-        clientId: {
-          type: 'string',
-          label: 'OAuth client ID',
-          default: stored?.clientId ?? getCloudWalletClientId(),
-        },
-        apiUrl: {
-          type: 'string',
-          label: 'Cloud Wallet API URL',
-          default: getCloudWalletApiUrl(),
-        },
-        uiUrl: {
-          type: 'string',
-          label: 'Cloud Wallet UI URL',
-          default: getCloudWalletUiUrl(),
-        },
-      },
-      finalize: async (values) => {
-        const clientId = String(values?.clientId ?? getCloudWalletClientId()).trim();
-        const apiUrl = String(values?.apiUrl ?? getCloudWalletApiUrl()).trim();
-        const uiUrl = String(values?.uiUrl ?? getCloudWalletUiUrl()).trim();
-        if (!clientId) {
-          throw new Error('Cloud Wallet OAuth client ID is required');
-        }
-        saveCloudWalletConfig({ clientId, apiUrl, uiUrl });
-
+      description: 'Sign in to Cloud Wallet via the popup.',
+      // Empty but present: the modal's Connect click is the user gesture that
+      // lets the OAuth popup open, and it keeps silent resume from finalizing.
+      fields: {},
+      finalize: async () => {
         const tokens = await beginOAuthPopupLogin();
         this.auth = {
           accessToken: tokens.accessToken,
