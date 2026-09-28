@@ -574,9 +574,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         throw new Error('wallet returned a fee transaction without a spend bundle');
       }
       if (tx.fee_amount !== fee) {
-        throw new Error(
-          `wallet fee transaction reserved ${tx.fee_amount} mojos, expected ${fee}`,
-        );
+        throw new Error(`wallet fee transaction reserved ${tx.fee_amount} mojos, expected ${fee}`);
       }
       if (tx.amount !== 0n) {
         throw new Error(`wallet fee transaction paid a nonzero amount ${tx.amount}`);
