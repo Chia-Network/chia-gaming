@@ -521,8 +521,10 @@ serializes one-shot wallet delivery and reports the typed outcome back to Rust.
 The external wallet constructs each funding offer from Rust's canonical
 request; Rust validates the result. Rejection terminates the handshake and does
 not create controller-owned successor or predecessor requests. Persisted
-funding and fee offers enter strict, separate `channelFundingOperations` and
-`feeAttachments` slices.
+funding offers and offer-based fee reservations enter strict, separate
+`channelFundingOperations` and `feeAttachments` slices. WalletConnect fees are
+not offer-based (see the fee-attachment section) and hold no `feeAttachments`
+entry.
 Every trade owns its exact provider trade ID and exact
 `(installationPlayerId, peerSessionId, provider/account scope, purpose kind,
 operationId)` identity;
@@ -1407,17 +1409,28 @@ Shell manages wallet connections through two abstractions defined in
   neither consumed nor released, and reusing an already reserved input is
   rejected.
 
-  Cloud fee attachment is also offer-based. `createFeeSpend` creates a fee-only
+  WalletConnect fee attachment is not offer-based. Its provider declares
+  `feeMaterial: 'unreserved-bundle'`, so `FeeAttachmentRuntime.reserve` skips the
+  durable ledger entirely: it calls `beginCreation` once, returns the
+  `created-ephemeral` bundle straight to `SubmissionPump`, and writes no
+  `feeAttachments` entry, retention, or cancellation. Because
+  `chia_createFeeTransaction` reserves nothing on the wallet, there is no trade
+  to orphan; if the unreserved fee input is spent before the aggregate lands,
+  the transaction simply fails to enter the mempool and Rust retries the retained
+  submission with a fresh fee.
+
+  Cloud and simulator fee attachment stays offer-based
+  (`feeMaterial: 'reserved-offer'`). Cloud's `createFeeSpend` creates a fee-only
   offer with empty `offered`/`requested` arrays, the native `fee` field, and one
-  serialized `ASSERT_CONCURRENT_SPEND` targeting Rust's protocol coin. Unlike a
-  WalletConnect settlement offer, this shape already contains the reserve-fee
-  condition and fee deficit, so Rust normalizes it without adding a settlement
-  or nil-puzzle spend. Both shapes then pass through the same Rust checks for
-  target, amount, deficit, input overlap, aggregate signatures, expiry, and
-  combined consensus validity. Rejected or unusable Cloud fee offers are
-  cancelled off chain using their offer IDs. Cancellation is typed and complete
-  only when the Cloud signature request reaches a terminal success status;
-  transport unavailability and wallet rejection remain distinct durable
+  serialized `ASSERT_CONCURRENT_SPEND` targeting Rust's protocol coin. This shape
+  already contains the reserve-fee condition and fee deficit, so Rust normalizes
+  it without adding a settlement or nil-puzzle spend. Both an OFFER_MOD
+  settlement offer and this native-fee shape then pass through the same Rust
+  checks for target, amount, deficit, input overlap, aggregate signatures,
+  expiry, and combined consensus validity. Rejected or unusable Cloud fee offers
+  are cancelled off chain using their offer IDs. Cancellation is typed and
+  complete only when the Cloud signature request reaches a terminal success
+  status; transport unavailability and wallet rejection remain distinct durable
   cleanup outcomes.
 
   Cloud's wallet address, balance, consent, and offer operations remain on the
@@ -1437,17 +1450,21 @@ Shell manages wallet connections through two abstractions defined in
   field) reject a nonzero fee below it. Zero (a free transaction) and
   floor-or-above are allowed. This is a floor below which a fee definitely cannot
   work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
-  `createFeeSpend` makes a persisted signed offer whose wallet spend asserts the
-  Rust-specified target coin is spent concurrently and reserves the fee. Cloud
-  Wallet returns its native-fee offer instead. JavaScript passes
+  `beginWalletOffer` calls `chia_createFeeTransaction` with the fee and one
+  `ASSERT_CONCURRENT_SPEND` extra condition binding the Rust-specified target
+  coin; the wallet builds and signs a fee-only spend (amount 0, `RESERVE_FEE`
+  added by the wallet) without persisting a trade record or reserving a coin
+  (`push` defaults to false), and returns it as `created-ephemeral` bundle
+  material. Cloud Wallet returns its native-fee offer instead. JavaScript passes
   either tagged provider result opaquely to one Rust/WASM attachment operation.
   Rust captures the configured amount, target, and explicit
   `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,
-  so retries cannot silently change fee policy. Rust completes WalletConnect's
-  OFFER_MOD output into a spent nil-puzzle coin; validates the exact reserve,
-  deficit, target assertion, signatures (including legitimate
-  `AGG_SIG_UNSAFE` pairs), and lack of protocol input overlap for either
-  provider; aggregates the bundles; and consensus-checks the result. If the
+  so retries cannot silently change fee policy. Rust completes a WalletConnect
+  or Cloud OFFER_MOD settlement output into a spent nil-puzzle coin when present,
+  accepts an already-complete fee bundle directly, and for either provider
+  validates the exact reserve, deficit, target assertion, signatures (including
+  legitimate `AGG_SIG_UNSAFE` pairs), and lack of protocol input overlap;
+  aggregates the bundles; and consensus-checks the result. If the
   wallet source cannot be obtained or validated, the same Rust finalization
   boundary deliberately returns the original fee-free bundle with a warning.
   The host never chooses that fallback or derives fee policy or target coins

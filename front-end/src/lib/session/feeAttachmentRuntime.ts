@@ -118,6 +118,14 @@ export class FeeAttachmentRuntime {
     if (!provider) {
       return { kind: 'unavailable', reason: 'Reconnect the original wallet account to attach fee' };
     }
+    if (provider.feeMaterial === 'unreserved-bundle') {
+      // This provider mints a signed fee bundle that reserves nothing on the
+      // wallet, so there is no trade to persist, retain, or cancel. Skip the
+      // durable ledger entirely and hand the material straight back.
+      return this.flight(`create:${submissionId}`, () =>
+        this.createUnreserved(provider, owner, submissionId, request, consumerDead),
+      );
+    }
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (current?.stage === 'best-effort-uncertain') {
       await this.flights.get(`replace:${submissionId}`)?.promise;
@@ -172,6 +180,27 @@ export class FeeAttachmentRuntime {
     while (this.flights.size) {
       await Promise.allSettled([...this.flights.values()].map((flight) => flight.promise));
     }
+  }
+
+  private async createUnreserved(
+    provider: WalletOfferProvider,
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    request: FeeAttachmentRequest,
+    consumerDead: () => boolean,
+  ): Promise<WalletOfferCompletion> {
+    const operation = { owner, purpose: { kind: 'fee' as const, operationId: submissionId } };
+    const outcome = await provider.beginCreation(operation, request);
+    if (outcome.kind === 'created-reserved') {
+      throw new Error('Unreserved fee provider returned a reserved offer');
+    }
+    if (outcome.kind === 'pending') {
+      throw new Error('Unreserved fee provider returned a pending reservation');
+    }
+    if (consumerDead()) {
+      return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+    }
+    return outcome;
   }
 
   private async create(

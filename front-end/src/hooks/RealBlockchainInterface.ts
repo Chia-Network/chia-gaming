@@ -284,9 +284,15 @@ function walletOfferMutationMayHaveSucceeded(response: unknown): boolean {
 
 function walletOfferTradeId(response: unknown): string | null {
   if (!response || typeof response !== 'object') return null;
-  const tradeRecord = (response as Record<string, unknown>).tradeRecord;
+  const record = response as Record<string, unknown>;
+  // `chia_createOfferForIds` is configured with `preserveNestedDataKeys` in the
+  // wallet, so its response is only shallow-camelCased: the top-level key becomes
+  // `tradeRecord` but the nested trade id stays snake_case (`trade_id`). Accept
+  // either casing at both levels so the reservation identity is not lost.
+  const tradeRecord = record.tradeRecord ?? record.trade_record;
   if (!tradeRecord || typeof tradeRecord !== 'object') return null;
-  const tradeId = (tradeRecord as Record<string, unknown>).tradeId;
+  const tradeRecordFields = tradeRecord as Record<string, unknown>;
+  const tradeId = tradeRecordFields.tradeId ?? tradeRecordFields.trade_id;
   return typeof tradeId === 'string' && tradeId ? tradeId : null;
 }
 
@@ -384,6 +390,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     ) {
       this.walletOfferProvider = {
         capability: 'best-effort',
+        feeMaterial: 'unreserved-bundle',
         scope: { provider: 'walletconnect', fingerprint, chainId },
         beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
         cancel: (tradeId) => this.beginWalletOfferCancellation(tradeId),
@@ -537,7 +544,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async beginWalletOffer(
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
-  ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
+  ): Promise<WalletOfferCompletion> {
     if (request.kind === 'funding') {
       return this.createFundingOffer(request);
     }
@@ -547,38 +554,33 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
     try {
-      const response = await rpc.createOfferForIds({
-        offer: { '1': -fee },
-        driverDict: {},
-        // Persist the offer so the wallet reserves its selected fee input
-        // until the aggregate transaction spends it; otherwise concurrent
-        // submissions can select the same still-unconfirmed coin.
-        validateOnly: false,
+      // create_fee_transaction builds and signs a fee-only spend from this
+      // wallet without persisting a trade record or reserving a coin (push
+      // defaults to false). We aggregate it with the protocol bundle and
+      // broadcast the combined transaction ourselves. The wallet appends
+      // RESERVE_FEE itself, so we only bind the spend to the protocol coin.
+      const response = await rpc.createFeeTransaction({
+        fee,
         allowUnsynced: true,
-        extraConditions: [
-          { opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } },
-          { opcode: 52n, args: { amount: fee } },
-        ],
+        extraConditions: [{ opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } }],
       });
-      const offer = (response as any)?.offer;
-      const tradeId = walletOfferTradeId(response);
-      if (typeof offer !== 'string' || !offer.startsWith('offer')) {
-        if (walletOfferMutationMayHaveSucceeded(response)) {
-          return {
-            kind: 'unavailable',
-            reason: 'wallet reported fee offer creation success without reservation identity',
-          };
-        }
-        throw new Error('wallet returned no signed offer for the fee');
+      const transactions = (response as { transactions?: unknown })?.transactions;
+      if (!Array.isArray(transactions) || transactions.length !== 1) {
+        throw new Error('wallet returned no single fee transaction');
       }
-      if (typeof tradeId !== 'string' || !tradeId) {
-        return {
-          kind: 'unavailable',
-          reason: 'wallet returned a persisted fee offer without tradeRecord.tradeId',
-        };
+      const tx = transactions[0] as TransactionRecord;
+      const bundle = tx?.spend_bundle;
+      if (!bundle) {
+        throw new Error('wallet returned a fee transaction without a spend bundle');
+      }
+      if (tx.fee_amount !== fee) {
+        throw new Error(`wallet fee transaction reserved ${tx.fee_amount} mojos, expected ${fee}`);
+      }
+      if (tx.amount !== 0n) {
+        throw new Error(`wallet fee transaction paid a nonzero amount ${tx.amount}`);
       }
       log(`[wc-blockchain] createFeeSpend ok fee=${fee} protocol=${protocolCoinId}`);
-      return { kind: 'created-reserved', material: { kind: 'offer', offer }, tradeId };
+      return { kind: 'created-ephemeral', material: { kind: 'bundle', bundle } };
     } catch (e) {
       // Propagate the real reason (RPC error, missing signed bundle) so the
       // caller's user-facing warning is accurate rather than always blaming

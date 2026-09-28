@@ -630,6 +630,71 @@ describe('FeeAttachmentRuntime lifecycle', () => {
     runtime.detach();
   });
 
+  it('returns unreserved fee material without writing a ledger entry or cancelling', async () => {
+    const beginCreation = jest.fn().mockResolvedValue({
+      kind: 'created-ephemeral',
+      material: { kind: 'bundle', bundle: { coin_spends: [], aggregated_signature: '0xc0' } },
+    });
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      feeMaterial: 'unreserved-bundle',
+      scope: owner.providerScope,
+      beginCreation,
+      cancel,
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+
+    await expect(runtime.reserve(owner, 'unreserved', request, () => false)).resolves.toEqual({
+      kind: 'created-ephemeral',
+      material: { kind: 'bundle', bundle: { coin_spends: [], aggregated_signature: '0xc0' } },
+    });
+    expect(beginCreation).toHaveBeenCalledTimes(1);
+    await runtime.awaitIdle();
+    expect(storageRepository.feeAttachments()).toEqual([]);
+    expect(cancel).not.toHaveBeenCalled();
+    runtime.detach();
+  });
+
+  it('reports unreserved fee material as unavailable when its submission dies during creation', async () => {
+    let resolveCreation!: (value: {
+      kind: 'created-ephemeral';
+      material: { kind: 'bundle'; bundle: unknown };
+    }) => void;
+    let inactive = false;
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      feeMaterial: 'unreserved-bundle',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveCreation = resolve;
+          }),
+      ),
+      cancel,
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    const reservation = runtime.reserve(owner, 'unreserved-dead', request, () => inactive);
+    await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+
+    inactive = true;
+    resolveCreation({ kind: 'created-ephemeral', material: { kind: 'bundle', bundle: {} } });
+
+    await expect(reservation).resolves.toEqual({
+      kind: 'unavailable',
+      reason: 'Fee consumer retired during wallet creation',
+    });
+    expect(storageRepository.feeAttachments()).toEqual([]);
+    expect(cancel).not.toHaveBeenCalled();
+    runtime.detach();
+  });
+
   it('unsubscribes a detached runtime only after its provider flight leaves the map', async () => {
     let resolveCreation!: (value: { kind: 'failure'; reason: string }) => void;
     const beginCreation = jest.fn(

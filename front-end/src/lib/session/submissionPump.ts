@@ -318,10 +318,17 @@ export class SubmissionPump {
               feeSource.material.kind === 'offer'
                 ? jsonStringify({ kind: 'offer', offer: feeSource.material.offer })
                 : jsonStringify({ kind: 'bundle', bundle: feeSource.material.bundle });
-          } else if (feeSource.kind === 'failure' || feeSource.kind === 'unavailable') {
-            feeSourceJson = jsonStringify({ kind: 'failure', reason: feeSource.reason });
+          } else if (feeSource.kind === 'created-ephemeral') {
+            // Unreserved fee material (e.g. a WalletConnect create_fee_transaction
+            // bundle) holds no reservation, so it needs no ledger entry, retain,
+            // or cancellation. Leave feeOfferCreated false.
+            if (feeSource.warning) this.ports.reportWarning(feeSource.warning);
+            feeSourceJson =
+              feeSource.material.kind === 'offer'
+                ? jsonStringify({ kind: 'offer', offer: feeSource.material.offer })
+                : jsonStringify({ kind: 'bundle', bundle: feeSource.material.bundle });
           } else {
-            throw new Error('Reserving fee provider returned ephemeral wallet material');
+            feeSourceJson = jsonStringify({ kind: 'failure', reason: feeSource.reason });
           }
         }
       }

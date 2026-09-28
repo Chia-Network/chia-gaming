@@ -945,8 +945,15 @@ boundary exposes every present channel state-number field as JavaScript
 conversion allowed only at external APIs that explicitly require it.
 
 Persisted funding offers enter `channelFundingOperations` and are orchestrated
-by `ChannelFundingRuntime`; fee reservations enter the fee-specific
+by `ChannelFundingRuntime`; offer-based fee reservations enter the fee-specific
 `feeAttachments` ledger owned by `SubmissionPump` and `FeeAttachmentRuntime`.
+WalletConnect fees are not offer-based: `chia_createFeeTransaction` returns a
+signed fee bundle that reserves nothing on the wallet, so those fees carry no
+`feeAttachments` entry, retention, or cancellation. The ledger therefore holds
+only Cloud Wallet and simulator reservations. Each provider declares its
+`feeMaterial` (`unreserved-bundle` for WalletConnect, `reserved-offer` for Cloud
+and the simulator), and the runtime skips the durable ledger for unreserved
+material.
 Each reserved trade carries its mandatory internal `providerReservationId`, exact owner
 (`installationPlayerId`, peer session, and strict provider/account scope),
 stable purpose/operation identity, stage, and bounded reason. A `creating`
@@ -962,12 +969,14 @@ pending rather than becoming a rejection. Controller retirement promotes only
 cancellation; `retained-for-replay` remains owned by Rust replay.
 Channel funding survives material delivery in `awaiting-channel` until typed
 Rust `ChannelCoinConfirmed` forgets it or `ChannelCreationTimedOut` requests
-cancellation of that exact `providerReservationId`. An attached fee offer
+cancellation of that exact `providerReservationId`. An attached Cloud fee offer
 survives wallet acknowledgement for exact transaction replay until Rust
 submission retirement requests cancellation of that exact
 `providerReservationId`; Cloud
 cancellation completes only after its signature request reaches a successful
-terminal state. Cloud is recoverable after begin: before a begin response
+terminal state. A WalletConnect fee bundle reserves nothing, so it needs no such
+retention or cancellation; if its unreserved fee input is spent before the
+aggregate lands, Rust simply retries the submission with a fresh fee. Cloud is recoverable after begin: before a begin response
 supplies a `signatureRequest` ID, response loss is persisted uncertainty; once
 the ID is known, `creating`/`cancelling` persist it for exact paired
 reconciliation. The aggregate carries the typed provenance

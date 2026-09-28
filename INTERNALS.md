@@ -536,7 +536,12 @@ number-valued persistence or event decodes are rejected.
 Persisted provider reservations enter two strict aggregate slices with two
 explicit owners: `ChannelFundingRuntime` owns `channelFundingOperations`, while
 `SubmissionPump` and `FeeAttachmentRuntime` own `feeAttachments`. There is no
-generic wallet-operation, settlement, or session cancellation layer. Entries
+generic wallet-operation, settlement, or session cancellation layer. Only
+offer-based fees (Cloud Wallet and the simulator, whose providers declare
+`feeMaterial: 'reserved-offer'`) create `feeAttachments` entries; WalletConnect
+fees use `chia_createFeeTransaction` (`feeMaterial: 'unreserved-bundle'`), which
+reserves nothing and is attached straight to the submission without a durable
+ledger entry, retention, or cancellation. Entries
 preserve the exact provider trade
 ID and exact `(installationPlayerId, peerSessionId, provider/account scope,
 purpose kind, operationId)` owner, so multiple trades for one operation remain independent.
@@ -613,7 +618,8 @@ the required transitions, and matching restore/reconnect attachment drains
 them.
 
 Transaction submission promises span persistence-gated launch, ordered wallet
-delivery, Rust acknowledgement/rejection, and fee-offer cleanup. Terminal
+delivery, Rust acknowledgement/rejection, and offer-based fee cleanup (Cloud and
+simulator only; unreserved WalletConnect fee bundles have no cleanup). Terminal
 finalization drains those promises, controller events, persistence, and reliable
 transport repeatedly to quiescence, then takes the terminal snapshot from that
 post-quiescence authoritative runtime model. Terminal capture installs that

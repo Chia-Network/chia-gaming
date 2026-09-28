@@ -10,6 +10,7 @@ import {
   nextAttempt,
   setup,
   submission,
+  unreservedWalletRpc,
 } from './runtime_capability.harness';
 
 async function waitFor(check: () => boolean): Promise<void> {
@@ -323,6 +324,43 @@ describe('submission pump delivery and runtime replacement', () => {
       expect(cradle.reject_submission_attempt).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
       expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-fee');
+    } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('attaches an unreserved fee bundle without a ledger entry or cancellation', async () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const beginWalletOffer = jest.fn().mockResolvedValue({
+      kind: 'created-ephemeral',
+      material: { kind: 'bundle', bundle: { coin_spends: [], aggregated_signature: '0xc0' } },
+    });
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const { controller, cradle, submit } = setup(
+      spend,
+      unreservedWalletRpc(beginWalletOffer, cancel),
+    );
+    const lease = new ControlledRuntime();
+    try {
+      commitRuntime(controller, lease);
+      submit({
+        ...submission('unreserved-fee'),
+        fee_request: { target: '22'.repeat(32), amount: '10' },
+      });
+      await lease.launch('submission:unreserved-fee');
+      await controller.flushPendingWork();
+      await waitFor(() => spend.mock.calls.length === 1);
+
+      expect(beginWalletOffer).toHaveBeenCalledTimes(1);
+      expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
+      const feeSourceJson = (cradle.finalize_submission_attempt as jest.Mock).mock.calls[0][1];
+      expect(JSON.parse(feeSourceJson)).toEqual({
+        kind: 'bundle',
+        bundle: { coin_spends: [], aggregated_signature: '0xc0' },
+      });
+      expect(spend).toHaveBeenCalledTimes(1);
+      expect(storageRepository.feeAttachments()).toEqual([]);
+      expect(cancel).not.toHaveBeenCalled();
     } finally {
       controller.cleanup();
     }
