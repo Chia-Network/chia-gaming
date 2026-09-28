@@ -98,17 +98,12 @@ jobs:
         id: apple-signing
         shell: bash
         env:
-          APPLE_SIGNING_ENABLED: ${{ vars.ENABLE_APPLE_SIGNING }}
           APPLE_DEV_ID_APP: ${{ secrets.APPLE_DEV_ID_APP }}
           APPLE_DEV_ID_APP_PASS: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
           APPLE_NOTARIZE_USERNAME: ${{ secrets.APPLE_NOTARIZE_USERNAME }}
           APPLE_NOTARIZE_PASSWORD: ${{ secrets.APPLE_NOTARIZE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          if [[ "$APPLE_SIGNING_ENABLED" != "true" ]]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           configured=0
           for value in \
             "$APPLE_DEV_ID_APP" \
@@ -142,14 +137,9 @@ jobs:
         id: windows-signing
         shell: bash
         env:
-          WINDOWS_SIGNING_ENABLED: ${{ vars.ENABLE_WINDOWS_SIGNING }}
           AZURE_SIGNING_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
           AZURE_SIGNING_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
         run: |
-          if [[ "$WINDOWS_SIGNING_ENABLED" != "true" ]]; then
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           configured=0
           for value in \
             "$AZURE_SIGNING_CLIENT_ID" \
