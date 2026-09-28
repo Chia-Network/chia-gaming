@@ -24,12 +24,12 @@ export type DesktopConfig = {
 
 const DEFAULT_HUB_ORIGINS = ['http://localhost:3003', 'http://127.0.0.1:3003'];
 
-/** Matches `CLOUD_WALLET_*_URL` defaults in `front-end/src/constants/env.ts`. */
+/** Matches `*_CLOUD_WALLET` defaults in `front-end/src/constants/env.ts`. */
 const DEFAULT_CLOUD_WALLET_ORIGINS = [
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
-  'http://localhost:3000',
-  'http://localhost:3001',
+  'https://api.vault.chia.net',
+  'https://vault.chia.net',
+  'https://api.vault.chiatest.net',
+  'https://vault.chiatest.net',
 ];
 
 export const hubOriginSchema = z.string().refine((value) => {

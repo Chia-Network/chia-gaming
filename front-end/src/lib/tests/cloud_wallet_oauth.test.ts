@@ -74,13 +74,11 @@ import {
   saveCloudWalletAuth,
 } from '../../hooks/cloudWalletAuth';
 import {
-  clearCloudWalletConfig,
   getCloudWalletApiUrl,
   getCloudWalletClientId,
   getCloudWalletUiUrl,
-  loadCloudWalletConfig,
-  saveCloudWalletConfig,
 } from '../../hooks/cloudWalletConfig';
+import { storageRepository } from '../session/storageRepository';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 import { conditionsForGraphql, jsonSafeVariables } from '../../hooks/cloudWalletHelpers';
 import { encodeU64AsClvmHex } from '../../util';
@@ -298,31 +296,22 @@ describe('graphqlRequest authentication retry', () => {
 });
 
 describe('cloudWalletConfig', () => {
-  beforeEach(() => {
-    setTestGlobal('localStorage', makeStorage());
-    clearCloudWalletConfig();
+  afterEach(() => {
+    storageRepository._resetForTests();
   });
 
-  it('falls back to env defaults when nothing is stored', () => {
-    expect(getCloudWalletApiUrl()).toBe('https://api-dev-testnet11.cw.chia.net');
-    expect(getCloudWalletUiUrl()).toBe('https://dev-testnet11.cw.chia.net');
-    expect(getCloudWalletClientId()).toBe('w70zx0oc40vkue0gdp0xcfv3');
+  it('uses the mainnet Cloud Wallet endpoints and client id on mainnet', () => {
+    void storageRepository.updatePreference({ key: 'network', value: 'mainnet' });
+    expect(getCloudWalletApiUrl()).toBe('https://api.vault.chia.net');
+    expect(getCloudWalletUiUrl()).toBe('https://vault.chia.net');
+    expect(getCloudWalletClientId()).toBe('vzgg2w46rv9qwrehkf7fqwrg');
   });
 
-  it('persisted values take precedence and are normalized', () => {
-    saveCloudWalletConfig({
-      clientId: '  client-1  ',
-      apiUrl: 'http://api.local/',
-      uiUrl: 'http://ui.local/',
-    });
-    expect(getCloudWalletClientId()).toBe('client-1');
-    expect(getCloudWalletApiUrl()).toBe('http://api.local');
-    expect(getCloudWalletUiUrl()).toBe('http://ui.local');
-    expect(loadCloudWalletConfig()).toEqual({
-      clientId: 'client-1',
-      apiUrl: 'http://api.local',
-      uiUrl: 'http://ui.local',
-    });
+  it('uses the testnet Cloud Wallet endpoints and client id on testnet', () => {
+    void storageRepository.updatePreference({ key: 'network', value: 'testnet' });
+    expect(getCloudWalletApiUrl()).toBe('https://api.vault.chiatest.net');
+    expect(getCloudWalletUiUrl()).toBe('https://vault.chiatest.net');
+    expect(getCloudWalletClientId()).toBe('t65ikzv2xf838al5tk5v4fee');
   });
 });
 
@@ -330,33 +319,15 @@ describe('CloudBlockchainInterface beginConnect', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
-    clearCloudWalletConfig();
     clearCloudWalletAuth();
   });
 
-  it('fresh connect requests the Cloud Wallet OAuth configuration', async () => {
+  it('fresh connect prompts for sign-in without editable OAuth settings', async () => {
     const iface = new CloudBlockchainInterface();
     const setup = await iface.beginConnect('uid', true);
     expect(setup.skipQr).toBe(true);
     expect(setup.title).toBe('Cloud Wallet');
-    expect(setup.fields).toEqual({
-      clientId: {
-        type: 'string',
-        label: 'OAuth client ID',
-        default: 'w70zx0oc40vkue0gdp0xcfv3',
-      },
-      apiUrl: {
-        type: 'string',
-        label: 'Cloud Wallet API URL',
-        default: 'https://api-dev-testnet11.cw.chia.net',
-      },
-      uiUrl: {
-        type: 'string',
-        label: 'Cloud Wallet UI URL',
-        default: 'https://dev-testnet11.cw.chia.net',
-      },
-    });
-    expect(loadCloudWalletConfig()).toBeNull();
+    expect(setup.fields).toEqual({});
   });
 
   it('stored auth skips setup fields so silent reconnect can finalize', async () => {
@@ -371,39 +342,13 @@ describe('CloudBlockchainInterface beginConnect', () => {
     expect(setup.skipQr).toBe(true);
     expect(setup.fields).toBeUndefined();
   });
-
-  it('finalize persists the submitted OAuth values', async () => {
-    const iface = new CloudBlockchainInterface();
-    const setup = await iface.beginConnect('uid', true);
-    // OAuth cannot complete in the test environment because there is no popup.
-    await expect(
-      setup.finalize({
-        clientId: 'client-1',
-        apiUrl: 'http://api.local/',
-        uiUrl: 'http://ui.local/',
-      }),
-    ).rejects.toBeTruthy();
-    expect(loadCloudWalletConfig()).toEqual({
-      clientId: 'client-1',
-      apiUrl: 'http://api.local',
-      uiUrl: 'http://ui.local',
-    });
-  });
 });
 
 describe('CloudBlockchainInterface stored-session finalize', () => {
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
     setTestGlobal('sessionStorage', makeStorage());
-    clearCloudWalletConfig();
     clearCloudWalletAuth();
-    // Refreshing a token requires a client id; without one the provider fails
-    // before it ever reaches the endpoints these tests are exercising.
-    saveCloudWalletConfig({
-      clientId: 'client-test',
-      apiUrl: 'http://api.local',
-      uiUrl: 'http://ui.local',
-    });
     saveCloudWalletAuth({
       accessToken: 'access-token',
       refreshToken: 'refresh-token',
@@ -544,7 +489,6 @@ describe('waitForGamingConsentWalletId grace period', () => {
 
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
-    clearCloudWalletConfig();
     jest.useFakeTimers();
     fakeWindow = makeFakeWindow();
     setTestGlobal('window', fakeWindow);
@@ -556,7 +500,7 @@ describe('waitForGamingConsentWalletId grace period', () => {
     setTestGlobal('window', globalThis);
   });
 
-  const consentEvent = (walletId: string, origin = 'https://dev-testnet11.cw.chia.net') => ({
+  const consentEvent = (walletId: string, origin = 'https://vault.chia.net') => ({
     origin,
     data: { type: GAMING_CONSENT_MESSAGE_TYPE, walletId },
   });
@@ -694,7 +638,6 @@ describe('fetchFirstConsentedWalletId', () => {
 
   beforeEach(() => {
     setTestGlobal('localStorage', makeStorage());
-    clearCloudWalletConfig();
   });
 
   afterEach(() => {
