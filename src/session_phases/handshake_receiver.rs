@@ -1199,9 +1199,10 @@ mod queued_message_tests {
         let mut allocator = crate::common::types::AllocEncoder::new();
         let mut env = ChannelEnv::new(&mut allocator).expect("env");
 
-        let effect = PeerLifecyclePhase::start_handshake(&mut phase, &mut env, Amount::new(100000000))
-            .expect("start handshake")
-            .expect("deferred funding offer emitted");
+        let effect =
+            PeerLifecyclePhase::start_handshake(&mut phase, &mut env, Amount::new(100000000))
+                .expect("start handshake")
+                .expect("deferred funding offer emitted");
 
         match effect {
             Effect::NeedCoinSpend(request) => {
