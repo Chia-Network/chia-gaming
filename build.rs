@@ -2,6 +2,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chialisp::compiler::debug_metadata::{
+    compile_with_debug, debug_output_path, DebugMetadata, FrameMatch,
+};
 use clvmr::allocator::Allocator;
 use clvmr::chia_dialect::ChiaDialect;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
@@ -49,7 +52,7 @@ fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
 
     arguments.insert(
         "path_or_code".to_string(),
-        ArgumentValue::ArgString(Some(filename.to_string()), file_content),
+        ArgumentValue::ArgString(Some(filename.to_string()), file_content.clone()),
     );
 
     let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).map_err(|e| {
@@ -58,11 +61,61 @@ fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
             format!("error building chialisp {title}: {e}"),
         )
     })?;
-    let mut symbol_table = HashMap::new();
-
-    parsed.compile_modern(&mut allocator, &mut symbol_table)?;
+    let artifacts = compile_with_debug(parsed.opts, &file_content)
+        .map_err(|CompileErr(loc, message)| CompileError::Modern(loc, message))?;
+    let is_module = artifacts.len() > 1;
+    for artifact in artifacts {
+        let Some(output_path) =
+            compile_output_path(filename, is_module, artifact.export_name.as_deref())
+        else {
+            continue;
+        };
+        let metadata = DebugMetadata::decode(&artifact.metadata).map_err(|e| {
+            CompileError::Modern(
+                Srcloc::start(filename),
+                format!("invalid debug metadata for {title}: {e}"),
+            )
+        })?;
+        metadata.verify_program(&artifact.program).map_err(|e| {
+            CompileError::Modern(
+                Srcloc::start(filename),
+                format!("mismatched debug metadata for {title}: {e}"),
+            )
+        })?;
+        fs::write(&output_path, &artifact.program).map_err(|e| {
+            CompileError::Modern(
+                Srcloc::start(filename),
+                format!("writing {}: {e}", output_path.display()),
+            )
+        })?;
+        let debug_path = debug_output_path(&output_path.to_string_lossy());
+        fs::write(&debug_path, &artifact.metadata).map_err(|e| {
+            CompileError::Modern(
+                Srcloc::start(filename),
+                format!("writing {debug_path}: {e}"),
+            )
+        })?;
+    }
 
     Ok(())
+}
+
+fn compile_output_path(
+    filename: &str,
+    is_module: bool,
+    export_name: Option<&str>,
+) -> Option<PathBuf> {
+    let source = Path::new(filename);
+    match (is_module, export_name) {
+        (true, None) => None,
+        (true, Some("program")) => Some(source.with_extension("clvm.bin")),
+        (true, Some(export)) => {
+            let stem = source.file_stem()?.to_str()?;
+            Some(source.with_file_name(format!("{stem}_{export}.clvm.bin")))
+        }
+        (false, None) => Some(source.with_extension("clvm.bin")),
+        (false, Some(_)) => unreachable!("ordinary compilation cannot have a named export"),
+    }
 }
 
 fn string_list(value: Option<&JsonValue>, field: &str) -> Vec<String> {
@@ -246,11 +299,9 @@ fn curry_program(
     list_from_nodes(allocator, &[apply, quoted_program, curried_args])
 }
 
-fn read_hex_node(allocator: &mut Allocator, path: &Path) -> Result<NodePtr, String> {
-    let encoded = fs::read_to_string(path)
-        .map_err(|e| format!("reading compiled Chialisp {}: {e}", path.display()))?;
-    let bytes = hex::decode(encoded.trim())
-        .map_err(|e| format!("decoding compiled Chialisp {}: {e}", path.display()))?;
+fn read_binary_node(allocator: &mut Allocator, path: &Path) -> Result<NodePtr, String> {
+    let bytes =
+        fs::read(path).map_err(|e| format!("reading compiled Chialisp {}: {e}", path.display()))?;
     node_from_bytes(allocator, &bytes)
         .map_err(|e| format!("parsing compiled Chialisp {}: {e:?}", path.display()))
 }
@@ -261,9 +312,34 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
 
     for key in &registry.production {
         let root = PathBuf::from("games").join(key).join("clsp");
-        let raw_factory_path = root.join(format!("factory_{key}_factory.hex"));
+        let raw_factory_path = root.join(format!("factory_{key}_factory.clvm.bin"));
+        let raw_metadata_path =
+            PathBuf::from(debug_output_path(&raw_factory_path.to_string_lossy()));
         let mut allocator = Allocator::new();
-        let raw_factory = read_hex_node(&mut allocator, &raw_factory_path)?;
+        let raw_factory_bytes = fs::read(&raw_factory_path)
+            .map_err(|e| format!("reading raw factory {}: {e}", raw_factory_path.display()))?;
+        let raw_metadata_bytes = fs::read(&raw_metadata_path).map_err(|e| {
+            format!(
+                "reading factory metadata {}: {e}",
+                raw_metadata_path.display()
+            )
+        })?;
+        let raw_metadata = DebugMetadata::decode(&raw_metadata_bytes).map_err(|e| {
+            format!(
+                "decoding factory metadata {}: {e}",
+                raw_metadata_path.display()
+            )
+        })?;
+        raw_metadata
+            .verify_program(&raw_factory_bytes)
+            .map_err(|e| {
+                format!(
+                    "verifying factory metadata {}: {e}",
+                    raw_metadata_path.display()
+                )
+            })?;
+        let raw_factory = node_from_bytes(&mut allocator, &raw_factory_bytes)
+            .map_err(|e| format!("parsing raw factory {}: {e:?}", raw_factory_path.display()))?;
 
         let args_path = root.join("factory_args.clvm.bin");
         let prepared_factory = if args_path.is_file() {
@@ -287,9 +363,33 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
             .map_err(|e| format!("serializing prepared factory for {key}: {e:?}"))?;
         fs::write(&prepared_path, prepared_bytes)
             .map_err(|e| format!("writing prepared factory {}: {e}", prepared_path.display()))?;
+        let prepared_bytes = fs::read(&prepared_path)
+            .map_err(|e| format!("reading prepared factory {}: {e}", prepared_path.display()))?;
+        let prepared_frame = raw_metadata
+            .symbolize_frame(&prepared_bytes, &[])
+            .map_err(|e| format!("symbolizing prepared factory {key}: {e}"))?;
+        let expected_match = if args_path.is_file() {
+            FrameMatch::Curried
+        } else {
+            FrameMatch::Exact
+        };
+        if prepared_frame.matched != expected_match {
+            return Err(format!(
+                "prepared factory {key} metadata match was {:?}, expected {expected_match:?}",
+                prepared_frame.matched
+            ));
+        }
+        let prepared_metadata_path =
+            PathBuf::from(debug_output_path(&prepared_path.to_string_lossy()));
+        fs::write(&prepared_metadata_path, raw_metadata_bytes).map_err(|e| {
+            format!(
+                "writing prepared factory metadata {}: {e}",
+                prepared_metadata_path.display()
+            )
+        })?;
 
-        let probe_path = root.join("factory_probe.hex");
-        let probe_program = read_hex_node(&mut allocator, &probe_path)?;
+        let probe_path = root.join("factory_probe.clvm.bin");
+        let probe_program = read_binary_node(&mut allocator, &probe_path)?;
         let probe_parameters = run_program(
             &mut allocator,
             &ChiaDialect::default(),

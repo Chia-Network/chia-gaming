@@ -125,6 +125,17 @@ fn every_referenced_clvm_artifact_is_built() {
             }
             if !Path::new(&lit).exists() {
                 missing.push(format!("{lit}  (referenced in {})", file.display()));
+            } else if lit.ends_with(".clvm.bin")
+                && !lit.ends_with(".debug.clvm.bin")
+                && !lit.ends_with("factory_args.clvm.bin")
+            {
+                let debug = format!("{}.debug.clvm.bin", lit.trim_end_matches(".clvm.bin"));
+                if !Path::new(&debug).exists() {
+                    missing.push(format!(
+                        "{debug}  (sidecar for {lit}, referenced in {})",
+                        file.display()
+                    ));
+                }
             }
         }
     }
@@ -284,6 +295,10 @@ fn every_production_package_preset_exists() {
         let factory = PathBuf::from(format!("games/{key}/clsp/factory_prepared.clvm.bin"));
         if !factory.is_file() {
             missing.push(factory.display().to_string());
+        }
+        let metadata = PathBuf::from(format!("games/{key}/clsp/factory_prepared.debug.clvm.bin"));
+        if !metadata.is_file() {
+            missing.push(metadata.display().to_string());
         }
     }
     assert!(
