@@ -63,6 +63,7 @@ pub struct HandshakeReceiverPhase {
     last_height: u64,
     channel_deadline: Option<u64>,
     pending_coin_spend: bool,
+    handshake_started: bool,
     funding_announcement: Option<Hash>,
 
     waiting_to_start: bool,
@@ -94,6 +95,7 @@ impl HandshakeReceiverPhase {
             last_height: 0,
             channel_deadline: None,
             pending_coin_spend: false,
+            handshake_started: false,
             funding_announcement: None,
             waiting_to_start: true,
             incoming_messages: VecDeque::new(),
@@ -294,7 +296,12 @@ impl HandshakeReceiverPhase {
                     }
                 };
 
-                let coin_spend_request = if self.last_height > 0 {
+                // The funding offer amount folds in the opening fee, which is
+                // only known once start_handshake runs. Do not emit the offer
+                // until the handshake has been started, otherwise a warm re-open
+                // (poller already supplying heights) would build it with the
+                // default opening_fee of 0.
+                let coin_spend_request = if self.handshake_started && self.last_height > 0 {
                     Some(self.build_bob_coin_spend_request(env)?)
                 } else {
                     None
@@ -622,7 +629,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     }
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error> {
         self.last_height = height;
-        if self.pending_coin_spend && self.last_height > 0 {
+        if self.pending_coin_spend && self.handshake_started && self.last_height > 0 {
             self.pending_coin_spend = false;
             let req = self.build_bob_coin_spend_request(env)?;
             self.channel_deadline = self.compute_not_valid_after_height();
@@ -638,10 +645,20 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     }
     fn start_handshake(
         &mut self,
-        _env: &mut ChannelEnv<'_>,
+        env: &mut ChannelEnv<'_>,
         opening_fee: Amount,
     ) -> Result<Option<Effect>, Error> {
         self.opening_fee = opening_fee;
+        self.handshake_started = true;
+        // If handshake A was already processed while the fee was still unknown
+        // (e.g. a warm re-open where a height arrived before start_handshake),
+        // emit the deferred funding offer now that the opening fee is set.
+        if self.pending_coin_spend && self.last_height > 0 {
+            self.pending_coin_spend = false;
+            let req = self.build_bob_coin_spend_request(env)?;
+            self.channel_deadline = self.compute_not_valid_after_height();
+            return Ok(Some(Effect::NeedCoinSpend(req)));
+        }
         Ok(None)
     }
     fn channel_offer(
@@ -1127,6 +1144,7 @@ mod queued_message_tests {
     fn handshake_a_request_failure_does_not_publish_waiting_state() {
         let mut phase = finished_phase();
         phase.state = ReceiverState::WaitingForA;
+        phase.handshake_started = true;
         phase.last_height = 1;
         phase.my_contribution = Amount::new(u64::MAX);
         phase.opening_fee = Amount::new(1);
@@ -1150,6 +1168,51 @@ mod queued_message_tests {
         assert!(matches!(phase.state, ReceiverState::WaitingForA));
         assert!(!phase.pending_coin_spend);
         assert!(phase.channel_deadline.is_none());
+    }
+
+    #[test]
+    fn funding_offer_is_deferred_until_handshake_started() {
+        // A warm re-open can deliver a height before start_handshake sets the
+        // opening fee. Until the handshake is started the deferred funding offer
+        // must not be emitted, otherwise it would fold in a zero opening fee.
+        let mut phase = finished_phase();
+        phase.state = ReceiverState::WaitingForA;
+        phase.pending_coin_spend = true;
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+
+        let effects = PeerLifecyclePhase::new_block(&mut phase, &mut env, 5).expect("new block");
+
+        assert!(effects.is_empty());
+        assert!(phase.pending_coin_spend);
+    }
+
+    #[test]
+    fn start_handshake_emits_deferred_funding_offer_with_opening_fee() {
+        // Once start_handshake supplies the opening fee, the deferred funding
+        // offer is emitted with amount = my_contribution + opening_fee.
+        let mut phase = finished_phase();
+        phase.state = ReceiverState::WaitingForA;
+        phase.my_contribution = Amount::new(100);
+        phase.pending_coin_spend = true;
+        phase.last_height = 5;
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+
+        let effect = PeerLifecyclePhase::start_handshake(&mut phase, &mut env, Amount::new(100000000))
+            .expect("start handshake")
+            .expect("deferred funding offer emitted");
+
+        match effect {
+            Effect::NeedCoinSpend(request) => {
+                assert_eq!(request.amount.to_u64(), 100000100);
+                assert_eq!(request.fee.to_u64(), 100000000);
+            }
+            other => panic!("expected NeedCoinSpend, got {other:?}"),
+        }
+        assert!(phase.handshake_started);
+        assert!(!phase.pending_coin_spend);
+        assert!(phase.channel_deadline.is_some());
     }
 
     #[test]

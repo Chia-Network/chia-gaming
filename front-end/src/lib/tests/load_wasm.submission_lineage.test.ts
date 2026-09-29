@@ -91,7 +91,7 @@ it(
     };
 
     try {
-      assert.equal(WholeWasmObject.game_session_serialization_schema(), 23);
+      assert.equal(WholeWasmObject.game_session_serialization_schema(), 24);
       assert.equal(lane.controller.goOnChain(), true);
       await flushWrapperDrain(adapters);
 
