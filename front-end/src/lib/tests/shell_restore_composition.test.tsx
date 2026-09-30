@@ -4,6 +4,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
+import * as blobSingleton from '../../hooks/blobSingleton';
 import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
 import { storageRepository } from '../session/storageRepository';
 import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
@@ -191,5 +192,43 @@ describe('Shell production restore composition', () => {
     expect(requestTrust).toHaveBeenCalledWith('https://hub.example.test');
     await flushEffects();
     expect(unhandledRejections).toEqual([]);
+  });
+
+  it('retires the live protocol owner before starting destructive storage reset', async () => {
+    await storageRepository.claimApplicationState();
+    await storageRepository.write(
+      storageRepository.patchApplicationState(() =>
+        baseSave({
+          blockchainType: 'walletconnect',
+        }),
+      ),
+    );
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const order: string[] = [];
+    const destroyController = jest
+      .spyOn(blobSingleton, 'destroySessionController')
+      .mockImplementation(() => {
+        order.push('controller');
+      });
+    const hardReset = jest.spyOn(storageRepository, 'hardReset').mockImplementation(async () => {
+      order.push('storage');
+      return { success: true };
+    });
+
+    act(() => {
+      renderer = create(React.createElement(Shell));
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Start over' }).props.onClick();
+    });
+
+    expect(destroyController).toHaveBeenCalledTimes(1);
+    expect(hardReset).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['controller', 'storage']);
   });
 });

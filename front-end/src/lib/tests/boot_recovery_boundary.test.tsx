@@ -179,7 +179,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     Object.defineProperty(globalThis, 'indexedDB', {
       configurable: true,
       value: {
-        databases: jest.fn().mockResolvedValue([]),
+        databases: jest.fn().mockResolvedValue([{ name: SESSION_DB_NAME }]),
         deleteDatabase: jest.fn(() => {
           const request: { onsuccess?: () => void } = {};
           deletes.push(request);
@@ -245,7 +245,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     Object.defineProperty(globalThis, 'indexedDB', {
       configurable: true,
       value: {
-        databases: jest.fn().mockResolvedValue([]),
+        databases: jest.fn().mockResolvedValue([{ name: SESSION_DB_NAME }]),
         deleteDatabase: jest.fn(() => {
           const request: { onblocked?: () => void } = {};
           deletes.push(request);
@@ -632,6 +632,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 
     const reload = jest.fn();
     const claim = jest.spyOn(storageRepository, 'claimAndRead');
+    const beginHardReset = jest.spyOn(indexedDbStoragePort, 'beginHardReset');
     act(() => {
       renderer = create(
         createElement(ShellBootHarness, {
@@ -647,7 +648,9 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
     });
     expect(reload).toHaveBeenCalledTimes(1);
+    expect(beginHardReset).not.toHaveBeenCalled();
     claim.mockRestore();
+    beginHardReset.mockRestore();
   });
 
   it('flushes pre-authority identity changes only after the atomic claim', async () => {
