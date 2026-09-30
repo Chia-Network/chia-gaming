@@ -718,6 +718,7 @@ impl GameSession {
             Some(Ok(effects)) => self.process_effects(effects, allocator)?,
             Some(Err(e)) => {
                 let action_context = self.peer.take_failed_queued_action();
+                self.collect_runtime_prints(allocator);
                 self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
                         id: action_context.as_ref().map(|(id, _)| *id),
@@ -1047,6 +1048,7 @@ impl GameSession {
         allocator: &mut AllocEncoder,
         error: Error,
     ) -> Result<(), Error> {
+        self.collect_runtime_prints(allocator);
         self.state
             .events
             .push_back(GameSessionEvent::ReceiveError(format!("{error:?}")));
@@ -1686,7 +1688,7 @@ mod sequencing_tests {
     }
 
     #[test]
-    fn runtime_prints_precede_ordinary_effect_logs() {
+    fn runtime_prints_precede_following_effects_and_errors() {
         let mut allocator = AllocEncoder::new();
         let mut rng = ChaCha8Rng::from_seed([0x51; 32]);
         let identity =
@@ -1731,6 +1733,33 @@ mod sequencing_tests {
             Some(GameSessionEvent::Log(line))
                 if line == "[ordinary-effect] after print"
         ));
+
+        allocator.push_runtime_prints(RuntimePrintOutput {
+            records: vec![RuntimePrintRecord {
+                kind: RuntimePrintKind::Rue,
+                source: Some("game.rue:4:5".to_string()),
+                value: "\"before error\"".to_string(),
+            }],
+            dropped: 0,
+        });
+        let _ = session.handle_peer_protocol_error(&mut allocator, Error::BasicErr);
+
+        let events = session.state.events.iter().collect::<Vec<_>>();
+        let print_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    GameSessionEvent::Log(line)
+                        if line == "[clvm-print] game.rue:4:5: \"before error\""
+                )
+            })
+            .expect("runtime print event");
+        let error_index = events
+            .iter()
+            .position(|event| matches!(event, GameSessionEvent::ReceiveError(_)))
+            .expect("receive error event");
+        assert!(print_index < error_index);
     }
 
     #[test]
