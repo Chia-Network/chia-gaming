@@ -991,6 +991,18 @@ describe('outbound message numbering', () => {
 });
 
 describe('bounded controller histories', () => {
+  it('routes runtime CLVM prints into diagnostic history', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.processResult({
+      ...wasmResult(),
+      events: [{ Log: '[clvm-print] game.rue:2:3: ("move" 7)' }],
+    });
+    blob.flushDeferredWork();
+
+    expect(blob.diagnosticLog).toContain('[clvm-print] game.rue:2:3: ("move" 7)');
+  });
+
   it('keeps only recent WASM notifications and diagnostic lines', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);

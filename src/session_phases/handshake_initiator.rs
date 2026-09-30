@@ -10,7 +10,7 @@ use crate::channel_state::types::{
     StateUpdateSignatures,
 };
 use crate::channel_state::ChannelState;
-use crate::clvm_execution::run_clvm;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, sign_reward_payout,
 };
@@ -65,7 +65,8 @@ pub(crate) fn validate_wallet_bundle_applies_conditions(
         }
         let puzzle = spend.bundle.puzzle.to_program().to_nodeptr(allocator)?;
         let solution = spend.bundle.solution.to_nodeptr(allocator)?;
-        let emitted = run_clvm(allocator.allocator(), puzzle, solution, MAX_BLOCK_COST_CLVM)?.1;
+        let emitted =
+            run_clvm_with_runtime_prints(allocator, puzzle, solution, MAX_BLOCK_COST_CLVM)?.1;
         let emitted = crate::utils::proper_list(allocator.allocator_ref(), emitted, true)
             .ok_or_else(|| Error::Channel("wallet coin conditions were not a list".to_string()))?;
         let emitted_hashes = emitted

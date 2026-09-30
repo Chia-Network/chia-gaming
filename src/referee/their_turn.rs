@@ -10,7 +10,7 @@ use crate::channel_state::game_handler::{
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
 
-use crate::clvm_execution::run_clvm;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
     u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
@@ -420,13 +420,10 @@ impl TheirTurnReferee {
             .allocator()
             .new_pair(curried_args, slash_args)
             .into_gen()?;
-        Ok(run_clvm(
-            allocator.allocator(),
-            referee_clvm,
-            args,
-            MAX_BLOCK_COST_CLVM,
+        Ok(
+            run_clvm_with_runtime_prints(allocator, referee_clvm, args, MAX_BLOCK_COST_CLVM)
+                .is_ok(),
         )
-        .is_ok())
     }
 
     fn inspect_peer_move(

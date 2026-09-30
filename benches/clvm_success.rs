@@ -6,7 +6,8 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use chia_gaming::clvm_execution::run_clvm;
+use chia_gaming::clvm_execution::{run_clvm, run_clvm_with_runtime_prints};
+use chia_gaming::common::types::AllocEncoder;
 use clvmr::allocator::{Allocator, NodePtr};
 use clvmr::{run_program, ChiaDialect};
 
@@ -47,11 +48,23 @@ fn main() {
         );
     });
 
+    let mut print_allocator = AllocEncoder::new();
+    let print_program = print_allocator.allocator().one();
+    let print_aware = elapsed(|| {
+        black_box(
+            run_clvm_with_runtime_prints(&mut print_allocator, print_program, NodePtr::NIL, 100)
+                .expect("print-aware successful execution"),
+        );
+    });
+
     let bare_ns = bare.as_nanos() as f64 / f64::from(ITERATIONS);
     let wrapped_ns = wrapped.as_nanos() as f64 / f64::from(ITERATIONS);
+    let print_ns = print_aware.as_nanos() as f64 / f64::from(ITERATIONS);
     println!(
         "CLVM success path ({ITERATIONS} iterations): bare={bare_ns:.1} ns/op, \
-         wrapped={wrapped_ns:.1} ns/op, ratio={:.3}x",
-        wrapped_ns / bare_ns
+         wrapped={wrapped_ns:.1} ns/op ({:.3}x), \
+         print-aware={print_ns:.1} ns/op ({:.3}x)",
+        wrapped_ns / bare_ns,
+        print_ns / bare_ns,
     );
 }

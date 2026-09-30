@@ -5,7 +5,7 @@ use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::NodePtr;
 
 use crate::channel_state::types::{Evidence, ReadableMove};
-use crate::clvm_execution::run_clvm;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::types::{
     atom_from_clvm, u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Node, Program,
     ProgramRef, MAX_BLOCK_COST_CLVM,
@@ -87,7 +87,7 @@ pub struct TheirTurnInputs<'a> {
 }
 
 fn run_code(allocator: &mut AllocEncoder, code: NodePtr, env: NodePtr) -> Result<NodePtr, Error> {
-    run_clvm(allocator.allocator(), code, env, MAX_BLOCK_COST_CLVM).map(|r| r.1)
+    run_clvm_with_runtime_prints(allocator, code, env, MAX_BLOCK_COST_CLVM).map(|r| r.1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

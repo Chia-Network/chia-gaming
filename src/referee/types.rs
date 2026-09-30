@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_state::types::{
     CachedSendMove, Evidence, ReadableMove, StateUpdateProgram, ValidationProgramRegistry,
 };
-use crate::clvm_execution::run_clvm;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
@@ -478,8 +478,8 @@ impl InternalStateUpdateArgs {
             PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
 
-        let raw_result_p = run_clvm(
-            allocator.allocator(),
+        let raw_result_p = run_clvm_with_runtime_prints(
+            allocator,
             validation_program_nodeptr,
             validator_full_args_node,
             MAX_BLOCK_COST_CLVM,

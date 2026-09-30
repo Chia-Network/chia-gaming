@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
 use crate::channel_state::ChannelState;
-use crate::clvm_execution::run_clvm;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::types::{
     Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
     LocalProposalId, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle,
@@ -657,12 +657,8 @@ impl SpendChannelCoinPhase {
 
         let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
         let run_args = solution.to_nodeptr(env.allocator)?;
-        let conditions_result = run_clvm(
-            env.allocator.allocator(),
-            run_puzzle,
-            run_args,
-            MAX_BLOCK_COST_CLVM,
-        )?;
+        let conditions_result =
+            run_clvm_with_runtime_prints(env.allocator, run_puzzle, run_args, MAX_BLOCK_COST_CLVM)?;
         let conditions_nodeptr = conditions_result.1;
 
         // Not a clean shutdown — an unroll landed.  Find the unroll coin

@@ -1,7 +1,7 @@
 use clvmr::allocator::{NodePtr, SExp};
 use clvmr::ChiaDialect;
 
-use crate::clvm_execution::run_clvm;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::utils::proper_list;
 
 use crate::common::constants::{
@@ -183,12 +183,8 @@ impl CoinCondition {
     ) -> Result<Vec<CoinCondition>, Error> {
         let run_puzzle = puzzle.to_nodeptr(allocator)?;
         let run_args = solution.to_nodeptr(allocator)?;
-        let conditions = run_clvm(
-            allocator.allocator(),
-            run_puzzle,
-            run_args,
-            MAX_BLOCK_COST_CLVM,
-        )?;
+        let conditions =
+            run_clvm_with_runtime_prints(allocator, run_puzzle, run_args, MAX_BLOCK_COST_CLVM)?;
         CoinCondition::from_nodeptr(allocator, conditions.1)
     }
 }

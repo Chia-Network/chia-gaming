@@ -9,6 +9,7 @@ use chialisp::compiler::debug_metadata::{
     format_stack_frame, ArgumentBinding, DebugMetadata, FrameMatch, StackFrameStyle,
     SymbolizedFrame,
 };
+use chialisp::runtime_print::run_program_with_runtime_prints;
 use clvmr::allocator::{Allocator, NodePtr, SExp};
 use clvmr::chia_dialect::{ChiaDialect, ClvmFlags};
 use clvmr::error::EvalErr;
@@ -18,7 +19,7 @@ use clvmr::{run_program, run_program_with_pre_eval};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::common::types::Error;
+use crate::common::types::{AllocEncoder, Error};
 
 const MAX_CAPSULES: usize = 16;
 const MAX_CAPSULE_BYTES: usize = 512 * 1024;
@@ -235,6 +236,39 @@ pub fn run_clvm(
         Ok(reduction) => Ok(reduction),
         Err(error) => Err(clvm_error_with_diagnostic(
             allocator,
+            program,
+            environment,
+            max_cost,
+            dialect_flags,
+            error,
+            None,
+        )),
+    }
+}
+
+/// Execute application-owned CLVM while recognizing the established Chialisp
+/// and Rue runtime print encodings. Print records are retained by the
+/// session-local allocator even when execution fails. Diagnostic replay uses
+/// [`run_clvm`] directly and therefore cannot emit duplicate print records.
+pub fn run_clvm_with_runtime_prints(
+    encoder: &mut AllocEncoder,
+    program: NodePtr,
+    environment: NodePtr,
+    max_cost: u64,
+) -> Result<Reduction, Error> {
+    let dialect_flags = ClvmFlags::empty();
+    let run = run_program_with_runtime_prints(
+        encoder.allocator(),
+        dialect_flags,
+        program,
+        environment,
+        max_cost,
+    );
+    encoder.push_runtime_prints(run.prints);
+    match run.result {
+        Ok(reduction) => Ok(reduction),
+        Err(error) => Err(clvm_error_with_diagnostic(
+            encoder.allocator_ref(),
             program,
             environment,
             max_cost,
@@ -566,6 +600,7 @@ pub(crate) fn capsule_serializations_for_test() -> usize {
 mod tests {
     use std::rc::Rc;
 
+    use chialisp::classic::clvm_tools::binutils::assemble;
     use chialisp::compiler::compiler::DefaultCompilerOpts;
     use chialisp::compiler::comptypes::CompilerOpts;
     use chialisp::compiler::debug_metadata::compile_with_debug;
@@ -619,6 +654,55 @@ mod tests {
         assert_eq!(diagnostic_registry_len(), 0);
         METADATA_LOADS.with(|loads| assert_eq!(loads.get(), 0));
         CAPSULE_SERIALIZATIONS.with(|serializations| assert_eq!(serializations.get(), 0));
+    }
+
+    #[test]
+    fn runtime_prints_are_ordered_and_session_local() {
+        reset();
+        let mut encoder = AllocEncoder::new();
+        let program = assemble(
+            encoder.allocator(),
+            r#"(c
+                (all (q . "$print$") (q . "chialisp") (q . 1))
+                ("debug_print" (q . "game.rue:2:3") (q . ("rue" 2)))
+            )"#,
+        )
+        .expect("assemble mixed print program");
+        run_clvm_with_runtime_prints(&mut encoder, program, NodePtr::NIL, 1_000_000)
+            .expect("mixed print program");
+        assert_eq!(
+            encoder.drain_runtime_prints(),
+            vec![
+                "[clvm-print] game.rue:2:3: (\"rue\" 2)",
+                "[clvm-print] (\"chialisp\" 1)",
+            ]
+        );
+        assert!(encoder.drain_runtime_prints().is_empty());
+
+        let mut other_session = AllocEncoder::new();
+        assert!(other_session.drain_runtime_prints().is_empty());
+    }
+
+    #[test]
+    fn failed_execution_retains_print_without_diagnostic_replay_duplicate() {
+        reset();
+        let mut encoder = AllocEncoder::new();
+        let program = assemble(
+            encoder.allocator(),
+            r#"(c
+                ("not_an_operator")
+                ("debug_print" (q . "game.rue:4:5") (q . "before error"))
+            )"#,
+        )
+        .expect("assemble failing print program");
+        let error = run_clvm_with_runtime_prints(&mut encoder, program, NodePtr::NIL, 1_000_000)
+            .expect_err("program should fail after printing");
+        let _ = diagnose_clvm(token(&error), &DebugMetadataCollection::default());
+        assert_eq!(
+            encoder.drain_runtime_prints(),
+            vec!["[clvm-print] game.rue:4:5: \"before error\""]
+        );
+        assert!(encoder.drain_runtime_prints().is_empty());
     }
 
     #[test]
