@@ -3,20 +3,20 @@ use std::rc::Rc;
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
 use clvmr::allocator::NodePtr;
-use clvmr::run_program;
 
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
     CachedSendMove, Evidence, ReadableMove, StateUpdateProgram, ValidationProgramRegistry,
 };
+use crate::clvm_execution::run_clvm;
 use crate::common::standard_coin::{
     calculate_hash_of_quoted_mod_hash, curry_and_treehash, sign_agg_sig_me, ChiaIdentity,
 };
 use crate::common::types::{
-    chia_dialect, u64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash,
-    IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
-    Timeout, MAX_BLOCK_COST_CLVM,
+    u64_from_atom, Aggsig, AllocEncoder, Amount, CoinSpend, CoinString, Error, Hash, IntoErr, Node,
+    Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree, Timeout,
+    MAX_BLOCK_COST_CLVM,
 };
 use crate::utils::proper_list;
 
@@ -478,14 +478,12 @@ impl InternalStateUpdateArgs {
             PuzzleHash::from_hash(validation_program_mod_hash.clone()),
         )?;
 
-        let raw_result_p = run_program(
+        let raw_result_p = run_clvm(
             allocator.allocator(),
-            &chia_dialect(),
             validation_program_nodeptr,
             validator_full_args_node,
             MAX_BLOCK_COST_CLVM,
-        )
-        .into_gen();
+        );
         let raw_result = raw_result_p?;
 
         parse_validator_result(allocator, raw_result.1)

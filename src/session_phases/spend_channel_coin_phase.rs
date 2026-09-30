@@ -2,16 +2,17 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use clvm_traits::{clvm_curried_args, ToClvm};
 use clvm_utils::CurriedProgram;
-use clvmr::{run_program, NodePtr};
+use clvmr::NodePtr;
 
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv, ReadableMove};
 use crate::channel_state::ChannelState;
+use crate::clvm_execution::run_clvm;
 use crate::common::types::{
-    chia_dialect, Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash,
-    IntoErr, LocalProposalId, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend,
-    SpendBundle, Timeout, MAX_BLOCK_COST_CLVM,
+    Aggsig, Amount, CoinCondition, CoinSpend, CoinString, Error, GameID, Hash, IntoErr,
+    LocalProposalId, Node, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle,
+    Timeout, MAX_BLOCK_COST_CLVM,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
 use crate::session_phases::effects::{
@@ -656,14 +657,12 @@ impl SpendChannelCoinPhase {
 
         let run_puzzle = puzzle.to_nodeptr(env.allocator)?;
         let run_args = solution.to_nodeptr(env.allocator)?;
-        let conditions_result = run_program(
+        let conditions_result = run_clvm(
             env.allocator.allocator(),
-            &chia_dialect(),
             run_puzzle,
             run_args,
             MAX_BLOCK_COST_CLVM,
-        )
-        .into_gen()?;
+        )?;
         let conditions_nodeptr = conditions_result.1;
 
         // Not a clean shutdown — an unroll landed.  Find the unroll coin

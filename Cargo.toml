@@ -30,6 +30,7 @@ chia-bls = "=0.38.2"
 chia-consensus = "=0.38.2"
 chia-protocol = "=0.38.2"
 chia-puzzles = "=0.20.2"
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "c06c6868" }
 clvm-traits = "=0.38.2"
 clvm-utils = "=0.38.2"
 clvmr = { version = "=0.17.7", features = ["pre-eval"] }

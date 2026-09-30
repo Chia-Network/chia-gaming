@@ -2,13 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::proper_list;
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
-use clvmr::run_program;
 use clvmr::NodePtr;
 
 use crate::channel_state::types::{Evidence, ReadableMove};
+use crate::clvm_execution::run_clvm;
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Node,
-    Program, ProgramRef, MAX_BLOCK_COST_CLVM,
+    atom_from_clvm, u64_from_atom, AllocEncoder, Amount, Error, Hash, IntoErr, Node, Program,
+    ProgramRef, MAX_BLOCK_COST_CLVM,
 };
 use crate::referee::types::GameMoveDetails;
 
@@ -87,15 +87,7 @@ pub struct TheirTurnInputs<'a> {
 }
 
 fn run_code(allocator: &mut AllocEncoder, code: NodePtr, env: NodePtr) -> Result<NodePtr, Error> {
-    run_program(
-        allocator.allocator(),
-        &chia_dialect(),
-        code,
-        env,
-        MAX_BLOCK_COST_CLVM,
-    )
-    .into_gen()
-    .map(|r| r.1)
+    run_clvm(allocator.allocator(), code, env, MAX_BLOCK_COST_CLVM).map(|r| r.1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,11 +264,19 @@ impl GameHandler {
 
         let run_result = match run_result_e {
             Ok(v) => v,
-            Err(Error::ClvmErr(e)) => {
-                let failing_hex = Node(e.node_ptr()).to_hex(allocator)?;
+            Err(Error::ClvmErr {
+                error,
+                diagnostic,
+                context,
+            }) => {
+                let failing_hex = Node(error.node_ptr()).to_hex(allocator)?;
                 let failing_prefix = &failing_hex[..failing_hex.len().min(96)];
-                return Err(Error::StrErr(format!(
-                    "their turn handler failed: error={e:?} move_len={} move_hex={} pre_state_len={} state_len={} pre_state={:?} state={:?} node_len={} node_prefix={}{}",
+                return Err(Error::ClvmErr {
+                    error,
+                    diagnostic,
+                    context: Some(format!(
+                    "their turn handler failed{} move_len={} move_hex={} pre_state_len={} state_len={} pre_state={:?} state={:?} node_len={} node_prefix={}{}",
+                    context.map(|value| format!(": {value}")).unwrap_or_default(),
                     inputs.new_move.basic.move_made.len(),
                     hex::encode(&inputs.new_move.basic.move_made),
                     proper_list(allocator.allocator(), inputs.pre_state, true)
@@ -294,7 +294,8 @@ impl GameHandler {
                     } else {
                         ""
                     }
-                )));
+                )),
+                });
             }
             Err(e) => {
                 return Err(Error::StrErr(format!(
@@ -329,7 +330,7 @@ impl GameHandler {
             )));
         }
 
-        let decode_slash_evidence = |allocator: &mut AllocEncoder| {
+        let decode_slash_evidence = |allocator: &mut AllocEncoder| -> Result<Vec<Evidence>, Error> {
             let mut lst = Vec::new();
             let lst_nodeptr = proper_list(allocator.allocator(), pl[1], true)
                 .ok_or_else(|| Error::StrErr("slash evidence was not a list".to_string()))?;
@@ -394,8 +395,8 @@ impl MessageHandler {
         let run_prog = self.0.to_nodeptr(allocator)?;
         let run_result = run_code(allocator, run_prog, args);
 
-        let run_output = run_result
-            .map_err(|e| Error::StrErr(format!("message parser returned error: {e:?}")))?;
+        let run_output =
+            run_result.map_err(|error| error.with_context("message parser returned error"))?;
 
         ReadableMove::from_nodeptr(allocator, run_output)
     }
