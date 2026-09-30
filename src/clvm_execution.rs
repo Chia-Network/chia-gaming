@@ -161,22 +161,27 @@ thread_local! {
     static DIAGNOSTICS: RefCell<DiagnosticRegistry> = RefCell::new(DiagnosticRegistry::default());
     #[cfg(test)]
     static METADATA_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(test)]
+    static CAPSULE_SERIALIZATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn capture_capsule(
-    program: Vec<u8>,
-    environment: Vec<u8>,
+    allocator: &Allocator,
+    program: NodePtr,
+    environment: NodePtr,
     max_cost: u64,
     error: &EvalErr,
 ) -> Option<DiagnosticToken> {
+    #[cfg(test)]
+    CAPSULE_SERIALIZATIONS.with(|serializations| {
+        serializations.set(serializations.get() + 1);
+    });
     let original_error = error.to_string();
     let fixed_size = original_error.len() + "ChiaDialect::default".len();
-    let size = fixed_size
-        .checked_add(program.len())?
-        .checked_add(environment.len())?;
-    if size > MAX_CAPSULE_BYTES {
-        return None;
-    }
+    let available = MAX_CAPSULE_BYTES.checked_sub(fixed_size)?;
+    let program = node_to_bytes_limit(allocator, program, available).ok()?;
+    let available = available.checked_sub(program.len())?;
+    let environment = node_to_bytes_limit(allocator, environment, available).ok()?;
     let capsule = DiagnosticCapsule {
         program,
         environment,
@@ -187,27 +192,19 @@ fn capture_capsule(
     DIAGNOSTICS.with(|registry| registry.borrow_mut().insert(capsule))
 }
 
-/// Execute application-owned CLVM. The program and environment are serialized
-/// before execution because clvmr may reuse temporary allocator nodes before an
-/// `EvalErr` is returned. Diagnostic registry state is created only on failure.
+/// Execute application-owned CLVM. Successful execution is exactly one ordinary
+/// `run_program` call. Serialization and diagnostic registry work happen only
+/// after an `EvalErr`.
 pub fn run_clvm(
     allocator: &mut Allocator,
     program: NodePtr,
     environment: NodePtr,
     max_cost: u64,
 ) -> Result<Reduction, Error> {
-    let capture = (|| {
-        let program = node_to_bytes_limit(allocator, program, MAX_CAPSULE_BYTES).ok()?;
-        let remaining = MAX_CAPSULE_BYTES.checked_sub(program.len())?;
-        let environment = node_to_bytes_limit(allocator, environment, remaining).ok()?;
-        Some((program, environment))
-    })();
     match run_program(allocator, &chia_dialect(), program, environment, max_cost) {
         Ok(reduction) => Ok(reduction),
         Err(error) => {
-            let diagnostic = capture.and_then(|(program, environment)| {
-                capture_capsule(program, environment, max_cost, &error)
-            });
+            let diagnostic = capture_capsule(allocator, program, environment, max_cost, &error);
             Err(Error::ClvmErr {
                 error,
                 diagnostic,
@@ -533,6 +530,7 @@ mod tests {
     fn reset() {
         DIAGNOSTICS.with(|registry| *registry.borrow_mut() = DiagnosticRegistry::default());
         METADATA_LOADS.with(|loads| loads.set(0));
+        CAPSULE_SERIALIZATIONS.with(|serializations| serializations.set(0));
     }
 
     fn compiled(source: &str) -> chialisp::compiler::debug_metadata::DebugCompileArtifact {
@@ -576,6 +574,7 @@ mod tests {
         assert_eq!(result.1, NodePtr::NIL);
         assert_eq!(diagnostic_registry_len(), 0);
         METADATA_LOADS.with(|loads| assert_eq!(loads.get(), 0));
+        CAPSULE_SERIALIZATIONS.with(|serializations| assert_eq!(serializations.get(), 0));
     }
 
     #[test]
