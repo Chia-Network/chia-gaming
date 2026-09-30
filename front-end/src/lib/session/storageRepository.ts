@@ -630,8 +630,16 @@ class StorageRepository {
   }
 
   async hardReset(): Promise<HardResetResult> {
+    const { hardResetStorage, hardResetUnclaimedStorage } = await import(
+      '../../hooks/saveHardReset'
+    );
+    if (!this.hasAuthority()) {
+      this.root = newApplicationState();
+      this.activeRuntime = null;
+      return hardResetUnclaimedStorage();
+    }
+
     const authority = await this.beginHardReset(getStorageTabId());
-    const { hardResetStorage } = await import('../../hooks/saveHardReset');
     this.stopPersistenceForHardReset();
     return hardResetStorage(authority, (owned, reset) => this.hardResetMutation(owned, reset));
   }

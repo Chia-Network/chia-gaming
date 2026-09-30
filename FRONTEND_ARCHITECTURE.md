@@ -926,7 +926,7 @@ identities calculated by the package build. Handshake uses that already-loaded
 module for BLS identity only.
 
 On page load, Shell delegates storage/recovery ownership to
-`BootRecoveryBoundary`. It completes a pending owned-storage wipe and visible
+`BootRecoveryBoundary`. It completes a pending origin-wide storage wipe and visible
 read-only IndexedDB inspection before choosing recovery UI. Hub and wallet
 promises are not part of this local boundary. Resume/takeover use one atomic
 claim-and-read transaction over coordination plus `application-state/current`,
@@ -966,7 +966,7 @@ is the escape hatch for garbled local state, so it must not deserialize saved
 state, reconnect to services, preserve preferences, or otherwise interpret the
 current session. The handler tears down live hub/wallet sockets (so IndexedDB
 deletes are not blocked), awaits `hardReset()`, and reloads only after every
-targeted deletion confirms success. A blocked or failed deletion leaves the
+origin-local deletion confirms success. A blocked or failed deletion leaves the
 shell on recovery UI with Retry Hard Reset guidance.
 
 All aggregate and reset mutations share one serialized same-tab coordinator.
@@ -986,11 +986,10 @@ pre-reset work cannot recreate the database or cached state afterward.
    graceful cancellation.
 3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
-4. Deletes only the exact owned app / WalletConnect manifest:
-   `chia-gaming-session`, `WALLET_CONNECT_V2_INDEXED_DB`, `walletconnect`, and
-   `walletconnect-v2`. Foreign same-origin databases, including names that merely
-   resemble WalletConnect databases, are preserved. `onsuccess` confirms
-   deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
+4. Enumerates and deletes every IndexedDB database visible to the origin.
+   There is no preservation allowlist: Start Over also removes unknown keys,
+   foreign-looking database names, and stale data from older unreleased builds.
+   `onsuccess` confirms deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
    keeps recovery UI open with **Retry Hard Reset**, and leaves a minimal
    generalized pending-wipe marker for retry or next boot. Reload occurs only
    after every deletion confirms success.
@@ -1015,8 +1014,8 @@ clear, rejection, and wallet-ledger mutations reject until authority exists.
 Semantic rejection and preserving-reset transactions remain repository-owned.
 Ordinary I/O failure is durability
 degradation; `StorageAuthorityLostError` retires the obsolete runtime and
-suppresses effects. Start over advances reset authority and wipes only the
-owned manifest.
+suppresses effects. Start over advances reset authority when one exists and
+wipes the entire origin-local storage surface.
 
 #### Restore path
 

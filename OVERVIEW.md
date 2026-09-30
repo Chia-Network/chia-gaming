@@ -995,10 +995,11 @@ invalid discriminants, and non-current versions. IndexedDB v5 coordination
 stores durable owner, write, and reset epochs; each aggregate mutation checks
 that authority atomically with its write. `localStorage` ownership and resume
 markers are UX hints only. Hard reset advances the durable reset epoch before
-deleting only the exact app and external WalletConnect database manifest and
-intentionally erases every obligation. Blocked or failed deletion remains on
-recovery UI with Retry; foreign same-origin databases and lookalikes are
-preserved.
+deletion when authority has already been claimed; the pre-claim boot dialog
+skips that unnecessary coordination. Both paths clear all `localStorage`, all
+`sessionStorage`, and every IndexedDB database visible to the origin, intentionally
+erasing every obligation and any unknown stale local state. Blocked or failed
+deletion remains on recovery UI with Retry.
 
 Ordinary IndexedDB I/O failure never gates use, transaction release, or
 cancellation; the in-memory aggregate remains pending for a later checkpoint.
