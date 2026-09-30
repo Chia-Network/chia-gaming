@@ -34,9 +34,10 @@ configured, with at least 1000 mojos in your wallet.
 
 ## Prerequisites
 
-- **Rust** (stable) with the `wasm32-unknown-unknown` target:
+- **Rust** via rustup. The repository pins Rust 1.97.1 and the
+  `wasm32-unknown-unknown` target in `rust-toolchain.toml`:
   ```bash
-  rustup target add wasm32-unknown-unknown
+  rustc --version
   ```
 - **wasm-pack** (0.15.0):
   ```bash
@@ -47,10 +48,11 @@ configured, with at least 1000 mojos in your wallet.
   brew install node@22        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
   ```
-- **macOS only** — Homebrew LLVM for WASM builds. If present, build scripts
-automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
-to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
-fail with clang errors.
+- **A C compiler with WebAssembly support.** The ambient `clang` selected by
+  your environment must advertise the `wasm32` target:
+  ```bash
+  clang --print-targets | grep wasm32
+  ```
 
 ## Building & Testing
 

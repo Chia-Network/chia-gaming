@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 env:
-  RUST_VERSION: stable
+  RUST_VERSION: 1.97.1
 
 jobs:
   frontend_test:
