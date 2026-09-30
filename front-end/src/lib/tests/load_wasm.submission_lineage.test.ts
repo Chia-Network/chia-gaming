@@ -115,7 +115,7 @@ it(
         if (restoredProvider) channelFundingRuntime.attachProvider(restoredProvider);
       });
       lane = restored.lane;
-      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 23n);
+      assert.equal(restored.save.session.live.gameSessionSchemaVersion, 24n);
       captureRustSubmissions(lane.controller, rustSubmissions, acknowledged, relinquished);
 
       for (let attempt = 0; attempt < 20 && rustSubmissions.length < 3; attempt += 1) {
