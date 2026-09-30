@@ -264,8 +264,14 @@ install_dep() {
                 pm_install pkg-config
             elif [ "$dep" = "make" ]; then
                 pm_install make
-            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
+            elif [ "$dep" = "clang" ]; then
                 pm_install llvm
+            elif [ "$dep" = "clang-wasm32" ]; then
+                pm_install llvm
+                echo "Homebrew LLVM is keg-only; configure your shell so"
+                echo "  $(brew --prefix llvm)/bin"
+                echo "precedes the current clang on PATH, then start a new shell."
+                return 1
             else
                 pm_install "$dep"
             fi
