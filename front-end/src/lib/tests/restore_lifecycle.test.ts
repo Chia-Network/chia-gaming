@@ -231,15 +231,19 @@ describe('restore lifecycle gates', () => {
     expect(shouldCancelOnPeerUnreachable('none', 'Handshaking')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Handshaking')).toBe(true);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OurWalletMakingOffer')).toBe(true);
+    // Once the local offer is sent / funding tx is pushed the channel may form
+    // regardless of the peer link, so a delivery_failure degrades, not cancels.
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent')).toBe(false);
+    expect(shouldCancelOnPeerUnreachable('off-chain', 'TransactionPending')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('on-chain', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('off-chain', 'OfferSent', true)).toBe(false);
     // Phase 'none' with a known Active/post-active channel is a blocked restore,
-    // not a pre-active matchmaking attempt; delivery failures should degrade.
+    // not a pre-commitment matchmaking attempt; delivery failures should degrade.
     expect(shouldCancelOnPeerUnreachable('none', 'Active')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('none', 'ShuttingDown')).toBe(false);
     // Finished sessions keep freeze/terminal save even if channelState is null
-    // (null is otherwise treated as pre-active).
+    // (null is otherwise treated as pre-commitment).
     expect(shouldCancelOnPeerUnreachable('resolved', 'ResolvedClean')).toBe(false);
     expect(shouldCancelOnPeerUnreachable('resolved', null)).toBe(false);
   });

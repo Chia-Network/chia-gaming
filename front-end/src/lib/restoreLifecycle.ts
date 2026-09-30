@@ -3,7 +3,7 @@ import type { RestoreStatus } from '../hooks/SessionController';
 import type { DurableSessionPhase } from './session/saveEnvelope';
 import {
   createSessionModel,
-  isPreActiveChannelStatus,
+  isPreCommitmentChannelStatus,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
 } from './session/model';
@@ -184,15 +184,19 @@ export function isAvailableForNewSessionPrompt(
 
 /**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
- * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
- * Active (or further), delivery_failure only degrades peer liveness — the peer
- * may be mid-reload. See CONNECTIVITY.md peer degradation.
+ * abort the attempt. The boundary is the funding commitment, not channel
+ * activation: cancel only before the local wallet has sent its signed offer
+ * (Handshaking / WaitingForHeight* / OurWalletMakingOffer(Acceptance)). Once
+ * `OfferSent` / `TransactionPending` is reached the funding aggregate may be
+ * broadcast and the channel coin will appear regardless of the peer link, so a
+ * delivery_failure there only degrades peer liveness — the peer may be
+ * mid-reload. See CONNECTIVITY.md peer degradation.
  *
  * Resolved finished sessions never cancel: invites are allowed afterward while
  * the dashboard freeze and terminal save must stay for Resume. A null/undefined
- * channel state is treated as pre-active; a known Active/post-active channel wins
- * over the 'none' phase so that a blocked restore is not mistaken for a pre-active
- * attempt.
+ * channel state is treated as pre-commitment; a known committed/active/post-active
+ * channel wins over the 'none' phase so that a blocked restore is not mistaken
+ * for a pre-commitment attempt.
  */
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
@@ -201,7 +205,7 @@ export function shouldCancelOnPeerUnreachable(
 ): boolean {
   if (abandoning) return false;
   if (sessionPhase === 'resolved') return false;
-  return isPreActiveChannelStatus(channelState);
+  return isPreCommitmentChannelStatus(channelState);
 }
 
 export type HubPlayerIdRemapAction = 'none' | 'cancel-attempt' | 'go-on-chain' | 'ignore';

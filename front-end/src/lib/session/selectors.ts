@@ -130,6 +130,29 @@ export function isPreActiveChannelStatus(state: string | null | undefined): bool
   );
 }
 
+// States before the funding-commitment boundary: the local wallet has not yet
+// sent its signed OFFER_MOD offer, so no funds can be committed and a peer that
+// becomes unreachable can safely cancel the attempt. Once `OfferSent` /
+// `TransactionPending` is reached the channel may form regardless of the peer
+// link (see `dashboardActionFor`, which projects Waiting/Abandon rather than
+// Cancel for those states), so a delivery_failure there must degrade, not
+// cancel. This is deliberately narrower than `PRE_ACTIVE_CHANNEL_STATES`.
+export const PRE_COMMITMENT_CHANNEL_STATES = new Set<ChannelStatus>([
+  'Handshaking',
+  'WaitingForHeightToOffer',
+  'WaitingForHeightToAccept',
+  'OurWalletMakingOffer',
+  'OurWalletMakingOfferAcceptance',
+]);
+
+export function isPreCommitmentChannelStatus(state: string | null | undefined): boolean {
+  return (
+    state === null ||
+    state === undefined ||
+    PRE_COMMITMENT_CHANNEL_STATES.has(state as ChannelStatus)
+  );
+}
+
 const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   Handshaking: 'Handshaking',
   WaitingForHeightToOffer: 'Waiting For Height To Offer',
