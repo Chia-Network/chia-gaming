@@ -416,6 +416,15 @@ export class SessionController implements PollingGameSession {
     return this.committedSessionRuntime;
   }
 
+  recordClvmDiagnostic(line: string): boolean {
+    const runtime = this.committedSessionRuntime;
+    if (!runtime || this.retired || this.terminalSealed) return false;
+    runtime.enqueue(() => {
+      this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, line);
+    });
+    return true;
+  }
+
   commitSessionRuntime(runtime: SessionMachineRuntime): void {
     if (this.retired || this.terminalSealed) {
       runtime.retire();

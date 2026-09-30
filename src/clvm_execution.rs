@@ -1,10 +1,4 @@
-//! Lazy diagnostics for application-owned CLVM execution.
-//!
-//! Consensus bundle validation remains an external-library gap:
-//! `chia_consensus::spendbundle_conditions::run_spendbundle` owns its allocator,
-//! dialect flags, and bundle-wide cost accounting and returns an `ErrorCode`,
-//! not the underlying `EvalErr` or a pre-eval callback. Re-running individual
-//! spends here would not faithfully replay those consensus semantics.
+//! Lazy diagnostics for CLVM execution.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -16,6 +10,7 @@ use chialisp::compiler::debug_metadata::{
     SymbolizedFrame,
 };
 use clvmr::allocator::{Allocator, NodePtr, SExp};
+use clvmr::chia_dialect::{ChiaDialect, ClvmFlags};
 use clvmr::error::EvalErr;
 use clvmr::reduction::Reduction;
 use clvmr::serde::{node_from_bytes, node_to_bytes_limit};
@@ -23,7 +18,7 @@ use clvmr::{run_program, run_program_with_pre_eval};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::common::types::{chia_dialect, Error};
+use crate::common::types::Error;
 
 const MAX_CAPSULES: usize = 16;
 const MAX_CAPSULE_BYTES: usize = 512 * 1024;
@@ -112,13 +107,16 @@ struct DiagnosticCapsule {
     program: Vec<u8>,
     environment: Vec<u8>,
     max_cost: u64,
-    dialect: &'static str,
+    dialect_flags: u32,
     original_error: String,
 }
 
 impl DiagnosticCapsule {
     fn size(&self) -> usize {
-        self.program.len() + self.environment.len() + self.original_error.len() + self.dialect.len()
+        self.program.len()
+            + self.environment.len()
+            + self.original_error.len()
+            + std::mem::size_of_val(&self.dialect_flags)
     }
 }
 
@@ -170,6 +168,7 @@ fn capture_capsule(
     program: NodePtr,
     environment: NodePtr,
     max_cost: u64,
+    dialect_flags: ClvmFlags,
     error: &EvalErr,
 ) -> Option<DiagnosticToken> {
     #[cfg(test)]
@@ -177,7 +176,7 @@ fn capture_capsule(
         serializations.set(serializations.get() + 1);
     });
     let original_error = error.to_string();
-    let fixed_size = original_error.len() + "ChiaDialect::default".len();
+    let fixed_size = original_error.len() + std::mem::size_of::<u32>();
     let available = MAX_CAPSULE_BYTES.checked_sub(fixed_size)?;
     let program = node_to_bytes_limit(allocator, program, available).ok()?;
     let available = available.checked_sub(program.len())?;
@@ -186,10 +185,34 @@ fn capture_capsule(
         program,
         environment,
         max_cost,
-        dialect: "ChiaDialect::default",
+        dialect_flags: dialect_flags.bits(),
         original_error,
     };
     DIAGNOSTICS.with(|registry| registry.borrow_mut().insert(capsule))
+}
+
+pub(crate) fn clvm_error_with_diagnostic(
+    allocator: &Allocator,
+    program: NodePtr,
+    environment: NodePtr,
+    max_cost: u64,
+    dialect_flags: ClvmFlags,
+    error: EvalErr,
+    context: Option<String>,
+) -> Error {
+    let diagnostic = capture_capsule(
+        allocator,
+        program,
+        environment,
+        max_cost,
+        dialect_flags,
+        &error,
+    );
+    Error::ClvmErr {
+        error,
+        diagnostic,
+        context,
+    }
 }
 
 /// Execute application-owned CLVM. Successful execution is exactly one ordinary
@@ -201,16 +224,24 @@ pub fn run_clvm(
     environment: NodePtr,
     max_cost: u64,
 ) -> Result<Reduction, Error> {
-    match run_program(allocator, &chia_dialect(), program, environment, max_cost) {
+    let dialect_flags = ClvmFlags::empty();
+    match run_program(
+        allocator,
+        &ChiaDialect::new(dialect_flags),
+        program,
+        environment,
+        max_cost,
+    ) {
         Ok(reduction) => Ok(reduction),
-        Err(error) => {
-            let diagnostic = capture_capsule(allocator, program, environment, max_cost, &error);
-            Err(Error::ClvmErr {
-                error,
-                diagnostic,
-                context: None,
-            })
-        }
+        Err(error) => Err(clvm_error_with_diagnostic(
+            allocator,
+            program,
+            environment,
+            max_cost,
+            dialect_flags,
+            error,
+            None,
+        )),
     }
 }
 
@@ -301,8 +332,11 @@ fn symbolize<'a>(
     let program_sha256: [u8; 32] = Sha256::digest(program).into();
     for entry in &metadata.entries {
         if entry.program_sha256 == program_sha256 {
-            entry.verify_program(program)?;
-            return Ok((entry, entry.symbolize_frame(program, arguments)?));
+            let frame = entry.symbolize_frame(program, arguments)?;
+            if frame.matched == FrameMatch::Unknown {
+                return Err("debug metadata program structure mismatch".to_string());
+            }
+            return Ok((entry, frame));
         }
     }
     if let Some((base, bound_arguments)) = peel_curry(program)? {
@@ -457,7 +491,7 @@ fn diagnose_capsule(capsule: DiagnosticCapsule, metadata: &DebugMetadataCollecti
     });
     let replay = run_program_with_pre_eval(
         &mut allocator,
-        &chia_dialect(),
+        &ChiaDialect::new(ClvmFlags::from_bits_retain(capsule.dialect_flags)),
         program,
         environment,
         capsule.max_cost,
@@ -517,6 +551,18 @@ pub(crate) fn diagnostic_registry_len() -> usize {
 }
 
 #[cfg(test)]
+pub(crate) fn reset_diagnostics_for_test() {
+    DIAGNOSTICS.with(|registry| *registry.borrow_mut() = DiagnosticRegistry::default());
+    METADATA_LOADS.with(|loads| loads.set(0));
+    CAPSULE_SERIALIZATIONS.with(|serializations| serializations.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn capsule_serializations_for_test() -> usize {
+    CAPSULE_SERIALIZATIONS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
 mod tests {
     use std::rc::Rc;
 
@@ -528,9 +574,7 @@ mod tests {
     use super::*;
 
     fn reset() {
-        DIAGNOSTICS.with(|registry| *registry.borrow_mut() = DiagnosticRegistry::default());
-        METADATA_LOADS.with(|loads| loads.set(0));
-        CAPSULE_SERIALIZATIONS.with(|serializations| serializations.set(0));
+        reset_diagnostics_for_test();
     }
 
     fn compiled(source: &str) -> chialisp::compiler::debug_metadata::DebugCompileArtifact {
@@ -575,6 +619,35 @@ mod tests {
         assert_eq!(diagnostic_registry_len(), 0);
         METADATA_LOADS.with(|loads| assert_eq!(loads.get(), 0));
         CAPSULE_SERIALIZATIONS.with(|serializations| assert_eq!(serializations.get(), 0));
+    }
+
+    #[test]
+    fn capsule_retains_exact_dialect_flag_bits() {
+        reset();
+        let mut allocator = Allocator::new();
+        let program = allocator.new_atom(&[0xff]).unwrap();
+        let flags = ClvmFlags::NO_UNKNOWN_OPS | ClvmFlags::LIMIT_HEAP;
+        let error = run_program(
+            &mut allocator,
+            &ChiaDialect::new(flags),
+            program,
+            NodePtr::NIL,
+            100,
+        )
+        .expect_err("unknown operator");
+        let captured =
+            clvm_error_with_diagnostic(&allocator, program, NodePtr::NIL, 100, flags, error, None);
+        let token = token(&captured);
+        DIAGNOSTICS.with(|registry| {
+            let registry = registry.borrow();
+            let capsule = &registry
+                .entries
+                .iter()
+                .find(|(candidate, _)| *candidate == token)
+                .expect("captured capsule")
+                .1;
+            assert_eq!(capsule.dialect_flags, flags.bits());
+        });
     }
 
     #[test]
@@ -685,9 +758,13 @@ mod tests {
         let apply_tail = allocator.new_pair(curry_environment, NodePtr::NIL).unwrap();
         let apply_middle = allocator.new_pair(quoted_base, apply_tail).unwrap();
         let curried = allocator.new_pair(apply, apply_middle).unwrap();
+        let curried_bytes = node_to_bytes(&allocator, curried).unwrap();
 
         let error = run_clvm(&mut allocator, curried, NodePtr::NIL, 1_000_000).unwrap_err();
-        let diagnostic = diagnose_clvm(token(&error), &metadata(&[&artifact.metadata]));
+        let mut prepared_metadata = DebugMetadata::decode(&artifact.metadata).unwrap();
+        prepared_metadata.program_sha256 = Sha256::digest(&curried_bytes).into();
+        let prepared_sidecar = prepared_metadata.encode().unwrap();
+        let diagnostic = diagnose_clvm(token(&error), &metadata(&[&prepared_sidecar]));
         assert!(diagnostic.contains("X: unknown = 7"), "{diagnostic}");
         assert!(diagnostic.contains("# bound: X"), "{diagnostic}");
         assert!(diagnostic.contains("original EvalErr: path into atom"));

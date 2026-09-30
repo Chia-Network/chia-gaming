@@ -10,6 +10,7 @@ use clvmr::chia_dialect::ChiaDialect;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
 use clvmr::{run_program, NodePtr, SExp};
 use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
 use toml::{Table, Value};
 
 use chialisp::classic::clvm_tools::clvmc::CompileError;
@@ -306,6 +307,26 @@ fn read_binary_node(allocator: &mut Allocator, path: &Path) -> Result<NodePtr, S
         .map_err(|e| format!("parsing compiled Chialisp {}: {e:?}", path.display()))
 }
 
+fn rebind_debug_metadata_identity(
+    encoded: &[u8],
+    old_identity: &[u8; 32],
+    new_identity: &[u8; 32],
+) -> Result<Vec<u8>, String> {
+    // Debug metadata is a top-level CLVM list whose fourth item is a 32-byte
+    // program identity atom. Patching that fixed-width atom preserves the
+    // potentially large structural shadow tree without re-encoding it.
+    let mut marker = Vec::with_capacity(33);
+    marker.push(0xa0);
+    marker.extend_from_slice(old_identity);
+    let offset = encoded
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .ok_or_else(|| "debug metadata program identity atom not found".to_string())?;
+    let mut rebound = encoded.to_vec();
+    rebound[offset + 1..offset + marker.len()].copy_from_slice(new_identity);
+    Ok(rebound)
+}
+
 fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8; 32]>, String> {
     let mut package_ids = HashMap::new();
     let mut manifest = Vec::new();
@@ -381,7 +402,36 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         }
         let prepared_metadata_path =
             PathBuf::from(debug_output_path(&prepared_path.to_string_lossy()));
-        fs::write(&prepared_metadata_path, raw_metadata_bytes).map_err(|e| {
+        let prepared_identity: [u8; 32] = Sha256::digest(&prepared_bytes).into();
+        let prepared_metadata_bytes = rebind_debug_metadata_identity(
+            &raw_metadata_bytes,
+            &raw_metadata.program_sha256,
+            &prepared_identity,
+        )?;
+        let prepared_metadata = DebugMetadata::decode(&prepared_metadata_bytes).map_err(|e| {
+            format!(
+                "decoding prepared factory metadata {}: {e}",
+                prepared_metadata_path.display()
+            )
+        })?;
+        if prepared_metadata.program_sha256 != prepared_identity {
+            return Err(format!(
+                "prepared factory metadata {} retained the wrong program identity",
+                prepared_metadata_path.display()
+            ));
+        }
+        if prepared_metadata
+            .symbolize_frame(&prepared_bytes, &[])
+            .map_err(|e| format!("validating prepared factory metadata {key}: {e}"))?
+            .matched
+            != expected_match
+        {
+            return Err(format!(
+                "prepared factory metadata {} lost its curry structure",
+                prepared_metadata_path.display()
+            ));
+        }
+        fs::write(&prepared_metadata_path, prepared_metadata_bytes).map_err(|e| {
             format!(
                 "writing prepared factory metadata {}: {e}",
                 prepared_metadata_path.display()
@@ -390,6 +440,8 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
 
         let probe_path = root.join("factory_probe.clvm.bin");
         let probe_program = read_binary_node(&mut allocator, &probe_path)?;
+        // build.rs runs before the library exists, so it cannot use the
+        // application runtime wrapper; these are build-time factory checks.
         let probe_parameters = run_program(
             &mut allocator,
             &ChiaDialect::default(),

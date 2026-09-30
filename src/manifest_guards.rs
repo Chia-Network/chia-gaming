@@ -11,6 +11,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chialisp::compiler::debug_metadata::{DebugMetadata, FrameMatch};
+use sha2::{Digest, Sha256};
+
 fn read(path: &str) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("manifest guard: cannot read {path}: {e}"))
 }
@@ -24,6 +27,27 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
         if path.is_dir() {
             rs_files(&path, out);
         } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+fn clvm_binaries(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in
+        fs::read_dir(dir).unwrap_or_else(|e| panic!("manifest guard: read_dir {dir:?}: {e}"))
+    {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            clvm_binaries(&path, out);
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.ends_with(".clvm.bin")
+                    && !name.ends_with(".debug.clvm.bin")
+                    && name != "factory_args.clvm.bin"
+            })
+        {
             out.push(path);
         }
     }
@@ -146,6 +170,69 @@ fn every_referenced_clvm_artifact_is_built() {
          in chialisp.toml [compile]?\n  {}",
         missing.join("\n  ")
     );
+}
+
+fn verify_debug_sidecar(program: &[u8], metadata_bytes: &[u8]) -> Result<(), String> {
+    let metadata = DebugMetadata::decode(metadata_bytes)?;
+    let program_sha256: [u8; 32] = Sha256::digest(program).into();
+    if metadata.program_sha256 != program_sha256 {
+        return Err("debug metadata program identity mismatch".to_string());
+    }
+    if metadata.symbolize_frame(program, &[])?.matched == FrameMatch::Unknown {
+        return Err("debug metadata program structure mismatch".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn every_clvm_sidecar_matches_its_program_identity() {
+    let mut binaries = Vec::new();
+    clvm_binaries(Path::new("clsp"), &mut binaries);
+    clvm_binaries(Path::new("games"), &mut binaries);
+
+    for binary in binaries {
+        let name = binary
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("CLVM binary filename");
+        let sidecar = binary.with_file_name(format!(
+            "{}.debug.clvm.bin",
+            name.trim_end_matches(".clvm.bin")
+        ));
+        let program = fs::read(&binary)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", binary.display()));
+        let metadata_bytes = fs::read(&sidecar)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", sidecar.display()));
+        verify_debug_sidecar(&program, &metadata_bytes).unwrap_or_else(|error| {
+            panic!(
+                "debug sidecar {} does not match {}: {error}",
+                sidecar.display(),
+                binary.display()
+            )
+        });
+    }
+}
+
+#[test]
+fn sidecar_identity_check_rejects_valid_metadata_for_a_different_program() {
+    let mut binaries = Vec::new();
+    clvm_binaries(Path::new("clsp"), &mut binaries);
+    clvm_binaries(Path::new("games"), &mut binaries);
+    let binary = binaries
+        .first()
+        .expect("at least one compiled CLVM program");
+    let name = binary.file_name().and_then(|name| name.to_str()).unwrap();
+    let sidecar = binary.with_file_name(format!(
+        "{}.debug.clvm.bin",
+        name.trim_end_matches(".clvm.bin")
+    ));
+    let metadata_bytes = fs::read(&sidecar).expect("read valid debug sidecar");
+    let program = fs::read(binary).expect("read paired CLVM program");
+    let different_program: &[u8] = if program == [0x80] { &[1] } else { &[0x80] };
+
+    let error = verify_debug_sidecar(different_program, &metadata_bytes)
+        .expect_err("valid sidecar must reject a different valid CLVM program");
+    assert!(!error.is_empty());
 }
 
 fn registry_keys() -> (Vec<String>, Vec<String>) {
