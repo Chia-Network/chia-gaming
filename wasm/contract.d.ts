@@ -298,3 +298,7 @@ export interface GameSessionCreateResult {
   id: number;
   puzzle_hash: string;
 }
+
+export interface ClvmDiagnosticError extends Error {
+  clvmDiagnosticToken?: string;
+}

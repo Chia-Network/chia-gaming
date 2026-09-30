@@ -1,7 +1,7 @@
 mod gaming_wasm {
 
     use std::cell::RefCell;
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, BTreeSet, HashMap};
     use std::convert::TryFrom;
     #[cfg(target_family = "wasm")]
     use std::sync::atomic::AtomicBool;
@@ -14,6 +14,9 @@ mod gaming_wasm {
     use serde::{Deserialize, Serialize};
 
     use chia_gaming::common::types::ChaCha8SerializationWrapper;
+    use chia_gaming::clvm_execution::{
+        diagnose_clvm as diagnose_clvm_token, DebugMetadataCollection, DiagnosticToken,
+    };
 
     use wasm_bindgen::prelude::*;
 
@@ -144,6 +147,12 @@ mod gaming_wasm {
         status: &'static str,
     }
 
+    #[derive(Default)]
+    struct DebugMetadataCache {
+        names: BTreeSet<String>,
+        metadata: DebugMetadataCollection,
+    }
+
     thread_local! {
         static NEXT_ID: AtomicI32 = const {
             AtomicI32::new(0)
@@ -153,7 +162,9 @@ mod gaming_wasm {
         };
         static RNGS: RefCell<HashMap<i32, ChaCha8Rng>> = {
         return RefCell::new(HashMap::new());
-    };
+        };
+        static DEBUG_METADATA: RefCell<DebugMetadataCache> =
+            RefCell::new(DebugMetadataCache::default());
 
     }
 
@@ -182,6 +193,32 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn cache_file(name: &str, data: &[u8]) {
         wasm_cache_file(name, data);
+    }
+
+    #[wasm_bindgen]
+    pub fn cache_debug_metadata(name: &str, data: &[u8]) -> Result<(), JsValue> {
+        if !name.ends_with(".debug.clvm.bin") {
+            return Err(js_error(
+                "debug metadata name must end with .debug.clvm.bin",
+            ));
+        }
+        DEBUG_METADATA.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.names.contains(name) {
+                return Err(js_error(&format!("duplicate debug metadata name {name}")));
+            }
+            cache.metadata.insert(data).map_err(|error| js_error(&error))?;
+            cache.names.insert(name.to_string());
+            Ok(())
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn diagnose_clvm(token: &str) -> Result<String, JsValue> {
+        let token = DiagnosticToken::parse(token).map_err(|error| js_error(&error))?;
+        Ok(DEBUG_METADATA.with(|cache| {
+            diagnose_clvm_token(token, &cache.borrow().metadata)
+        }))
     }
 
     fn get_next_id() -> i32 {
@@ -281,7 +318,17 @@ mod gaming_wasm {
     impl ErrIntoJs for types::Error {
         type EResult = JsValue;
         fn into_js(self) -> Self::EResult {
-            js_error(&format!("{self:?}"))
+            let token = self.diagnostic_token().map(|token| token.to_string());
+            let error = js_sys::Error::new(&format!("{self:?}"));
+            if let Some(token) = token {
+                js_sys::Reflect::set(
+                    error.as_ref(),
+                    &JsValue::from_str("clvmDiagnosticToken"),
+                    &JsValue::from_str(&token),
+                )
+                .expect("setting diagnostic token on Error must succeed");
+            }
+            error.into()
         }
     }
 

@@ -310,6 +310,8 @@ export interface WasmConnection {
   restore_session: (serialized: Uint8Array, new_seed: string) => number;
   game_session_serialization_schema: () => number;
   cache_file: (name: string, data: Uint8Array) => void;
+  cache_debug_metadata: (name: string, data: Uint8Array) => void;
+  diagnose_clvm: (token: string) => string;
   registered_game_packages: () => Array<{ key: string; id: string }>;
 
   // Blockchain
