@@ -918,6 +918,11 @@ impl GameSession {
                 .into_iter()
                 .map(GameSessionEvent::Log),
         );
+        self.state.events.extend(
+            allocator
+                .drain_clvm_diagnostics()
+                .map(|token| GameSessionEvent::ClvmDiagnostic(token.to_string())),
+        );
     }
 
     fn process_effects(

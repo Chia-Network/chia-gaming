@@ -4,14 +4,18 @@ use clvmr::allocator::NodePtr;
 use clvmr::Allocator;
 use std::collections::VecDeque;
 
+use crate::clvm_execution::DiagnosticToken;
+
 const MAX_RUNTIME_PRINT_LINES: usize = 256;
 const MAX_RUNTIME_PRINT_BYTES: usize = 256 * 1024;
+const MAX_PENDING_CLVM_DIAGNOSTICS: usize = 16;
 
 pub struct AllocEncoder {
     allocator: Allocator,
     runtime_prints: VecDeque<String>,
     runtime_print_bytes: usize,
     dropped_runtime_prints: usize,
+    clvm_diagnostics: VecDeque<DiagnosticToken>,
 }
 
 impl Default for AllocEncoder {
@@ -21,6 +25,7 @@ impl Default for AllocEncoder {
             runtime_prints: VecDeque::new(),
             runtime_print_bytes: 0,
             dropped_runtime_prints: 0,
+            clvm_diagnostics: VecDeque::new(),
         }
     }
 }
@@ -75,6 +80,17 @@ impl AllocEncoder {
         self.runtime_print_bytes = 0;
         self.dropped_runtime_prints = 0;
         lines
+    }
+
+    pub fn push_clvm_diagnostic(&mut self, token: DiagnosticToken) {
+        if self.clvm_diagnostics.len() >= MAX_PENDING_CLVM_DIAGNOSTICS {
+            self.clvm_diagnostics.pop_front();
+        }
+        self.clvm_diagnostics.push_back(token);
+    }
+
+    pub fn drain_clvm_diagnostics(&mut self) -> impl Iterator<Item = DiagnosticToken> + '_ {
+        self.clvm_diagnostics.drain(..)
     }
 }
 

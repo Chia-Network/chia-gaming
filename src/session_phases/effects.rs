@@ -430,6 +430,7 @@ pub enum GameSessionEvent {
     OutboundTransaction(TransactionSubmission),
     Notification(GameNotification),
     Log(String),
+    ClvmDiagnostic(String),
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),

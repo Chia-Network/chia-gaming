@@ -20,6 +20,7 @@ import {
   requireWasmResult,
 } from '../types/ChiaGaming';
 import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
+import { scheduleClvmDiagnostic } from './WasmStateInit';
 import { coerceToBytes } from '../util';
 import { log, diagStack } from '../services/log';
 import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
@@ -1624,6 +1625,9 @@ export class SessionController implements PollingGameSession {
     } else if ('Log' in event) {
       this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, event.Log);
       this.rxjsEmitter?.next({ type: 'log', message: event.Log });
+    } else if ('ClvmDiagnostic' in event) {
+      if (!this.wc) throw new Error('received CLVM diagnostic before WASM was loaded');
+      scheduleClvmDiagnostic(this.wc, event.ClvmDiagnostic);
     } else if ('NeedCoinSpend' in event) {
       this.queueFunding(event.NeedCoinSpend);
     } else if ('ChannelCoinConfirmed' in event) {

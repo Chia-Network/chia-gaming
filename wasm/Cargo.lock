@@ -315,7 +315,7 @@ dependencies = [
 [[package]]
 name = "chialisp"
 version = "0.5.0"
-source = "git+https://github.com/Chia-Network/chialisp.git?rev=45ecac03#45ecac03dc19affc0bc2064ef0a2425c82e0dbf5"
+source = "git+https://github.com/Chia-Network/chialisp.git?rev=a527ff68#a527ff68e0eb8c84837199459aad10e90dbf3a5d"
 dependencies = [
  "binascii",
  "chia-bls",
@@ -380,8 +380,7 @@ dependencies = [
 [[package]]
 name = "clvmr"
 version = "0.17.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3060bcd64cb8cf2b32fe6ee3a82698835c03361c8e1da446d2e9d058fbfffd5f"
+source = "git+https://github.com/Chia-Network/clvm_rs.git?rev=22d51cd739398e34ed3cab901b6ad721d12c9c1d#22d51cd739398e34ed3cab901b6ad721d12c9c1d"
 dependencies = [
  "bitflags",
  "bitvec",

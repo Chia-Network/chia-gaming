@@ -214,7 +214,7 @@ describe('WasmStateInit lazy load', () => {
   });
 
   it.each(['fetch', 'malformed'] as const)(
-    '%s diagnostic failure preserves the operation error and logs loading failure',
+    '%s diagnostic failure preserves the operation error and logs the diagnostic failure',
     async (failure) => {
       const wasm = mockWasm();
       const original = new Error('original operation error') as Error & {
@@ -247,7 +247,7 @@ describe('WasmStateInit lazy load', () => {
         const connection = await ensureWasmLoaded();
         expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(original);
         await _drainClvmDiagnosticsForTests();
-        expect(lines.some((line) => line.includes('diagnostic loading/replay failed'))).toBe(true);
+        expect(lines.some((line) => line.includes('diagnostic failed'))).toBe(true);
         expect(
           lines.some((line) => line.includes(failure === 'fetch' ? 'unavailable' : 'malformed')),
         ).toBe(true);

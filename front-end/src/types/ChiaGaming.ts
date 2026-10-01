@@ -74,6 +74,7 @@ function requireGameSessionEvent(event: unknown): void {
       requireClosedNotification(payload);
       return;
     case 'Log':
+    case 'ClvmDiagnostic':
     case 'CoinSolutionRequest':
     case 'ReceiveError':
       if (typeof payload !== 'string') {

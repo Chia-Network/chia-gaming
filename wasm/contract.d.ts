@@ -258,6 +258,7 @@ export type GameSessionEvent =
   | { OutboundMessage: Uint8Array }
   | { Notification: WasmNotification }
   | { Log: string }
+  | { ClvmDiagnostic: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
   | { NeedCoinSpend: NeedCoinSpendRequest }

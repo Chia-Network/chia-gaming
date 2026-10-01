@@ -1622,6 +1622,9 @@ mod gaming_wasm {
             )),
             GameSessionEvent::Notification(n) => notification_event_to_js(n),
             GameSessionEvent::Log(line) => json_event_to_js(serde_json::json!({ "Log": line })),
+            GameSessionEvent::ClvmDiagnostic(token) => {
+                json_event_to_js(serde_json::json!({ "ClvmDiagnostic": token }))
+            }
             GameSessionEvent::CoinSolutionRequest(coin) => json_event_to_js(
                 serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) }),
             ),

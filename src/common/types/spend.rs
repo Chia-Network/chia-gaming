@@ -17,10 +17,12 @@ use chia_protocol::{Bytes, Bytes32};
 use clvm_utils::tree_hash;
 use clvmr::chia_dialect::ChiaDialect;
 use clvmr::reduction::Reduction;
+#[cfg(test)]
 use clvmr::run_program;
+use clvmr::run_program_with_diagnostics;
 use clvmr::serde::node_from_bytes;
 
-use crate::clvm_execution::clvm_error_with_diagnostic;
+use crate::clvm_execution::{clvm_error_from_failure, MAX_CAPTURED_FRAMES};
 use crate::common::types::atom_from_clvm;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GetCoinStringParts,
@@ -279,24 +281,26 @@ fn replay_consensus_eval_error(
             .ok()?;
         let amount = allocator.new_number(coin_spend.coin.amount.into()).ok()?;
 
-        let Reduction(clvm_cost, output) =
-            match run_program(&mut allocator, &dialect, puzzle, solution, cost_left) {
-                Ok(reduction) => reduction,
-                Err(error) => {
-                    return Some(clvm_error_with_diagnostic(
-                        &allocator,
-                        puzzle,
-                        solution,
-                        cost_left,
-                        dialect_flags,
-                        error,
-                        Some(format!(
-                            "spend bundle consensus validation failed ({consensus_error}); \
+        let Reduction(clvm_cost, output) = match run_program_with_diagnostics(
+            &mut allocator,
+            &dialect,
+            puzzle,
+            solution,
+            cost_left,
+            MAX_CAPTURED_FRAMES,
+        ) {
+            Ok(reduction) => reduction,
+            Err(failure) => {
+                return Some(clvm_error_from_failure(
+                    &allocator,
+                    failure,
+                    Some(format!(
+                        "spend bundle consensus validation failed ({consensus_error}); \
                              replayed coin spend {index}"
-                        )),
-                    ));
-                }
-            };
+                    )),
+                ));
+            }
+        };
         conditions.execution_cost += clvm_cost;
         subtract_cost(&allocator, &mut cost_left, clvm_cost).ok()?;
 
@@ -815,7 +819,7 @@ mod consensus_validation_tests {
     use clvm_traits::ToClvm;
 
     use crate::clvm_execution::{
-        capsule_serializations_for_test, diagnose_clvm, diagnostic_registry_len,
+        diagnose_clvm, diagnostic_registry_len, frame_serializations_for_test,
         reset_diagnostics_for_test, DebugMetadataCollection,
     };
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
@@ -929,7 +933,7 @@ mod consensus_validation_tests {
     }
 
     #[test]
-    fn successful_consensus_validation_does_no_replay_or_capsule_work() {
+    fn successful_consensus_validation_does_no_fallback_or_frame_capture_work() {
         reset_consensus_replay_attempts();
         reset_diagnostics_for_test();
         let mut allocator = AllocEncoder::new();
@@ -943,7 +947,7 @@ mod consensus_validation_tests {
 
         assert_eq!(consensus_replay_attempts(), 0);
         assert_eq!(diagnostic_registry_len(), 0);
-        assert_eq!(capsule_serializations_for_test(), 0);
+        assert_eq!(frame_serializations_for_test(), 0);
     }
 
     #[test]
@@ -990,7 +994,7 @@ mod consensus_validation_tests {
         assert!(rendered.contains("coin spend 0"), "{rendered}");
         assert_eq!(consensus_replay_attempts(), 1);
         assert_eq!(diagnostic_registry_len(), 1);
-        assert_eq!(capsule_serializations_for_test(), 1);
+        assert_eq!(frame_serializations_for_test(), 1);
 
         let mut metadata = DebugMetadataCollection::default();
         metadata
@@ -1027,7 +1031,7 @@ mod consensus_validation_tests {
         assert!(error.diagnostic_token().is_none());
         assert_eq!(consensus_replay_attempts(), 1);
         assert_eq!(diagnostic_registry_len(), 0);
-        assert_eq!(capsule_serializations_for_test(), 0);
+        assert_eq!(frame_serializations_for_test(), 0);
     }
 
     #[test]

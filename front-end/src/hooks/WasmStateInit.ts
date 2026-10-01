@@ -52,10 +52,8 @@ function loadDebugMetadata(wasm: WasmConnection): Promise<void> {
   return debugMetadataPromise;
 }
 
-function scheduleDiagnostic(wasm: WasmConnection, error: unknown): void {
-  const token = diagnosticToken(error);
+export function scheduleClvmDiagnostic(wasm: WasmConnection, token: string): void {
   if (
-    token === null ||
     pendingDiagnosticTokens.has(token) ||
     pendingDiagnosticTokens.size >= MAX_PENDING_DIAGNOSTICS
   ) {
@@ -69,13 +67,18 @@ function scheduleDiagnostic(wasm: WasmConnection, error: unknown): void {
     .catch((diagnosticError) => {
       const message =
         diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError);
-      log(`[clvm-diagnostic token=${token}] diagnostic loading/replay failed: ${message}`);
+      log(`[clvm-diagnostic token=${token}] diagnostic failed: ${message}`);
     })
     .finally(() => {
       pendingDiagnosticTokens.delete(token);
       diagnosticTasks.delete(task);
     });
   diagnosticTasks.add(task);
+}
+
+function scheduleDiagnostic(wasm: WasmConnection, error: unknown): void {
+  const token = diagnosticToken(error);
+  if (token !== null) scheduleClvmDiagnostic(wasm, token);
 }
 
 function diagnosticAwareConnection(wasm: WasmConnection): WasmConnection {
