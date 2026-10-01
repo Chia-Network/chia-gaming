@@ -369,7 +369,7 @@ dependencies = [
 [[package]]
 name = "chialisp"
 version = "0.5.0"
-source = "git+https://github.com/Chia-Network/chialisp.git?rev=a527ff68#a527ff68e0eb8c84837199459aad10e90dbf3a5d"
+source = "git+https://github.com/Chia-Network/chialisp.git?rev=dfc144c6f5eab8e377a57f9a14e2e35628aa85e3#dfc144c6f5eab8e377a57f9a14e2e35628aa85e3"
 dependencies = [
  "binascii",
  "chia-bls",
@@ -434,7 +434,7 @@ dependencies = [
 [[package]]
 name = "clvmr"
 version = "0.17.7"
-source = "git+https://github.com/Chia-Network/clvm_rs.git?rev=22d51cd739398e34ed3cab901b6ad721d12c9c1d#22d51cd739398e34ed3cab901b6ad721d12c9c1d"
+source = "git+https://github.com/Chia-Network/clvm_rs.git?rev=fd40a80aa70bb6a59354248d2927d06895465388#fd40a80aa70bb6a59354248d2927d06895465388"
 dependencies = [
  "bitflags",
  "bitvec",
