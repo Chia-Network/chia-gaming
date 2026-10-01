@@ -1766,7 +1766,12 @@ const Shell = () => {
         const next = appendDiagnosticEntry(logLinesRef.current, line);
         logLinesRef.current = next;
         setLogLines(next);
-        storageRepository.updateCommon({ history: { diagnosticLog: next } });
+        if (
+          !line.includes('[clvm-diagnostic token=') ||
+          !sessionController?.recordClvmDiagnostic(line)
+        ) {
+          storageRepository.updateCommon({ history: { diagnosticLog: next } });
+        }
       });
     });
   }, [deferStateUpdate]);

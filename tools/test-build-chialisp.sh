@@ -29,6 +29,8 @@ set -e
 : "${CHIALISP_COMPILE:?build-chialisp.sh must explicitly request compilation}"
 echo compile >> "$FAKE_CARGO_LOG"
 git hash-object clsp/example.clsp > clsp/example.hex
+printf '\200' > clsp/example.clvm.bin
+printf 'debug:%s\n' "$(git hash-object clsp/example.clsp)" > clsp/example.debug.clvm.bin
 EOF
 chmod +x "$FAKE_BIN/cargo"
 
@@ -64,6 +66,10 @@ assert_count 1
     echo "build did not produce binary CLVM output" >&2
     exit 1
 }
+[ -f "$REPO/clsp/example.debug.clvm.bin" ] || {
+    echo "build did not produce debug metadata sidecar" >&2
+    exit 1
+}
 
 run_build
 assert_count 1
@@ -83,12 +89,20 @@ rm "$REPO/clsp/example.clvm.bin"
 run_build
 assert_count 5
 
-printf '%s\n' corrupted > "$REPO/clsp/example.hex"
+rm "$REPO/clsp/example.debug.clvm.bin"
 run_build
 assert_count 6
 
-printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
+printf '%s\n' corrupted > "$REPO/clsp/example.debug.clvm.bin"
 run_build
 assert_count 7
+
+printf '%s\n' corrupted > "$REPO/clsp/example.hex"
+run_build
+assert_count 8
+
+printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
+run_build
+assert_count 9
 
 echo "build-chialisp regression tests passed"

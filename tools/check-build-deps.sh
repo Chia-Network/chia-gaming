@@ -195,13 +195,21 @@ sys.exit(0 if sys.version_info >= (3, 9) else 1)
 PY
 }
 
+check_clang_wasm_target() {
+    clang --print-targets 2>/dev/null | grep -Eq '^[[:space:]]*wasm32[[:space:]]'
+}
+
 check_deps() {
     MISSING=()
     NEEDS_WASM_TARGET=0
 
     need_cmd git || add_missing git
     need_cmd curl || add_missing curl
-    need_cmd clang || add_missing clang
+    if ! need_cmd clang; then
+        add_missing clang
+    elif ! check_clang_wasm_target; then
+        add_missing clang-wasm32
+    fi
     need_cmd pkg-config || add_missing pkg-config
     need_cmd make || add_missing make
     need_cmd python3 || add_missing python3
@@ -235,7 +243,11 @@ print_missing() {
 
     echo "Missing build dependencies:"
     for dep in "${MISSING[@]}"; do
-        echo "  - $dep"
+        if [ "$dep" = "clang-wasm32" ]; then
+            echo "  - ambient clang with wasm32 target support"
+        else
+            echo "  - $dep"
+        fi
     done
     if [ "$NEEDS_WASM_TARGET" -eq 1 ]; then
         echo "  - rust target: wasm32-unknown-unknown"
@@ -245,7 +257,7 @@ print_missing() {
 install_dep() {
     dep="$1"
     case "$dep" in
-    git|curl|pkg-config|make|clang)
+    git|curl|pkg-config|make|clang|clang-wasm32)
         case "$PM" in
         brew)
             if [ "$dep" = "pkg-config" ]; then
@@ -253,11 +265,13 @@ install_dep() {
             elif [ "$dep" = "make" ]; then
                 pm_install make
             elif [ "$dep" = "clang" ]; then
-                if need_cmd xcode-select; then
-                    xcode-select --install || true
-                else
-                    pm_install llvm
-                fi
+                pm_install llvm
+            elif [ "$dep" = "clang-wasm32" ]; then
+                pm_install llvm
+                echo "Homebrew LLVM is keg-only; configure your shell so"
+                echo "  $(brew --prefix llvm)/bin"
+                echo "precedes the current clang on PATH, then start a new shell."
+                return 1
             else
                 pm_install "$dep"
             fi
@@ -267,7 +281,7 @@ install_dep() {
                 pm_install pkg-config
             elif [ "$dep" = "make" ]; then
                 pm_install build-essential
-            elif [ "$dep" = "clang" ]; then
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
                 pm_install clang build-essential
             else
                 pm_install "$dep"
@@ -278,7 +292,7 @@ install_dep() {
                 pm_install pkgconf-pkg-config
             elif [ "$dep" = "make" ]; then
                 pm_install make gcc gcc-c++
-            elif [ "$dep" = "clang" ]; then
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
                 pm_install clang gcc gcc-c++
             else
                 pm_install "$dep"
@@ -289,7 +303,7 @@ install_dep() {
                 pm_install pkgconf
             elif [ "$dep" = "make" ]; then
                 pm_install base-devel
-            elif [ "$dep" = "clang" ]; then
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
                 pm_install clang base-devel
             else
                 pm_install "$dep"

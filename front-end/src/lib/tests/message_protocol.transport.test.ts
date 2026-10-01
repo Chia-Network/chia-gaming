@@ -85,6 +85,13 @@ describe('WASM result boundary', () => {
     expect(requireWasmResult(result)).toBe(result);
   });
 
+  it('accepts a nonfatal CLVM diagnostic token event', () => {
+    const result = wasmResult({
+      events: [{ ClvmDiagnostic: 'clvm-0000000000000001' }],
+    });
+    expect(requireWasmResult(result)).toBe(result);
+  });
+
   it('requires outbound protocol messages to remain bytes', () => {
     const result = wasmResult({
       events: [{ OutboundMessage: 'not bytes' } as unknown as WasmResult['events'][number]],
@@ -991,6 +998,18 @@ describe('outbound message numbering', () => {
 });
 
 describe('bounded controller histories', () => {
+  it('routes runtime CLVM prints into diagnostic history', () => {
+    const { blob } = createReadyBlob();
+    setActiveBlob(blob);
+    blob.processResult({
+      ...wasmResult(),
+      events: [{ Log: '[clvm-print] game.rue:2:3: ("move" 7)' }],
+    });
+    blob.flushDeferredWork();
+
+    expect(blob.diagnosticLog).toContain('[clvm-print] game.rue:2:3: ("move" 7)');
+  });
+
   it('keeps only recent WASM notifications and diagnostic lines', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);

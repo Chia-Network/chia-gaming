@@ -46,6 +46,16 @@ clsp_binary() {
     done
 }
 
+clsp_debug() {
+    {
+        clsp_binary
+        find_chialisp -type f -name 'factory_prepared.clvm.bin' -print
+    } | while IFS= read -r file; do
+        debug="${file%.clvm.bin}.debug.clvm.bin"
+        [ -f "$debug" ] && printf '%s\n' "$debug"
+    done | LC_ALL=C sort
+}
+
 prepared_packages() {
     find_chialisp -type f -name 'factory_prepared.clvm.bin' -print | LC_ALL=C sort
     [ -f games/package_manifest.json ] && printf '%s\n' games/package_manifest.json
@@ -54,7 +64,7 @@ prepared_packages() {
 write_state() {
     local destination=$1
     {
-        echo "version 3"
+        echo "version 4"
         clsp_sources | while IFS= read -r file; do
             printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
         done
@@ -62,6 +72,9 @@ write_state() {
             printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
         done
         clsp_binary | while IFS= read -r file; do
+            printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
+        done
+        clsp_debug | while IFS= read -r file; do
             printf 'output %s  %s\n' "$(git hash-object "$file")" "$file"
         done
         prepared_packages | while IFS= read -r file; do
@@ -84,9 +97,7 @@ SECONDS=0
 prepared_packages | while IFS= read -r file; do
     rm -f "$file"
 done
-clsp_hex | while IFS= read -r file; do
-    rm -f "${file%.hex}.clvm.bin"
-done
+find_chialisp -type f -name '*.clvm.bin' ! -name 'factory_args.clvm.bin' -delete
 find_chialisp -name '*.hex' -delete
 
 # CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
@@ -94,19 +105,26 @@ find_chialisp -name '*.hex' -delete
 # cache. Ordinary cargo commands leave it unset and never compile Chialisp.
 CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
 
-if ! { find_chialisp -type f -name '*.hex' -print | head -n 1 | grep -q .; }; then
+if [ -z "$(find_chialisp -type f -name '*.hex' -print)" ]; then
     echo "Error: Chialisp build produced no .hex files" >&2
     exit 1
 fi
 
-clsp_hex | while IFS= read -r file; do
-    xxd -r -p "$file" "${file%.hex}.clvm.bin"
-done
-
-if ! { find_chialisp -type f -name '*.clvm.bin' -print | head -n 1 | grep -q .; }; then
+if [ -z "$(clsp_binary)" ]; then
     echo "Error: Chialisp build produced no binary CLVM files" >&2
     exit 1
 fi
+
+{
+    clsp_binary
+    find_chialisp -type f -name 'factory_prepared.clvm.bin' -print
+} | while IFS= read -r file; do
+    debug="${file%.clvm.bin}.debug.clvm.bin"
+    if [ ! -f "$debug" ]; then
+        echo "Error: missing Chialisp debug sidecar $debug" >&2
+        exit 1
+    fi
+done
 
 write_state "$CURRENT_STATE"
 mv "$CURRENT_STATE" "$STATE_FILE"

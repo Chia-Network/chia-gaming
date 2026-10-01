@@ -58,7 +58,9 @@ if (typeof meta.basePath !== "string" || !meta.basePath.startsWith("/app/")) {
 }
 process.stdout.write(meta.basePath.replace(/^\/+|\/+$/g, ""));
 ' "$PLAYER_STAGE/build-meta.json")
-for f in "games/krunk/clsp/factory_prepared.clvm.bin"
+for f in \
+    "games/krunk/clsp/factory_prepared.clvm.bin" \
+    "games/krunk/clsp/factory_prepared.debug.clvm.bin"
 do
     if [ ! -f "$PLAYER_STAGE/$PLAYER_BASE_PATH/$f" ]; then
         echo "ERROR: missing $f in player staging"

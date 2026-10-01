@@ -4,12 +4,25 @@ use serde::{Deserialize, Serialize};
 use std::mem::MaybeUninit;
 
 use chia_consensus::allocator::make_allocator;
+use chia_consensus::conditions::{
+    process_single_spend, MempoolVisitor, ParseState, SpendBundleConditions,
+};
 use chia_consensus::consensus_constants::ConsensusConstants;
 use chia_consensus::flags::{ConsensusFlags, MEMPOOL_MODE};
+use chia_consensus::run_block_generator::subtract_cost;
+use chia_consensus::solution_generator::calculate_generator_length;
 use chia_consensus::spendbundle_conditions::run_spendbundle;
 use chia_consensus::spendbundle_validation::get_flags_for_height_and_constants;
 use chia_protocol::{Bytes, Bytes32};
+use clvm_utils::tree_hash;
+use clvmr::chia_dialect::ChiaDialect;
+use clvmr::reduction::Reduction;
+#[cfg(test)]
+use clvmr::run_program;
+use clvmr::run_program_with_diagnostics;
+use clvmr::serde::node_from_bytes;
 
+use crate::clvm_execution::{clvm_error_from_failure, MAX_CAPTURED_FRAMES};
 use crate::common::types::atom_from_clvm;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, CoinString, Error, GetCoinStringParts,
@@ -190,19 +203,31 @@ impl SpendBundle {
             .map_err(|_| Error::StrErr(format!("validation height {height} exceeds u32")))?;
         let flags = get_flags_for_height_and_constants(height, &constants) | MEMPOOL_MODE;
         let mut allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
-        let (_conditions, signature_pairs) = run_spendbundle(
+        let consensus_result = run_spendbundle(
             &mut allocator,
             &protocol_bundle,
             constants.max_block_cost_clvm,
             flags,
             &constants,
-        )
-        .map_err(|err| {
-            Error::StrErr(format!(
-                "spend bundle consensus validation failed: {:?}",
-                err.1
-            ))
-        })?;
+        );
+        let (_conditions, signature_pairs) = match consensus_result {
+            Ok(result) => result,
+            Err(err) => {
+                if let Some(clvm_error) = replay_consensus_eval_error(
+                    &protocol_bundle,
+                    constants.max_block_cost_clvm,
+                    flags,
+                    &constants,
+                    &format!("{:?}", err.1),
+                ) {
+                    return Err(clvm_error);
+                }
+                return Err(Error::StrErr(format!(
+                    "spend bundle consensus validation failed: {:?}",
+                    err.1
+                )));
+            }
+        };
         if !aggregate_verify_aligned(
             &protocol_bundle.aggregated_signature,
             signature_pairs
@@ -215,6 +240,106 @@ impl SpendBundle {
         }
         Ok(())
     }
+}
+
+/// Replay the per-spend portion of `run_spendbundle` after it has failed.
+///
+/// This deliberately mirrors byte, execution, and condition cost accounting
+/// only far enough to recover an `EvalErr`. Any serialization or consensus
+/// condition failure returns `None`, preserving the original `ErrorCode`.
+fn replay_consensus_eval_error(
+    spend_bundle: &chia_protocol::SpendBundle,
+    max_cost: u64,
+    flags: ConsensusFlags,
+    constants: &ConsensusConstants,
+    consensus_error: &str,
+) -> Option<Error> {
+    #[cfg(test)]
+    CONSENSUS_REPLAY_ATTEMPTS.with(|attempts| attempts.set(attempts.get() + 1));
+
+    const QUOTE_BYTES: usize = 2;
+    let generator_length = calculate_generator_length(&spend_bundle.coin_spends);
+    let byte_length = generator_length.checked_sub(QUOTE_BYTES)?;
+    let byte_cost = u64::try_from(byte_length)
+        .ok()?
+        .checked_mul(constants.cost_per_byte)?;
+
+    let mut allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
+    let mut cost_left = max_cost;
+    subtract_cost(&allocator, &mut cost_left, byte_cost).ok()?;
+
+    let dialect_flags = flags.to_clvm_flags();
+    let dialect = ChiaDialect::new(dialect_flags);
+    let mut conditions = SpendBundleConditions::default();
+    let mut state = ParseState::default();
+
+    for (index, coin_spend) in spend_bundle.coin_spends.iter().enumerate() {
+        let puzzle = node_from_bytes(&mut allocator, coin_spend.puzzle_reveal.as_slice()).ok()?;
+        let solution = node_from_bytes(&mut allocator, coin_spend.solution.as_slice()).ok()?;
+        let parent = allocator
+            .new_atom(coin_spend.coin.parent_coin_info.as_slice())
+            .ok()?;
+        let amount = allocator.new_number(coin_spend.coin.amount.into()).ok()?;
+
+        let Reduction(clvm_cost, output) = match run_program_with_diagnostics(
+            &mut allocator,
+            &dialect,
+            puzzle,
+            solution,
+            cost_left,
+            MAX_CAPTURED_FRAMES,
+        ) {
+            Ok(reduction) => reduction,
+            Err(failure) => {
+                return Some(clvm_error_from_failure(
+                    &allocator,
+                    failure,
+                    Some(format!(
+                        "spend bundle consensus validation failed ({consensus_error}); \
+                             replayed coin spend {index}"
+                    )),
+                ));
+            }
+        };
+        conditions.execution_cost += clvm_cost;
+        subtract_cost(&allocator, &mut cost_left, clvm_cost).ok()?;
+
+        let puzzle_hash = tree_hash(&allocator, puzzle);
+        if coin_spend.coin.puzzle_hash != puzzle_hash.into() {
+            return None;
+        }
+        let puzzle_hash = allocator.new_atom(&puzzle_hash).ok()?;
+        process_single_spend::<MempoolVisitor>(
+            &allocator,
+            &mut conditions,
+            &mut state,
+            parent,
+            puzzle_hash,
+            amount,
+            output,
+            flags,
+            &mut cost_left,
+            clvm_cost,
+            constants,
+        )
+        .ok()?;
+    }
+    None
+}
+
+#[cfg(test)]
+thread_local! {
+    static CONSENSUS_REPLAY_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_consensus_replay_attempts() {
+    CONSENSUS_REPLAY_ATTEMPTS.with(|attempts| attempts.set(0));
+}
+
+#[cfg(test)]
+fn consensus_replay_attempts() -> usize {
+    CONSENSUS_REPLAY_ATTEMPTS.with(std::cell::Cell::get)
 }
 
 fn aggregate_verify_aligned<'a, I>(signature: &chia_bls::Signature, pairs: I) -> bool
@@ -686,8 +811,17 @@ pub fn convert_coinset_org_spend_to_spend(
 #[cfg(test)]
 mod consensus_validation_tests {
     use super::*;
+    use std::rc::Rc;
+
+    use chialisp::compiler::compiler::DefaultCompilerOpts;
+    use chialisp::compiler::comptypes::CompilerOpts;
+    use chialisp::compiler::debug_metadata::compile_with_debug;
     use clvm_traits::ToClvm;
 
+    use crate::clvm_execution::{
+        diagnose_clvm, diagnostic_registry_len, frame_serializations_for_test,
+        reset_diagnostics_for_test, DebugMetadataCollection,
+    };
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
     use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
     use crate::common::types::{PrivateKey, Sha256tree, ToQuotedProgram};
@@ -796,6 +930,187 @@ mod consensus_validation_tests {
             },
             fee_target,
         )
+    }
+
+    #[test]
+    fn successful_consensus_validation_does_no_fallback_or_frame_capture_work() {
+        reset_consensus_replay_attempts();
+        reset_diagnostics_for_test();
+        let mut allocator = AllocEncoder::new();
+        let spend = quoted_condition_spend(&mut allocator, 0x21, 1, Vec::new());
+        SpendBundle {
+            name: None,
+            spends: vec![spend],
+        }
+        .validate_consensus(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA), 1)
+        .expect("valid spend bundle");
+
+        assert_eq!(consensus_replay_attempts(), 0);
+        assert_eq!(diagnostic_registry_len(), 0);
+        assert_eq!(frame_serializations_for_test(), 0);
+    }
+
+    #[test]
+    fn consensus_eval_error_is_captured_only_by_failure_replay_and_diagnosed() {
+        reset_consensus_replay_attempts();
+        reset_diagnostics_for_test();
+        let opts: Rc<dyn CompilerOpts> =
+            Rc::new(DefaultCompilerOpts::new("consensus_failure.clsp"));
+        let artifact = compile_with_debug(
+            opts,
+            "(mod (X) (include *standard-cl-23*) (defun fail (Y) (f Y)) (fail X))",
+        )
+        .expect("compile fixture")
+        .remove(0);
+        let mut allocator = AllocEncoder::new();
+        let puzzle = Puzzle::from_bytes(&artifact.program).expect("compiled puzzle");
+        let spend = CoinSpend {
+            coin: CoinString::from_parts(
+                &CoinID::new(Hash::from_bytes([0x22; 32])),
+                &puzzle.sha256tree(&mut allocator),
+                &Amount::new(1),
+            ),
+            bundle: Spend {
+                puzzle,
+                solution: Program::nil().into(),
+                signature: Aggsig::default(),
+            },
+        };
+        let error = SpendBundle {
+            name: None,
+            spends: vec![spend],
+        }
+        .validate_consensus(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA), 1)
+        .expect_err("failing puzzle");
+
+        let token = error
+            .diagnostic_token()
+            .expect("failure replay should capture a diagnostic");
+        let rendered = format!("{error:?}");
+        assert!(
+            rendered.contains("consensus validation failed"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("coin spend 0"), "{rendered}");
+        assert_eq!(consensus_replay_attempts(), 1);
+        assert_eq!(diagnostic_registry_len(), 1);
+        assert_eq!(frame_serializations_for_test(), 1);
+
+        let mut metadata = DebugMetadataCollection::default();
+        metadata
+            .insert(&artifact.metadata)
+            .expect("valid diagnostic metadata");
+        let diagnostic = diagnose_clvm(token, &metadata);
+        assert!(diagnostic.contains("CLVM stack trace"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("original EvalErr: path into atom"),
+            "{diagnostic}"
+        );
+    }
+
+    #[test]
+    fn non_clvm_consensus_error_preserves_error_code_without_token() {
+        reset_consensus_replay_attempts();
+        reset_diagnostics_for_test();
+        let mut allocator = AllocEncoder::new();
+        let mut spend = quoted_condition_spend(&mut allocator, 0x23, 1, Vec::new());
+        spend.coin = CoinString::from_parts(
+            &CoinID::new(Hash::from_bytes([0x23; 32])),
+            &PuzzleHash::from_bytes([0x99; 32]),
+            &Amount::new(1),
+        );
+        let error = SpendBundle {
+            name: None,
+            spends: vec![spend],
+        }
+        .validate_consensus(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA), 1)
+        .expect_err("wrong puzzle hash");
+
+        let rendered = format!("{error:?}");
+        assert!(rendered.contains("WrongPuzzleHash"), "{rendered}");
+        assert!(error.diagnostic_token().is_none());
+        assert_eq!(consensus_replay_attempts(), 1);
+        assert_eq!(diagnostic_registry_len(), 0);
+        assert_eq!(frame_serializations_for_test(), 0);
+    }
+
+    #[test]
+    fn consensus_replay_accounts_for_prior_spend_execution_cost() {
+        reset_diagnostics_for_test();
+        let constants =
+            validation_consensus_constants(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA));
+        let flags = get_flags_for_height_and_constants(1, &constants) | MEMPOOL_MODE;
+        let puzzle: chia_protocol::Program = Bytes::from(vec![1]).into();
+        let solution: chia_protocol::Program = Bytes::from(vec![0x80]).into();
+        let puzzle_hash = Puzzle::from_bytes(&[1])
+            .expect("identity puzzle")
+            .sha256tree(&mut AllocEncoder::new());
+        let puzzle_hash_bytes: [u8; 32] = puzzle_hash
+            .bytes()
+            .try_into()
+            .expect("identity puzzle hash");
+        let protocol_bundle = chia_protocol::SpendBundle {
+            coin_spends: vec![
+                chia_protocol::CoinSpend {
+                    coin: chia_protocol::Coin {
+                        parent_coin_info: Bytes32::from([0x31; 32]),
+                        puzzle_hash: Bytes32::from(puzzle_hash_bytes),
+                        amount: 1,
+                    },
+                    puzzle_reveal: puzzle.clone(),
+                    solution: solution.clone(),
+                },
+                chia_protocol::CoinSpend {
+                    coin: chia_protocol::Coin {
+                        parent_coin_info: Bytes32::from([0x32; 32]),
+                        puzzle_hash: Bytes32::from(puzzle_hash_bytes),
+                        amount: 1,
+                    },
+                    puzzle_reveal: puzzle,
+                    solution,
+                },
+            ],
+            aggregated_signature: chia_bls::Signature::default(),
+        };
+
+        let mut cost_allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
+        let puzzle_node = node_from_bytes(&mut cost_allocator, &[1]).unwrap();
+        let solution_node = node_from_bytes(&mut cost_allocator, &[0x80]).unwrap();
+        let first_cost = run_program(
+            &mut cost_allocator,
+            &ChiaDialect::new(flags.to_clvm_flags()),
+            puzzle_node,
+            solution_node,
+            u64::MAX,
+        )
+        .expect("measure identity puzzle")
+        .0;
+        let byte_cost = (calculate_generator_length(&protocol_bundle.coin_spends) - 2) as u64
+            * constants.cost_per_byte;
+        let max_cost = byte_cost + first_cost * 2 - 1;
+
+        let mut consensus_allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
+        let original = run_spendbundle(
+            &mut consensus_allocator,
+            &protocol_bundle,
+            max_cost,
+            flags,
+            &constants,
+        )
+        .expect_err("second spend should exceed remaining cost");
+        let error = replay_consensus_eval_error(
+            &protocol_bundle,
+            max_cost,
+            flags,
+            &constants,
+            &format!("{:?}", original.1),
+        )
+        .expect("replay should recover second-spend EvalErr");
+
+        let rendered = format!("{error:?}");
+        assert!(rendered.contains("coin spend 1"), "{rendered}");
+        assert!(rendered.contains("CostExceeded"), "{rendered}");
+        assert!(error.diagnostic_token().is_some());
     }
 
     #[test]

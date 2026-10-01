@@ -30,9 +30,10 @@ chia-bls = "=0.38.2"
 chia-consensus = "=0.38.2"
 chia-protocol = "=0.38.2"
 chia-puzzles = "=0.20.2"
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "dfc144c6f5eab8e377a57f9a14e2e35628aa85e3" }
 clvm-traits = "=0.38.2"
 clvm-utils = "=0.38.2"
-clvmr = { version = "=0.17.7", features = ["pre-eval"] }
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "fd40a80aa70bb6a59354248d2927d06895465388" }
 hex = "=0.4.3"
 lazy_static = "=1.5.0"
 num-bigint = "=0.4.6"
@@ -49,11 +50,12 @@ futures-util = { version = "=0.3.32", features = ["sink"], optional = true }
 axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
-chialisp = "0.5.0"
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "dfc144c6f5eab8e377a57f9a14e2e35628aa85e3" }
 clvm-utils = "=0.38.2"
-clvmr = { version = "=0.17.7" }
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "fd40a80aa70bb6a59354248d2927d06895465388" }
 hex = "=0.4.3"
 serde_json = "=1.0.145"
+sha2 = "=0.10.9"
 toml = "=0.8.23"
 
 [[bin]]
@@ -65,6 +67,13 @@ required-features = ["sim-server"]
 name = "gen-krunk-dict"
 path = "games/krunk/rust/bin_gen_krunk_dict.rs"
 
+[[bench]]
+name = "clvm_success"
+harness = false
+
 [lib]
 name = "chia_gaming"
 crate-type = ["rlib"]
+
+[patch.crates-io]
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "fd40a80aa70bb6a59354248d2927d06895465388" }

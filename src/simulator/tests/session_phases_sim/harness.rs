@@ -1248,6 +1248,9 @@ impl SimulationHarness {
                     GameSessionEvent::Log(line) => {
                         self.logs[player_index].push(line.clone());
                     }
+                    GameSessionEvent::ClvmDiagnostic(token) => {
+                        self.logs[player_index].push(format!("[clvm-diagnostic token={token}]"));
+                    }
                     GameSessionEvent::ChannelCoinConfirmed
                     | GameSessionEvent::ChannelCreationTimedOut => {}
                     GameSessionEvent::WatchCoin { .. } => {}

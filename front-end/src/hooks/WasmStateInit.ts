@@ -2,13 +2,14 @@ import { WasmConnection, WasmInitFn, ChiaGame, RngId } from '../types/ChiaGaming
 import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../lib/gameIdentities';
-import { PRESET_FILES } from '../generated/gamePresets';
+import { DEBUG_PRESET_FILES, PRESET_FILES } from '../generated/gamePresets';
+import { log } from '../services/log';
 
 let chia_gaming_init: WasmInitFn | undefined = undefined;
 let cg: WasmConnection | undefined = undefined;
 let logInitialized = false;
 
-export { PRESET_FILES };
+export { DEBUG_PRESET_FILES, PRESET_FILES };
 
 const WASM_URL = 'chia_gaming_wasm_bg.wasm';
 
@@ -23,6 +24,89 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
 
 let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
 let loadPromise: Promise<WasmConnection> | null = null;
+let debugMetadataPromise: Promise<void> | null = null;
+let diagnosticConnections = new WeakMap<WasmConnection, WasmConnection>();
+const pendingDiagnosticTokens = new Set<string>();
+const diagnosticTasks = new Set<Promise<void>>();
+const MAX_PENDING_DIAGNOSTICS = 16;
+
+function diagnosticToken(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const token = (error as { clvmDiagnosticToken?: unknown }).clvmDiagnosticToken;
+  return typeof token === 'string' ? token : null;
+}
+
+function loadDebugMetadata(wasm: WasmConnection): Promise<void> {
+  if (!debugMetadataPromise) {
+    debugMetadataPromise = Promise.all(
+      DEBUG_PRESET_FILES.map(async (name) => ({
+        name,
+        content: await presetFetcher(name),
+      })),
+    ).then((sidecars) => {
+      for (const { name, content } of sidecars) {
+        wasm.cache_debug_metadata(name, content);
+      }
+    });
+  }
+  return debugMetadataPromise;
+}
+
+export function scheduleClvmDiagnostic(wasm: WasmConnection, token: string): void {
+  if (
+    pendingDiagnosticTokens.has(token) ||
+    pendingDiagnosticTokens.size >= MAX_PENDING_DIAGNOSTICS
+  ) {
+    return;
+  }
+  pendingDiagnosticTokens.add(token);
+  const task = loadDebugMetadata(wasm)
+    .then(() => {
+      log(`[clvm-diagnostic token=${token}]\n${wasm.diagnose_clvm(token)}`);
+    })
+    .catch((diagnosticError) => {
+      const message =
+        diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError);
+      log(`[clvm-diagnostic token=${token}] diagnostic failed: ${message}`);
+    })
+    .finally(() => {
+      pendingDiagnosticTokens.delete(token);
+      diagnosticTasks.delete(task);
+    });
+  diagnosticTasks.add(task);
+}
+
+function scheduleDiagnostic(wasm: WasmConnection, error: unknown): void {
+  const token = diagnosticToken(error);
+  if (token !== null) scheduleClvmDiagnostic(wasm, token);
+}
+
+function diagnosticAwareConnection(wasm: WasmConnection): WasmConnection {
+  const existing = diagnosticConnections.get(wasm);
+  if (existing) return existing;
+  const wrapped = new Proxy(wasm, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (
+        typeof value !== 'function' ||
+        property === 'cache_debug_metadata' ||
+        property === 'diagnose_clvm'
+      ) {
+        return value;
+      }
+      return (...args: unknown[]) => {
+        try {
+          return Reflect.apply(value, target, args);
+        } catch (error) {
+          scheduleDiagnostic(wrapped, error);
+          throw error;
+        }
+      };
+    },
+  });
+  diagnosticConnections.set(wasm, wrapped);
+  return wrapped;
+}
 
 type WasmLoaderTarget = {
   loadWasm?: (init: WasmInitFn, wasmConn: WasmConnection) => void;
@@ -52,7 +136,7 @@ if (typeof window !== 'undefined') {
 
 export function storeInitArgs(chia_gaming_init_ready: WasmInitFn, cg_ready: WasmConnection) {
   chia_gaming_init = chia_gaming_init_ready;
-  cg = cg_ready;
+  cg = diagnosticAwareConnection(cg_ready);
   readyToInit.next(true);
 }
 
@@ -136,7 +220,15 @@ export function _resetWasmLoadForTests(): void {
   chia_gaming_init = undefined;
   cg = undefined;
   presetFetcher = fetchDeployPreset;
+  debugMetadataPromise = null;
+  pendingDiagnosticTokens.clear();
+  diagnosticTasks.clear();
+  diagnosticConnections = new WeakMap<WasmConnection, WasmConnection>();
   _resetGameIdentityWarmupForTests();
+}
+
+export async function _drainClvmDiagnosticsForTests(): Promise<void> {
+  await Promise.all([...diagnosticTasks]);
 }
 
 export class WasmStateInit {

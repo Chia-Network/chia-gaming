@@ -1,6 +1,7 @@
 use clvmr::allocator::{NodePtr, SExp};
-use clvmr::{run_program, ChiaDialect};
+use clvmr::ChiaDialect;
 
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::utils::proper_list;
 
 use crate::common::constants::{
@@ -11,8 +12,7 @@ use crate::common::constants::{
 };
 
 use crate::common::types::{
-    u64_from_atom, AllocEncoder, Amount, CoinID, Error, Hash, IntoErr, Program, PublicKey,
-    PuzzleHash,
+    u64_from_atom, AllocEncoder, Amount, CoinID, Error, Hash, Program, PublicKey, PuzzleHash,
 };
 
 pub fn chia_dialect() -> ChiaDialect {
@@ -183,14 +183,8 @@ impl CoinCondition {
     ) -> Result<Vec<CoinCondition>, Error> {
         let run_puzzle = puzzle.to_nodeptr(allocator)?;
         let run_args = solution.to_nodeptr(allocator)?;
-        let conditions = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            run_puzzle,
-            run_args,
-            MAX_BLOCK_COST_CLVM,
-        )
-        .into_gen()?;
+        let conditions =
+            run_clvm_with_runtime_prints(allocator, run_puzzle, run_args, MAX_BLOCK_COST_CLVM)?;
         CoinCondition::from_nodeptr(allocator, conditions.1)
     }
 }

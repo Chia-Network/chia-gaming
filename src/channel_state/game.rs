@@ -1,13 +1,13 @@
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::run_program;
 
 use crate::channel_state::game_handler::GameHandler;
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{StateUpdateProgram, ValidationInfo, ValidationProgramRegistry};
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::types::{
-    chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Program, Puzzle, Timeout,
+    AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Program, Puzzle, Timeout,
     MAX_BLOCK_COST_CLVM,
 };
 
@@ -163,16 +163,10 @@ impl Game {
     ) -> Result<FactoryResult, Error> {
         let args = arguments.to_clvm(allocator).into_gen()?;
         let factory_clvm = factory_program.to_clvm(allocator).into_gen()?;
-        let result = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            factory_clvm,
-            args,
-            MAX_BLOCK_COST_CLVM,
-        )
-        .into_gen()
-        .map_err(|e| Error::StrErr(format!("proposal factory failed: error={e:?}")))?
-        .1;
+        let result =
+            run_clvm_with_runtime_prints(allocator, factory_clvm, args, MAX_BLOCK_COST_CLVM)
+                .map_err(|error| error.with_context("proposal factory failed"))?
+                .1;
         let records = match factory_abi::parse_factory_result(
             allocator.allocator(),
             result,

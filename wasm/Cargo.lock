@@ -315,14 +315,12 @@ dependencies = [
 [[package]]
 name = "chialisp"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab59d41e9ed519178c28104ed119db6521a8883393a695e44b5dac954af74871"
+source = "git+https://github.com/Chia-Network/chialisp.git?rev=dfc144c6f5eab8e377a57f9a14e2e35628aa85e3#dfc144c6f5eab8e377a57f9a14e2e35628aa85e3"
 dependencies = [
  "binascii",
  "chia-bls",
  "clvmr",
  "do-notation",
- "getrandom 0.3.4",
  "hashlink",
  "hex",
  "indoc",
@@ -382,8 +380,7 @@ dependencies = [
 [[package]]
 name = "clvmr"
 version = "0.17.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3060bcd64cb8cf2b32fe6ee3a82698835c03361c8e1da446d2e9d058fbfffd5f"
+source = "git+https://github.com/Chia-Network/clvm_rs.git?rev=fd40a80aa70bb6a59354248d2927d06895465388#fd40a80aa70bb6a59354248d2927d06895465388"
 dependencies = [
  "bitflags",
  "bitvec",
@@ -1166,11 +1163,10 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.24.2"
+version = "0.29.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99636d423fa2ca130fa5acde3059308006d46f98caac629418e53f7ebb1e9999"
+checksum = "f41027e41b4bd03f6e60f9f417fe24a6341a6bb744edd62b6f709f2a52ea30e9"
 dependencies = [
- "once_cell",
  "target-lexicon",
 ]
 
@@ -1531,9 +1527,9 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
 name = "tempfile"
-version = "3.24.0"
+version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "655da9c7eb6305c55742045d5a8d2037996d61d8de95806335c7c86ce0f82e9c"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
  "getrandom 0.3.4",

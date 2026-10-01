@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (import games.krunk.clsp.krunk_generate exposing krunk_factory)
 

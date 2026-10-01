@@ -15,7 +15,7 @@ on:
       - "**"
 
 env:
-  RUST_VERSION: stable
+  RUST_VERSION: 1.97.1
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
@@ -43,7 +43,7 @@ jobs:
       - name: Set up rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rust.sh
-          sh rust.sh -y
+          sh rust.sh -y --default-toolchain "$RUST_VERSION"
 
       - name: Build hex files
         run: |

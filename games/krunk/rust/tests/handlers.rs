@@ -3,6 +3,7 @@
 use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{Evidence, ReadableMove, ValidationProgramRegistry};
+use crate::clvm_execution::{diagnose_clvm, DebugMetadataCollection};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
@@ -14,7 +15,7 @@ use crate::games::krunk_dict_tree::build_signed_dict_tree_from_bytes;
 use crate::referee::Referee;
 use crate::utils::proper_list;
 
-use std::rc::Rc;
+use std::{fs, rc::Rc};
 
 use chia_protocol::Bytes;
 use clvm_traits::{clvm_curried_args, ToClvm};
@@ -30,7 +31,7 @@ fn sha256_bytes(data: &[u8]) -> [u8; 32] {
 }
 
 fn run_clvm(allocator: &mut AllocEncoder, program: NodePtr, args: NodePtr) -> NodePtr {
-    run_program(allocator.allocator(), &chia_dialect(), program, args, 0)
+    crate::clvm_execution::run_clvm(allocator.allocator(), program, args, 0)
         .expect("CLVM run failed")
         .1
 }
@@ -1028,6 +1029,43 @@ fn test_krunk_bob_invalid_guess_slashes_through_referee() {
     assert!(
         result.slash.is_some(),
         "signed dictionary evidence should slash before continuation agreement"
+    );
+
+    let diagnostics = allocator.drain_clvm_diagnostics().collect::<Vec<_>>();
+    assert!(
+        !diagnostics.is_empty(),
+        "failed validator probes should emit nonfatal diagnostics"
+    );
+    let mut metadata = DebugMetadataCollection::default();
+    metadata
+        .insert(
+            &fs::read("games/krunk/clsp/onchain/commit.debug.clvm.bin")
+                .expect("Krunk commit debug sidecar"),
+        )
+        .expect("valid Krunk commit debug sidecar");
+    metadata
+        .insert(
+            &fs::read("clsp/referee/onchain/referee.debug.clvm.bin")
+                .expect("referee debug sidecar"),
+        )
+        .expect("valid referee debug sidecar");
+    let traces = diagnostics
+        .into_iter()
+        .map(|token| diagnose_clvm(token, &metadata))
+        .collect::<Vec<_>>();
+    assert!(
+        traces.iter().any(|trace| {
+            trace.contains("CLVM stack trace")
+                && trace.contains("referee.clsp:")
+                && trace.contains("MOVE:")
+        }),
+        "expected a symbolized active referee frame with Krunk move parameters: {traces:#?}"
+    );
+    assert!(
+        traces
+            .iter()
+            .all(|trace| !trace.contains("frame value does not match destructured parameter")),
+        "captured Krunk frames must decode without the old replay mismatch: {traces:#?}"
     );
 }
 
