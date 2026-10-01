@@ -160,19 +160,27 @@ fn capture_failure(allocator: &Allocator, failure: &EvalFailure) -> Option<Diagn
     let mut available =
         MAX_DIAGNOSTIC_BYTES.checked_sub(original_error.len() + std::mem::size_of::<usize>())?;
     let mut frames = Vec::with_capacity(failure.frames.len());
-    for frame in &failure.frames {
-        let program = node_to_bytes_limit(allocator, frame.program, available).ok()?;
+    let mut truncated = failure.truncated;
+    for (index, frame) in failure.frames.iter().enumerate().rev() {
+        let Ok(program) = node_to_bytes_limit(allocator, frame.program, available) else {
+            truncated += index + 1;
+            break;
+        };
         available = available.checked_sub(program.len())?;
-        let environment = node_to_bytes_limit(allocator, frame.environment, available).ok()?;
+        let Ok(environment) = node_to_bytes_limit(allocator, frame.environment, available) else {
+            truncated += index + 1;
+            break;
+        };
         available = available.checked_sub(environment.len())?;
         frames.push(SerializedFrame {
             program,
             environment,
         });
     }
+    frames.reverse();
     let record = DiagnosticRecord {
         frames,
-        truncated: failure.truncated,
+        truncated,
         original_error,
     };
     DIAGNOSTICS.with(|registry| registry.borrow_mut().insert(record))
@@ -405,6 +413,7 @@ mod tests {
     use chialisp::compiler::compiler::DefaultCompilerOpts;
     use chialisp::compiler::comptypes::CompilerOpts;
     use chialisp::compiler::debug_metadata::compile_with_debug;
+    use clvmr::run_program::EvalFrame;
     use clvmr::serde::{node_from_bytes, node_to_bytes};
 
     use super::*;
@@ -580,6 +589,64 @@ mod tests {
             diagnose_clvm(first.unwrap(), &metadata(&[&artifact.metadata]))
                 .contains("retired token")
         );
+    }
+
+    #[test]
+    fn oversized_older_frame_retains_newest_serialized_suffix() {
+        reset();
+        let mut allocator = Allocator::new();
+        let oversized = allocator
+            .new_atom(&vec![0x42; MAX_DIAGNOSTIC_BYTES])
+            .unwrap();
+        let newest_program = allocator.one();
+        let newest_environment = NodePtr::NIL;
+        let invalid_program = allocator.new_atom(&[2]).unwrap();
+        let error = run_program_with_diagnostics(
+            &mut allocator,
+            &ChiaDialect::default(),
+            invalid_program,
+            NodePtr::NIL,
+            100,
+            MAX_CAPTURED_FRAMES,
+        )
+        .unwrap_err()
+        .error;
+        let failure = EvalFailure {
+            error,
+            frames: vec![
+                EvalFrame {
+                    program: oversized,
+                    environment: NodePtr::NIL,
+                },
+                EvalFrame {
+                    program: newest_program,
+                    environment: newest_environment,
+                },
+            ],
+            truncated: 2,
+        };
+
+        let token = capture_failure(&allocator, &failure).expect("retain fitting suffix");
+        DIAGNOSTICS.with(|registry| {
+            let registry = registry.borrow();
+            let record = &registry
+                .entries
+                .iter()
+                .find(|(candidate, _)| *candidate == token)
+                .unwrap()
+                .1;
+            assert_eq!(record.frames.len(), 1);
+            assert_eq!(
+                record.frames[0].program,
+                node_to_bytes(&allocator, newest_program).unwrap()
+            );
+            assert_eq!(
+                record.frames[0].environment,
+                node_to_bytes(&allocator, newest_environment).unwrap()
+            );
+            assert_eq!(record.truncated, 3);
+            assert!(record.size() <= MAX_DIAGNOSTIC_BYTES);
+        });
     }
 
     #[test]
