@@ -318,7 +318,7 @@ pub(crate) fn run_clvm_probe_with_runtime_prints(
 
 fn diagnostic_failure(record: &DiagnosticRecord, reason: impl fmt::Display) -> String {
     format!(
-        "original EvalErr: {}\nCLVM diagnostic failed: {reason}",
+        "CLVM error: {}\nCLVM diagnostic failed: {reason}",
         record.original_error
     )
 }
@@ -382,10 +382,7 @@ fn diagnose_record(record: DiagnosticRecord, metadata: &DebugMetadataCollection)
             .collect::<Vec<_>>()
             .join("\n")
     };
-    format!(
-        "original EvalErr: {}\nCLVM stack trace (most recent call last):\n{stack}",
-        record.original_error
-    )
+    format!("CLVM error: {}\n{stack}", record.original_error)
 }
 
 #[cfg(test)]
@@ -546,9 +543,7 @@ mod tests {
         ));
         let tokens = encoder.drain_clvm_diagnostics().collect::<Vec<_>>();
         assert_eq!(tokens.len(), 1);
-        assert!(
-            diagnose_clvm(tokens[0], &metadata(&[&artifact.metadata])).contains("CLVM stack trace")
-        );
+        assert!(diagnose_clvm(tokens[0], &metadata(&[&artifact.metadata])).contains("CLVM error:"));
     }
 
     #[test]
@@ -567,11 +562,14 @@ mod tests {
 
         let metadata = metadata(&[&artifact.metadata]);
         let diagnostic = diagnose_clvm(token, &metadata);
-        assert!(diagnostic.contains("CLVM stack trace (most recent call last):"));
-        assert!(diagnostic.contains("<main>()"), "{diagnostic}");
+        assert!(diagnostic.contains("CLVM error:"));
+        assert!(diagnostic.contains("in <main>"), "{diagnostic}");
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.contains("diagnostic.clsp:"), "{diagnostic}");
-        assert!(diagnostic.starts_with("original EvalErr: path into atom\n"));
+        assert!(
+            diagnostic.contains("File \"diagnostic.clsp\", line "),
+            "{diagnostic}"
+        );
+        assert!(diagnostic.starts_with("CLVM error: path into atom\n  "));
         assert_eq!(diagnostic_registry_len(), 0);
         assert!(diagnose_clvm(token, &metadata).contains("retired token"));
     }
@@ -662,7 +660,7 @@ mod tests {
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
         let diagnostic = diagnose_clvm(token(&error), &metadata(&[&other.metadata]));
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.starts_with("original EvalErr: path into atom\n"));
+        assert!(diagnostic.starts_with("CLVM error: path into atom\n  "));
     }
 
     #[test]
@@ -690,9 +688,9 @@ mod tests {
         });
 
         let diagnostic = diagnose_clvm(token, &metadata(&[&artifact.metadata]));
-        assert!(diagnostic.contains("CLVM stack trace"), "{diagnostic}");
+        assert!(diagnostic.contains("CLVM error:"), "{diagnostic}");
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.starts_with("original EvalErr: path into atom\n"));
+        assert!(diagnostic.starts_with("CLVM error: path into atom\n  "));
     }
 
     #[test]
@@ -708,8 +706,11 @@ mod tests {
             token(&error),
             &metadata(&[&other.metadata, &failing.metadata]),
         );
-        assert!(diagnostic.contains("CLVM stack trace"), "{diagnostic}");
-        assert!(diagnostic.contains("diagnostic.clsp:"), "{diagnostic}");
+        assert!(diagnostic.contains("CLVM error:"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("File \"diagnostic.clsp\", line "),
+            "{diagnostic}"
+        );
     }
 
     #[test]
@@ -724,7 +725,7 @@ mod tests {
         assert!(diagnose_clvm(token, &DebugMetadataCollection::default())
             .contains("no debug metadata loaded"));
         assert_eq!(diagnostic_registry_len(), 1);
-        assert!(diagnose_clvm(token, &metadata(&[&artifact.metadata])).contains("CLVM stack trace"));
+        assert!(diagnose_clvm(token, &metadata(&[&artifact.metadata])).contains("CLVM error:"));
         assert_eq!(diagnostic_registry_len(), 0);
     }
 
@@ -763,8 +764,14 @@ mod tests {
             token(&error),
             &metadata(&[&outer.metadata, &inner.metadata]),
         );
-        assert!(diagnostic.contains("outer.clsp:"), "{diagnostic}");
-        assert!(diagnostic.contains("inner.clsp:"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("File \"outer.clsp\", line "),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("File \"inner.clsp\", line "),
+            "{diagnostic}"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -784,6 +791,6 @@ mod tests {
         std::fs::write(&path, &artifact.metadata).unwrap();
         let diagnostic = diagnose_clvm_from_sidecar_files(token, &[path.as_path()]);
         std::fs::remove_file(path).unwrap();
-        assert!(diagnostic.contains("CLVM stack trace"), "{diagnostic}");
+        assert!(diagnostic.contains("CLVM error:"), "{diagnostic}");
     }
 }

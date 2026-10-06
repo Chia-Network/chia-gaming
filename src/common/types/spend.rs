@@ -1003,9 +1003,9 @@ mod consensus_validation_tests {
             .insert(&artifact.metadata)
             .expect("valid diagnostic metadata");
         let diagnostic = diagnose_clvm(token, &metadata);
-        assert!(diagnostic.contains("CLVM stack trace"), "{diagnostic}");
+        assert!(diagnostic.contains("CLVM error:"), "{diagnostic}");
         assert!(
-            diagnostic.contains("original EvalErr: path into atom"),
+            diagnostic.contains("CLVM error: path into atom"),
             "{diagnostic}"
         );
     }
