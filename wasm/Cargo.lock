@@ -315,7 +315,7 @@ dependencies = [
 [[package]]
 name = "chialisp"
 version = "0.5.0"
-source = "git+https://github.com/Chia-Network/chialisp.git?rev=4f34b6932a16739fd4faaf62c8533bab2b896b97#4f34b6932a16739fd4faaf62c8533bab2b896b97"
+source = "git+https://github.com/Chia-Network/chialisp.git?rev=3f1c6310b16ce7e47f5c2b48b4884153e3546979#3f1c6310b16ce7e47f5c2b48b4884153e3546979"
 dependencies = [
  "binascii",
  "chia-bls",

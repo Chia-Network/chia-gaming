@@ -318,7 +318,7 @@ pub(crate) fn run_clvm_probe_with_runtime_prints(
 
 fn diagnostic_failure(record: &DiagnosticRecord, reason: impl fmt::Display) -> String {
     format!(
-        "CLVM error: {}\nCLVM diagnostic failed: {reason}",
+        "CLVM diagnostic failed: {reason}\nCLVM error: {}",
         record.original_error
     )
 }
@@ -382,7 +382,10 @@ fn diagnose_record(record: DiagnosticRecord, metadata: &DebugMetadataCollection)
             .collect::<Vec<_>>()
             .join("\n")
     };
-    format!("CLVM error: {}\n{stack}", record.original_error)
+    format!(
+        "Traceback (most recent call last):\n{stack}\nCLVM error: {}",
+        record.original_error
+    )
 }
 
 #[cfg(test)]
@@ -579,7 +582,8 @@ mod tests {
             diagnostic.contains("File \"diagnostic.clsp\", line "),
             "{diagnostic}"
         );
-        assert!(diagnostic.starts_with("CLVM error: path into atom\n  "));
+        assert!(diagnostic.starts_with("Traceback (most recent call last):\n  "));
+        assert!(diagnostic.ends_with("CLVM error: path into atom"));
         assert_eq!(diagnostic_registry_len(), 0);
         assert!(diagnose_clvm(token, &metadata).contains("retired token"));
     }
@@ -670,7 +674,8 @@ mod tests {
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
         let diagnostic = diagnose_clvm(token(&error), &metadata(&[&other.metadata]));
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.starts_with("CLVM error: path into atom\n  "));
+        assert!(diagnostic.starts_with("Traceback (most recent call last):\n  "));
+        assert!(diagnostic.ends_with("CLVM error: path into atom"));
     }
 
     #[test]
@@ -700,7 +705,8 @@ mod tests {
         let diagnostic = diagnose_clvm(token, &metadata(&[&artifact.metadata]));
         assert!(diagnostic.contains("CLVM error:"), "{diagnostic}");
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.starts_with("CLVM error: path into atom\n  "));
+        assert!(diagnostic.starts_with("Traceback (most recent call last):\n  "));
+        assert!(diagnostic.ends_with("CLVM error: path into atom"));
     }
 
     #[test]

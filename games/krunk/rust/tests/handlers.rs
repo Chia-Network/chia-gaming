@@ -1055,7 +1055,8 @@ fn test_krunk_bob_invalid_guess_slashes_through_referee() {
         .collect::<Vec<_>>();
     assert!(
         traces.iter().any(|trace| {
-            trace.starts_with("CLVM error: clvm raise\n  File ")
+            trace.starts_with("Traceback (most recent call last):\n  File ")
+                && trace.ends_with("CLVM error: clvm raise")
                 && trace.contains("referee.clsp\", line ")
                 && trace.contains("MOVE = \"xyzzy\"")
         }),
