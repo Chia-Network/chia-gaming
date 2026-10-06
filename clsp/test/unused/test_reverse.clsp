@@ -1,6 +1,6 @@
-(mod (X)
-  (include *standard-cl-21*)
-  (include reverse.clinc)
+(include *standard-cl-26*)
+(import std.reverse)
 
+(export (X)
   (reverse X)
   )

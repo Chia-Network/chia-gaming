@@ -30,7 +30,7 @@ chia-bls = "=0.38.2"
 chia-consensus = "=0.38.2"
 chia-protocol = "=0.38.2"
 chia-puzzles = "=0.20.2"
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "dfc144c6f5eab8e377a57f9a14e2e35628aa85e3" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "4d2f883d9fdeeb010e64c3cefc18f6f50a7b8186" }
 clvm-traits = "=0.38.2"
 clvm-utils = "=0.38.2"
 clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "fd40a80aa70bb6a59354248d2927d06895465388" }
@@ -50,7 +50,7 @@ futures-util = { version = "=0.3.32", features = ["sink"], optional = true }
 axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "dfc144c6f5eab8e377a57f9a14e2e35628aa85e3" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "4d2f883d9fdeeb010e64c3cefc18f6f50a7b8186" }
 clvm-utils = "=0.38.2"
 clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "fd40a80aa70bb6a59354248d2927d06895465388" }
 hex = "=0.4.3"

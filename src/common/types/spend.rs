@@ -954,14 +954,16 @@ mod consensus_validation_tests {
     fn consensus_eval_error_is_captured_only_by_failure_replay_and_diagnosed() {
         reset_consensus_replay_attempts();
         reset_diagnostics_for_test();
-        let opts: Rc<dyn CompilerOpts> =
-            Rc::new(DefaultCompilerOpts::new("consensus_failure.clsp"));
+        let opts: Rc<dyn CompilerOpts> = DefaultCompilerOpts::new("consensus_failure.clsp")
+            .set_search_paths(&[concat!(env!("CARGO_MANIFEST_DIR"), "/clsp").to_string()]);
         let artifact = compile_with_debug(
             opts,
-            "(mod (X) (include *standard-cl-23*) (defun fail (Y) (f Y)) (fail X))",
+            "(include *standard-cl-26*) (defun fail (Y) (f Y)) (export (X) (fail X))",
         )
         .expect("compile fixture")
-        .remove(0);
+        .into_iter()
+        .find(|artifact| artifact.export_name.as_deref() == Some("program"))
+        .expect("CL26 program export");
         let mut allocator = AllocEncoder::new();
         let puzzle = Puzzle::from_bytes(&artifact.program).expect("compiled puzzle");
         let spend = CoinSpend {

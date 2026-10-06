@@ -13,10 +13,10 @@ mod gaming_wasm {
     use rand_chacha::ChaCha8Rng;
     use serde::{Deserialize, Serialize};
 
-    use chia_gaming::common::types::ChaCha8SerializationWrapper;
     use chia_gaming::clvm_execution::{
         diagnose_clvm as diagnose_clvm_token, DebugMetadataCollection, DiagnosticToken,
     };
+    use chia_gaming::common::types::ChaCha8SerializationWrapper;
 
     use wasm_bindgen::prelude::*;
 
@@ -42,8 +42,8 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDrainFailureStage,
-        SubmissionAttemptRelationship, SubmissionAttemptStatus, SubmissionFeeSource,
+        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionAttemptRelationship,
+        SubmissionAttemptStatus, SubmissionDrainFailureStage, SubmissionFeeSource,
         TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -153,12 +153,124 @@ mod gaming_wasm {
         metadata: DebugMetadataCollection,
     }
 
+    enum SessionSlot<T> {
+        Ready(T),
+        Busy,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum SessionTakeError {
+        Missing,
+        Busy,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum SessionInsertOutcome {
+        Inserted,
+        Occupied,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum SessionRestoreOutcome {
+        Restored,
+        Dropped,
+        Occupied,
+    }
+
+    struct SessionRegistry<T> {
+        slots: HashMap<i32, SessionSlot<T>>,
+    }
+
+    impl<T> Default for SessionRegistry<T> {
+        fn default() -> Self {
+            Self {
+                slots: HashMap::new(),
+            }
+        }
+    }
+
+    impl<T> SessionRegistry<T> {
+        fn insert(&mut self, id: i32, value: T) -> SessionInsertOutcome {
+            match self.slots.entry(id) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(SessionSlot::Ready(value));
+                    SessionInsertOutcome::Inserted
+                }
+                std::collections::hash_map::Entry::Occupied(_) => SessionInsertOutcome::Occupied,
+            }
+        }
+
+        fn take(&mut self, id: i32) -> Result<T, SessionTakeError> {
+            let slot = self.slots.get_mut(&id).ok_or(SessionTakeError::Missing)?;
+            match std::mem::replace(slot, SessionSlot::Busy) {
+                SessionSlot::Ready(value) => Ok(value),
+                SessionSlot::Busy => Err(SessionTakeError::Busy),
+            }
+        }
+
+        fn remove(&mut self, id: i32) -> bool {
+            self.slots.remove(&id).is_some()
+        }
+
+        fn restore(&mut self, id: i32, value: T) -> SessionRestoreOutcome {
+            match self.slots.entry(id) {
+                std::collections::hash_map::Entry::Vacant(_) => SessionRestoreOutcome::Dropped,
+                std::collections::hash_map::Entry::Occupied(mut entry) => match entry.get() {
+                    SessionSlot::Busy => {
+                        entry.insert(SessionSlot::Ready(value));
+                        SessionRestoreOutcome::Restored
+                    }
+                    SessionSlot::Ready(_) => SessionRestoreOutcome::Occupied,
+                },
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod session_registry_tests {
+        use super::*;
+
+        #[test]
+        fn nested_take_reports_busy_and_outer_restore_succeeds() {
+            let mut registry = SessionRegistry::default();
+            assert_eq!(
+                registry.insert(7, "session"),
+                SessionInsertOutcome::Inserted
+            );
+
+            let session = registry.take(7).expect("outer take");
+            assert_eq!(registry.take(7), Err(SessionTakeError::Busy));
+            assert_eq!(
+                registry.restore(7, session),
+                SessionRestoreOutcome::Restored
+            );
+            assert_eq!(registry.take(7), Ok("session"));
+        }
+
+        #[test]
+        fn dropping_busy_slot_prevents_restore_from_resurrecting_session() {
+            let mut registry = SessionRegistry::default();
+            assert_eq!(
+                registry.insert(11, "session"),
+                SessionInsertOutcome::Inserted
+            );
+
+            let session = registry.take(11).expect("outer take");
+            assert!(registry.remove(11));
+            assert_eq!(
+                registry.restore(11, session),
+                SessionRestoreOutcome::Dropped
+            );
+            assert_eq!(registry.take(11), Err(SessionTakeError::Missing));
+        }
+    }
+
     thread_local! {
         static NEXT_ID: AtomicI32 = const {
             AtomicI32::new(0)
         };
-        static CRADLES: RefCell<HashMap<i32, JsGameSession>> = {
-            return RefCell::new(HashMap::new());
+        static CRADLES: RefCell<SessionRegistry<JsGameSession>> = {
+            return RefCell::new(SessionRegistry::default());
         };
         static RNGS: RefCell<HashMap<i32, ChaCha8Rng>> = {
         return RefCell::new(HashMap::new());
@@ -207,7 +319,10 @@ mod gaming_wasm {
             if cache.names.contains(name) {
                 return Err(js_error(&format!("duplicate debug metadata name {name}")));
             }
-            cache.metadata.insert(data).map_err(|error| js_error(&error))?;
+            cache
+                .metadata
+                .insert(data)
+                .map_err(|error| js_error(&error))?;
             cache.names.insert(name.to_string());
             Ok(())
         })
@@ -216,9 +331,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn diagnose_clvm(token: &str) -> Result<String, JsValue> {
         let token = DiagnosticToken::parse(token).map_err(|error| js_error(&error))?;
-        Ok(DEBUG_METADATA.with(|cache| {
-            diagnose_clvm_token(token, &cache.borrow().metadata)
-        }))
+        Ok(DEBUG_METADATA.with(|cache| diagnose_clvm_token(token, &cache.borrow().metadata)))
     }
 
     fn get_next_id() -> i32 {
@@ -226,10 +339,12 @@ mod gaming_wasm {
     }
 
     fn insert_cradle(this_id: i32, runner: JsGameSession) {
-        CRADLES.with(|cell| {
-            let mut mut_ref = cell.borrow_mut();
-            mut_ref.insert(this_id, runner);
-        });
+        let outcome = CRADLES.with(|cell| cell.borrow_mut().insert(this_id, runner));
+        assert_eq!(
+            outcome,
+            SessionInsertOutcome::Inserted,
+            "new game session id must be vacant"
+        );
     }
 
     /// Release a session the host is done with. `shut_down` is an on-chain
@@ -237,7 +352,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn drop_game_session(cid: i32) {
         CRADLES.with(|cell| {
-            cell.borrow_mut().remove(&cid);
+            cell.borrow_mut().remove(cid);
         });
     }
 
@@ -446,16 +561,26 @@ mod gaming_wasm {
     where
         F: FnOnce(&mut JsGameSession) -> Result<T, types::Error>,
     {
-        CRADLES.with(|cell| {
-            let mut mut_ref = cell.borrow_mut();
-            if let Some(cradle) = mut_ref.get_mut(&cid) {
-                return f(cradle).into_js();
+        let mut cradle = match CRADLES.with(|cell| cell.borrow_mut().take(cid)) {
+            Ok(cradle) => cradle,
+            Err(SessionTakeError::Missing) => {
+                return Err(js_error(&format!("could not find game instance {cid}")));
             }
+            Err(SessionTakeError::Busy) => {
+                return Err(js_error(&format!(
+                    "game instance {cid} is busy during a re-entrant API call"
+                )));
+            }
+        };
 
-            Err(JsValue::from_str(&format!(
-                "could not find game instance {cid}"
-            )))
-        })
+        // The registry contains only a Busy marker while the operation and all
+        // Rust-to-JavaScript conversion run. No CRADLES borrow crosses either
+        // boundary, so nested calls return the typed Busy error above.
+        let result = f(&mut cradle).into_js();
+        // `restore` only fills the original Busy marker. A re-entrant drop
+        // leaves it absent, and an unexpected replacement is preserved.
+        let _restore_outcome = CRADLES.with(|cell| cell.borrow_mut().restore(cid, cradle));
+        result
     }
 
     #[wasm_bindgen]
@@ -651,10 +776,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn relinquish_submission_attempt(
-        cid: i32,
-        attempt_token: &str,
-    ) -> Result<String, JsValue> {
+    pub fn relinquish_submission_attempt(cid: i32, attempt_token: &str) -> Result<String, JsValue> {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
@@ -1053,7 +1175,8 @@ mod gaming_wasm {
                         fee_source,
                         &additional_data,
                         working.last_height(),
-                    )? else {
+                    )?
+                    else {
                         return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt {
                             status: "stale",
                         })

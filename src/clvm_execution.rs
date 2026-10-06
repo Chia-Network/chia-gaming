@@ -430,10 +430,13 @@ mod tests {
         filename: &str,
         source: &str,
     ) -> chialisp::compiler::debug_metadata::DebugCompileArtifact {
-        let opts: Rc<dyn CompilerOpts> = Rc::new(DefaultCompilerOpts::new(filename));
+        let opts: Rc<dyn CompilerOpts> = DefaultCompilerOpts::new(filename)
+            .set_search_paths(&[concat!(env!("CARGO_MANIFEST_DIR"), "/clsp").to_string()]);
         compile_with_debug(opts, source)
             .expect("compile diagnostic fixture")
-            .remove(0)
+            .into_iter()
+            .find(|artifact| artifact.export_name.as_deref() == Some("program"))
+            .expect("CL26 program export")
     }
 
     fn decode(allocator: &mut Allocator, bytes: &[u8]) -> NodePtr {
@@ -531,7 +534,7 @@ mod tests {
     fn failed_probe_retains_nonfatal_diagnostic_token() {
         reset();
         let artifact =
-            compiled("(mod (X) (include *standard-cl-23*) (defun fail (Y) (f Y)) (fail X))");
+            compiled("(include *standard-cl-26*) (defun fail (Y) (f Y)) (export (X) (fail X))");
         let mut encoder = AllocEncoder::new();
         let program = decode(encoder.allocator(), &artifact.program);
 
@@ -552,7 +555,7 @@ mod tests {
     fn nested_path_into_atom_is_lazy_one_shot_and_symbolized() {
         reset();
         let artifact =
-            compiled("(mod (X) (include *standard-cl-23*) (defun fail (Y) (f Y)) (fail X))");
+            compiled("(include *standard-cl-26*) (defun fail (Y) (f Y)) (export (X) (fail X))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &artifact.program);
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
@@ -584,7 +587,7 @@ mod tests {
             first.get_or_insert_with(|| token(&error));
         }
         assert_eq!(diagnostic_registry_len(), MAX_DIAGNOSTICS);
-        let artifact = compiled("(mod () (include *standard-cl-23*) ())");
+        let artifact = compiled("(include *standard-cl-26*) (export () ())");
         assert!(
             diagnose_clvm(first.unwrap(), &metadata(&[&artifact.metadata]))
                 .contains("retired token")
@@ -652,8 +655,8 @@ mod tests {
     #[test]
     fn unknown_frames_preserve_original_error() {
         reset();
-        let failing = compiled("(mod (X) (include *standard-cl-23*) (f X))");
-        let other = compiled("(mod (X) (include *standard-cl-23*) (+ X 1))");
+        let failing = compiled("(include *standard-cl-26*) (export (X) (f X))");
+        let other = compiled("(include *standard-cl-26*) (export (X) (+ X 1))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &failing.program);
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
@@ -665,7 +668,7 @@ mod tests {
     #[test]
     fn diagnose_uses_captured_frames_without_reexecution() {
         reset();
-        let artifact = compiled("(mod (X) (include *standard-cl-23*) (f X))");
+        let artifact = compiled("(include *standard-cl-26*) (export (X) (f X))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &artifact.program);
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
@@ -695,8 +698,8 @@ mod tests {
     #[test]
     fn non_first_sidecar_owns_the_failure_program() {
         reset();
-        let other = compiled("(mod (X) (include *standard-cl-23*) (+ X 1))");
-        let failing = compiled("(mod (X) (include *standard-cl-23*) (f X))");
+        let other = compiled("(include *standard-cl-26*) (export (X) (+ X 1))");
+        let failing = compiled("(include *standard-cl-26*) (export (X) (f X))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &failing.program);
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
@@ -712,7 +715,7 @@ mod tests {
     #[test]
     fn missing_metadata_does_not_consume_token() {
         reset();
-        let artifact = compiled("(mod (X) (include *standard-cl-23*) (f X))");
+        let artifact = compiled("(include *standard-cl-26*) (export (X) (f X))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &artifact.program);
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
@@ -727,7 +730,7 @@ mod tests {
 
     #[test]
     fn metadata_collection_rejects_duplicate_identity_and_malformed_bytes() {
-        let artifact = compiled("(mod () (include *standard-cl-23*) ())");
+        let artifact = compiled("(include *standard-cl-26*) (export () ())");
         let mut collection = DebugMetadataCollection::default();
         collection.insert(&artifact.metadata).unwrap();
         assert!(collection
@@ -742,11 +745,11 @@ mod tests {
         reset();
         let outer = compiled_named(
             "outer.clsp",
-            "(mod (PROGRAM ARGS) (include *standard-cl-23*) (a PROGRAM ARGS))",
+            "(include *standard-cl-26*) (export (PROGRAM ARGS) (a PROGRAM ARGS))",
         );
         let inner = compiled_named(
             "inner.clsp",
-            "(mod (X) (include *standard-cl-23*) (defun fail (Y) (f Y)) (fail X))",
+            "(include *standard-cl-26*) (defun fail (Y) (f Y)) (export (X) (fail X))",
         );
         let mut allocator = Allocator::new();
         let outer_program = decode(&mut allocator, &outer.program);
@@ -768,7 +771,7 @@ mod tests {
     #[test]
     fn native_sidecar_helper_loads_only_when_explicitly_diagnosing() {
         reset();
-        let artifact = compiled("(mod (X) (include *standard-cl-23*) (f X))");
+        let artifact = compiled("(include *standard-cl-26*) (export (X) (f X))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &artifact.program);
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();

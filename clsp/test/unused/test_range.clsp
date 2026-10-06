@@ -1,6 +1,6 @@
-(mod (X)
-  (include *standard-cl-21*)
-  (include range.clinc)
+(include *standard-cl-26*)
+(import std.range)
 
+(export (X)
   (range X)
   )
