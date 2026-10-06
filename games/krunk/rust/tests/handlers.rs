@@ -1055,9 +1055,9 @@ fn test_krunk_bob_invalid_guess_slashes_through_referee() {
         .collect::<Vec<_>>();
     assert!(
         traces.iter().any(|trace| {
-            trace.contains("CLVM stack trace")
-                && trace.contains("referee.clsp:")
-                && trace.contains("MOVE:")
+            trace.starts_with("CLVM error: clvm raise\n  File ")
+                && trace.contains("referee.clsp\", line ")
+                && trace.contains("MOVE = \"xyzzy\"")
         }),
         "expected a symbolized active referee frame with Krunk move parameters: {traces:#?}"
     );
