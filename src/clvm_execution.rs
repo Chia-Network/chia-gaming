@@ -318,7 +318,7 @@ pub(crate) fn run_clvm_probe_with_runtime_prints(
 
 fn diagnostic_failure(record: &DiagnosticRecord, reason: impl fmt::Display) -> String {
     format!(
-        "CLVM diagnostic failed: {reason}\noriginal EvalErr: {}",
+        "original EvalErr: {}\nCLVM diagnostic failed: {reason}",
         record.original_error
     )
 }
@@ -383,7 +383,7 @@ fn diagnose_record(record: DiagnosticRecord, metadata: &DebugMetadataCollection)
             .join("\n")
     };
     format!(
-        "CLVM stack trace (most recent call last):\n{stack}\noriginal EvalErr: {}",
+        "original EvalErr: {}\nCLVM stack trace (most recent call last):\n{stack}",
         record.original_error
     )
 }
@@ -571,7 +571,7 @@ mod tests {
         assert!(diagnostic.contains("<main>()"), "{diagnostic}");
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
         assert!(diagnostic.contains("diagnostic.clsp:"), "{diagnostic}");
-        assert!(diagnostic.contains("original EvalErr: path into atom"));
+        assert!(diagnostic.starts_with("original EvalErr: path into atom\n"));
         assert_eq!(diagnostic_registry_len(), 0);
         assert!(diagnose_clvm(token, &metadata).contains("retired token"));
     }
@@ -662,7 +662,7 @@ mod tests {
         let error = run_clvm(&mut allocator, program, NodePtr::NIL, 1_000_000).unwrap_err();
         let diagnostic = diagnose_clvm(token(&error), &metadata(&[&other.metadata]));
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.contains("original EvalErr: path into atom"));
+        assert!(diagnostic.starts_with("original EvalErr: path into atom\n"));
     }
 
     #[test]
@@ -692,7 +692,7 @@ mod tests {
         let diagnostic = diagnose_clvm(token, &metadata(&[&artifact.metadata]));
         assert!(diagnostic.contains("CLVM stack trace"), "{diagnostic}");
         assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
-        assert!(diagnostic.contains("original EvalErr: path into atom"));
+        assert!(diagnostic.starts_with("original EvalErr: path into atom\n"));
     }
 
     #[test]
