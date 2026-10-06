@@ -29,8 +29,10 @@ describe('submission controller handoff and quiescence', () => {
       expect(controller.recordClvmDiagnostic('before runtime')).toBe(false);
       commitRuntime(controller, runtime);
 
+      const requestCommit = jest.spyOn(runtime, 'requestCommit');
       expect(controller.recordClvmDiagnostic('consensus CLVM trace')).toBe(true);
       expect(controller.diagnosticLog).toEqual(['consensus CLVM trace']);
+      expect(requestCommit).toHaveBeenCalledTimes(1);
     } finally {
       controller.cleanup();
     }

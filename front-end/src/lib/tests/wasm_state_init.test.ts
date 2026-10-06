@@ -213,6 +213,56 @@ describe('WasmStateInit lazy load', () => {
     }
   });
 
+  it.each(['fetch', 'cache'] as const)(
+    'retries a failed %s without recaching successful sidecars',
+    async (failure) => {
+      const wasm = mockWasm();
+      let recovered = false;
+      const cached = new Set<string>();
+      (wasm.cache_debug_metadata as jest.Mock).mockImplementation((name: string) => {
+        if (cached.has(name)) throw new Error('duplicate sidecar');
+        if (!recovered && failure === 'cache' && name === DEBUG_PRESET_FILES[1]) {
+          throw new Error('temporary cache failure');
+        }
+        cached.add(name);
+      });
+      const fetchPreset = jest.fn(async (name: string) => {
+        if (!recovered && failure === 'fetch' && name.endsWith('.debug.clvm.bin')) {
+          throw new Error('temporary fetch failure');
+        }
+        return new Uint8Array([1]);
+      });
+      const error = Object.assign(new Error('operation failed'), {
+        clvmDiagnosticToken: 'clvm-first',
+      });
+      (wasm as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => {
+        throw error;
+      });
+      new WasmStateInit(fetchPreset);
+      storeInitArgs(
+        jest.fn(async () => {}),
+        wasm,
+      );
+      const connection = await ensureWasmLoaded();
+      expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(error);
+      await _drainClvmDiagnosticsForTests();
+      expect(wasm.diagnose_clvm).not.toHaveBeenCalled();
+      recovered = true;
+      error.clvmDiagnosticToken = 'clvm-retry';
+      expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(error);
+      await _drainClvmDiagnosticsForTests();
+      expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-retry');
+      expect(cached.size).toBe(DEBUG_PRESET_FILES.length);
+      for (const name of cached) {
+        expect(
+          (wasm.cache_debug_metadata as jest.Mock).mock.calls.filter(
+            ([cachedName]) => cachedName === name,
+          ).length,
+        ).toBe(name === DEBUG_PRESET_FILES[1] && failure === 'cache' ? 2 : 1);
+      }
+    },
+  );
+
   it.each(['fetch', 'malformed'] as const)(
     '%s diagnostic failure preserves the operation error and logs the diagnostic failure',
     async (failure) => {

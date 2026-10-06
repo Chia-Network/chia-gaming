@@ -25,6 +25,7 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
 let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
 let loadPromise: Promise<WasmConnection> | null = null;
 let debugMetadataPromise: Promise<void> | null = null;
+const cachedDebugMetadataFiles = new Set<string>();
 let diagnosticConnections = new WeakMap<WasmConnection, WasmConnection>();
 const pendingDiagnosticTokens = new Set<string>();
 const diagnosticTasks = new Set<Promise<void>>();
@@ -43,11 +44,18 @@ function loadDebugMetadata(wasm: WasmConnection): Promise<void> {
         name,
         content: await presetFetcher(name),
       })),
-    ).then((sidecars) => {
-      for (const { name, content } of sidecars) {
-        wasm.cache_debug_metadata(name, content);
-      }
-    });
+    )
+      .then((sidecars) => {
+        for (const { name, content } of sidecars) {
+          if (cachedDebugMetadataFiles.has(name)) continue;
+          wasm.cache_debug_metadata(name, content);
+          cachedDebugMetadataFiles.add(name);
+        }
+      })
+      .catch((error) => {
+        debugMetadataPromise = null;
+        throw error;
+      });
   }
   return debugMetadataPromise;
 }
@@ -221,6 +229,7 @@ export function _resetWasmLoadForTests(): void {
   cg = undefined;
   presetFetcher = fetchDeployPreset;
   debugMetadataPromise = null;
+  cachedDebugMetadataFiles.clear();
   pendingDiagnosticTokens.clear();
   diagnosticTasks.clear();
   diagnosticConnections = new WeakMap<WasmConnection, WasmConnection>();

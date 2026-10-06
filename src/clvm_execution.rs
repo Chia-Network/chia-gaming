@@ -564,6 +564,7 @@ mod tests {
         let diagnostic = diagnose_clvm(token, &metadata);
         assert!(diagnostic.contains("CLVM error:"));
         assert!(diagnostic.contains("in <main>"), "{diagnostic}");
+        assert_eq!(diagnostic.matches("\n  File ").count(), 2, "{diagnostic}");
         let leaf = diagnostic.rsplit("\n  File ").next().unwrap();
         assert!(
             leaf.starts_with("\"diagnostic.clsp\", line 1, column 69\n"),
@@ -705,7 +706,10 @@ mod tests {
     #[test]
     fn non_first_sidecar_owns_the_failure_program() {
         reset();
-        let other = compiled("(include *standard-cl-26*) (export (X) (+ X 1))");
+        let other = compiled_named(
+            "other.clsp",
+            "(include *standard-cl-26*) (export (X) (+ X 1))",
+        );
         let failing = compiled("(include *standard-cl-26*) (export (X) (f X))");
         let mut allocator = Allocator::new();
         let program = decode(&mut allocator, &failing.program);
@@ -720,6 +724,7 @@ mod tests {
             diagnostic.contains("File \"diagnostic.clsp\", line "),
             "{diagnostic}"
         );
+        assert!(!diagnostic.contains("other.clsp"), "{diagnostic}");
     }
 
     #[test]

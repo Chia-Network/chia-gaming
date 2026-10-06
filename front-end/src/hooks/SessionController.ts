@@ -422,6 +422,7 @@ export class SessionController implements PollingGameSession {
     if (!runtime || this.retired || this.terminalSealed) return false;
     runtime.enqueue(() => {
       this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, line);
+      runtime.requestCommit();
     });
     return true;
   }
