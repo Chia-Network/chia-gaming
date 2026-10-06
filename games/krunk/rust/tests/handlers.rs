@@ -3,7 +3,6 @@
 use crate::channel_state::game_handler::{GameHandler, MyTurnInputs};
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{Evidence, ReadableMove, ValidationProgramRegistry};
-use crate::clvm_execution::{diagnose_clvm, DebugMetadataCollection};
 use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::standard_coin::{sign_reward_payout, ChiaIdentity};
@@ -1031,42 +1030,9 @@ fn test_krunk_bob_invalid_guess_slashes_through_referee() {
         "signed dictionary evidence should slash before continuation agreement"
     );
 
-    let diagnostics = allocator.drain_clvm_diagnostics().collect::<Vec<_>>();
     assert!(
-        !diagnostics.is_empty(),
-        "failed validator probes should emit nonfatal diagnostics"
-    );
-    let mut metadata = DebugMetadataCollection::default();
-    metadata
-        .insert(
-            &fs::read("games/krunk/clsp/onchain/commit.debug.clvm.bin")
-                .expect("Krunk commit debug sidecar"),
-        )
-        .expect("valid Krunk commit debug sidecar");
-    metadata
-        .insert(
-            &fs::read("clsp/referee/onchain/referee.debug.clvm.bin")
-                .expect("referee debug sidecar"),
-        )
-        .expect("valid referee debug sidecar");
-    let traces = diagnostics
-        .into_iter()
-        .map(|token| diagnose_clvm(token, &metadata))
-        .collect::<Vec<_>>();
-    assert!(
-        traces.iter().any(|trace| {
-            trace.starts_with("Traceback (most recent call last):\n  File ")
-                && trace.ends_with("CLVM error: clvm raise")
-                && trace.contains("referee.clsp\", line ")
-                && trace.contains("MOVE = \"xyzzy\"")
-        }),
-        "expected a symbolized active referee frame with Krunk move parameters: {traces:#?}"
-    );
-    assert!(
-        traces
-            .iter()
-            .all(|trace| !trace.contains("frame value does not match destructured parameter")),
-        "captured Krunk frames must decode without the old replay mismatch: {traces:#?}"
+        allocator.drain_clvm_diagnostics().next().is_none(),
+        "expected evidence-probe failures must not emit stack diagnostics"
     );
 }
 

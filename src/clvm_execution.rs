@@ -296,24 +296,16 @@ fn run_clvm_with_runtime_prints_and_capture(
     }
 }
 
-/// Execute a CLVM probe whose failure is an expected negative result. Failed
-/// probes retain their diagnostic token so the host can render a nonfatal
-/// stack trace after lazily loading metadata.
+/// Execute an evidence probe whose failure is an expected negative result.
+/// Preserve explicit runtime prints, but do not capture or publish a stack for
+/// the normal case where evidence does not slash the move.
 pub(crate) fn run_clvm_probe_with_runtime_prints(
     encoder: &mut AllocEncoder,
     program: NodePtr,
     environment: NodePtr,
     max_cost: u64,
 ) -> bool {
-    match run_clvm_with_runtime_prints(encoder, program, environment, max_cost) {
-        Ok(_) => true,
-        Err(error) => {
-            if let Some(token) = error.diagnostic_token() {
-                encoder.push_clvm_diagnostic(token);
-            }
-            false
-        }
-    }
+    run_clvm_with_runtime_prints_and_capture(encoder, program, environment, max_cost, false).is_ok()
 }
 
 fn diagnostic_failure(record: &DiagnosticRecord, reason: impl fmt::Display) -> String {
@@ -531,22 +523,39 @@ mod tests {
     }
 
     #[test]
-    fn failed_probe_retains_nonfatal_diagnostic_token() {
+    fn expected_probe_failure_is_quiet_without_discarding_explicit_prints() {
         reset();
-        let artifact =
-            compiled("(include *standard-cl-26*) (defun fail (Y) (f Y)) (export (X) (fail X))");
         let mut encoder = AllocEncoder::new();
-        let program = decode(encoder.allocator(), &artifact.program);
-
+        let program = assemble(
+            encoder.allocator(),
+            r#"(c
+                ("not_an_operator")
+                ("debug_print" (q . "game.rue:4:5") (q . "before probe"))
+            )"#,
+        )
+        .unwrap();
         assert!(!run_clvm_probe_with_runtime_prints(
             &mut encoder,
             program,
             NodePtr::NIL,
             1_000_000,
         ));
-        let tokens = encoder.drain_clvm_diagnostics().collect::<Vec<_>>();
-        assert_eq!(tokens.len(), 1);
-        assert!(diagnose_clvm(tokens[0], &metadata(&[&artifact.metadata])).contains("CLVM error:"));
+        assert!(encoder.drain_clvm_diagnostics().next().is_none());
+        assert_eq!(diagnostic_registry_len(), 0);
+        assert_eq!(frame_serializations_for_test(), 0);
+        assert_eq!(
+            encoder.drain_runtime_prints(),
+            vec!["[clvm-print] game.rue:4:5: \"before probe\""]
+        );
+        assert!(encoder.drain_runtime_prints().is_empty());
+        let success = assemble(encoder.allocator(), "(q . 5)").unwrap();
+        assert!(run_clvm_probe_with_runtime_prints(
+            &mut encoder,
+            success,
+            NodePtr::NIL,
+            1_000_000
+        ));
+        assert_eq!(diagnostic_registry_len(), 0);
     }
 
     #[test]
