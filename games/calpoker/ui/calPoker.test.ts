@@ -177,6 +177,15 @@ describe('Calpoker bigint domain helpers', () => {
     );
   });
 
+  it.each([
+    [[5n, 14n], 'Royal flush'],
+    [[5n, 13n], 'Straight flush, King High'],
+    [[5n, 5n], 'Straight flush, Five High'],
+    [[3n, 1n, 2n, 14n], 'Straight, Ace High'],
+  ] as const)('labels poker hand %s as %s', (value, expected) => {
+    expect(makeDescription(handValueToDescription([...value], []))).toBe(expected);
+  });
+
   it('does not auto-fire final reveal after hand is already finished', () => {
     expect(shouldAutoFireCalpokerMove(true, true, 2n)).toBe(false);
     expect(shouldAutoFireCalpokerMove(false, true, 2n)).toBe(true);
