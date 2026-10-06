@@ -228,6 +228,7 @@ function makeCallbacks(presence?: {
     }),
     onHubReconnected: jest.fn(),
     onHubActivity: jest.fn(),
+    onHubKeepalive: jest.fn(),
     getPresence: jest.fn(() => presence ?? { busy: false }),
     onClosed: jest.fn(),
   };
@@ -377,6 +378,7 @@ describe('event routing', () => {
     expect(cb.onHubAttention).toHaveBeenCalledTimes(1);
     expect(cb.onClosed).toHaveBeenCalledTimes(1);
     expect(cb.onHubActivity).toHaveBeenCalledTimes(3);
+    expect(cb.onHubKeepalive).toHaveBeenCalledTimes(1);
   });
 
   it('rejects old verbose discriminator and tags', async () => {

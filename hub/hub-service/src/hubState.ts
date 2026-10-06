@@ -46,7 +46,6 @@ export class Hub {
     targetAmount: string,
     channel_timeout?: string,
     unroll_timeout?: string,
-    createdAt = Date.now(),
   ): Challenge {
     const pairKey = this.challengePairKey(fromId, targetId);
     if (this.challengeByPair.has(pairKey)) {
@@ -60,7 +59,6 @@ export class Hub {
       target_amount: targetAmount,
       channel_timeout,
       unroll_timeout,
-      created_at: createdAt,
     };
     this.challenges.set(challenge.id, challenge);
     this.challengeByPair.set(pairKey, challenge.id);
@@ -79,16 +77,6 @@ export class Hub {
 
   countChallengesFrom(playerId: string): number {
     return this.challengeCountBySender.get(playerId) ?? 0;
-  }
-
-  removeExpiredChallenges(now: number, ttlMs: number): Challenge[] {
-    const expired: Challenge[] = [];
-    for (const [id, challenge] of this.challenges) {
-      if (now - challenge.created_at < ttlMs) continue;
-      this.removeChallenge(id);
-      expired.push(challenge);
-    }
-    return expired;
   }
 
   removeChallenge(challengeId: string) {

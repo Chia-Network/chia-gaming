@@ -153,6 +153,60 @@ describe('SessionMachineRuntime quiescent projection', () => {
     expect(render).not.toHaveBeenCalled();
   });
 
+  it('persists and releases peer work without waiting for browser timers', async () => {
+    // Model browser message tasks separately from suspended timer tasks.
+    let messageTask: (() => void) | null = null;
+    class FakeMessageChannel {
+      port1 = { onmessage: null as (() => void) | null, close: jest.fn() };
+      port2 = {
+        close: jest.fn(),
+        postMessage: () => {
+          messageTask = () => this.port1.onmessage?.();
+        },
+      };
+    }
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { MessageChannel: FakeMessageChannel },
+    });
+    try {
+      const order: string[] = [];
+      const mockController = controller(jest.fn());
+      (mockController.completeReliableCommit as jest.Mock).mockImplementation(() =>
+        order.push('peer-send'),
+      );
+      const runtime = new SessionMachineRuntime(initialState(), {
+        controller: mockController,
+        iStarted: false,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        onError: jest.fn(),
+        persist: async () => {
+          order.push('persist');
+        },
+      });
+      runtime.activate();
+      runtime.activatePersistence();
+      runtime.setRender(() => order.push('render'));
+      runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
+      expect(order).toEqual([]);
+      expect(messageTask).not.toBeNull();
+      (messageTask as unknown as () => void)();
+      for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+      expect(order).toEqual(['persist', 'render', 'peer-send']);
+      runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
+      runtime.retire();
+      (messageTask as unknown as () => void)();
+      for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+      expect(order).toEqual(['persist', 'render', 'peer-send']);
+    } finally {
+      if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
+
   it('orders persistence before projection and staged peer release', async () => {
     const order: string[] = [];
     const mockController = controller(jest.fn());
@@ -363,9 +417,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.setRender((state) => rendered.push(state));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
-    jest.runOnlyPendingTimers();
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
     expect(persist).toHaveBeenCalledTimes(1);
     expect(reportDurabilityError).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveLength(2);

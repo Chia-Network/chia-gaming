@@ -23,6 +23,27 @@ import {
   type RegisteredGameHand,
 } from '../gameRegistry';
 
+// Preserve task-level batching, but avoid timer throttling in browser tabs.
+function scheduleCommitTask(task: () => void): () => void {
+  if (typeof window !== 'undefined' && typeof window.MessageChannel === 'function') {
+    const channel = new window.MessageChannel();
+    const cancel = () => {
+      channel.port1.onmessage = null;
+      channel.port1.close();
+      channel.port2.close();
+    };
+    channel.port1.onmessage = () => {
+      cancel();
+      task();
+    };
+    channel.port2.postMessage(null);
+    return cancel;
+  }
+  const timer = setTimeout(task, 0);
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  return () => clearTimeout(timer);
+}
+
 export interface SessionMachineRuntimeDependencies {
   controller: SessionController;
   iStarted: boolean;
@@ -146,7 +167,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private durabilityDegraded = false;
   private projectionPending = false;
   private projecting = false;
-  private commitTimer: ReturnType<typeof setTimeout> | null = null;
+  private cancelCommitTask: (() => void) | null = null;
   private commitPromise: Promise<void> = Promise.resolve();
   private readonly persistOverride?: (state: SessionMachineState) => Promise<void>;
   private readonly onError: (error: unknown) => void;
@@ -219,10 +240,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
   retire(): void {
     if (this.retired) return;
     this.retired = true;
-    if (this.commitTimer !== null) {
-      clearTimeout(this.commitTimer);
-      this.commitTimer = null;
-    }
+    this.cancelCommitTask?.();
+    this.cancelCommitTask = null;
     const error = new SessionRuntimeRetiredError();
     for (const work of this.pendingControllerWork.splice(0)) {
       if (work.kind === 'result') work.reject(error);
@@ -533,14 +552,12 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       }
       return;
     }
-    if (this.committing || this.draining || this.commitTimer !== null) return;
-    this.commitTimer = setTimeout(() => {
-      this.commitTimer = null;
+    if (this.committing || this.draining || this.cancelCommitTask !== null) return;
+    // Background throttling must not delay the save that releases messages/ACKs.
+    this.cancelCommitTask = scheduleCommitTask(() => {
+      this.cancelCommitTask = null;
       this.startCommit();
-    }, 0);
-    if (typeof this.commitTimer === 'object' && 'unref' in this.commitTimer) {
-      this.commitTimer.unref();
-    }
+    });
   }
 
   private startCommit(): void {
@@ -724,10 +741,8 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       this.scheduleCommit(false);
       return;
     }
-    if (this.commitTimer !== null) {
-      clearTimeout(this.commitTimer);
-      this.commitTimer = null;
-    }
+    this.cancelCommitTask?.();
+    this.cancelCommitTask = null;
     if (
       !this.committing &&
       (this.durabilityDirty || this.projectionPending || this.pendingEvents.length > 0)

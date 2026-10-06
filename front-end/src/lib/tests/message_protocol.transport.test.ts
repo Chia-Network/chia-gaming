@@ -733,6 +733,26 @@ describe('duplicate detection', () => {
 });
 
 describe('keepalive activity', () => {
+  it('sends on a server heartbeat while browser timers are suspended, and stops on cleanup', () => {
+    jest.useFakeTimers();
+    const { blob } = createReadyBlob();
+    const send = jest.fn();
+    blob.setPeerKeepalive(send);
+    try {
+      // Move wall-clock time without executing the browser interval.
+      jest.setSystemTime(Date.now() + 60_000);
+      expect(send).not.toHaveBeenCalled();
+      blob.sendPeerKeepalive();
+      expect(send).toHaveBeenCalledTimes(1);
+      blob.cleanup();
+      blob.sendPeerKeepalive();
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      blob.cleanup();
+      jest.useRealTimers();
+    }
+  });
+
   it('does not retransmit unacked outbound when a peer keepalive arrives', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
