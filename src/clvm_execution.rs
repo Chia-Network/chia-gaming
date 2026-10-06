@@ -564,7 +564,16 @@ mod tests {
         let diagnostic = diagnose_clvm(token, &metadata);
         assert!(diagnostic.contains("CLVM error:"));
         assert!(diagnostic.contains("in <main>"), "{diagnostic}");
-        assert!(diagnostic.contains("<unknown:"), "{diagnostic}");
+        let leaf = diagnostic.rsplit("\n  File ").next().unwrap();
+        assert!(
+            leaf.starts_with("\"diagnostic.clsp\", line 1, column 69\n"),
+            "{diagnostic}"
+        );
+        assert!(
+            !leaf.contains("in ") && !leaf.contains(" = "),
+            "{diagnostic}"
+        );
+        assert!(leaf.contains('^'), "{diagnostic}");
         assert!(
             diagnostic.contains("File \"diagnostic.clsp\", line "),
             "{diagnostic}"
