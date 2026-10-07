@@ -787,53 +787,106 @@ describe('Calpoker terminal hand projection', () => {
     ).toBe(GAME_STATES.FINAL);
   });
 
-  it('reprojects a saved ace-high straight flush as a Royal flush on restore', () => {
-    const outcome: CalpokerOutcomeView = {
-      my_win_outcome: 'win',
-      my_cards: ['2', '6', '9', '13', '32', '36', '41', '49'],
-      their_cards: ['3', '7', '10', '14', '33', '37', '42', '50'],
-      my_final_hand: ['2', '6', '9', '13', '32'],
-      their_final_hand: ['3', '7', '10', '14', '33'],
-      my_used_cards: ['2', '6', '9', '13', '32'],
-      their_used_cards: ['3', '7', '10', '14', '33'],
-      my_hand_value: ['5', '14'],
-      their_hand_value: ['1', '1', '1', '1', '1', '13', '9', '8', '4', '3'],
-    };
-    const props: CaliforniapokerProps = {
-      outcome,
-      moveNumber: '2',
-      playerNumber: 1,
-      playerHand: ['2', '6', '9', '13', '32', '36', '41', '49'],
-      opponentHand: ['3', '7', '10', '14', '33', '37', '42', '50'],
+  it('reprojects a cold-restored ace-high straight flush when outcome is withheld', () => {
+    const playerHand = [2n, 6n, 9n, 13n, 32n, 36n, 41n, 49n];
+    const opponentHand = [3n, 7n, 10n, 14n, 33n, 37n, 42n, 50n];
+    const saved: CalpokerHandState = {
+      perPlayerStake: 100n,
+      playerHand,
+      opponentHand,
       cardSelections: [],
-      setCardSelections: () => {},
-      setHandOrder: () => {},
-      handleMakeMove: () => {},
-      onGameLog: () => {},
-      onSnapshotChange: () => {},
-      initialSnapshot: {
+      moveNumber: 2n,
+      isPlayerTurn: false,
+      iStarted: true,
+      settlementOutcome: null,
+      outcome: {
+        my_win_outcome: 'win',
+        my_cards: playerHand,
+        their_cards: opponentHand,
+        my_final_hand: [2n, 6n, 9n, 13n, 32n],
+        their_final_hand: [3n, 7n, 10n, 14n, 33n],
+        my_used_cards: [2n, 6n, 9n, 13n, 32n],
+        their_used_cards: [3n, 7n, 10n, 14n, 33n],
+        my_hand_value: [5n, 14n],
+        their_hand_value: [1n, 1n, 1n, 1n, 1n, 13n, 9n, 8n, 4n, 3n],
+      },
+      displaySnapshot: {
         gameState: GAME_STATES.FINAL,
         winner: 'player',
-        playerBestHandCardIds: ['2', '6', '9', '13', '32'],
-        opponentBestHandCardIds: ['3', '7', '10', '14', '33'],
-        playerHaloCardIds: ['36', '41', '49'],
-        opponentHaloCardIds: ['37', '42', '50'],
-        // Stale text persisted before royal flushes were recognized.
+        playerBestHandCardIds: [2n, 6n, 9n, 13n, 32n],
+        opponentBestHandCardIds: [3n, 7n, 10n, 14n, 33n],
+        playerHaloCardIds: [36n, 41n, 49n],
+        opponentHaloCardIds: [37n, 42n, 50n],
         playerDisplayText: 'Straight flush, Ace High',
-        opponentDisplayText: 'King high. Nine, Eight, Four, Three kickers',
+        opponentDisplayText: 'Pair, Twos',
       },
-      myName: 'Bob',
-      opponentName: 'Alice',
-      terminalOutcome: null,
-      frozen: true,
     };
+    const hand = restoreCalpokerHand(saved);
+    let restoredOutcome: ReturnType<typeof useCalpokerHand>['outcome'] | 'missing' = 'missing';
+
+    function ColdRestore() {
+      const restored = useCalpokerHand({
+        frozen: true,
+        hand,
+        myName: 'Bob',
+        opponentName: 'Alice',
+      });
+      restoredOutcome = restored.outcome;
+      const snapshot = restored.initialDisplaySnapshot;
+      const outcome = restored.outcome;
+      return React.createElement(CaliforniaPoker, {
+        outcome: outcome && {
+          my_win_outcome: outcome.my_win_outcome,
+          my_cards: outcome.my_cards.map(String),
+          their_cards: outcome.their_cards.map(String),
+          my_final_hand: outcome.my_final_hand.map(String),
+          their_final_hand: outcome.their_final_hand.map(String),
+          my_used_cards: outcome.my_used_cards.map(String),
+          their_used_cards: outcome.their_used_cards.map(String),
+          my_hand_value: outcome.my_hand_value.map(String),
+          their_hand_value: outcome.their_hand_value.map(String),
+        },
+        moveNumber: String(restored.moveNumber),
+        playerNumber: 1,
+        playerHand: restored.playerHand.map(String),
+        opponentHand: restored.opponentHand.map(String),
+        cardSelections: restored.cardSelections.map(String),
+        setCardSelections: () => {},
+        setHandOrder: () => {},
+        handleMakeMove: restored.handleMakeMove,
+        onGameLog: () => {},
+        onSnapshotChange: () => {},
+        initialSnapshot: snapshot && {
+          ...snapshot,
+          playerBestHandCardIds: snapshot.playerBestHandCardIds.map(String),
+          opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(String),
+          playerHaloCardIds: snapshot.playerHaloCardIds.map(String),
+          opponentHaloCardIds: snapshot.opponentHaloCardIds.map(String),
+        },
+        myName: 'Bob',
+        opponentName: 'Alice',
+        terminalOutcome: restored.terminalOutcome,
+        frozen: true,
+      });
+    }
 
     act(() => {
-      renderer = create(React.createElement(CaliforniaPoker, props));
+      renderer = create(React.createElement(ColdRestore));
     });
 
+    expect(restoredOutcome).toBeUndefined();
     const markup = JSON.stringify(renderer!.toJSON());
     expect(markup).toContain('Bob wins (Royal flush)');
+    expect(markup).toContain('Alice loses (King high. Nine, Eight, Four, Three kickers)');
     expect(markup).not.toContain('Straight flush, Ace High');
+    expect(markup).not.toContain('Pair, Twos');
+    expect(
+      renderer!.root.findAll((node) => node.props['data-moving-card'] === 'true'),
+    ).toHaveLength(0);
+    expect(
+      renderer!.root.find((node) => node.props['data-calpoker-game-state'] !== undefined).props[
+        'data-calpoker-game-state'
+      ],
+    ).toBe(GAME_STATES.FINAL);
   });
 });
