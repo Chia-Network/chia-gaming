@@ -1,5 +1,5 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { useEffect, type ReactElement } from 'react';
+import { Profiler, useEffect, type ReactElement } from 'react';
 import { SETUP_2048_SLIDE_MS, Setup2048Provider } from '../../components/Setup2048';
 import { SessionTransitionSurface } from '../../components/SessionTransitionSurface';
 import type { Setup2048Direction } from '../setup2048';
@@ -150,6 +150,33 @@ describe('setup challenge UI', () => {
     const moved = board();
     act(() => renderer.update(render(true)));
     expect(board()).toEqual(moved);
+  });
+
+  it('never commits the previous board when a new attempt becomes visible', () => {
+    const committedBoards: string[][] = [];
+    let recording = false;
+    const attempt = (attemptKey: string) => (
+      <Setup2048Provider attemptKey={attemptKey}>
+        <Profiler
+          id="setup-board"
+          onRender={() => {
+            if (recording) committedBoards.push(board());
+          }}
+        >
+          <SessionTransitionSurface />
+        </Profiler>
+      </Setup2048Provider>
+    );
+    act(() => {
+      renderer = mount(attempt('first'));
+    });
+    const fresh = board();
+    move('left');
+    expect(board()).not.toEqual(fresh);
+    recording = true;
+    act(() => renderer.update(attempt('second')));
+    expect(committedBoards.length).toBeGreaterThan(0);
+    for (const committed of committedBoards) expect(committed).toEqual(fresh);
   });
 
   it('resets an attempt mid-animation without remounting the session or applying a stale move', () => {

@@ -12,18 +12,19 @@ import { Button } from './button';
 export const SETUP_2048_SLIDE_MS = 150;
 type Tile = { id: number; index: number; value: number; appearance?: 'new' | 'merged' };
 type Game = {
+  attemptKey: string | null;
   board: Setup2048Board;
   tiles: Tile[];
   nextId: number;
   pending: { board: Setup2048Board; tiles: Tile[]; nextId: number } | null;
 };
 
-function freshGame(): Game {
+function freshGame(attemptKey: string | null): Game {
   const board = newSetup2048Board();
   const tiles = board.flatMap((value, index) =>
     value ? [{ id: index, index, value, appearance: 'new' as const }] : [],
   );
-  return { board, tiles, nextId: 6, pending: null };
+  return { attemptKey, board, tiles, nextId: 6, pending: null };
 }
 
 function finishTiles(board: Setup2048Board, movedTiles: Tile[], nextId: number) {
@@ -50,13 +51,10 @@ export function Setup2048Provider({
   children: ReactNode;
   attemptKey: string | null;
 }) {
-  const [game, setGame] = useState<Game>(freshGame);
-  const previousAttempt = useRef(attemptKey);
-  useEffect(() => {
-    if (previousAttempt.current === attemptKey) return;
-    previousAttempt.current = attemptKey;
-    setGame(freshGame());
-  }, [attemptKey]);
+  const [game, setGame] = useState<Game>(() => freshGame(attemptKey));
+  // Reset this provider before rendering children, so a new attempt cannot
+  // commit the previous board. Keep the session children mounted.
+  if (game.attemptKey !== attemptKey) setGame(freshGame(attemptKey));
   const pending = game.pending;
   useEffect(() => {
     if (!pending) return;
@@ -83,7 +81,7 @@ export function Setup2048Provider({
       return { ...current, tiles, pending: finishTiles(board, tiles, current.nextId) };
     });
   };
-  const restart = () => setGame(freshGame());
+  const restart = () => setGame(freshGame(attemptKey));
   return (
     <Setup2048Context.Provider value={{ game, move, restart }}>
       {children}
