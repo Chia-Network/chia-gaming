@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 @source '../../games';
 @import './generated/gameStyles.css';
+@import './components/setup2048.css';
 @custom-variant dark (&:is(.dark *));
 /* LIGHT THEME */
 :root {
