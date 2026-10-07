@@ -90,9 +90,10 @@ export function handValueToDescription(handValue: bigint[], _myCards: bigint[]):
   }
 
   if (handType[0] === 5n) {
+    const highCard = aget(handValue, 1, 0n);
     return {
-      name: 'Straight flush',
-      values: [aget(handValue, 1, 0n)],
+      name: highCard === 14n ? 'Royal flush' : 'Straight flush',
+      values: [highCard],
     };
   }
 

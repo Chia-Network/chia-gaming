@@ -25,6 +25,7 @@ import {
 } from './serialize';
 import { testStateCodec } from '../../testStateCodec';
 import CaliforniaPoker from './components/CaliforniaPoker';
+import { makeDescription } from './components/utils';
 import {
   GAME_STATES,
   PRE_SWAP_REVEAL_DURATION,
@@ -146,6 +147,34 @@ describe('Calpoker bigint domain helpers', () => {
       name: 'Pair',
       values: [14n, 13n, 12n, 11n],
     });
+  });
+
+  it('names an ace-high straight flush a Royal flush', () => {
+    expect(handValueToDescription([5n, 14n], [0n])).toEqual({
+      name: 'Royal flush',
+      values: [14n],
+    });
+  });
+
+  it('keeps lower straight flushes as straight flushes', () => {
+    expect(handValueToDescription([5n, 13n], [0n])).toEqual({
+      name: 'Straight flush',
+      values: [13n],
+    });
+    expect(handValueToDescription([5n, 5n], [0n])).toEqual({
+      name: 'Straight flush',
+      values: [5n],
+    });
+  });
+
+  it('renders royal and straight flush headers distinctly', () => {
+    expect(makeDescription(handValueToDescription([5n, 14n], [0n]))).toBe('Royal flush');
+    expect(makeDescription(handValueToDescription([5n, 13n], [0n]))).toBe(
+      'Straight flush, King High',
+    );
+    expect(makeDescription(handValueToDescription([5n, 5n], [0n]))).toBe(
+      'Straight flush, Five High',
+    );
   });
 
   it('does not auto-fire final reveal after hand is already finished', () => {
@@ -756,5 +785,55 @@ describe('Calpoker terminal hand projection', () => {
         'data-calpoker-game-state'
       ],
     ).toBe(GAME_STATES.FINAL);
+  });
+
+  it('reprojects a saved ace-high straight flush as a Royal flush on restore', () => {
+    const outcome: CalpokerOutcomeView = {
+      my_win_outcome: 'win',
+      my_cards: ['2', '6', '9', '13', '32', '36', '41', '49'],
+      their_cards: ['3', '7', '10', '14', '33', '37', '42', '50'],
+      my_final_hand: ['2', '6', '9', '13', '32'],
+      their_final_hand: ['3', '7', '10', '14', '33'],
+      my_used_cards: ['2', '6', '9', '13', '32'],
+      their_used_cards: ['3', '7', '10', '14', '33'],
+      my_hand_value: ['5', '14'],
+      their_hand_value: ['1', '1', '1', '1', '1', '13', '9', '8', '4', '3'],
+    };
+    const props: CaliforniapokerProps = {
+      outcome,
+      moveNumber: '2',
+      playerNumber: 1,
+      playerHand: ['2', '6', '9', '13', '32', '36', '41', '49'],
+      opponentHand: ['3', '7', '10', '14', '33', '37', '42', '50'],
+      cardSelections: [],
+      setCardSelections: () => {},
+      setHandOrder: () => {},
+      handleMakeMove: () => {},
+      onGameLog: () => {},
+      onSnapshotChange: () => {},
+      initialSnapshot: {
+        gameState: GAME_STATES.FINAL,
+        winner: 'player',
+        playerBestHandCardIds: ['2', '6', '9', '13', '32'],
+        opponentBestHandCardIds: ['3', '7', '10', '14', '33'],
+        playerHaloCardIds: ['36', '41', '49'],
+        opponentHaloCardIds: ['37', '42', '50'],
+        // Stale text persisted before royal flushes were recognized.
+        playerDisplayText: 'Straight flush, Ace High',
+        opponentDisplayText: 'King high. Nine, Eight, Four, Three kickers',
+      },
+      myName: 'Bob',
+      opponentName: 'Alice',
+      terminalOutcome: null,
+      frozen: true,
+    };
+
+    act(() => {
+      renderer = create(React.createElement(CaliforniaPoker, props));
+    });
+
+    const markup = JSON.stringify(renderer!.toJSON());
+    expect(markup).toContain('Bob wins (Royal flush)');
+    expect(markup).not.toContain('Straight flush, Ace High');
   });
 });

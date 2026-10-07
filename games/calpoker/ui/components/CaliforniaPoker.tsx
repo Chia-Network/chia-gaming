@@ -541,8 +541,11 @@ const CaliforniaPoker: React.FC<CaliforniapokerProps> = ({
       setWinner(snap.winner);
       setPlayerHaloCardIds(snap.playerHaloCardIds);
       setOpponentHaloCardIds(snap.opponentHaloCardIds);
-      setPlayerDisplayText(snap.playerDisplayText);
-      setOpponentDisplayText(snap.opponentDisplayText);
+      const reprojected = initial.outcome
+        ? projectCalpokerFinalDisplay(initial.outcome)
+        : undefined;
+      setPlayerDisplayText(reprojected?.playerDisplayText ?? snap.playerDisplayText);
+      setOpponentDisplayText(reprojected?.opponentDisplayText ?? snap.opponentDisplayText);
       if (snap.playerBestHandCardIds.length > 0) {
         setPlayerBestHand({
           cards: snap.playerBestHandCardIds.map(cvsFromCard),
