@@ -25,6 +25,7 @@ import {
 } from './serialize';
 import { testStateCodec } from '../../testStateCodec';
 import CaliforniaPoker from './components/CaliforniaPoker';
+import { makeDescription } from './components/utils';
 import {
   GAME_STATES,
   PRE_SWAP_REVEAL_DURATION,
@@ -146,6 +147,34 @@ describe('Calpoker bigint domain helpers', () => {
       name: 'Pair',
       values: [14n, 13n, 12n, 11n],
     });
+  });
+
+  it('names an ace-high straight flush a Royal flush', () => {
+    expect(handValueToDescription([5n, 14n], [0n])).toEqual({
+      name: 'Royal flush',
+      values: [14n],
+    });
+  });
+
+  it('keeps lower straight flushes as straight flushes', () => {
+    expect(handValueToDescription([5n, 13n], [0n])).toEqual({
+      name: 'Straight flush',
+      values: [13n],
+    });
+    expect(handValueToDescription([5n, 5n], [0n])).toEqual({
+      name: 'Straight flush',
+      values: [5n],
+    });
+  });
+
+  it('renders royal and straight flush headers distinctly', () => {
+    expect(makeDescription(handValueToDescription([5n, 14n], [0n]))).toBe('Royal flush');
+    expect(makeDescription(handValueToDescription([5n, 13n], [0n]))).toBe(
+      'Straight flush, King High',
+    );
+    expect(makeDescription(handValueToDescription([5n, 5n], [0n]))).toBe(
+      'Straight flush, Five High',
+    );
   });
 
   it('does not auto-fire final reveal after hand is already finished', () => {
@@ -748,6 +777,109 @@ describe('Calpoker terminal hand projection', () => {
     expect(markup).toContain('Alice wins (Straight, Ace High)');
     expect(markup).toContain('Bob loses (Pair, Eights. Ace, King, Nine kickers)');
     expect(markup).not.toContain('forfeit');
+    expect(
+      renderer!.root.findAll((node) => node.props['data-moving-card'] === 'true'),
+    ).toHaveLength(0);
+    expect(
+      renderer!.root.find((node) => node.props['data-calpoker-game-state'] !== undefined).props[
+        'data-calpoker-game-state'
+      ],
+    ).toBe(GAME_STATES.FINAL);
+  });
+
+  it('reprojects a cold-restored ace-high straight flush when outcome is withheld', () => {
+    const playerHand = [2n, 6n, 9n, 13n, 32n, 36n, 41n, 49n];
+    const opponentHand = [3n, 7n, 10n, 14n, 33n, 37n, 42n, 50n];
+    const saved: CalpokerHandState = {
+      perPlayerStake: 100n,
+      playerHand,
+      opponentHand,
+      cardSelections: [],
+      moveNumber: 2n,
+      isPlayerTurn: false,
+      iStarted: true,
+      settlementOutcome: null,
+      outcome: {
+        my_win_outcome: 'win',
+        my_cards: playerHand,
+        their_cards: opponentHand,
+        my_final_hand: [2n, 6n, 9n, 13n, 32n],
+        their_final_hand: [3n, 7n, 10n, 14n, 33n],
+        my_used_cards: [2n, 6n, 9n, 13n, 32n],
+        their_used_cards: [3n, 7n, 10n, 14n, 33n],
+        my_hand_value: [5n, 14n],
+        their_hand_value: [1n, 1n, 1n, 1n, 1n, 13n, 9n, 8n, 4n, 3n],
+      },
+      displaySnapshot: {
+        gameState: GAME_STATES.FINAL,
+        winner: 'player',
+        playerBestHandCardIds: [2n, 6n, 9n, 13n, 32n],
+        opponentBestHandCardIds: [3n, 7n, 10n, 14n, 33n],
+        playerHaloCardIds: [36n, 41n, 49n],
+        opponentHaloCardIds: [37n, 42n, 50n],
+        playerDisplayText: 'Straight flush, Ace High',
+        opponentDisplayText: 'Pair, Twos',
+      },
+    };
+    const hand = restoreCalpokerHand(saved);
+    let restoredOutcome: ReturnType<typeof useCalpokerHand>['outcome'] | 'missing' = 'missing';
+
+    function ColdRestore() {
+      const restored = useCalpokerHand({
+        frozen: true,
+        hand,
+        myName: 'Bob',
+        opponentName: 'Alice',
+      });
+      restoredOutcome = restored.outcome;
+      const snapshot = restored.initialDisplaySnapshot;
+      const outcome = restored.outcome;
+      return React.createElement(CaliforniaPoker, {
+        outcome: outcome && {
+          my_win_outcome: outcome.my_win_outcome,
+          my_cards: outcome.my_cards.map(String),
+          their_cards: outcome.their_cards.map(String),
+          my_final_hand: outcome.my_final_hand.map(String),
+          their_final_hand: outcome.their_final_hand.map(String),
+          my_used_cards: outcome.my_used_cards.map(String),
+          their_used_cards: outcome.their_used_cards.map(String),
+          my_hand_value: outcome.my_hand_value.map(String),
+          their_hand_value: outcome.their_hand_value.map(String),
+        },
+        moveNumber: String(restored.moveNumber),
+        playerNumber: 1,
+        playerHand: restored.playerHand.map(String),
+        opponentHand: restored.opponentHand.map(String),
+        cardSelections: restored.cardSelections.map(String),
+        setCardSelections: () => {},
+        setHandOrder: () => {},
+        handleMakeMove: restored.handleMakeMove,
+        onGameLog: () => {},
+        onSnapshotChange: () => {},
+        initialSnapshot: snapshot && {
+          ...snapshot,
+          playerBestHandCardIds: snapshot.playerBestHandCardIds.map(String),
+          opponentBestHandCardIds: snapshot.opponentBestHandCardIds.map(String),
+          playerHaloCardIds: snapshot.playerHaloCardIds.map(String),
+          opponentHaloCardIds: snapshot.opponentHaloCardIds.map(String),
+        },
+        myName: 'Bob',
+        opponentName: 'Alice',
+        terminalOutcome: restored.terminalOutcome,
+        frozen: true,
+      });
+    }
+
+    act(() => {
+      renderer = create(React.createElement(ColdRestore));
+    });
+
+    expect(restoredOutcome).toBeUndefined();
+    const markup = JSON.stringify(renderer!.toJSON());
+    expect(markup).toContain('Bob wins (Royal flush)');
+    expect(markup).toContain('Alice loses (King high. Nine, Eight, Four, Three kickers)');
+    expect(markup).not.toContain('Straight flush, Ace High');
+    expect(markup).not.toContain('Pair, Twos');
     expect(
       renderer!.root.findAll((node) => node.props['data-moving-card'] === 'true'),
     ).toHaveLength(0);
