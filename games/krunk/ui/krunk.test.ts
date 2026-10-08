@@ -864,6 +864,55 @@ describe('Krunk draft continuity', () => {
     });
   });
 
+  it('derives the scheduled guesser payout for a 3-guess clean solve', () => {
+    const lost: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [
+        { word: 'SLATE', clue: [0n, 0n, 1n, 0n, 0n] },
+        { word: 'POACH', clue: [1n, 2n, 2n, 2n, 2n] },
+        { word: 'ROACH', clue: [2n, 2n, 2n, 2n, 2n] },
+      ],
+      queuedGuesses: [],
+      secretWord: 'ROACH',
+      revealedWord: 'ROACH',
+      outcome: 'lose',
+      settlementOutcome: 'settled_cleanly',
+      moverShare: null,
+      error: null,
+    };
+    expect(krunkBoardNotice(lost, 'Peer', 100n)).toEqual({
+      text: 'Peer won 20 mojo!',
+      kind: 'info',
+    });
+  });
+
+  it('derives the scheduled guesser payout for a 4-guess clean solve', () => {
+    const lost: KrunkGameState = {
+      handler: KrunkHandler.Terminal,
+      myTurn: false,
+      role: 'alice',
+      guesses: [
+        { word: 'SUITE', clue: [0n, 0n, 1n, 0n, 0n] },
+        { word: 'POACH', clue: [1n, 2n, 2n, 2n, 2n] },
+        { word: 'COACH', clue: [1n, 2n, 2n, 2n, 2n] },
+        { word: 'ROACH', clue: [2n, 2n, 2n, 2n, 2n] },
+      ],
+      queuedGuesses: [],
+      secretWord: 'ROACH',
+      revealedWord: 'ROACH',
+      outcome: 'lose',
+      settlementOutcome: 'settled_cleanly',
+      moverShare: null,
+      error: null,
+    };
+    expect(krunkBoardNotice(lost, 'Peer', 100n)).toEqual({
+      text: 'Peer won 5 mojo!',
+      kind: 'info',
+    });
+  });
+
   it('aggregates keyboard letter statuses with NYT green-over-amber priority', () => {
     expect(
       krunkLetterStatuses([

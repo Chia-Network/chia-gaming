@@ -74,6 +74,22 @@ export interface KrunkBoardNotice {
   kind: 'error' | 'win' | 'info';
 }
 
+// Mirrors KRUNK_PAYOUTS in clsp/onchain/clue.clsp: a correct guess pays the
+// guesser (pot / 100) * schedule[guesses - 1].
+const KRUNK_PAYOUT_SCHEDULE = [100n, 100n, 20n, 5n, 1n] as const;
+
+/**
+ * The guesser's scheduled payout when they solved it, or null when the final
+ * guess is not a correct solve (a 5-guess miss pays the guesser nothing).
+ */
+function krunkGuesserPayout(state: KrunkGameState, perPlayerStake: bigint): bigint | null {
+  const guessCount = state.guesses.length;
+  if (guessCount < 1 || guessCount > KRUNK_PAYOUT_SCHEDULE.length) return null;
+  const lastClue = state.guesses[guessCount - 1].clue;
+  if (!lastClue.every((value) => value === 2n)) return null;
+  return (perPlayerStake / 100n) * KRUNK_PAYOUT_SCHEDULE[guessCount - 1];
+}
+
 function krunkTerminalNotice(
   state: KrunkGameState,
   opponentLabel: string,
@@ -112,7 +128,10 @@ function krunkTerminalNotice(
       return { text: krunkSettlementStatus(state.settlementOutcome, opponentLabel), kind: 'info' };
     }
     const outcome = state.outcome ?? krunkOutcomeFromPlay(state);
-    const winnerAmount = state.moverShare === null ? perPlayerStake : state.moverShare;
+    const winnerAmount =
+      state.moverShare !== null
+        ? state.moverShare
+        : (krunkGuesserPayout(state, perPlayerStake) ?? perPlayerStake);
     if (outcome === 'win') {
       if (state.role === 'alice') {
         return { text: `${opponentLabel} didn't win anything.`, kind: 'info' };
@@ -221,6 +240,7 @@ export function useKrunkHand(
   memberIndex: number,
 ): UseKrunkHandResult {
   const handState = view.hand.getState();
+  const perPlayerStake = handState.perPlayerStake;
   const gameState = krunkGameStateFromHand(handState, memberIndex);
   const interactive = !view.frozen && gameState.handler !== KrunkHandler.Terminal;
 
@@ -267,10 +287,15 @@ export function useKrunkHand(
     const isReveal =
       !!latest && (latest.clue.every((v) => v === 2n) || gameState.guesses.length >= MAX_GUESSES);
     const next = isReveal
-      ? finishedKrunkState(gameState, gameState.secretWord, latest.clue)
+      ? finishedKrunkState(
+          gameState,
+          gameState.secretWord,
+          latest.clue,
+          krunkGuesserPayout(gameState, perPlayerStake),
+        )
       : { ...gameState, handler: KrunkHandler.AliceWaiting, myTurn: false };
     commitLocalAction(next, { type: 'make-move', readable: null });
-  }, [gameState, interactive, commitLocalAction]);
+  }, [gameState, interactive, perPlayerStake, commitLocalAction]);
 
   const setSecretWord = useCallback(
     (word: string) => {
