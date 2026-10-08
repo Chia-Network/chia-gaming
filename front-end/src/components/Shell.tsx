@@ -917,6 +917,11 @@ const Shell = () => {
       setActiveBlockchainPoller(null);
     },
     beforeHardReset: async () => {
+      peerSessionRef.current?.destroy();
+      peerSessionRef.current = null;
+      peerMessageHandlerRef.current = null;
+      setPeerLiveness(null);
+      destroySessionController();
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
       if (activeBlockchainRef.current) {
