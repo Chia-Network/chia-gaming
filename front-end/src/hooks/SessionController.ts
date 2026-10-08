@@ -828,10 +828,16 @@ export class SessionController implements PollingGameSession {
       throw new Error('ASSERT_FAIL: keepalive timer already running');
     }
     const timer = setInterval(() => {
-      this.peerSendKeepalive?.();
+      this.sendPeerKeepalive();
     }, KEEPALIVE_INTERVAL_MS);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
     this.keepaliveTimer = timer;
+  }
+
+  sendPeerKeepalive(): void {
+    // The hub's server heartbeat also calls this, so background timer
+    // throttling cannot make an otherwise responsive peer appear stuck.
+    if (this.keepaliveTimer !== null) this.peerSendKeepalive?.();
   }
 
   private stopKeepaliveTimer() {

@@ -46,7 +46,6 @@ async function startHub(env = {}) {
         HUB_MAX_PLAYERS: '1000',
         HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '8',
         HUB_MAX_CHALLENGES: '4000',
-        HUB_CHALLENGE_TTL_MS: '300000',
         HUB_MAX_RETAINED_SESSIONS: '10000',
         HUB_RETAINED_SESSION_TTL_MS: '86400000',
         HUB_MAX_CONNECTION_ATTEMPTS_PER_WINDOW: '100',
@@ -692,16 +691,14 @@ test('challenge creation rejects self, duplicate, per-player, and global overflo
   }
 });
 
-test('expired challenges are resolved and stop consuming challenger capacity', async () => {
-  const hub = await startHub({
-    HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '1',
-    HUB_CHALLENGE_TTL_MS: '20',
-  });
+test('pending challenges remain available until explicitly accepted', async () => {
+  // Existing deployments retaining the removed setting must not expire challenges.
+  const hub = await startHub({ HUB_CHALLENGE_TTL_MS: '20' });
   try {
-    const alice = await joinHub(hub.origin, 'expiring-challenge-alice', 'Alice');
-    const bob = await joinHub(hub.origin, 'expiring-challenge-bob', 'Bob');
-    const aliceGame = await identifyGame(hub.origin, 'expiring-challenge-alice');
-    const bobGame = await identifyGame(hub.origin, 'expiring-challenge-bob');
+    const alice = await joinHub(hub.origin, 'pending-challenge-alice', 'Alice');
+    const bob = await joinHub(hub.origin, 'pending-challenge-bob', 'Bob');
+    const aliceGame = await identifyGame(hub.origin, 'pending-challenge-alice');
+    const bobGame = await identifyGame(hub.origin, 'pending-challenge-bob');
     const sendChallenge = () =>
       sendJson(alice.ws, {
         type: 'challenge',
@@ -709,29 +706,27 @@ test('expired challenges are resolved and stop consuming challenger capacity', a
         challenger_amount: '100',
         target_amount: '100',
       });
-
-    let receivedPromise = nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
+    const received = nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
     sendChallenge();
-    const first = await receivedPromise;
+    const challenge = await received;
     await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // Creating another challenge used to trigger expiry of the original.
+    const duplicateError = nextJson(alice.ws, (msg) => msg.type === 'error');
+    sendChallenge();
+    assert.match((await duplicateError).error, /already challenged/);
 
     const aliceResolved = nextJson(
       alice.ws,
-      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === first.challenge_id,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === challenge.challenge_id,
     );
     const bobResolved = nextJson(
       bob.ws,
-      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === first.challenge_id,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === challenge.challenge_id,
     );
-    receivedPromise = nextJson(
-      bob.ws,
-      (msg) => msg.type === 'challenge_received' && msg.challenge_id !== first.challenge_id,
-    );
-    sendChallenge();
-
-    assert.equal((await aliceResolved).accepted, false);
-    assert.equal((await bobResolved).accepted, false);
-    await receivedPromise;
+    sendJson(bob.ws, { type: 'challenge_accept', challenge_id: challenge.challenge_id });
+    assert.equal((await aliceResolved).accepted, true);
+    assert.equal((await bobResolved).accepted, true);
 
     await closeWs(alice.ws);
     await closeWs(bob.ws);

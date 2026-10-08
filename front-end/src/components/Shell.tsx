@@ -2076,10 +2076,24 @@ const Shell = () => {
               return;
             }
             const channelState = dashboardSessionModelRef.current?.channel.status.state;
+            // A saved funding offer can be released before React projects its
+            // status. Preserve that commitment when delivery fails in that gap.
+            const savedSession = storageRepository.loadState().session;
+            const savedChannelState =
+              savedSession?.phase === 'live' &&
+              savedSession.pairing.peerId === ps.peerId &&
+              savedSession.pairing.gameSessionId === ps.sessionId
+                ? savedSession.presentation.channelStatus?.state
+                : undefined;
             if (
               shouldCancelOnPeerUnreachable(
                 sessionPhaseRef.current,
                 channelState,
+                abandonPendingRef.current,
+              ) &&
+              shouldCancelOnPeerUnreachable(
+                sessionPhaseRef.current,
+                savedChannelState,
                 abandonPendingRef.current,
               )
             ) {
@@ -2273,6 +2287,9 @@ const Shell = () => {
           },
           onHubActivity: () => {
             lastHubActivityRef.current = Date.now();
+          },
+          onHubKeepalive: () => {
+            sessionController?.sendPeerKeepalive();
           },
           getPresence: () => {
             const save = storageRepository.loadState();

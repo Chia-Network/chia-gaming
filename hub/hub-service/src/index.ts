@@ -123,7 +123,6 @@ const MAX_PENDING_CHALLENGES_PER_PLAYER = readPositiveIntegerEnv(
   8,
 );
 const MAX_CHALLENGES = readPositiveIntegerEnv('HUB_MAX_CHALLENGES', 4000);
-const CHALLENGE_TTL_MS = readPositiveIntegerEnv('HUB_CHALLENGE_TTL_MS', 5 * 60_000);
 const MAX_RETAINED_SESSIONS = readPositiveIntegerEnv('HUB_MAX_RETAINED_SESSIONS', 10_000);
 const RETAINED_SESSION_TTL_MS = readPositiveIntegerEnv(
   'HUB_RETAINED_SESSION_TTL_MS',
@@ -181,7 +180,6 @@ const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
 const queuedGameBytes = new WeakMap<WebSocket, number>();
 let totalQueuedGameBytes = 0;
-let nextChallengePruneAt = 0;
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -753,27 +751,7 @@ function unbindGameConnection(ws: WebSocket): void {
   markRetainedSessionInactive(meta.playerId);
 }
 
-function pruneExpiredChallenges(now: number): void {
-  nextChallengePruneAt = now + Math.min(CHALLENGE_TTL_MS, SWEEP_INTERVAL_MS);
-  for (const challenge of hub.removeExpiredChallenges(now, CHALLENGE_TTL_MS)) {
-    const payload = { challenge_id: challenge.id, accepted: false };
-    sendHubEvent(challenge.from_id, 'challenge_resolved', payload);
-    sendHubEvent(challenge.target_id, 'challenge_resolved', payload);
-    logHub('challenge_expired', {
-      challenge_id: challenge.id,
-      challenger_id: challenge.from_id,
-      target_id: challenge.target_id,
-    });
-  }
-}
-
-function pruneExpiredChallengesIfDue(now: number): void {
-  if (now < nextChallengePruneAt) return;
-  pruneExpiredChallenges(now);
-}
-
 function replayPendingChallengesToPlayer(playerId: string): void {
-  pruneExpiredChallenges(Date.now());
   for (const challenge of hub.challenges.values()) {
     if (challenge.target_id !== playerId) continue;
     const fromAlias = aliasForPlayer(challenge.from_id);
@@ -1125,7 +1103,6 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     return;
   }
 
-  pruneExpiredChallengesIfDue(Date.now());
   if (hub.challenges.size >= MAX_CHALLENGES) {
     logHub('challenge_drop_global_limit', {
       sender_id: senderId,
@@ -1783,7 +1760,6 @@ const sweepTimer = setInterval(() => {
   const now = Date.now();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
-  pruneExpiredChallenges(now);
   pruneConnectionAttemptBudgets(now);
   pruneRecentCorrespondents(now);
   pruneRetainedSessions();

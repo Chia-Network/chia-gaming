@@ -729,6 +729,7 @@ impl Simulator {
         }
 
         // Check for duplicate or conflicting transactions already in the mempool.
+        let mut equivalent_overlap = false;
         for existing in state.mempool.iter() {
             if existing.fingerprint == tx_fingerprint {
                 return Ok(IncludeTransactionResult {
@@ -749,6 +750,22 @@ impl Simulator {
                         overlap, existing.removals, removals,
                     );
                 }
+                // Both peers can submit the same settlement with different wallet
+                // fee spends. Acknowledge the redundant submission in demo mode;
+                // keep only the original bundle so the second fee is not charged.
+                // Strict simulations above still flag this for unit tests.
+                let identical_spends = overlap.iter().all(|coin_id| {
+                    let incoming = puzzle_solutions.iter().find(|(id, _, _)| id == *coin_id);
+                    let pending = existing
+                        .puzzle_solutions
+                        .iter()
+                        .find(|(id, _, _)| id == *coin_id);
+                    matches!((incoming, pending), (Some(a), Some(b)) if a == b)
+                });
+                if identical_spends {
+                    equivalent_overlap = true;
+                    continue;
+                }
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(9),
@@ -758,6 +775,14 @@ impl Simulator {
                     ),
                 });
             }
+        }
+
+        if equivalent_overlap {
+            return Ok(IncludeTransactionResult {
+                code: 1,
+                e: None,
+                diagnostic: "equivalent coin spends already pending".to_string(),
+            });
         }
 
         drop(state);

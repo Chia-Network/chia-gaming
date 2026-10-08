@@ -32,6 +32,7 @@ export interface HubConnectionCallbacks {
   onHubDisconnected: () => void;
   onHubReconnected: () => void;
   onHubActivity: () => void;
+  onHubKeepalive?: () => void;
   getPresence: () => { busy: boolean };
 }
 
@@ -421,6 +422,7 @@ export class HubConnection {
         this.callbacks.onClosed();
         break;
       case 'keepalive':
+        this.callbacks.onHubKeepalive?.();
         break;
       default:
         break;
