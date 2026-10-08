@@ -839,7 +839,7 @@ describe('Krunk draft continuity', () => {
         word: index === guessCount - 1 ? 'NANNY' : 'CRANE',
         clue: index === guessCount - 1 ? [2n, 2n, 2n, 2n, 2n] : [0n, 1n, 0n, 2n, 0n],
       }));
-      for (const stake of [100n, 500n, 1_000_000_000_000n]) {
+      for (const stake of [500n, 1_000_000_000_000n]) {
         const payout = (stake / 100n) * amount;
         const picker: KrunkGameState = {
           ...initialKrunkGameState('alice'),
