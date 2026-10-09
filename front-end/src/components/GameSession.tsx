@@ -28,7 +28,7 @@ import {
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
-import { channelSetupCoverCopy } from '../lib/session/acceptLifecycle';
+import { channelSetupCoverCopy, showChannelSetupChallenge } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
@@ -858,13 +858,12 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       </div>
 
       {/*
-        Full-pane centered setup copy. SessionTransitionSurface covers Accept
-        cancel states; once that cover drops (OfferSent / TransactionPending)
-        keep the same absolute centering so the text does not jump to the top.
+        Keep the setup challenge through funding and confirmation. Its state
+        lives in Shell so mounting GameSession does not restart the board.
         z-20 stays under notification overlays (z-40 / z-50).
       */}
-      {showTransitionSurface ? (
-        <div className="absolute inset-0 z-20" aria-hidden>
+      {showChannelSetupChallenge(session.channelStatus.state, !!showTransitionSurface) ? (
+        <div className="absolute inset-0 z-20">
           <SessionTransitionSurface />
         </div>
       ) : (

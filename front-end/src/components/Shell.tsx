@@ -22,6 +22,7 @@ import { recoveryReadiness } from '../lib/session/channelFundingSelectors';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
+import { Setup2048Provider } from './Setup2048';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { ConnectionSetupModal } from './ConnectionSetupModal';
 import { useBootRecoveryBoundary } from './BootRecoveryBoundary';
@@ -4314,93 +4315,101 @@ const Shell = () => {
               coins={dashboardCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-              {(() => {
-                const pane = selectGamePaneKind({
-                  sessionPaneTransition,
-                  keepSession,
-                  restoreStatus,
-                  restoreError,
-                  sessionPhase,
-                  hasDashboardModel: dashboardSessionModel !== null,
-                  sessionCanMount,
-                });
-                switch (pane.kind) {
-                  case 'transitionCover':
-                    return <SessionTransitionSurface />;
-                  case 'restoreFailed':
-                    return (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
-                        <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
-                        <p className="max-w-lg text-sm text-center select-text cursor-text">
-                          {pane.error ?? 'The saved session could not be restored.'}
-                        </p>
-                        <button
-                          onClick={handleStartOver}
-                          disabled={startingOver}
-                          className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
-                        >
-                          {startingOver ? 'Starting over\u2026' : 'Start over'}
-                        </button>
-                      </div>
-                    );
-                  case 'gameSession':
-                    return (
-                      <div className="relative w-full h-full">
-                        <GameSessionErrorBoundary>
-                          <GameSession
-                            key={sessionConfig!.pairingToken}
-                            params={sessionConfig!}
-                            peerConn={peerConn!}
-                            registerMessageHandler={registerMessageHandler}
-                            appendGameLog={appendHistory}
-                            sessionSave={bootstrapSessionPropRef.current}
-                            blockchain={activeBlockchainPoller}
-                            onGameActivity={onGameActivity}
-                            onSessionPhaseChange={handleSessionPhaseChange}
-                            onRestoreStatusChange={handleRestoreStatusChange}
-                            onSessionModelChange={handleSessionModelChange}
-                            onCoinsChange={handleCoinsChange}
-                            suppressPhaseReporting={shouldSuppressPhaseReporting(
-                              restoreBlocked,
-                              terminalPresentation != null,
-                            )}
-                            terminalPresentation={terminalPresentation}
-                            showTransitionSurface={pane.showTransitionSurface}
-                          />
-                        </GameSessionErrorBoundary>
-                        {sessionConsentOverlay}
-                      </div>
-                    );
-                  case 'finishedFreeze':
-                    return (
-                      <div className="relative w-full h-full">
-                        <FinishedSessionGameView
-                          model={sessionModelForReactProps(dashboardSessionModel!)}
-                          myName={
-                            finishedSessionIdentity?.myName ?? storageRepository.query('alias')
-                          }
-                          opponentName={finishedSessionIdentity?.opponentName}
-                        />
-                        {sessionConsentOverlay}
-                      </div>
-                    );
-                  case 'restoringPlaceholder':
-                    return (
-                      <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                        Restoring session...
-                      </div>
-                    );
-                  case 'empty':
-                    return (
-                      <div className="relative w-full h-full">
-                        <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                          No active game session
-                        </div>
-                        {sessionConsentOverlay}
-                      </div>
-                    );
+              <Setup2048Provider
+                attemptKey={
+                  shellState.transition.kind === 'pending'
+                    ? shellState.transition.readyKey
+                    : (sessionConfig?.pairingToken ?? null)
                 }
-              })()}
+              >
+                {(() => {
+                  const pane = selectGamePaneKind({
+                    sessionPaneTransition,
+                    keepSession,
+                    restoreStatus,
+                    restoreError,
+                    sessionPhase,
+                    hasDashboardModel: dashboardSessionModel !== null,
+                    sessionCanMount,
+                  });
+                  switch (pane.kind) {
+                    case 'transitionCover':
+                      return <SessionTransitionSurface />;
+                    case 'restoreFailed':
+                      return (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
+                          <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
+                          <p className="max-w-lg text-sm text-center select-text cursor-text">
+                            {pane.error ?? 'The saved session could not be restored.'}
+                          </p>
+                          <button
+                            onClick={handleStartOver}
+                            disabled={startingOver}
+                            className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+                          >
+                            {startingOver ? 'Starting over\u2026' : 'Start over'}
+                          </button>
+                        </div>
+                      );
+                    case 'gameSession':
+                      return (
+                        <div className="relative w-full h-full">
+                          <GameSessionErrorBoundary>
+                            <GameSession
+                              key={sessionConfig!.pairingToken}
+                              params={sessionConfig!}
+                              peerConn={peerConn!}
+                              registerMessageHandler={registerMessageHandler}
+                              appendGameLog={appendHistory}
+                              sessionSave={bootstrapSessionPropRef.current}
+                              blockchain={activeBlockchainPoller}
+                              onGameActivity={onGameActivity}
+                              onSessionPhaseChange={handleSessionPhaseChange}
+                              onRestoreStatusChange={handleRestoreStatusChange}
+                              onSessionModelChange={handleSessionModelChange}
+                              onCoinsChange={handleCoinsChange}
+                              suppressPhaseReporting={shouldSuppressPhaseReporting(
+                                restoreBlocked,
+                                terminalPresentation != null,
+                              )}
+                              terminalPresentation={terminalPresentation}
+                              showTransitionSurface={pane.showTransitionSurface}
+                            />
+                          </GameSessionErrorBoundary>
+                          {sessionConsentOverlay}
+                        </div>
+                      );
+                    case 'finishedFreeze':
+                      return (
+                        <div className="relative w-full h-full">
+                          <FinishedSessionGameView
+                            model={sessionModelForReactProps(dashboardSessionModel!)}
+                            myName={
+                              finishedSessionIdentity?.myName ?? storageRepository.query('alias')
+                            }
+                            opponentName={finishedSessionIdentity?.opponentName}
+                          />
+                          {sessionConsentOverlay}
+                        </div>
+                      );
+                    case 'restoringPlaceholder':
+                      return (
+                        <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                          Restoring session...
+                        </div>
+                      );
+                    case 'empty':
+                      return (
+                        <div className="relative w-full h-full">
+                          <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                            No active game session
+                          </div>
+                          {sessionConsentOverlay}
+                        </div>
+                      );
+                  }
+                })()}
+              </Setup2048Provider>
             </div>
           </div>
 
