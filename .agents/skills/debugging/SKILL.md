@@ -1,9 +1,6 @@
 ---
-description: >-
-  Systematic debugging techniques. You are bad at debugging. Your
-  instinct is to skip evidence gathering and jump to theories
-  (usually "race condition"). This rule corrects that instinct.
-alwaysApply: true
+name: debugging
+description: Diagnose bugs, failing tests, stalls, hangs, and unexpected behavior using evidence, root-cause tracing, and verified fixes.
 ---
 
 # Debugging Techniques

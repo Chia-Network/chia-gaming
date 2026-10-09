@@ -824,6 +824,44 @@ describe('Krunk draft continuity', () => {
     expect(krunkWinMessage(1000000000000n)).toBe('You won 1 chia!');
   });
 
+  it.each(
+    (['accept_settlement', 'we_accepted', 'settled_cleanly'] as const).flatMap((settlement) =>
+      [100n, 100n, 20n, 5n, 1n].map((amount, index) => ({
+        settlement,
+        guessCount: index + 1,
+        amount,
+      })),
+    ),
+  )(
+    'shows matching payouts on both boards for guess $guessCount / $settlement',
+    ({ settlement, guessCount, amount }) => {
+      const guesses: KrunkGameState['guesses'] = Array.from({ length: guessCount }, (_, index) => ({
+        word: index === guessCount - 1 ? 'NANNY' : 'CRANE',
+        clue: index === guessCount - 1 ? [2n, 2n, 2n, 2n, 2n] : [0n, 1n, 0n, 2n, 0n],
+      }));
+      for (const stake of [500n, 1_000_000_000_000n]) {
+        const payout = (stake / 100n) * amount;
+        const picker: KrunkGameState = {
+          ...initialKrunkGameState('alice'),
+          handler: KrunkHandler.Terminal,
+          myTurn: false,
+          guesses,
+          outcome: 'lose',
+          settlementOutcome: settlement,
+          moverShare: null,
+        };
+        const guesser: KrunkGameState = {
+          ...picker,
+          role: 'bob',
+          outcome: 'win',
+          moverShare: payout,
+        };
+        expect(krunkBoardNotice(picker, 'You', stake)?.text).toBe(krunkWinMessage(payout));
+        expect(krunkBoardNotice(guesser, 'Peer', stake)?.text).toBe(krunkWinMessage(payout));
+      }
+    },
+  );
+
   it('formats an opponent clean win in chia from game amount minus our share', () => {
     const lost: KrunkGameState = {
       handler: KrunkHandler.Terminal,

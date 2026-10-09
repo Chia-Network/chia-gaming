@@ -177,6 +177,12 @@ describe('Calpoker bigint domain helpers', () => {
     );
   });
 
+  it('keeps an ace-high ordinary straight distinct from a royal flush', () => {
+    expect(makeDescription(handValueToDescription([3n, 1n, 2n, 14n], []))).toBe(
+      'Straight, Ace High',
+    );
+  });
+
   it('does not auto-fire final reveal after hand is already finished', () => {
     expect(shouldAutoFireCalpokerMove(true, true, 2n)).toBe(false);
     expect(shouldAutoFireCalpokerMove(false, true, 2n)).toBe(true);

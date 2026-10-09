@@ -1,9 +1,6 @@
 ---
-description: >-
-  Protocol for delegating debugging work to sub-agents. Complements
-  the debugging techniques rule with operational guidance on when and
-  how to hand off diagnostic work.
-alwaysApply: true
+name: debugging-delegation
+description: Decide when to delegate debugging, prepare diagnostic handoffs, and evaluate debugging results. Use for bug fixes and failing tests alongside the debugging skill.
 ---
 
 # Debugging Delegation Protocol
@@ -49,14 +46,14 @@ to a sub-agent.** Do not start speculative investigation in the
 parent context.
 
 Debugging sub-agents should be launched in the foreground by default
-(`run_in_background: false`). The goal is context isolation, not
+(wait for their result using your agent's delegation tools). The goal is context isolation, not
 asynchronous parallelism. Background debugging sub-agents are only
 appropriate when the user explicitly asks for parallel/background work
 or when the parent has a concrete plan to monitor and stop them.
 
 ## What to Provide (parent)
 
-Spawn a `generalPurpose` sub-agent with four things:
+Spawn a general-purpose sub-agent with four things:
 
 1. **Context:** The relevant files, modules, execution path, and
    surrounding contracts. Give enough context for the sub-agent to
@@ -79,17 +76,17 @@ Spawn a `generalPurpose` sub-agent with four things:
    `./ct.sh test_name`). The sub-agent must be able to run it
    immediately.
 
-The sub-agent has the debugging techniques rule in its context
-automatically (it's always-applied). You do not need to restate
-the debugging methodology, but you should remind it to follow
+Provide the sub-agent with the debugging skill at
+`.agents/skills/debugging/SKILL.md` and this delegation skill. Do not
+assume its harness loads them automatically. Remind it to follow
 structured diagnosis and not speculate.
 
 ---
 
 ## If You Are the Sub-agent
 
-You were spawned to fix a specific bug. You have the debugging
-techniques rule in your context -- follow it. Use structured
+You were spawned to fix a specific bug. Read the debugging skill at
+`.agents/skills/debugging/SKILL.md` -- follow it. Use structured
 diagnosis, not speculation. The parent gave you context, intent,
 symptoms, and a repro command. Use the stated intent to adjudicate
 discrepancies between code, tests, documentation, and callers; do
