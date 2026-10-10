@@ -236,7 +236,8 @@ fn make_sim_consensus_constants() -> ConsensusConstants {
         max_generator_ref_list_size: 512,
         pool_sub_slot_iters: 37_600_000_000,
         hard_fork_height: 0,
-        hard_fork2_height: 0,
+        // Keep the upcoming cost model and interned spend-list rules disabled.
+        hard_fork2_height: u32::MAX,
         soft_fork8_height: 0,
         plot_v1_phase_out_epoch_bits: 0,
         plot_filter_128_height: u32::MAX,
@@ -244,9 +245,11 @@ fn make_sim_consensus_constants() -> ConsensusConstants {
         plot_filter_32_height: u32::MAX,
         min_plot_strength: 0,
         max_plot_strength: 0,
-        plot_filter_v2_first_adjustment_height: 0,
-        plot_filter_v2_second_adjustment_height: 0,
-        plot_filter_v2_third_adjustment_height: 0,
+        soft_fork9_height: u32::MAX,
+        plot_filter_v2_relative_height: [0; 9],
+        filter_window_size: 16,
+        max_effective_plot_filter_bits: 13,
+        testnet: true,
     }
 }
 
@@ -584,14 +587,15 @@ impl Simulator {
             constants.max_block_cost_clvm,
             &constants,
             flags,
+            std::time::Duration::MAX,
         ) {
             Ok(v) => v.0,
             Err(err) => {
-                let msg = format_validation_error(err.1);
+                let msg = format_validation_error(err.error_code());
                 if self.strict {
                     panic!("Strict mode: spend bundle rejected: {msg}");
                 }
-                let code_num: u32 = err.1.into();
+                let code_num: u32 = err.error_code().into();
                 return Ok(IncludeTransactionResult {
                     code: 3,
                     e: Some(code_num),
@@ -1152,6 +1156,48 @@ pub fn run_simulation_tests() {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn current_consensus_costs_match_deployed_rules() {
+        let mut allocator = clvmr::Allocator::new();
+        let source = format!(
+            "(q . ((51 0x{} 1) (51 0x{} 2) (52 0)))",
+            "77".repeat(32),
+            "77".repeat(32)
+        );
+        let puzzle = chialisp::classic::clvm_tools::binutils::assemble(&mut allocator, &source)
+            .expect("quoted conditions");
+        let puzzle_hash = clvm_utils::tree_hash(&allocator, puzzle);
+        let puzzle_bytes = clvmr::serde::node_to_bytes(&allocator, puzzle).expect("puzzle bytes");
+        let bundle = chia_protocol::SpendBundle {
+            coin_spends: vec![chia_protocol::CoinSpend {
+                coin: chia_protocol::Coin {
+                    parent_coin_info: [0x31; 32].into(),
+                    puzzle_hash: puzzle_hash.into(),
+                    amount: 3,
+                },
+                puzzle_reveal: chia_protocol::Bytes::from(puzzle_bytes).into(),
+                solution: chia_protocol::Bytes::from(vec![0x80]).into(),
+            }],
+            aggregated_signature: chia_bls::Signature::default(),
+        };
+        let constants = make_sim_consensus_constants();
+        let flags = get_flags_for_height_and_constants(1, &constants) | MEMPOOL_MODE;
+        let (result, _) = validate_clvm_and_signature(
+            &bundle,
+            constants.max_block_cost_clvm,
+            &constants,
+            flags,
+            std::time::Duration::MAX,
+        )
+        .expect("current-rule simulator spend");
+        assert_eq!(result.condition_cost, 3_600_000);
+        let byte_cost =
+            (chia_consensus::solution_generator::calculate_generator_length(&bundle.coin_spends)
+                - 2) as u64
+                * constants.cost_per_byte;
+        assert_eq!(result.cost, byte_cost + result.execution_cost + 3_600_000);
+    }
 
     /// Run simulation tests. Set `SIM_TEST_FROM=<substring>` to start from
     /// the first matching test and wraparound through all tests.

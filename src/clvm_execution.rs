@@ -11,8 +11,8 @@ use chialisp::runtime_print::RuntimePrintDialect;
 use clvmr::allocator::{Allocator, NodePtr};
 use clvmr::chia_dialect::{ChiaDialect, ClvmFlags};
 use clvmr::reduction::Reduction;
-use clvmr::run_program::EvalFailure;
 use clvmr::serde::node_to_bytes_limit;
+use clvmr::EvalFailure;
 use clvmr::{run_program, run_program_with_diagnostics};
 use serde::{Deserialize, Serialize};
 
@@ -405,8 +405,8 @@ mod tests {
     use chialisp::compiler::compiler::DefaultCompilerOpts;
     use chialisp::compiler::comptypes::CompilerOpts;
     use chialisp::compiler::debug_metadata::compile_with_debug;
-    use clvmr::run_program::EvalFrame;
     use clvmr::serde::{node_from_bytes, node_to_bytes};
+    use clvmr::EvalFrame;
 
     use super::*;
 

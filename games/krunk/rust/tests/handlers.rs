@@ -14,7 +14,7 @@ use crate::games::krunk_dict_tree::build_signed_dict_tree_from_bytes;
 use crate::referee::Referee;
 use crate::utils::proper_list;
 
-use std::{fs, rc::Rc};
+use std::rc::Rc;
 
 use chia_protocol::Bytes;
 use clvm_traits::{clvm_curried_args, ToClvm};
