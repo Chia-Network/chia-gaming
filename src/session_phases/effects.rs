@@ -430,6 +430,7 @@ pub enum GameSessionEvent {
     OutboundTransaction(TransactionSubmission),
     Notification(GameNotification),
     Log(String),
+    ClvmDiagnostic(String),
     CoinSolutionRequest(CoinString),
     ReceiveError(String),
     NeedCoinSpend(CoinSpendRequest),
@@ -497,12 +498,15 @@ pub enum Effect {
 
 pub fn apply_effects(
     effects: Vec<Effect>,
-    _allocator: &mut crate::common::types::AllocEncoder,
+    allocator: &mut crate::common::types::AllocEncoder,
     system: &mut (impl crate::session_phases::types::ToLocalUI
               + crate::session_phases::types::PacketSender
               + crate::session_phases::types::WalletSpendInterface
               + crate::session_phases::types::ChannelFundingWallet),
 ) -> Result<(), crate::common::types::Error> {
+    for line in allocator.drain_runtime_prints() {
+        system.log(&line)?;
+    }
     for effect in effects.into_iter() {
         match effect {
             Effect::Notify(n) => {

@@ -680,6 +680,7 @@ impl GameSession {
         &mut self,
         allocator: &mut AllocEncoder,
     ) -> Result<DrainResult, Error> {
+        self.collect_runtime_prints(allocator);
         if self.state.session_disposition.is_some() {
             return Ok(DrainResult {
                 events: std::mem::take(&mut self.state.events),
@@ -717,6 +718,7 @@ impl GameSession {
             Some(Ok(effects)) => self.process_effects(effects, allocator)?,
             Some(Err(e)) => {
                 let action_context = self.peer.take_failed_queued_action();
+                self.collect_runtime_prints(allocator);
                 self.state.events.push_back(GameSessionEvent::Notification(
                     GameNotification::ActionFailed {
                         id: action_context.as_ref().map(|(id, _)| *id),
@@ -727,6 +729,7 @@ impl GameSession {
             }
             None => {}
         }
+        self.collect_runtime_prints(allocator);
 
         Ok(DrainResult {
             events: std::mem::take(&mut self.state.events),
@@ -908,11 +911,26 @@ impl GameSession {
         self.state.events.push_back(event);
     }
 
+    fn collect_runtime_prints(&mut self, allocator: &mut AllocEncoder) {
+        self.state.events.extend(
+            allocator
+                .drain_runtime_prints()
+                .into_iter()
+                .map(GameSessionEvent::Log),
+        );
+        self.state.events.extend(
+            allocator
+                .drain_clvm_diagnostics()
+                .map(|token| GameSessionEvent::ClvmDiagnostic(token.to_string())),
+        );
+    }
+
     fn process_effects(
         &mut self,
         effects: Vec<Effect>,
         allocator: &mut AllocEncoder,
     ) -> Result<(), Error> {
+        self.collect_runtime_prints(allocator);
         if self.state.session_disposition.is_some() {
             return Ok(());
         }
@@ -1035,6 +1053,7 @@ impl GameSession {
         allocator: &mut AllocEncoder,
         error: Error,
     ) -> Result<(), Error> {
+        self.collect_runtime_prints(allocator);
         self.state
             .events
             .push_back(GameSessionEvent::ReceiveError(format!("{error:?}")));
@@ -1624,6 +1643,7 @@ mod sequencing_tests {
     use crate::session_phases::on_chain::{OnChainPhase, OnChainPhaseArgs};
     use crate::session_phases::types::PotatoState;
     use crate::transaction_manager::TransactionManager;
+    use chialisp::runtime_print::{RuntimePrintKind, RuntimePrintOutput, RuntimePrintRecord};
     use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use std::cell::RefCell;
@@ -1670,6 +1690,81 @@ mod sequencing_tests {
             expiry + CHANNEL_EXPIRY_BUFFER,
             expiry,
         ));
+    }
+
+    #[test]
+    fn runtime_prints_precede_following_effects_and_errors() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([0x51; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([0x51; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x52; 32]),
+            },
+            rng.random(),
+        );
+        allocator.push_runtime_prints(RuntimePrintOutput {
+            records: vec![RuntimePrintRecord {
+                kind: RuntimePrintKind::Chialisp,
+                source: None,
+                value: "(\"session\" 1)".to_string(),
+            }],
+            dropped: 0,
+        });
+
+        session
+            .process_effects(
+                vec![Effect::Log("[ordinary-effect] after print".to_string())],
+                &mut allocator,
+            )
+            .expect("process effects");
+
+        assert!(matches!(
+            session.state.events.pop_front(),
+            Some(GameSessionEvent::Log(line))
+                if line == "[clvm-print] (\"session\" 1)"
+        ));
+        assert!(matches!(
+            session.state.events.pop_front(),
+            Some(GameSessionEvent::Log(line))
+                if line == "[ordinary-effect] after print"
+        ));
+
+        allocator.push_runtime_prints(RuntimePrintOutput {
+            records: vec![RuntimePrintRecord {
+                kind: RuntimePrintKind::Rue,
+                source: Some("game.rue:4:5".to_string()),
+                value: "\"before error\"".to_string(),
+            }],
+            dropped: 0,
+        });
+        let _ = session.handle_peer_protocol_error(&mut allocator, Error::BasicErr);
+
+        let events = session.state.events.iter().collect::<Vec<_>>();
+        let print_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    GameSessionEvent::Log(line)
+                        if line == "[clvm-print] game.rue:4:5: \"before error\""
+                )
+            })
+            .expect("runtime print event");
+        let error_index = events
+            .iter()
+            .position(|event| matches!(event, GameSessionEvent::ReceiveError(_)))
+            .expect("receive error event");
+        assert!(print_index < error_index);
     }
 
     #[test]

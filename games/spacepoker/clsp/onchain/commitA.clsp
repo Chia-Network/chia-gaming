@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (import games.spacepoker.clsp.onchain.commitB exposing (program_hash as commitB_hash))
 (import games.game_codes)

@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (import games.calpoker.clsp.onchain.c exposing (program_hash as chash))
 (import games.game_codes)

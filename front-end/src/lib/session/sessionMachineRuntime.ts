@@ -151,7 +151,10 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       return snapshotRegisteredGameHand(gameType, this.activeHand);
     },
     receive: (update) => {
-      this.requireActiveHand().receive(update);
+      const hand = this.requireActiveHand();
+      const before = hand.getState();
+      hand.receive(update);
+      if (hand.getState() === before) return null;
       return this.snapshotActiveHand();
     },
     clear: () => {

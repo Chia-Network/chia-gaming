@@ -258,6 +258,7 @@ export type GameSessionEvent =
   | { OutboundMessage: Uint8Array }
   | { Notification: WasmNotification }
   | { Log: string }
+  | { ClvmDiagnostic: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
   | { NeedCoinSpend: NeedCoinSpendRequest }
@@ -297,4 +298,8 @@ export interface GameSessionConfig {
 export interface GameSessionCreateResult {
   id: number;
   puzzle_hash: string;
+}
+
+export interface ClvmDiagnosticError extends Error {
+  clvmDiagnosticToken?: string;
 }

@@ -18,7 +18,7 @@ fn sha256_bytes(data: &[u8]) -> [u8; 32] {
 }
 
 fn run_clvm(allocator: &mut AllocEncoder, program: NodePtr, args: NodePtr) -> NodePtr {
-    run_program(allocator.allocator(), &chia_dialect(), program, args, 0)
+    crate::clvm_execution::run_clvm(allocator.allocator(), program, args, 0)
         .expect("CLVM run failed")
         .1
 }

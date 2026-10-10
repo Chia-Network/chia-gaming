@@ -149,7 +149,7 @@ Krunk is the reference example for that case.
 `factory.clsp` is normally only an exported entry point. California Poker uses:
 
 ```clojure
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (import games.calpoker.clsp.calpoker_generate exposing calpoker_factory)
 
@@ -418,7 +418,7 @@ for the proposer and accepter reserves followed by the game parameters.
 Calpoker's current probe is:
 
 ```clojure
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (export () (list 1 1 1))
 ```

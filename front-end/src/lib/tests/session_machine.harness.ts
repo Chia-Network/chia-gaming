@@ -33,7 +33,9 @@ export function reduceSessionMachineForTest(
     },
     receive: (update) => {
       if (hand === null) throw new Error('Test game update requires an active hand');
+      const before = hand.getState();
       hand.receive(update);
+      if (hand.getState() === before) return null;
       return snapshotRegisteredGameHand(gameType, hand);
     },
     clear: () => {
