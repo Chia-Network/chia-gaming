@@ -22,7 +22,7 @@ import {
   coalesceProviderFlight,
   type ProviderFlight,
 } from './providerExecution';
-import { providerOwnerKey, providerScopeKey } from './providerKeys';
+import { providerScopeKey } from './providerKeys';
 import { storageRepository } from './storageRepository';
 import {
   walletProviderRegistry,
@@ -84,9 +84,14 @@ export class FeeAttachmentRuntime {
 
   private entries(): FeeAttachment[] {
     const owner = this.ports.getOwner();
-    const key = owner ? providerOwnerKey(owner) : null;
-    return key
-      ? storageRepository.feeAttachments().filter((entry) => providerOwnerKey(entry.owner) === key)
+    return owner
+      ? storageRepository
+          .feeAttachments()
+          .filter(
+            (entry) =>
+              entry.owner.installationPlayerId === owner.installationPlayerId &&
+              entry.owner.peerSessionId === owner.peerSessionId,
+          )
       : [];
   }
 

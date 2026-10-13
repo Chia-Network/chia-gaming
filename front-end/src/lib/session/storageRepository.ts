@@ -389,12 +389,17 @@ class StorageRepository {
 
   ensureWalletContext(context: NonNullable<DurableApplicationState['walletContext']>): void {
     if (!this.hasAuthority()) throw this.authorityMutationError();
-    if (this.root.walletContext) {
-      if (providerScopeKey(this.root.walletContext) !== providerScopeKey(context)) {
-        throw new Error('Internal wallet consistency error: walletContext cannot change');
-      }
+    if (this.root.walletContext) return;
+    this.setWalletContext(context);
+  }
+
+  setWalletContext(context: NonNullable<DurableApplicationState['walletContext']>): void {
+    if (!this.hasAuthority()) throw this.authorityMutationError();
+    if (
+      this.root.walletContext &&
+      providerScopeKey(this.root.walletContext) === providerScopeKey(context)
+    )
       return;
-    }
     this.root = { ...this.root, walletContext: structuredClone(context) };
     void this.persistDomainMutation().catch(() => {});
   }

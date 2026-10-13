@@ -1460,6 +1460,8 @@ const Shell = () => {
       try {
         const conn = hubConnRef.current;
         if (!conn) throw new Error('hub connection unavailable during session start');
+        const walletProviderScope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
+        if (!walletProviderScope) throw new Error('Wallet provider scope is unavailable');
         epoch = sessionStartEpochRef.current;
         const myContribution = parseSessionAmount(request.myAmount);
         const theirContribution = parseSessionAmount(request.theirAmount);
@@ -1525,11 +1527,7 @@ const Shell = () => {
               epoch,
               getCurrentEpoch: () => sessionStartEpochRef.current,
               checkpoint: {
-                walletProviderScope: (() => {
-                  const scope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
-                  if (!scope) throw new Error('Wallet provider scope is unavailable');
-                  return scope;
-                })(),
+                walletProviderScope,
                 pairing: {
                   token,
                   peerId: request.peerId,
@@ -3226,7 +3224,7 @@ const Shell = () => {
   }, [closeBootBoundary, stopBalancePolling]);
 
   // Reject/cancel any pending consent prompt or pre-active matchmaking attempt.
-  // Shared by wallet and hub disconnect. Active off-chain sessions stay mounted
+  // Used by hub disconnect. Active off-chain sessions stay mounted
   // (only pre-Active attempts cancel); resolved finished sessions keep their
   // dashboard freeze + terminal save — a pending invite after a game is
   // consent-only and must not trigger cancelAttemptedSession. While restore is
@@ -3313,6 +3311,13 @@ const Shell = () => {
 
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
+    walletConnectedRef.current = false;
+    blockchainReadyRef.current = false;
+    setWalletConnected(false);
+    if (activeBlockchainPoller && sessionController) {
+      sessionController.detachBlockchain(activeBlockchainPoller);
+    }
+    setActiveBlockchainPoller(null);
     if (activeBlockchainRef.current) {
       try {
         await activeBlockchainRef.current.disconnect();
@@ -3343,20 +3348,17 @@ const Shell = () => {
     if (!hasResumableSession) {
       clearSavedSessionMarker();
     }
-    // Clear blockchainType before cancel so storageRepository.clearSession.bind(storageRepository)'s async tail does not
-    // re-mark Resume from a wallet preference this disconnect is dropping.
+    // Clear the wallet preference without retiring the independently owned session.
     storageRepository.updateCommon({ preferences: { blockchainType: undefined } });
-    // Wallet is orthogonal to the hub: stay connected and only cancel pending
-    // matchmaking (no hub teardown). Then advertise busy — without a wallet we
-    // cannot fund or resolve a channel, so the lobby must not offer matches.
-    cancelPendingMatchmaking({ preserveHub: true });
+    // A wallet connection does not own the session or its pending consent.
+    // Keep the handshake and peer transport; funding resumes when a wallet returns.
     hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
-  }, [stopBalancePolling, cancelPendingMatchmaking]);
+  }, [stopBalancePolling, activeBlockchainPoller]);
 
   const handleDisconnectWallet = useCallback(() => {
     // Wallet disconnect no longer cascades to the hub or peer: the session
     // stays mounted and we appear busy. Warn only that chain ops stall while a
-    // session is live (and any pending invite is cancelled).
+    // session is live.
     if (sessionPhase !== 'none') {
       setConfirmDialog({
         title: 'Disconnect wallet?',
@@ -3723,6 +3725,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
+            disabled={!walletConnected || !blockchainReadyRef.current}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -3752,6 +3755,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
+            disabled={!walletConnected || !blockchainReadyRef.current}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept

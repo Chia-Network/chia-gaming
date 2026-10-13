@@ -87,6 +87,70 @@ describe('durable channel funding record', () => {
     controller.cleanup();
   });
 
+  it('keeps the session while a replacement wallet resumes monitoring and funds new work', async () => {
+    const { controller, blockchain, cradle } = setup(jest.fn());
+    commitRuntime(controller, new ControlledRuntime());
+    const originalReward = controller.rewardPuzzleHash;
+    cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+    installAggregateWallet([
+      {
+        owner,
+        purpose: { kind: 'funding', operationId: 'prior-wallet-offer' },
+        stage: 'awaiting-channel',
+        providerReservationId: 'original-trade',
+        request: { kind: 'funding', canonical: { amount: '50', fee: '0', conditions: [] } },
+        reason: 'already-delivered',
+      },
+    ]);
+    controller.detachBlockchain(blockchain);
+    const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+    controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    const beginCreation = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1newwallet' },
+      tradeId: 'new-trade',
+    });
+    const scope = { provider: 'cloud' as const, walletId: 'Wallet_replacement' };
+    const cancel = jest.fn();
+    const replacement = new BlockchainPoller(
+      {
+        ...mockRpc,
+        getWalletOfferProvider: () => ({
+          capability: 'best-effort' as const,
+          scope,
+          beginCreation,
+          cancel,
+        }),
+      } as InternalBlockchainInterface,
+      60_000,
+    );
+    replacement.refreshProviderReadiness();
+    const snapshot = jest.spyOn(replacement, 'snapshotGameSessionCoinInterest');
+    try {
+      controller.attachBlockchain(replacement);
+      await controller.flushPendingWork();
+      expect(controller.getWalletProviderScope()).toEqual(scope);
+      expect(storageRepository.loadState().walletContext).toEqual(scope);
+      expect(controller.rewardPuzzleHash).toBe(originalReward);
+      expect(snapshot).toHaveBeenCalledWith(controller);
+      expect(beginCreation).toHaveBeenCalledTimes(1);
+      expect(cradle.provide_offer_bech32).toHaveBeenCalledTimes(1);
+      expect(storageRepository.channelFundingOperations()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ owner, providerReservationId: 'original-trade' }),
+          expect.objectContaining({
+            owner: { ...owner, providerScope: scope },
+            providerReservationId: 'new-trade',
+          }),
+        ]),
+      );
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+      replacement.detachProvider();
+    }
+  });
+
   it.each([
     {
       label: 'offer',
