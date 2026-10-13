@@ -160,7 +160,7 @@ export class ReliablePeerTransport {
 
   private receiveDataNow(msgno: bigint, body: Uint8Array): boolean {
     if (body.byteLength > this.receivePolicy.maxPeerBodyBytes) {
-      this.fail(
+      this.reportFailure(
         `peer message body ${body.byteLength} exceeds maximum ${this.receivePolicy.maxPeerBodyBytes}`,
       );
       return false;
@@ -176,7 +176,7 @@ export class ReliablePeerTransport {
     }
     const futureGap = msgno - (this.state.remoteNumber + 1n);
     if (futureGap > this.receivePolicy.maxFutureReliableMsgnoGap) {
-      this.fail(
+      this.reportFailure(
         `peer message ${msgno} is ${futureGap} ahead of next expected ${this.state.remoteNumber + 1n}; maximum gap is ${this.receivePolicy.maxFutureReliableMsgnoGap}`,
       );
       return false;
@@ -208,13 +208,13 @@ export class ReliablePeerTransport {
       0,
     );
     if (this.runtime.reorderQueue.size + 1 > this.receivePolicy.maxQueuedMessages) {
-      this.fail(
+      this.reportFailure(
         `peer receive queue count ${this.runtime.reorderQueue.size + 1} exceeds maximum ${this.receivePolicy.maxQueuedMessages}`,
       );
       return false;
     }
     if (queuedBytes + body.byteLength > this.receivePolicy.maxQueuedBytes) {
-      this.fail(
+      this.reportFailure(
         `peer receive queue bytes ${queuedBytes + body.byteLength} exceeds maximum ${this.receivePolicy.maxQueuedBytes}`,
       );
       return false;
@@ -238,7 +238,7 @@ export class ReliablePeerTransport {
   private receiveAckNow(ack: bigint): boolean {
     const highestAllocated = this.state.messageNumber - 1n;
     if (ack < 1n || ack > highestAllocated) {
-      this.fail(
+      this.reportFailure(
         `peer acknowledgement ${ack} exceeds highest allocated message ${highestAllocated}`,
       );
       return false;
@@ -334,7 +334,7 @@ export class ReliablePeerTransport {
     try {
       return consumer.canDeliver(msgno, body);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : String(error));
+      this.reportFailure(error instanceof Error ? error.message : String(error));
       return false;
     }
   }
@@ -348,7 +348,7 @@ export class ReliablePeerTransport {
     try {
       return consumer.canTerminateAt(msgno, body);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : String(error));
+      this.reportFailure(error instanceof Error ? error.message : String(error));
       return false;
     }
   }
@@ -357,7 +357,7 @@ export class ReliablePeerTransport {
     try {
       this.consumer!.deliver(msgno, body);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : String(error));
+      this.reportFailure(error instanceof Error ? error.message : String(error));
       return false;
     }
     this.state.remoteNumber = msgno;
@@ -442,7 +442,7 @@ export class ReliablePeerTransport {
     this.durableAckRetries = this.durableAckRetries.filter((ack) => !this.sendAck(ack));
   }
 
-  private fail(reason: string): void {
+  reportFailure(reason: string): void {
     this.runtime.reorderQueue.clear();
     this.consumer?.failure(reason);
   }
@@ -713,7 +713,7 @@ export class PeerSession implements PeerConnectionResult {
     this.failureReason = reason;
     log(`[PeerSession] ${reason} peer=${this.peerId}`);
     this.markDead();
-    this.messageHandler?.failureHandler?.(reason);
+    this.reliableTransport.reportFailure(reason);
   }
 
   // --- Inbound message delivery (called by Shell's hub callbacks) ---
