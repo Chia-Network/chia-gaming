@@ -7,6 +7,7 @@ packages:
   - "shared/*"
 
 overrides:
+  '@tailwindcss/cli>@parcel/watcher': 2.6.0
   '@xmldom/xmldom@0.8.13': 0.8.15
   brace-expansion@1.1.18: 1.1.21
   brace-expansion@2.1.4: 2.1.7
