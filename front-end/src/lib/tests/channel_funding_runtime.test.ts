@@ -1,3 +1,4 @@
+import { activeSave } from './session_save_envelope.fixtures';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
@@ -150,6 +151,232 @@ describe('durable channel funding record', () => {
       replacement.detachProvider();
     }
   });
+
+  it.each([false, true])(
+    'replaces an unreachable unmet funding flight (durable=%s) without waiting for cancellation',
+    async (durable) => {
+      let finishOld!: (value: unknown) => void;
+      const oldBegin = jest.fn(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve;
+          }),
+      );
+      const oldCancel = jest
+        .fn()
+        .mockResolvedValue({ status: 'unavailable', detail: 'old wallet gone' });
+      const { controller, blockchain, cradle } = setup(
+        jest.fn(),
+        bestEffortWalletRpc(oldBegin, oldCancel),
+      );
+      cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+      const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+      commitRuntime(controller, new ControlledRuntime());
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      for (let n = 0; n < 30 && !oldBegin.mock.calls.length; n++)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(oldBegin).toHaveBeenCalledTimes(1);
+      if (durable)
+        storageRepository.replaceChannelFunding([
+          {
+            owner,
+            purpose: { kind: 'funding', operationId: fundingRequestKey(request) },
+            stage: 'creating',
+            disposition: 'active',
+            recoveryId: 'old-recovery',
+            request: { kind: 'funding', canonical: request },
+            reason: 'pending',
+          },
+        ]);
+      controller.detachBlockchain(blockchain);
+      blockchain.detachProvider();
+      const scope = { provider: 'cloud' as const, walletId: 'Wallet_new_funding' };
+      const beginCreation = jest.fn().mockResolvedValue({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer1replacement' },
+        tradeId: 'new-funding',
+      });
+      const replacement = new BlockchainPoller(
+        {
+          ...mockRpc,
+          getWalletOfferProvider: () => ({
+            capability: 'best-effort',
+            scope,
+            beginCreation,
+            cancel: jest.fn(),
+          }),
+        } as InternalBlockchainInterface,
+        60_000,
+      );
+      try {
+        replacement.refreshProviderReadiness();
+        controller.attachBlockchain(replacement);
+        for (
+          let n = 0;
+          n < 30 && !(cradle.provide_offer_bech32 as jest.Mock).mock.calls.length;
+          n++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(beginCreation).toHaveBeenCalledTimes(1);
+        expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1replacement');
+        await controller.flushPendingWork();
+        finishOld({
+          kind: 'created-reserved',
+          material: { kind: 'offer', offer: 'offer1obsolete' },
+          tradeId: 'old-funding',
+        });
+        for (let n = 0; n < 30 && !oldCancel.mock.calls.length; n++)
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(oldCancel).toHaveBeenCalledWith('old-funding');
+        const postFundingBegin = jest.fn();
+        const postFunding = new BlockchainPoller(
+          {
+            ...mockRpc,
+            getWalletOfferProvider: () => ({
+              capability: 'best-effort',
+              scope: { provider: 'cloud', walletId: 'Wallet_after_material' },
+              beginCreation: postFundingBegin,
+              cancel: jest.fn(),
+            }),
+          } as InternalBlockchainInterface,
+          60_000,
+        );
+        postFunding.refreshProviderReadiness();
+        controller.attachBlockchain(postFunding);
+        await controller.flushPendingWork();
+        expect(postFundingBegin).not.toHaveBeenCalled();
+        postFunding.detachProvider();
+        expect(cradle.provide_offer_bech32).toHaveBeenCalledTimes(1);
+        expect(storageRepository.channelFundingOperations()).toEqual([
+          expect.objectContaining({
+            providerReservationId: 'new-funding',
+            owner: { ...owner, providerScope: scope },
+          }),
+        ]);
+      } finally {
+        finishOld({ kind: 'unavailable', reason: 'test cleanup' });
+        controller.cleanup();
+        replacement.detachProvider();
+      }
+    },
+  );
+
+  it.each(['pending', 'same-id', 'recovery-id'])(
+    'funds through a reconnected original scope and protects the current reservation (%s)',
+    async (mode) => {
+      const sameId = mode === 'same-id';
+      const reuseRecovery = mode === 'recovery-id';
+      let finishOld!: (value: unknown) => void;
+      let finishNew!: (value: unknown) => void;
+      let finishOther!: (value: unknown) => void;
+      const begin = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishOld = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishNew = resolve;
+            }),
+        );
+      const oldCancel = jest.fn().mockResolvedValue({ status: 'unavailable', detail: 'offline' });
+      const walletRpc = reuseRecovery
+        ? recoverableWalletRpc(
+            jest.fn().mockResolvedValue({ kind: 'pending', recoveryId: 'reused-recovery' }),
+            begin,
+            oldCancel,
+          )
+        : bestEffortWalletRpc(begin, oldCancel);
+      const { controller, blockchain, cradle } = setup(jest.fn(), walletRpc);
+      cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+      commitRuntime(controller, new ControlledRuntime());
+      const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      controller.flushDeferredWork();
+      for (let n = 0; n < 30 && !begin.mock.calls.length; n++)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      const oldEffect = (controller as unknown as { pendingFunding: { effect: Promise<void> } })
+        .pendingFunding.effect;
+      const otherBegin = jest.fn(
+        () =>
+          new Promise((resolve) => {
+            finishOther = resolve;
+          }),
+      );
+      const other = new BlockchainPoller(
+        {
+          ...mockRpc,
+          getWalletOfferProvider: () => ({
+            capability: 'best-effort',
+            scope: { provider: 'cloud', walletId: 'Wallet_in_between' },
+            beginCreation: otherBegin,
+            cancel: jest.fn(),
+          }),
+        } as InternalBlockchainInterface,
+        60_000,
+      );
+      const reconnected = new BlockchainPoller(
+        { ...mockRpc, ...walletRpc } as InternalBlockchainInterface,
+        60_000,
+      );
+      try {
+        blockchain.detachProvider();
+        other.refreshProviderReadiness();
+        controller.attachBlockchain(other);
+        for (let n = 0; n < 30 && !otherBegin.mock.calls.length; n++)
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(otherBegin).toHaveBeenCalledTimes(1);
+        other.detachProvider();
+        reconnected.refreshProviderReadiness();
+        controller.attachBlockchain(reconnected);
+        for (let n = 0; n < 30 && begin.mock.calls.length < 2; n++)
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(begin).toHaveBeenCalledTimes(2);
+        const newOutcome = {
+          kind: 'created-reserved',
+          material: { kind: 'offer', offer: 'offer1current' },
+          tradeId: 'current-cycle',
+        };
+        if (sameId) {
+          finishNew(newOutcome);
+          await controller.flushPendingWork();
+        }
+        finishOld({
+          kind: 'created-reserved',
+          material: { kind: 'offer', offer: 'offer1obsolete' },
+          tradeId: sameId ? 'current-cycle' : 'old-cycle',
+        });
+        await oldEffect;
+        expect(oldCancel).not.toHaveBeenCalled();
+        if (reuseRecovery)
+          expect(storageRepository.channelFundingOperations()).toEqual([
+            expect.objectContaining({ stage: 'creating', recoveryId: 'reused-recovery' }),
+          ]);
+        if (!sameId) {
+          expect(cradle.provide_offer_bech32).not.toHaveBeenCalled();
+          finishNew(newOutcome);
+          await controller.flushPendingWork();
+        }
+        expect(cradle.provide_offer_bech32).toHaveBeenCalledTimes(1);
+        expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1current');
+        expect(storageRepository.channelFundingOperations()).toEqual([
+          expect.objectContaining({ providerReservationId: 'current-cycle' }),
+        ]);
+      } finally {
+        finishOld?.({ kind: 'unavailable', reason: 'cleanup' });
+        finishNew?.({ kind: 'unavailable', reason: 'cleanup' });
+        finishOther?.({ kind: 'unavailable', reason: 'cleanup' });
+        controller.cleanup();
+        reconnected.detachProvider();
+        other.detachProvider();
+      }
+    },
+  );
 
   it.each([
     {
@@ -336,6 +563,11 @@ describe('durable channel funding record', () => {
       conditions: [{ opcode: 60n, args: ['launcher'] }],
     });
     const first = setup(jest.fn(), rpcOverrides);
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      session: activeSave().session,
+      walletContext: { provider: 'cloud', walletId: 'Wallet_1' },
+    });
     try {
       first.controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
       first.controller.flushDeferredWork();
@@ -436,6 +668,7 @@ describe('durable channel funding record', () => {
     };
     const persisted = {
       ...storageRepository.loadState(),
+      session: activeSave().session,
       walletContext: owner.providerScope,
       channelFundingOperations: [reserved],
       feeAttachments: [],
@@ -576,7 +809,7 @@ describe('durable channel funding record', () => {
     ]);
   });
 
-  it('does not broadly cancel awaiting funding during terminal cleanup or wallet mismatch', async () => {
+  it('terminal retirement forgets original funding without cancelling the connected different wallet', async () => {
     const wrongCancel = jest.fn().mockResolvedValue({ status: 'cancelled' as const });
     const wrongScope = {
       provider: 'walletconnect' as const,
@@ -616,12 +849,7 @@ describe('durable channel funding record', () => {
         coinsOfInterest: [],
       });
       expect(wrongCancel).not.toHaveBeenCalled();
-      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([
-        expect.objectContaining({
-          providerReservationId: 'trade-original-wallet',
-          stage: 'awaiting-channel',
-        }),
-      ]);
+      expect(entriesForOwner(storageRepository.channelFundingOperations(), owner)).toEqual([]);
     } finally {
       controller.cleanup();
     }
