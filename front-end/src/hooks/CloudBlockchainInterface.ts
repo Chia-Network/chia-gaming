@@ -423,17 +423,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const uniqueNames = [...new Set(names.map((n) => normalizeHex(n)).filter(Boolean))];
     if (uniqueNames.length === 0) return [];
     try {
-      if (uniqueNames.length === 1) {
-        const response = await this.coinset<{
-          success?: boolean;
-          coin_record?: CoinsetCoinRecord | null;
-        }>('get_coin_record_by_name', { name: uniqueNames[0] });
-        if (response.success !== true) {
-          throw new Error('Coinset get_coin_record_by_name failed');
-        }
-        return response.coin_record ? [coinRecordFromCoinset(response.coin_record)] : [];
-      }
-
+      // Watched coins may not exist yet. The singular RPC throws for absence;
+      // the batch RPC returns only existing records, even for a single name.
       const response = await this.coinset<{
         success?: boolean;
         coin_records?: CoinsetCoinRecord[];
