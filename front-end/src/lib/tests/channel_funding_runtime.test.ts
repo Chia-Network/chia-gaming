@@ -1,3 +1,6 @@
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { createSessionModel } from '../session/model';
 import { activeSave } from './session_save_envelope.fixtures';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
@@ -146,6 +149,185 @@ describe('durable channel funding record', () => {
         ]),
       );
       expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+      replacement.detachProvider();
+    }
+  });
+
+  it.each([
+    ['reserved', false],
+    ['ephemeral', false],
+    ['reserved', true],
+    ['ephemeral', true],
+  ])(
+    'handles completed %s funding queued behind a checkpoint (timed out=%s)',
+    async (kind, timedOut) => {
+      let finishOffer!: (value: unknown) => void;
+      const begin = jest.fn(
+        () =>
+          new Promise((resolve) => {
+            finishOffer = resolve;
+          }),
+      );
+      const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+      const { controller, blockchain, cradle } = setup(
+        jest.fn(),
+        bestEffortWalletRpc(begin, cancel),
+      );
+      cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+      let releaseCheckpoint!: () => void;
+      let holdCheckpoint = false;
+      const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+        controller,
+        iStarted: true,
+        restoring: false,
+        getRestoreStatus: () => 'idle',
+        getRestoreError: () => null,
+        onError: (error) => {
+          throw error;
+        },
+        persist: () =>
+          holdCheckpoint
+            ? new Promise<void>((resolve) => {
+                releaseCheckpoint = resolve;
+              })
+            : Promise.resolve(),
+      });
+      const replacementBegin = jest
+        .fn()
+        .mockResolvedValue({ kind: 'unavailable', reason: 'unexpected replacement' });
+      const replacement = new BlockchainPoller(
+        {
+          ...mockRpc,
+          getWalletOfferProvider: () => ({
+            capability: 'best-effort',
+            scope: { provider: 'cloud', walletId: 'Wallet_queued_completion' },
+            beginCreation: replacementBegin,
+            cancel: jest.fn(),
+          }),
+        } as InternalBlockchainInterface,
+        60_000,
+      );
+      try {
+        runtime.activate();
+        const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+        controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+        await runtime.flush();
+        for (let n = 0; n < 30 && !begin.mock.calls.length; n++)
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(begin).toHaveBeenCalledTimes(1);
+        holdCheckpoint = true;
+        runtime.requestCommit();
+        const checkpoint = runtime.flush();
+        const timeout = timedOut
+          ? controller.runCommittedMutation(() => {
+              controller.processResult(wasmResult({ events: [{ ChannelCreationTimedOut: null }] }));
+              controller.flushDeferredWork();
+            })
+          : Promise.resolve();
+        finishOffer(
+          kind === 'reserved'
+            ? {
+                kind: 'created-reserved',
+                material: { kind: 'offer', offer: 'offer1queued' },
+                tradeId: 'queued-trade',
+              }
+            : {
+                kind: 'created-ephemeral',
+                material: { kind: 'bundle', bundle: testSpendBundle('queued') },
+              },
+        );
+        // Wait until the actual runtime has queued the authoritative completion.
+        for (
+          let n = 0;
+          n < 30 &&
+          (runtime as unknown as { pendingControllerWork: unknown[] }).pendingControllerWork
+            .length < (timedOut ? 2 : 1);
+          n++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(
+          (runtime as unknown as { pendingControllerWork: unknown[] }).pendingControllerWork.length,
+        ).toBe(timedOut ? 2 : 1);
+        controller.detachBlockchain(blockchain);
+        replacement.refreshProviderReadiness();
+        controller.attachBlockchain(replacement);
+        holdCheckpoint = false;
+        releaseCheckpoint();
+        await checkpoint;
+        await timeout;
+        await controller.flushPendingWork();
+        expect(replacementBegin).not.toHaveBeenCalled();
+        if (timedOut) {
+          expect(cradle.provide_offer_bech32).not.toHaveBeenCalled();
+          expect(cradle.provide_coin_spend_bundle).not.toHaveBeenCalled();
+        } else if (kind === 'reserved') {
+          expect(cancel).not.toHaveBeenCalled();
+          expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1queued');
+          expect(storageRepository.channelFundingOperations()).toEqual([
+            expect.objectContaining({
+              stage: 'awaiting-channel',
+              providerReservationId: 'queued-trade',
+              owner,
+            }),
+          ]);
+        } else expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledTimes(1);
+      } finally {
+        holdCheckpoint = false;
+        releaseCheckpoint?.();
+        runtime.retire();
+        controller.cleanup();
+        replacement.detachProvider();
+      }
+    },
+  );
+
+  it('replaces a restored reservation without live material when its wallet is unreachable', async () => {
+    const oldBegin = jest.fn();
+    const { controller, blockchain, cradle } = setup(jest.fn(), bestEffortWalletRpc(oldBegin));
+    cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+    const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+    installAggregateWallet([
+      {
+        owner,
+        purpose: { kind: 'funding', operationId: fundingRequestKey(request) },
+        stage: 'awaiting-channel',
+        providerReservationId: 'restored-no-material',
+        request: { kind: 'funding', canonical: request },
+        reason: 'restored',
+      },
+    ]);
+    controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+    controller.flushDeferredWork();
+    commitRuntime(controller, new ControlledRuntime(undefined, 'funding:'));
+    controller.detachBlockchain(blockchain);
+    blockchain.detachProvider();
+    const beginCreation = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1restoredreplacement' },
+      tradeId: 'restored-replacement',
+    });
+    const replacement = new BlockchainPoller(
+      {
+        ...mockRpc,
+        getWalletOfferProvider: () => ({
+          capability: 'best-effort',
+          scope: { provider: 'cloud', walletId: 'Wallet_restored_replacement' },
+          beginCreation,
+          cancel: jest.fn(),
+        }),
+      } as InternalBlockchainInterface,
+      60_000,
+    );
+    try {
+      replacement.refreshProviderReadiness();
+      controller.attachBlockchain(replacement);
+      commitRuntime(controller, new ControlledRuntime());
+      await controller.flushPendingWork();
+      expect(oldBegin).not.toHaveBeenCalled();
+      expect(beginCreation).toHaveBeenCalledTimes(1);
+      expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1restoredreplacement');
     } finally {
       controller.cleanup();
       replacement.detachProvider();
