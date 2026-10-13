@@ -8,7 +8,6 @@ import {
   type ChannelFundingPurpose,
   type ChannelFundingRecoveryRequest,
 } from './channelFundingStore';
-import { providerScopeKey } from './providerKeys';
 import {
   boundedString,
   decodeProviderOwner,
@@ -135,7 +134,6 @@ export function decodeChannelFundingEntries(
     string,
     { preId: boolean; cancellation: boolean; awaiting: boolean }
   >();
-  const sessionScopes = new Map<string, string>();
   return value.map((item, index) => {
     const entry = decodeChannelFundingEntry(item, `${label}[${index}]`);
     if (expectedPurpose && entry.purpose.kind !== expectedPurpose) {
@@ -168,15 +166,6 @@ export function decodeChannelFundingEntries(
       cancellation: priorStages.cancellation || cancellation,
       awaiting: priorStages.awaiting || awaiting,
     });
-    const session = `${entry.owner.installationPlayerId}:${entry.owner.peerSessionId}`;
-    const scope = providerScopeKey(entry.owner.providerScope);
-    const prior = sessionScopes.get(session);
-    if (prior && prior !== scope) {
-      throw new Error(
-        `Garbled save: channel funding operations for one session span provider scopes`,
-      );
-    }
-    sessionScopes.set(session, scope);
     return entry;
   });
 }

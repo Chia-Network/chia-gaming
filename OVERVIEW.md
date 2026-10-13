@@ -921,13 +921,22 @@ cradle have hydrated, the saved shell, game, and dashboard are visible even
 when the hub, wallet, or blockchain is still unavailable. Actions requiring
 those services remain gated until their independent reconciliation succeeds.
 
+Session lifetime is independent of wallet connectivity. Disconnecting a wallet
+pauses wallet-dependent work without abandoning the handshake or live session.
+Attaching a wallet on the same blockchain resumes monitoring of the session's
+coins and pending chain work; new wallet operations use that provider, while
+existing reservations retain their original wallet ownership. Changing networks
+cannot preserve the channel and is locked during an unfinished session. See
+[Session lifetime and wallet connectivity](FRONTEND_ARCHITECTURE.md#session-lifetime-and-wallet-connectivity).
+
 Funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
 omitted rather than stored as null. The aggregate stores one canonical
 wallet-provider scope for the current session with strict, purpose-specific
 `channelFundingOperations` and `feeAttachments` slices. Unresolved operations
-from retired sessions retain their original owner scopes across wallet changes.
+retain their original owner scopes across wallet changes, including within an
+ongoing session.
 `ChannelFundingRuntime` attaches one stable funding inbox to that session while
 Rust and the aggregate own durable protocol and recovery state.
 After restore, the same operation cannot launch another wallet offer until its

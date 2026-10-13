@@ -227,6 +227,7 @@ export function useGameSession(
   useLayoutEffect(() => {
     if (!blockchain || terminalMode) return;
     controller.attachBlockchain(blockchain);
+    return () => controller.detachBlockchain(blockchain);
   }, [blockchain, controller, terminalMode]);
 
   const setComposeGameTimeout = useCallback(
