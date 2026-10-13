@@ -22,6 +22,20 @@ const fee: FeeAttachment = {
   providerReservationId: 'trade-1',
   reason: 'fee-submission-retired',
 };
+const request: FeeAttachment = {
+  owner,
+  submissionId: 'unknown-fee',
+  stage: 'best-effort-uncertain',
+  disposition: 'active',
+  request: {
+    kind: 'fee',
+    uniqueId: 'unknown-fee',
+    fee: 10n,
+    concurrentSpendCoinId: 'ab'.repeat(32),
+  },
+  lastAttemptEpoch: 1n,
+  reason: 'response-lost',
+};
 
 describe('wallet recovery notice after changing wallets', () => {
   let renderer: ReactTestRenderer | null = null;
@@ -79,10 +93,10 @@ describe('wallet recovery notice after changing wallets', () => {
     ).toBeNull();
   });
 
-  it('clears immediately when fee cleanup finishes without a funding or provider event', async () => {
-    storageRepository.replaceFeeAttachments([fee]);
+  it('clears immediately when an unfinished request retires without a funding or provider event', async () => {
+    storageRepository.replaceFeeAttachments([request]);
     await mount();
-    expect(JSON.stringify(renderer!.toJSON())).toContain('1 offer cancellation');
+    expect(JSON.stringify(renderer!.toJSON())).toContain('1 unfinished wallet request');
     await act(async () => storageRepository.replaceFeeAttachments([]));
     expect(renderer!.toJSON()).toBeNull();
   });
@@ -110,43 +124,42 @@ describe('wallet recovery notice after changing wallets', () => {
     expect(storageRepository.feeAttachments()).toHaveLength(1);
   });
 
-  it('dismisses the reminder without discarding cleanup and shows new obligations', async () => {
-    storageRepository.replaceFeeAttachments([fee]);
+  it('dismisses the reminder without discarding requests and shows new requests', async () => {
+    storageRepository.replaceFeeAttachments([request]);
     await mount();
     await act(async () => renderer!.root.findByType('button').props.onClick());
     expect(renderer!.toJSON()).toBeNull();
-    expect(storageRepository.feeAttachments()).toEqual([fee]);
+    expect(storageRepository.feeAttachments()).toEqual([request]);
     await act(async () =>
-      storageRepository.replaceFeeAttachments([
-        { ...fee, stage: 'cancelling', recoveryId: 'cancel-1' },
-      ]),
+      storageRepository.replaceFeeAttachments([{ ...request, lastAttemptEpoch: 2n }]),
     );
     expect(renderer!.toJSON()).toBeNull();
     await act(async () =>
-      storageRepository.replaceFeeAttachments([{ ...fee, submissionId: 'fee-2' }]),
+      storageRepository.replaceFeeAttachments([{ ...request, submissionId: 'fee-2' }]),
     );
-    expect(JSON.stringify(renderer!.toJSON())).toContain('1 offer cancellation');
+    expect(JSON.stringify(renderer!.toJSON())).toContain('1 unfinished wallet request');
+  });
+
+  it('does not ask for the old wallet to perform best-effort cancellation', () => {
+    expect(
+      walletRecoveryNotice(
+        [
+          fee,
+          { ...fee, stage: 'cancelling', recoveryId: 'cancel-1' },
+          { ...fee, stage: 'best-effort-cancellation-uncertain', lastAttemptEpoch: 1n },
+          { ...request, disposition: 'cancel-on-create' },
+        ],
+        new Set(),
+      ),
+    ).toBeNull();
   });
 
   it('only counts requests that need a missing original account', () => {
     const connected = new Set([providerScopeKey(scope)]);
     expect(walletRecoveryNotice([fee], connected)).toBeNull();
-    const uncertain: FeeAttachment = {
-      owner,
-      submissionId: 'unknown-fee',
-      stage: 'best-effort-uncertain',
-      disposition: 'active',
-      request: {
-        kind: 'fee',
-        uniqueId: 'unknown-fee',
-        fee: 10n,
-        concurrentSpendCoinId: 'ab'.repeat(32),
-      },
-      lastAttemptEpoch: 1n,
-      reason: 'response-lost',
-    };
-    expect(walletRecoveryNotice([fee, uncertain], new Set())?.message).toContain(
-      '1 offer cancellation and 1 unfinished wallet request',
+    expect(walletRecoveryNotice([request], connected)).toBeNull();
+    expect(walletRecoveryNotice([fee, request], new Set())?.message).toContain(
+      '1 unfinished wallet request',
     );
   });
 });

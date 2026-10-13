@@ -105,26 +105,11 @@ export function walletRecoveryNotice(
 ): WalletRecoveryNotice | null {
   const pending = entries.filter(
     (entry) =>
-      entry.stage !== 'awaiting-channel' &&
-      entry.stage !== 'reserved' &&
-      entry.stage !== 'retained-for-replay' &&
+      (entry.stage === 'creating' || entry.stage === 'best-effort-uncertain') &&
+      entry.disposition === 'active' &&
       !scopeKeys.has(providerScopeKey(entry.owner.providerScope)),
   );
   if (!pending.length) return null;
-  const cancellations = pending.filter(
-    (entry) =>
-      entry.stage === 'cancel-required' ||
-      entry.stage === 'cancelling' ||
-      entry.stage === 'best-effort-cancellation-uncertain' ||
-      ('disposition' in entry && entry.disposition === 'cancel-on-create'),
-  ).length;
-  const requests = pending.length - cancellations;
-  const tasks = [
-    cancellations > 0
-      ? `${cancellations} offer cancellation${cancellations === 1 ? '' : 's'}`
-      : null,
-    requests > 0 ? `${requests} unfinished wallet request${requests === 1 ? '' : 's'}` : null,
-  ].filter(Boolean);
   return {
     key: JSON.stringify(
       pending
@@ -137,6 +122,6 @@ export function walletRecoveryNotice(
         )
         .sort(),
     ),
-    message: `Earlier offers have ${tasks.join(' and ')} waiting for the original wallet account. Reconnect the wallet that created them to finish this work.`,
+    message: `There ${pending.length === 1 ? 'is' : 'are'} ${pending.length} unfinished wallet request${pending.length === 1 ? '' : 's'} from an earlier wallet account. Reconnect that account to retry ${pending.length === 1 ? 'it' : 'them'}.`,
   };
 }
