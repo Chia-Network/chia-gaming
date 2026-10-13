@@ -840,6 +840,7 @@ const Shell = () => {
   // reconnect) and by isAvailableForNewSessionPrompt, so it lives in a ref
   // rather than state — no UI depends on it, only the hub busy bit does.
   const blockchainReadyRef = useRef(false);
+  const [blockchainReady, setBlockchainReady] = useState(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -2925,10 +2926,12 @@ const Shell = () => {
   useEffect(() => {
     if (!hubOrigin || !walletConnected || !activeBlockchainPoller) {
       blockchainReadyRef.current = false;
+      setBlockchainReady(false);
       return;
     }
     const applyReady = (ready: boolean) => {
       blockchainReadyRef.current = ready;
+      setBlockchainReady(ready);
       hubConnRef.current?.setBusy(
         hubBusyFromSessionState(
           sessionPhaseRef.current,
@@ -3331,6 +3334,7 @@ const Shell = () => {
     stopBalancePolling();
     walletConnectedRef.current = false;
     blockchainReadyRef.current = false;
+    setBlockchainReady(false);
     setWalletConnected(false);
     if (activeBlockchainPoller && sessionController) {
       sessionController.detachBlockchain(activeBlockchainPoller);
@@ -3352,6 +3356,7 @@ const Shell = () => {
     // readiness subscription effect re-runs so a reconnect cannot read a stale
     // ready state.
     blockchainReadyRef.current = false;
+    setBlockchainReady(false);
     setBalance(undefined);
     // Pre-game wallet disconnect: drop the boot marker so reload does not
     // force Resume just for a prior blockchainType. Mid-session / resumable
@@ -3743,7 +3748,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
-            disabled={!walletConnected || !blockchainReadyRef.current}
+            disabled={!walletConnected || !blockchainReady}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -3773,7 +3778,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
-            disabled={!walletConnected || !blockchainReadyRef.current}
+            disabled={!walletConnected || !blockchainReady}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
