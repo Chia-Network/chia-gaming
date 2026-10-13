@@ -2217,16 +2217,22 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            const terminalSave = save?.session?.phase === 'terminal';
-            // Match getPresence: session/restore obligation OR the full-node-peer wait.
-            // Broader than getPresence: also covers pairingToken-only / reserved peer
-            // before `restoring` is set on sessionConfig.
+            // A saved live session still needs recovery. A pre-handshake record
+            // only reserves the lobby while it retains an actual peer.
             const restoreBusy =
-              presenceBusy(sessionPhaseRef.current) ||
-              (!terminalSave &&
-                (save?.session?.phase === 'live' ||
-                  save?.session?.phase === 'pre-handshake' ||
-                  !!pairing?.peerId));
+              hubBusyFromSessionState(
+                sessionPhaseRef.current,
+                walletConnectedRef.current,
+                !!sessionConfigRef.current?.restoring,
+                save,
+                {
+                  pending: isAcceptSessionTransition(shellTransitionRef.current),
+                  persistInFlight: freshStartPersistInFlightRef.current,
+                  blockchainReady: blockchainReadyRef.current,
+                },
+              ) ||
+              save.session?.phase === 'live' ||
+              (save.session?.phase === 'pre-handshake' && !!pairing?.peerId);
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
                 pairing.peerId,
@@ -2249,10 +2255,7 @@ const Shell = () => {
               } else {
                 bindPeerMessageHandler(peerSessionRef.current);
               }
-              // Restore never goes through startFreshSessionWithPeer, which is
-              // otherwise the only place that marks the hub busy. Use restoreBusy
-              // (session/wallet/peer-wait); terminal saves stay available unless
-              // walletless or the full-node-peer wait still requires busy.
+              // Restore does not pass through the fresh-session busy update.
               conn.setBusy(restoreBusy);
             } else if (
               save?.session?.phase === 'live' ||
