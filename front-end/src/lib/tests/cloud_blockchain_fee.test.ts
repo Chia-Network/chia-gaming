@@ -752,9 +752,27 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(calls).toEqual([]);
   });
 
+  it('reports an absent single watched coin without failing the snapshot', async () => {
+    const calls = mockGraphql((_query, variables) => {
+      const endpoint = (variables.input as { endpoint: string }).endpoint;
+      if (endpoint === 'get_coin_record_by_name') {
+        throw new Error(`Coin record 0x${'aa'.repeat(32)} not found`);
+      }
+      return { coinset: { response: { success: true, coin_records: [] } } };
+    });
+    await expect(
+      new CloudBlockchainInterface().getCoinRecordsByNames(['aa'.repeat(32)]),
+    ).resolves.toEqual([]);
+    expect(calls[0]!.variables.input).toEqual({
+      walletId: 'Wallet_1',
+      endpoint: 'get_coin_records_by_names',
+      request: { names: ['aa'.repeat(32)], include_spent_coins: true },
+    });
+  });
+
   it('rejects coin-record batches when the Cloud query fails', async () => {
     mockGraphql((_query, variables) => {
-      if ((variables.input as { endpoint?: string })?.endpoint === 'get_coin_record_by_name') {
+      if ((variables.input as { endpoint?: string })?.endpoint === 'get_coin_records_by_names') {
         throw new Error('cloud unavailable');
       }
       return {};
@@ -766,23 +784,25 @@ describe('CloudBlockchainInterface fee support', () => {
 
   it('rejects coin-record batches containing incomplete identities', async () => {
     mockGraphql((_query, variables) => {
-      if ((variables.input as { endpoint?: string })?.endpoint === 'get_coin_record_by_name') {
+      if ((variables.input as { endpoint?: string })?.endpoint === 'get_coin_records_by_names') {
         return {
           coinset: {
             response: {
               success: true,
-              coin_record: {
-                coin: {
-                  amount: '1',
-                  puzzle_hash: 'bb',
-                  parent_coin_info: 'cc'.repeat(32),
+              coin_records: [
+                {
+                  coin: {
+                    amount: '1',
+                    puzzle_hash: 'bb',
+                    parent_coin_info: 'cc'.repeat(32),
+                  },
+                  confirmed_block_index: 1,
+                  spent_block_index: 0,
+                  spent: false,
+                  coinbase: false,
+                  timestamp: 0,
                 },
-                confirmed_block_index: 1,
-                spent_block_index: 0,
-                spent: false,
-                coinbase: false,
-                timestamp: 0,
-              },
+              ],
             },
           },
         };
@@ -811,7 +831,7 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
-  it('uses singular and batch Coinset coin-record requests without reshaping the request', async () => {
+  it('uses batch Coinset queries for both single and multiple watched coins', async () => {
     const record = {
       coin: {
         parent_coin_info: '11'.repeat(32),
@@ -824,14 +844,10 @@ describe('CloudBlockchainInterface fee support', () => {
       coinbase: false,
       timestamp: 123,
     };
-    const calls = mockGraphql((_query, variables) => {
-      const endpoint = (variables.input as { endpoint: string }).endpoint;
+    const calls = mockGraphql(() => {
       return {
         coinset: {
-          response:
-            endpoint === 'get_coin_record_by_name'
-              ? { success: true, coin_record: record }
-              : { success: true, coin_records: [record] },
+          response: { success: true, coin_records: [record] },
         },
       };
     });
@@ -840,7 +856,16 @@ describe('CloudBlockchainInterface fee support', () => {
     await expect(
       iface.getCoinRecordsByNames(['aa'.repeat(32), 'bb'.repeat(32)]),
     ).resolves.toHaveLength(1);
-    expect((calls[0]!.variables.input as any).request).toEqual({ name: 'aa'.repeat(32) });
+    expect((calls[0]!.variables.input as any).request).toEqual({
+      names: ['aa'.repeat(32)],
+      include_spent_coins: true,
+    });
+    expect(
+      calls.every(
+        (call) =>
+          (call.variables.input as { endpoint: string }).endpoint === 'get_coin_records_by_names',
+      ),
+    ).toBe(true);
     expect((calls[1]!.variables.input as any).request).toEqual({
       names: ['aa'.repeat(32), 'bb'.repeat(32)],
       include_spent_coins: true,
