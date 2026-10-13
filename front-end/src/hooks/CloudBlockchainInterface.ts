@@ -393,15 +393,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const coinBytes = toUint8(coin);
     const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
     const coinName = toHexString(new Uint8Array(hashBuf));
-    const recordResponse = await this.coinset<{
-      success?: boolean;
-      coin_record?: CoinsetCoinRecord | null;
-    }>('get_coin_record_by_name', { name: coinName });
-    if (recordResponse.success !== true) {
-      throw new Error('Coinset get_coin_record_by_name failed');
-    }
-    if (!recordResponse.coin_record) return null;
-    const record = coinRecordFromCoinset(recordResponse.coin_record);
+    const [record] = await this.getCoinRecordsByNames([coinName]);
+    if (!record) return null;
     if (!record.spent || record.spentBlockIndex === 0n) return null;
 
     const response = await this.coinset<{
