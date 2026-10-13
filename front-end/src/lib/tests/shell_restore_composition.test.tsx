@@ -317,7 +317,11 @@ describe('Shell production restore composition', () => {
       });
       expect(renderer!.root.findAllByProps({ children: 'Accept' })).toHaveLength(0);
       await waitForText(renderer!, 'Resolved Clean');
-      await flushEffects();
+      // Cancellation keeps the lobby busy until the pending checkpoint drains.
+      for (let attempt = 0; attempt < 30 && mockHubCallbacks!.getPresence().busy; attempt++) {
+        await flushEffects();
+      }
+      expect(mockHubCallbacks!.getPresence().busy).toBe(false);
       await act(async () => {
         mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[1]);
         await storageRepository.inspect();
