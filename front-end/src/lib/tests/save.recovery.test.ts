@@ -1,3 +1,4 @@
+import { activeSave } from './session_save_envelope.fixtures';
 import { expectConsoleError } from '../../../scripts/testSetup';
 
 import { storageRepository } from '../session/storageRepository';
@@ -329,7 +330,7 @@ describe('session persistence: recovery', () => {
     unsubscribe();
   });
 
-  it('clearSession removes the session while preserving wallet obligations in the root', async () => {
+  it('clearSession removes the session and retires its wallet reservations', async () => {
     storageRepository._replaceApplicationStateForTests({
       ...storageRepository.loadState(),
       walletContext: { provider: 'simulator', identity: 'installation' },
@@ -348,15 +349,10 @@ describe('session persistence: recovery', () => {
     storageRepository._resetForTests();
 
     await storageRepository.claimApplicationState();
-    expect(storageRepository.channelFundingOperations()).toEqual([
-      expect.objectContaining({
-        providerReservationId: 'trade-clear',
-        stage: 'awaiting-channel',
-      }),
-    ]);
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
-  it('installs wallet obligations from a root without a session', async () => {
+  it('forgets retired wallet reservations from a root without a session', async () => {
     storageRepository._resetForTests();
     await storageRepository.claimApplicationState();
     const state = {
@@ -381,13 +377,7 @@ describe('session persistence: recovery', () => {
     clearSavedSessionMarker();
 
     expect(await storageRepository.claimApplicationState()).toMatchObject({ session: null });
-    expect(storageRepository.feeAttachments()).toEqual([
-      expect.objectContaining({
-        providerReservationId: 'trade-independent',
-        stage: 'cancel-required',
-        reason: 'orphaned-fee-reservation-restored',
-      }),
-    ]);
+    expect(storageRepository.feeAttachments()).toEqual([]);
   });
 
   it('restores retained fee sources without promoting them to cancellation', async () => {
@@ -395,6 +385,7 @@ describe('session persistence: recovery', () => {
     await storageRepository.claimApplicationState();
     const state = {
       ...storageRepository.loadState(),
+      session: activeSave().session,
       walletContext: { provider: 'simulator' as const, identity: 'installation' },
       feeAttachments: [
         {
@@ -425,7 +416,7 @@ describe('session persistence: recovery', () => {
   });
 
   it.each(['session deletion', 'rejection tombstone'])(
-    '%s preserves wallet-obligation siblings',
+    '%s retains only obligations whose session was not explicitly discarded',
     async (kind) => {
       const entry = {
         providerReservationId: `trade-${kind}`,
@@ -464,7 +455,9 @@ describe('session persistence: recovery', () => {
           rejectionTransports: [rejection],
         }));
       }
-      expect((await readApplicationState())?.channelFundingOperations).toEqual([entry]);
+      expect((await readApplicationState())?.channelFundingOperations).toEqual(
+        kind === 'session deletion' ? [] : [entry],
+      );
     },
   );
 

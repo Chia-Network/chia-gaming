@@ -1237,6 +1237,10 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
+    const current = storageRepository.loadState().session;
+    if (current?.phase === 'live' || current?.phase === 'pre-handshake') {
+      storageRepository.retireSessionWalletReservations(current.pairing.gameSessionId);
+    }
     const snapshot = storageRepository.patchApplicationState((state) =>
       clearGameSessionState(state, { humanHistory }),
     );

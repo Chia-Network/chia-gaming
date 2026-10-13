@@ -1017,12 +1017,14 @@ cancellation; the in-memory aggregate remains pending for a later checkpoint.
 the old owner is dead: Shell destroys its controller and suppresses its pending
 writes/effects. A new claimant independently rehydrates the latest flushed
 durable whole root; no controller snapshot or transient work crosses the
-authority generation. Failed cancellation retries only on restore or wallet
-reconnect/readiness—never by a timer or immediate loop. This is
-readiness-only, durable, nonblocking cleanup. Terminal finalization is blocked
+authority generation. Failed cancellation may leave an optional retry hint while the session remains
+active. Matching restore or wallet reconnect/readiness can retry it, without a
+timer, a reconnect requirement, or a persistent recovery banner. Cleanup is
+nonblocking and cancellation success is never required to switch wallets. Terminal finalization is blocked
 while reservation creation or identification is unresolved, or while funding
-material is still owed to Rust. Identified funding or fee cancellation residue
-remains durable and does not block terminal session capture.
+material is still owed to Rust. Terminal completion and explicit abandonment discard session-owned reservation
+residue. Original-provider cancellation is best effort and never gates that
+retirement; cold terminal or empty-session restore also forgets leftover cleanup.
 Going offline detaches the provider RPC without
 discarding cleanup; retirement records the required transitions, and matching
 restore/reconnect attachment drains them.

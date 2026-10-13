@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { activeSave } from './session_save_envelope.fixtures';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
@@ -40,6 +41,7 @@ function installWallet(entries: ChannelFundingEntry[]): void {
   storageRepository._replaceApplicationStateForTests({
     ...storageRepository.loadState(),
     walletContext: owner.providerScope,
+    session: activeSave().session,
     channelFundingOperations: entries.filter((entry) => entry.purpose.kind === 'funding'),
     feeAttachments: entries.filter((entry) => entry.purpose.kind === 'fee'),
   });
