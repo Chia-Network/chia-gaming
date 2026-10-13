@@ -2061,8 +2061,8 @@ const Shell = () => {
               failed: (reason) => {
                 console.error('[Shell] invalid provisional reliable session', reason);
                 if (peerSessionRef.current === provisional) {
-                  provisional.destroy();
-                  peerSessionRef.current = null;
+                  if (abortAcceptIfActive({ error: true })) return;
+                  abandonFailedStartAttempt({ error: true });
                 }
               },
             });
@@ -2338,6 +2338,7 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
+      abandonFailedStartAttempt,
       freshStartPersistInFlightRef,
       isAvailableForNewSessionPrompt,
       presenceBusy,
