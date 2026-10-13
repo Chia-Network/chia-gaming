@@ -925,8 +925,9 @@ Funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
 omitted rather than stored as null. The aggregate stores one canonical
-wallet-provider scope with strict, purpose-specific
-`channelFundingOperations` and `feeAttachments` slices.
+wallet-provider scope for the current session with strict, purpose-specific
+`channelFundingOperations` and `feeAttachments` slices. Unresolved operations
+from retired sessions retain their original owner scopes across wallet changes.
 `ChannelFundingRuntime` attaches one stable funding inbox to that session while
 Rust and the aggregate own durable protocol and recovery state.
 After restore, the same operation cannot launch another wallet offer until its

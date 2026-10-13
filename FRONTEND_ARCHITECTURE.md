@@ -556,12 +556,15 @@ no orphan-risk provenance.
 Wallet mutation starts only after the aggregate claim is installed. Malformation
 of any nested field rejects the whole root and remains visible on Resume /
 Start Over. A connected provider/account scope that differs from the durable
-owner is shown as a recovery mismatch rather than touching the wrong wallet.
+operation owner is shown as a recovery mismatch rather than touching the wrong wallet.
+`walletContext` identifies the current session's wallet; unresolved operations
+from retired sessions keep their own original provider scopes when a new session
+starts with a different wallet.
 
 The complete aggregate is written in one IndexedDB transaction. Strict
 validation rejects unknown or missing fields, duplicate identified
-`providerReservationId` values within or across both slices, provider scope
-mismatch, invalid discriminants, and non-current versions. Persistence failure does not gate
+`providerReservationId` values within or across both slices, malformed provider
+scopes, invalid discriminants, and non-current versions. Persistence failure does not gate
 offer use, transaction release, or cancellation; the latest in-memory root is
 captured again on later activity. Only the active-blockchain lifecycle attaches
 the cancellation RPC. A failed cancellation stays durable and retries only on

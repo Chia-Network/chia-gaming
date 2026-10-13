@@ -241,9 +241,14 @@ describe('Shell production restore composition', () => {
     expect(unhandledRejections).toEqual([]);
   });
 
-  it.each([false, true])(
-    'clears failed peer consent during Accept=%s and admits a new attempt',
-    async (accepting) => {
+  it.each([
+    { accepting: false, switchedWallet: false },
+    { accepting: true, switchedWallet: false },
+    { accepting: false, switchedWallet: true },
+    { accepting: true, switchedWallet: true },
+  ])(
+    'clears failed peer consent during Accept=$accepting with switched wallet=$switchedWallet and admits a new attempt',
+    async ({ accepting, switchedWallet }) => {
       requestTrust.mockResolvedValue('trusted');
       jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
         qrUri: '',
@@ -260,7 +265,9 @@ describe('Shell production restore composition', () => {
         .mockImplementation(() => new Promise<never>(() => {}));
       jest.spyOn(realBlockchainInfo, 'getWalletOfferProvider').mockReturnValue({
         capability: 'best-effort',
-        scope: { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },
+        scope: switchedWallet
+          ? { provider: 'cloud', walletId: 'cloud-wallet' }
+          : { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },
         beginCreation: jest.fn(),
         cancel: jest.fn(),
       });
@@ -275,6 +282,30 @@ describe('Shell production restore composition', () => {
         activeGameIds: [],
         currentHandGameIds: [],
         gameInstances: {},
+        walletProviderScope: {
+          provider: 'walletconnect',
+          fingerprint: '123',
+          chainId: 'chia:mainnet',
+        },
+        feeAttachments: switchedWallet
+          ? [
+              {
+                owner: {
+                  installationPlayerId: 'player',
+                  peerSessionId: 'finished',
+                  providerScope: {
+                    provider: 'walletconnect',
+                    fingerprint: '123',
+                    chainId: 'chia:mainnet',
+                  },
+                },
+                submissionId: 'old-fee',
+                stage: 'retained-for-replay',
+                providerReservationId: 'old-trade',
+                reason: 'fee-submission-retained',
+              },
+            ]
+          : [],
       });
       await storageRepository.write(storageRepository.patchApplicationState(() => save));
       markSavedSession();
@@ -311,9 +342,17 @@ describe('Shell production restore composition', () => {
       });
       await act(async () => {
         mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[0]);
+        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[0]);
+        firstAttempt.sendMessage(2, new Uint8Array(562));
+        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[2]);
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
+      if (switchedWallet) {
+        const persisted = (await storageRepository.inspect()).applicationState!;
+        expect(persisted.walletContext).toEqual({ provider: 'cloud', walletId: 'cloud-wallet' });
+        expect(persisted.feeAttachments).toEqual(save.feeAttachments);
+      }
       let releaseCheckpoint = () => {};
       if (accepting) {
         let checkpointCommitted!: () => void;
