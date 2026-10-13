@@ -268,6 +268,7 @@ export class SessionController implements PollingGameSession {
     purpose: ChannelFundingPurpose;
     request: CanonicalFundingRequest;
     effect?: Promise<void>;
+    materialReady?: boolean;
   } | null = null;
   private fundingInFlight: NonNullable<SessionController['pendingFunding']> | null = null;
   private fundingEffectSequence = 0;
@@ -497,7 +498,19 @@ export class SessionController implements PollingGameSession {
     let pending = this.pendingFunding;
     if (!pending) return;
     const connected = this.currentProviderOwnerForRead();
+    // Completed material belongs to this session even if its wallet disconnects
+    // while authoritative delivery is queued behind a checkpoint.
+    const awaitingChannel =
+      this.fundingInFlight === pending &&
+      pending.owner &&
+      entryForOperation(
+        storageRepository.channelFundingOperations(),
+        pending.owner,
+        pending.purpose,
+      )?.stage === 'awaiting-channel';
     if (
+      !pending.materialReady &&
+      !awaitingChannel &&
       pending.owner &&
       connected &&
       providerScopeKey(pending.owner.providerScope) !== providerScopeKey(connected.providerScope)
@@ -580,8 +593,14 @@ export class SessionController implements PollingGameSession {
       return;
     }
     if (outcome.kind === 'failure') {
-      this.pendingFunding = null;
       await this.runCommittedMutation(() => {
+        if (
+          this.pendingFunding !== pending ||
+          this.retired ||
+          !storageRepository.isGenerationCurrent(generation)
+        )
+          return;
+        this.pendingFunding = null;
         this.reportFundingWarning(outcome.reason);
         if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(outcome.reason));
         this.requestCommit();
@@ -617,7 +636,14 @@ export class SessionController implements PollingGameSession {
       this.requestCommit();
       return;
     }
+    pending.materialReady = true;
     await this.runCommittedMutation(() => {
+      if (
+        this.pendingFunding !== pending ||
+        this.retired ||
+        !storageRepository.isGenerationCurrent(generation)
+      )
+        return;
       try {
         if (outcome.warning) this.reportFundingWarning(outcome.warning);
         if (!this.cradle) {
@@ -647,7 +673,7 @@ export class SessionController implements PollingGameSession {
           throw error;
         }
       } finally {
-        this.pendingFunding = null;
+        if (this.pendingFunding === pending) this.pendingFunding = null;
         this.requestCommit();
       }
     });
