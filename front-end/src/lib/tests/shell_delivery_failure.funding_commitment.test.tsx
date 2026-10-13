@@ -415,6 +415,65 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     deactivate();
   });
 
+  it('updates pending consent when only wallet readiness changes', async () => {
+    let readinessChange: ((ready: boolean) => void) | undefined;
+    jest.spyOn(realBlockchainInfo, 'onPlayReadinessChange').mockImplementation((callback) => {
+      readinessChange = callback;
+      return () => {};
+    });
+    jest.spyOn(realBlockchainInfo, 'beginConnect').mockResolvedValue({
+      skipQr: true,
+      finalize: async () => {},
+    });
+    jest.spyOn(BlockchainPoller.prototype, 'start').mockImplementation(() => {});
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockResolvedValue(0n);
+    await storageRepository.claimApplicationState();
+    const save = liveSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      activeTab: 'game',
+      sessionPeerId: '22'.repeat(32),
+      myHubPlayerId: '11'.repeat(32),
+      iStarted: false,
+    });
+    if (save.session?.phase !== 'live') throw new Error('expected live fixture');
+    save.session = {
+      phase: 'pre-handshake',
+      pairing: save.session.pairing,
+      transport: {
+        messageNumber: 1n,
+        remoteNumber: 1n,
+        unackedMessages: [],
+        disposition: 'proposal-received',
+        terminalHandoff: null,
+      },
+    };
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    act(() => {
+      renderer = create(<Shell />);
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    await act(async () =>
+      renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick(),
+    );
+    await waitForText(renderer!, 'Connected');
+    await waitForText(renderer!, 'Accept');
+    for (let attempt = 0; attempt < 30 && !readinessChange; attempt++) {
+      await flushEffects();
+    }
+    expect(readinessChange).toBeDefined();
+    const accept = () => renderer!.root.findByProps({ children: 'Accept' });
+    expect(accept().props.disabled).toBe(true);
+    act(() => readinessChange!(true));
+    expect(accept().props.disabled).toBe(false);
+    act(() => readinessChange!(false));
+    expect(accept().props.disabled).toBe(true);
+    deactivate();
+  });
+
   it('preserves a sent offer when delivery fails before the UI projects OfferSent', async () => {
     await mountHandshake();
     await act(async () => {
