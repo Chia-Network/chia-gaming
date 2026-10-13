@@ -872,26 +872,44 @@ describe('CloudBlockchainInterface fee support', () => {
     });
   });
 
+  it('returns no puzzle and solution for a coin that does not exist yet', async () => {
+    const calls = mockGraphql((_query, variables) => {
+      if ((variables.input as { endpoint: string }).endpoint === 'get_coin_record_by_name') {
+        throw new Error('Coin record not found');
+      }
+      return { coinset: { response: { success: true, coin_records: [] } } };
+    });
+    await expect(
+      new CloudBlockchainInterface().getPuzzleAndSolution('00'.repeat(72)),
+    ).resolves.toBeNull();
+    expect(calls).toHaveLength(1);
+    expect((calls[0]!.variables.input as { endpoint: string }).endpoint).toBe(
+      'get_coin_records_by_names',
+    );
+  });
+
   it('resolves spent height before requesting puzzle and solution', async () => {
     const calls = mockGraphql((_query, variables) => {
       const endpoint = (variables.input as { endpoint: string }).endpoint;
-      if (endpoint === 'get_coin_record_by_name') {
+      if (endpoint === 'get_coin_records_by_names') {
         return {
           coinset: {
             response: {
               success: true,
-              coin_record: {
-                coin: {
-                  parent_coin_info: '11'.repeat(32),
-                  puzzle_hash: '22'.repeat(32),
-                  amount: '50',
+              coin_records: [
+                {
+                  coin: {
+                    parent_coin_info: '11'.repeat(32),
+                    puzzle_hash: '22'.repeat(32),
+                    amount: '50',
+                  },
+                  confirmed_block_index: 10,
+                  spent_block_index: 25,
+                  spent: true,
+                  coinbase: false,
+                  timestamp: 123,
                 },
-                confirmed_block_index: 10,
-                spent_block_index: 25,
-                spent: true,
-                coinbase: false,
-                timestamp: 123,
-              },
+              ],
             },
           },
         };
