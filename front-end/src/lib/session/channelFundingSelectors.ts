@@ -9,6 +9,7 @@ import {
 import type { WalletOfferRequest } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
 import { providerOwnerKey, providerScopeKey } from './providerKeys';
+import { type FeeAttachment } from './feeAttachmentStore';
 
 export function walletSessionKey(installationPlayerId: string, peerSessionId: string): string {
   return `${installationPlayerId.length}:${installationPlayerId}${peerSessionId.length}:${peerSessionId}`;
@@ -91,4 +92,51 @@ export function recoveryReadiness(
   return entries.some((entry) => !scopeKeys.has(providerScopeKey(entry.owner.providerScope)))
     ? 'scope-mismatch'
     : 'ready';
+}
+
+export interface WalletRecoveryNotice {
+  key: string;
+  message: string;
+}
+
+export function walletRecoveryNotice(
+  entries: readonly (ChannelFundingEntry | FeeAttachment)[],
+  scopeKeys: ReadonlySet<string>,
+): WalletRecoveryNotice | null {
+  const pending = entries.filter(
+    (entry) =>
+      entry.stage !== 'awaiting-channel' &&
+      entry.stage !== 'reserved' &&
+      entry.stage !== 'retained-for-replay' &&
+      !scopeKeys.has(providerScopeKey(entry.owner.providerScope)),
+  );
+  if (!pending.length) return null;
+  const cancellations = pending.filter(
+    (entry) =>
+      entry.stage === 'cancel-required' ||
+      entry.stage === 'cancelling' ||
+      entry.stage === 'best-effort-cancellation-uncertain' ||
+      ('disposition' in entry && entry.disposition === 'cancel-on-create'),
+  ).length;
+  const requests = pending.length - cancellations;
+  const tasks = [
+    cancellations > 0
+      ? `${cancellations} offer cancellation${cancellations === 1 ? '' : 's'}`
+      : null,
+    requests > 0 ? `${requests} unfinished wallet request${requests === 1 ? '' : 's'}` : null,
+  ].filter(Boolean);
+  return {
+    key: JSON.stringify(
+      pending
+        .map(
+          (entry) =>
+            providerOwnerKey(entry.owner) +
+            ('submissionId' in entry
+              ? `:fee:${entry.submissionId}`
+              : `:funding:${entry.purpose.operationId}`),
+        )
+        .sort(),
+    ),
+    message: `Earlier offers have ${tasks.join(' and ')} waiting for the original wallet account. Reconnect the wallet that created them to finish this work.`,
+  };
 }

@@ -17,8 +17,7 @@ import {
 } from '../lib/session/acceptLifecycle';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { selectGamePaneKind } from '../lib/session/gamePane';
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
-import { recoveryReadiness } from '../lib/session/channelFundingSelectors';
+import WalletRecoveryNotice from './WalletRecoveryNotice';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
@@ -1032,27 +1031,6 @@ const Shell = () => {
     storageRepository.updatePreference({ key: 'unreadGame', value: v });
   }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => storageRepository.query('walletAlert'));
-  const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
-    recoveryReadiness(
-      [...storageRepository.channelFundingOperations(), ...storageRepository.feeAttachments()],
-      channelFundingRuntime.providerScopeKeys(),
-    ),
-  );
-  useEffect(
-    () =>
-      channelFundingRuntime.subscribe(() =>
-        setWalletRecoveryReadiness(
-          recoveryReadiness(
-            [
-              ...storageRepository.channelFundingOperations(),
-              ...storageRepository.feeAttachments(),
-            ],
-            channelFundingRuntime.providerScopeKeys(),
-          ),
-        ),
-      ),
-    [],
-  );
   const setWalletAlert = useCallback((v: boolean) => {
     setWalletAlertRaw(v);
     storageRepository.updatePreference({ key: 'walletAlert', value: v });
@@ -2061,8 +2039,8 @@ const Shell = () => {
               failed: (reason) => {
                 console.error('[Shell] invalid provisional reliable session', reason);
                 if (peerSessionRef.current === provisional) {
-                  provisional.destroy();
-                  peerSessionRef.current = null;
+                  if (abortAcceptIfActive({ error: true })) return;
+                  abandonFailedStartAttempt({ error: true });
                 }
               },
             });
@@ -2217,16 +2195,22 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            const terminalSave = save?.session?.phase === 'terminal';
-            // Match getPresence: session/restore obligation OR the full-node-peer wait.
-            // Broader than getPresence: also covers pairingToken-only / reserved peer
-            // before `restoring` is set on sessionConfig.
+            // A saved live session still needs recovery. A pre-handshake record
+            // only reserves the lobby while it retains an actual peer.
             const restoreBusy =
-              presenceBusy(sessionPhaseRef.current) ||
-              (!terminalSave &&
-                (save?.session?.phase === 'live' ||
-                  save?.session?.phase === 'pre-handshake' ||
-                  !!pairing?.peerId));
+              hubBusyFromSessionState(
+                sessionPhaseRef.current,
+                walletConnectedRef.current,
+                !!sessionConfigRef.current?.restoring,
+                save,
+                {
+                  pending: isAcceptSessionTransition(shellTransitionRef.current),
+                  persistInFlight: freshStartPersistInFlightRef.current,
+                  blockchainReady: blockchainReadyRef.current,
+                },
+              ) ||
+              save.session?.phase === 'live' ||
+              (save.session?.phase === 'pre-handshake' && !!pairing?.peerId);
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
                 pairing.peerId,
@@ -2249,10 +2233,7 @@ const Shell = () => {
               } else {
                 bindPeerMessageHandler(peerSessionRef.current);
               }
-              // Restore never goes through startFreshSessionWithPeer, which is
-              // otherwise the only place that marks the hub busy. Use restoreBusy
-              // (session/wallet/peer-wait); terminal saves stay available unless
-              // walletless or the full-node-peer wait still requires busy.
+              // Restore does not pass through the fresh-session busy update.
               conn.setBusy(restoreBusy);
             } else if (
               save?.session?.phase === 'live' ||
@@ -2338,6 +2319,7 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
+      abandonFailedStartAttempt,
       freshStartPersistInFlightRef,
       isAvailableForNewSessionPrompt,
       presenceBusy,
@@ -3904,17 +3886,6 @@ const Shell = () => {
           </div>
         </div>
 
-        {walletRecoveryReadiness !== 'ready' && (
-          <div
-            role="alert"
-            className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
-          >
-            {walletRecoveryReadiness === 'scope-mismatch'
-              ? 'Reconnect the original wallet account to resume pending wallet recovery. The connected account will not be used.'
-              : 'Reconnect the original wallet account to resume pending wallet recovery.'}
-          </div>
-        )}
-
         {/* Tab content */}
         <div
           style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
@@ -3932,6 +3903,7 @@ const Shell = () => {
               overflow: 'auto',
             }}
           >
+            <WalletRecoveryNotice />
             <Button
               variant={transactionPublishNerfed ? 'solid' : 'outline'}
               color={transactionPublishNerfed ? 'primary' : 'neutral'}
