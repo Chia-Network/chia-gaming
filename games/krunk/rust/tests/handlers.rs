@@ -30,7 +30,7 @@ fn sha256_bytes(data: &[u8]) -> [u8; 32] {
 }
 
 fn run_clvm(allocator: &mut AllocEncoder, program: NodePtr, args: NodePtr) -> NodePtr {
-    run_program(allocator.allocator(), &chia_dialect(), program, args, 0)
+    crate::clvm_execution::run_clvm(allocator.allocator(), program, args, 0)
         .expect("CLVM run failed")
         .1
 }
@@ -1028,6 +1028,11 @@ fn test_krunk_bob_invalid_guess_slashes_through_referee() {
     assert!(
         result.slash.is_some(),
         "signed dictionary evidence should slash before continuation agreement"
+    );
+
+    assert!(
+        allocator.drain_clvm_diagnostics().next().is_none(),
+        "expected evidence-probe failures must not emit stack diagnostics"
     );
 }
 

@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 ; Mock validator for referee tests.
 ; Returns `previous_state` — the test controls the return value by putting

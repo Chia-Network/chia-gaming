@@ -30,22 +30,19 @@ impl ProposalParameters {
     fn to_nodeptr(&self, allocator: &mut AllocEncoder) -> Result<NodePtr, Error> {
         match self {
             Self::Null | Self::Bool(false) => Ok(NodePtr::NIL),
-            Self::Bool(true) => allocator.allocator().new_atom(&[1]).map_err(Error::ClvmErr),
+            Self::Bool(true) => allocator.allocator().new_atom(&[1]).map_err(Error::from),
             Self::Integer(value) => value.to_clvm(allocator).map_err(Error::EncodeErr),
-            Self::Bytes(value) => allocator
-                .allocator()
-                .new_atom(value)
-                .map_err(Error::ClvmErr),
+            Self::Bytes(value) => allocator.allocator().new_atom(value).map_err(Error::from),
             Self::Text(value) => allocator
                 .allocator()
                 .new_atom(value.as_bytes())
-                .map_err(Error::ClvmErr),
+                .map_err(Error::from),
             Self::List(values) => {
                 let nodes = values
                     .iter()
                     .map(|value| value.to_nodeptr(allocator))
                     .collect::<Result<Vec<_>, _>>()?;
-                enlist(allocator.allocator(), &nodes).map_err(Error::ClvmErr)
+                enlist(allocator.allocator(), &nodes).map_err(Error::from)
             }
             #[cfg(test)]
             Self::RawClvmPair(first, rest) => {
@@ -54,7 +51,7 @@ impl ProposalParameters {
                 allocator
                     .allocator()
                     .new_pair(first, rest)
-                    .map_err(Error::ClvmErr)
+                    .map_err(Error::from)
             }
         }
     }

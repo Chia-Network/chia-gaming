@@ -13,7 +13,7 @@
 ; Preemption path: first condition must be (REM sequence_number); checks
 ;                  sequence number > old with opposite parity, prepends AGG_SIG_UNSAFE
 
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 (import std.assert)
 (import std.shatree)
 (import std.condition_codes)

@@ -417,6 +417,69 @@ describe('session machine behavior sequences', () => {
     expect(transition.effects).toEqual([]);
   });
 
+  it('retires only the rejected Krunk queue head after runtime rollback', () => {
+    let state = createSessionMachineState(createSessionModel());
+    state = trackProposal(state, '1', KRUNK_TERMS);
+    state = send(state, {
+      type: 'notification-accepted-group',
+      proposalId: '1',
+      members: [
+        {
+          id: '1',
+          playerAContribution: 100n,
+          playerBContribution: 0n,
+          ourTurn: true,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+        {
+          id: '2',
+          playerAContribution: 0n,
+          playerBContribution: 100n,
+          ourTurn: false,
+          readableParameters: Program.fromBigInt(100n).serialize(),
+        },
+      ],
+    });
+    const hand = krunkStateCodec.decode(state.model.game.handState)!;
+    state = send(state, {
+      type: 'hand-state-changed',
+      handState: krunkStateCodec.encode({
+        ...hand,
+        members: [
+          hand.members[0],
+          {
+            ...hand.members[1],
+            handler: 4n,
+            myTurn: true,
+            queuedGuesses: ['XXXXX', 'SLATE'],
+          },
+        ],
+      }),
+    });
+
+    const transition = reduceSessionMachineForTest(state, {
+      type: 'wasm-notification',
+      iStarted: false,
+      notification: {
+        MoveRejected: { id: 2n, tag: 'not_in_dictionary', message: 'XXXXX' },
+      },
+    });
+
+    expect(transition.durability).toBe('durable');
+    expect(krunkStateCodec.decode(transition.state.model.game.handState)!.members[1]).toMatchObject(
+      {
+        handler: 4n,
+        myTurn: true,
+        queuedGuesses: ['SLATE'],
+        guesses: [],
+      },
+    );
+    expect(transition.state.model.game.queue.at(-1)).toMatchObject({
+      kind: 'move-rejected',
+      message: 'XXXXX is not in the dictionary.',
+    });
+  });
+
   it('surfaces a tagged rejection message when the tag has no dedicated copy', () => {
     const state = createSessionMachineState(createSessionModel());
     const transition = reduceSessionNotification(

@@ -201,21 +201,36 @@ gets the potato.
 
 ## Debugging Chialisp (CLVM)
 
-**Note:** This section covers the current state of chialisp debugging,
-which lacks print statements and stack traces. Once those are available,
-prefer them over the technique below.
+Application-owned CLVM execution recognizes the established Chialisp and Rue
+runtime print encodings. Messages are emitted as `[clvm-print] ...` entries in
+the session diagnostic log in execution order, including messages produced
+before a later CLVM error.
 
-### The problem
+Chialisp's conventional helper uses a deliberately recognizable `all` form:
 
-CLVM programs have no print/log facility. When a program crashes (raises,
-returns wrong values, or hits a type error like `Requires Int Argument`),
-the error message gives you the CLVM opcode and a NodePtr but no source
-location or call stack.
+```clsp
+(defun print (REPORT PASS_THROUGH)
+    (if (all "$print$" REPORT PASS_THROUGH) PASS_THROUGH PASS_THROUGH))
+```
+
+Calls such as `(print (list "state" STATE) RESULT)` log both evaluated
+arguments while still returning `RESULT`. Rue's `debug EXPRESSION;` form is
+also recognized; its compiled `debug_print` operation logs Rue's source
+location and the evaluated value, then returns nil as specified by Rue.
+
+Ordinary consensus execution remains unchanged. Print detection is enabled
+only for application-owned runs, is bounded and session-local, and diagnostic
+stack-trace replay is print-silent so a failed run cannot duplicate output.
+
+When CLVM raises or hits a type error, the error includes a diagnostic token.
+The deployed app lazily loads the parallel `.debug.clvm.bin` metadata only when
+that token is diagnosed, then renders a source-level stack trace. Runtime
+prints do not load metadata and add no compiler annotations.
 
 ### Diagnostic asserts via `(x ...)`
 
-The only way to probe execution is to make the program fail at a known
-point using `(x "MARKER" values...)`. The `x` operator raises an
+When ordinary prints and the stack trace are insufficient, make the program
+fail at a known point using `(x "MARKER" values...)`. The `x` operator raises an
 exception whose payload appears in the Rust error message as
 `Raise(NodePtr(...))`.
 

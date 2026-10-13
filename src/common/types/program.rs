@@ -18,7 +18,10 @@ pub trait ToQuotedProgram {
 
 impl ToQuotedProgram for NodePtr {
     fn to_quoted_program(&self, allocator: &mut AllocEncoder) -> Result<Program, Error> {
-        let pair = allocator.0.new_pair(allocator.0.one(), *self).into_gen()?;
+        let raw_allocator = allocator.allocator();
+        let pair = raw_allocator
+            .new_pair(raw_allocator.one(), *self)
+            .into_gen()?;
         Program::from_nodeptr(allocator, pair)
     }
 }
