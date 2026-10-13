@@ -351,7 +351,8 @@ describe('Shell production restore composition', () => {
       if (switchedWallet) {
         const persisted = (await storageRepository.inspect()).applicationState!;
         expect(persisted.walletContext).toEqual({ provider: 'cloud', walletId: 'cloud-wallet' });
-        expect(persisted.feeAttachments).toEqual(save.feeAttachments);
+        // The previous terminal session no longer owns exact replay material.
+        expect(persisted.feeAttachments).toEqual([]);
       }
       let releaseCheckpoint = () => {};
       if (accepting) {

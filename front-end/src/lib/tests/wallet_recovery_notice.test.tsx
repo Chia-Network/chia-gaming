@@ -101,6 +101,15 @@ describe('wallet recovery notice after changing wallets', () => {
     expect(renderer!.toJSON()).toBeNull();
   });
 
+  it('clears the notice when explicit session retirement forgets its requests', async () => {
+    storageRepository.replaceFeeAttachments([request]);
+    await mount();
+    expect(JSON.stringify(renderer!.toJSON())).toContain('1 unfinished wallet request');
+    await act(async () => storageRepository.retireSessionWalletReservations(owner.peerSessionId));
+    expect(storageRepository.feeAttachments()).toEqual([]);
+    expect(renderer!.toJSON()).toBeNull();
+  });
+
   it('does not show a recovery warning just because a previous wallet retained a fee offer', async () => {
     const original = {
       capability: 'best-effort' as const,
