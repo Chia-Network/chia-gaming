@@ -18,7 +18,7 @@ export interface ProviderFlight {
 export function coalesceProviderFlight<T>(
   flights: Map<string, ProviderFlight>,
   key: string,
-  launch: () => Promise<T>,
+  launch: (flight: ProviderFlight) => Promise<T>,
   resume?: () => void,
   epoch?: bigint,
 ): Promise<T> {
@@ -35,7 +35,7 @@ export function coalesceProviderFlight<T>(
   const flight: ProviderFlight = {
     ...(epoch === undefined ? {} : { pendingEpoch: epoch }),
     promise: Promise.resolve()
-      .then(launch)
+      .then(() => launch(flight))
       .finally(() => {
         if (flights.get(key) === flight) flights.delete(key);
         if (flight.pendingEpoch !== undefined) resume?.();

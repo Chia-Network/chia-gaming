@@ -38,6 +38,7 @@ import { StorageAuthorityLostError } from './indexedDb';
 
 interface FundingFlight extends ProviderFlight {
   completion?: WalletOfferCompletion;
+  retired?: boolean;
 }
 
 export class ChannelFundingRuntime {
@@ -77,6 +78,19 @@ export class ChannelFundingRuntime {
   detachProvider = (provider: WalletOfferProvider): void => void this.providerRegistry.detach(provider);
 
   providerScopeKeys = (): ReadonlySet<string> => this.providerRegistry.scopeKeys();
+
+  supersedeOperation(owner: ChannelFundingOwner, purpose: ChannelFundingPurpose): void {
+    const operation = channelFundingKey(owner, purpose);
+    for (const prefix of ['create', 'recover', 'replace', 'completed']) {
+      const key = `${prefix}:${operation}`;
+      const flight = this.inFlight.get(key);
+      if (flight) {
+        flight.retired = true;
+        flight.pendingEpoch = undefined;
+      }
+      this.inFlight.delete(key);
+    }
+  }
 
   private entries = (): ChannelFundingEntry[] => storageRepository.channelFundingOperations();
 
@@ -178,15 +192,17 @@ export class ChannelFundingRuntime {
     if (current && current.stage !== 'creating' && current.stage !== 'best-effort-uncertain') {
       throw new Error('Channel funding cleanup is pending for this request');
     }
-    return coalesceProviderFlight(this.inFlight, `create:${key}`, () =>
+    return coalesceProviderFlight(this.inFlight, `create:${key}`, (flight: FundingFlight) =>
       this.performCreation(
         provider,
         owner,
         purpose,
         request,
         recoveryRequest,
-        isRetired,
+        () => !!flight.retired || isRetired(),
         generation,
+        false,
+        flight,
       ),
     );
   }
@@ -200,7 +216,9 @@ export class ChannelFundingRuntime {
     isRetired: () => boolean,
     generation: number,
     replacement = false,
+    flight?: FundingFlight,
   ): Promise<WalletOfferCompletion> {
+    if (isRetired()) return { kind: 'unavailable', reason: 'Funding consumer was superseded' };
     const recovery = entryForOperation(this.entries(), owner, purpose);
     const hardResetEpoch = this.hardResetEpoch;
     if (!replacement && recovery?.stage === 'best-effort-uncertain') {
@@ -310,7 +328,11 @@ export class ChannelFundingRuntime {
       if (isRetired()) {
         if (storageRepository.isGenerationCurrent(generation)) {
           const current = entryForOperation(this.entries(), owner, purpose);
-          if (current?.stage === 'creating' && current.recoveryId === recoveryId) {
+          if (
+            !flight?.retired &&
+            current?.stage === 'creating' &&
+            current.recoveryId === recoveryId
+          ) {
             this.replace(current, null);
           }
         }
@@ -319,6 +341,7 @@ export class ChannelFundingRuntime {
             provider,
             completion.tradeId,
             channelFundingKey(owner, purpose),
+            flight,
           );
         } else if (completion.kind === 'unavailable') {
           log(
@@ -335,7 +358,12 @@ export class ChannelFundingRuntime {
         completion.kind === 'created-reserved' &&
         (generationCurrent || hardResetEpoch === this.hardResetEpoch)
       ) {
-        this.cancelLateReservation(provider, completion.tradeId, channelFundingKey(owner, purpose));
+        this.cancelLateReservation(
+          provider,
+          completion.tradeId,
+          channelFundingKey(owner, purpose),
+          flight,
+        );
       }
       return {
         kind: 'unavailable',
@@ -463,7 +491,11 @@ export class ChannelFundingRuntime {
         entry.providerReservationId,
         entry.stage === 'cancelling' ? entry.recoveryId : undefined,
       );
-      if (!storageRepository.isGenerationCurrent(generation)) return;
+      if (
+        !storageRepository.isGenerationCurrent(generation) ||
+        this.reservation(entry.providerReservationId)?.stage !== entry.stage
+      )
+        return;
       if (
         outcome.status === 'unavailable' &&
         provider.capability === 'recoverable-after-begin' &&
@@ -540,7 +572,7 @@ export class ChannelFundingRuntime {
     const provider = this.providerRegistry.provider(entry.owner.providerScope);
     if (!provider || !isRecoverableProvider(provider)) return;
     const key = channelFundingKey(entry.owner, entry.purpose);
-    void coalesceProviderFlight(this.inFlight, `recover:${key}`, async () => {
+    void coalesceProviderFlight(this.inFlight, `recover:${key}`, async (flight: FundingFlight) => {
       const generation = storageRepository.lifecycleGeneration;
       const completion = await this.performCreation(
         provider,
@@ -548,8 +580,13 @@ export class ChannelFundingRuntime {
         entry.purpose,
         providerRequestFromRecovery(entry.owner, entry.request),
         entry.request,
-        () => entry.disposition === 'cancel-on-create',
+        () =>
+          !!flight.retired ||
+          entry.disposition === 'cancel-on-create' ||
+          !entryForOperation(this.entries(), entry.owner, entry.purpose),
         generation,
+        false,
+        flight,
       );
       if (completion.kind === 'created-reserved')
         await this.routeCompletion(entry, completion, generation);
@@ -598,7 +635,8 @@ export class ChannelFundingRuntime {
     void coalesceProviderFlight(
       this.inFlight,
       flightKey,
-      () => this.launchUncertainCreation(entry, epoch, restored, restoredKey),
+      (flight: FundingFlight) =>
+        this.launchUncertainCreation(entry, epoch, restored, restoredKey, flight),
       () => {
         const current = entryForOperation(this.entries(), entry.owner, entry.purpose);
         if (current?.stage === 'best-effort-uncertain') this.scheduleUncertain(current);
@@ -612,7 +650,9 @@ export class ChannelFundingRuntime {
     epoch: bigint,
     restored: boolean,
     restoredKey: string,
+    flight: FundingFlight,
   ): Promise<void> {
+    if (flight.retired) return;
     const recovery = entryForOperation(this.entries(), entry.owner, entry.purpose);
     if (recovery?.stage !== 'best-effort-uncertain') return;
     if (restored || epoch > recovery.lastAttemptEpoch) {
@@ -630,9 +670,13 @@ export class ChannelFundingRuntime {
       entry.purpose,
       request,
       entry.request,
-      () => recovery.disposition === 'cancel-on-create',
+      () =>
+        !!flight.retired ||
+        recovery.disposition === 'cancel-on-create' ||
+        !entryForOperation(this.entries(), entry.owner, entry.purpose),
       generation,
       true,
+      flight,
     );
     if (completed.kind !== 'created-reserved' || !storageRepository.isGenerationCurrent(generation))
       return;
@@ -706,15 +750,32 @@ export class ChannelFundingRuntime {
     provider: WalletOfferProvider,
     id: string,
     operation: string,
+    obsoleteFlight?: FundingFlight,
   ): void {
     void Promise.resolve()
-      .then(() =>
-        provider.capability === 'best-effort' || provider.capability === 'terminal'
+      .then(() => {
+        const current = this.entries().find(
+          (entry) => channelFundingKey(entry.owner, entry.purpose) === operation,
+        );
+        const creating = ['create', 'recover', 'replace'].some((prefix) => {
+          const flight = this.inFlight.get(`${prefix}:${operation}`);
+          return flight !== undefined && flight !== obsoleteFlight && !flight.retired;
+        });
+        // Provider IDs can be reused: best-effort cleanup must not cancel a current reservation.
+        if (
+          this.reservation(id) ||
+          current?.stage === 'creating' ||
+          current?.stage === 'best-effort-uncertain' ||
+          (!current && creating)
+        )
+          return;
+        return provider.capability === 'best-effort' || provider.capability === 'terminal'
           ? provider.cancel(id)
-          : provider.beginCancellation(id),
-      )
+          : provider.beginCancellation(id);
+      })
       .then(
         (outcome) => {
+          if (!outcome) return;
           if (outcome.status !== 'cancelled' && outcome.status !== 'already-terminal') {
             log(
               `[channel-funding-runtime] stale reservation may remain orphaned operation=${operation} provider_reservation_id=${id}`,

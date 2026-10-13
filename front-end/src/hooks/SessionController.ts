@@ -25,6 +25,8 @@ import { log, diagStack } from '../services/log';
 import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
 import { jsonStringify } from '../util/jsonSafe';
 import { storageRepository } from '../lib/session/storageRepository';
+import { cancelRetiredWalletReservations } from '../lib/session/walletReservationRetirement';
+import { channelFundingKey } from '../lib/session/channelFundingStore';
 import type { ChannelStatusPayload } from '../types/ChiaGaming';
 import {
   appendDiagnosticEntry,
@@ -265,8 +267,11 @@ export class SessionController implements PollingGameSession {
     owner: ChannelFundingOwner | null;
     purpose: ChannelFundingPurpose;
     request: CanonicalFundingRequest;
+    effect?: Promise<void>;
+    materialReady?: boolean;
   } | null = null;
-  private fundingInFlight = false;
+  private fundingInFlight: NonNullable<SessionController['pendingFunding']> | null = null;
+  private fundingEffectSequence = 0;
   private channelFundingUnsubscribe: (() => void) | null = null;
   private fundingRuntime: ChannelFundingRuntime | null;
   private walletProviderScope: WalletProviderScope | null = null;
@@ -474,8 +479,7 @@ export class SessionController implements PollingGameSession {
       !this.committedSessionRuntime ||
       !this.blockchain ||
       !this.cradle ||
-      this.retired ||
-      this.fundingInFlight
+      this.retired
     )
       return;
     if (!this.pendingFunding) {
@@ -491,8 +495,41 @@ export class SessionController implements PollingGameSession {
         };
       }
     }
-    const pending = this.pendingFunding;
+    let pending = this.pendingFunding;
     if (!pending) return;
+    const connected = this.currentProviderOwnerForRead();
+    // Completed material belongs to this session even if its wallet disconnects
+    // while authoritative delivery is queued behind a checkpoint.
+    const awaitingChannel =
+      this.fundingInFlight === pending &&
+      pending.owner &&
+      entryForOperation(
+        storageRepository.channelFundingOperations(),
+        pending.owner,
+        pending.purpose,
+      )?.stage === 'awaiting-channel';
+    if (
+      !pending.materialReady &&
+      !awaitingChannel &&
+      pending.owner &&
+      connected &&
+      providerScopeKey(pending.owner.providerScope) !== providerScopeKey(connected.providerScope)
+    ) {
+      this.requireFundingRuntime().supersedeOperation(pending.owner, pending.purpose);
+      const key = channelFundingKey(pending.owner, pending.purpose);
+      const entries = storageRepository.channelFundingOperations();
+      const superseded = entries.filter(
+        (entry) => channelFundingKey(entry.owner, entry.purpose) === key,
+      );
+      storageRepository.replaceChannelFunding(
+        entries.filter((entry) => channelFundingKey(entry.owner, entry.purpose) !== key),
+      );
+      cancelRetiredWalletReservations(superseded);
+      if (pending.effect) this.pendingEffects.delete(pending.effect);
+      pending = { owner: connected, purpose: pending.purpose, request: pending.request };
+      this.pendingFunding = pending;
+    }
+    if (this.fundingInFlight === pending || pending.effect) return;
     if (
       !pending.owner ||
       !entryForOperation(
@@ -519,11 +556,11 @@ export class SessionController implements PollingGameSession {
     }
     const generation = storageRepository.lifecycleGeneration;
     const effect = this.schedulePersistenceGatedEffect(
-      `funding:${pending.purpose.operationId}`,
+      `funding:${pending.purpose.operationId}:${++this.fundingEffectSequence}`,
       async () => {
         if (!storageRepository.isGenerationCurrent(generation) || this.pendingFunding !== pending)
           return;
-        this.fundingInFlight = true;
+        this.fundingInFlight = pending;
         try {
           const recovery = { kind: 'funding' as const, canonical: pending.request };
           const outcome = await this.requireFundingRuntime().createOffer(
@@ -531,15 +568,18 @@ export class SessionController implements PollingGameSession {
             pending.purpose,
             providerRequestFromRecovery(pending.owner!, recovery),
             recovery,
-            () => this.retired,
+            () => this.retired || this.pendingFunding !== pending,
           );
           await this.handleFundingOutcome(pending, outcome, generation);
         } finally {
-          this.fundingInFlight = false;
+          if (this.fundingInFlight === pending) this.fundingInFlight = null;
         }
       },
     );
-    this.trackEffect(effect);
+    pending.effect = this.trackEffect(effect);
+    void pending.effect.finally(() => {
+      pending.effect = undefined;
+    });
   }
 
   private async handleFundingOutcome(
@@ -553,8 +593,14 @@ export class SessionController implements PollingGameSession {
       return;
     }
     if (outcome.kind === 'failure') {
-      this.pendingFunding = null;
       await this.runCommittedMutation(() => {
+        if (
+          this.pendingFunding !== pending ||
+          this.retired ||
+          !storageRepository.isGenerationCurrent(generation)
+        )
+          return;
+        this.pendingFunding = null;
         this.reportFundingWarning(outcome.reason);
         if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(outcome.reason));
         this.requestCommit();
@@ -590,7 +636,14 @@ export class SessionController implements PollingGameSession {
       this.requestCommit();
       return;
     }
+    pending.materialReady = true;
     await this.runCommittedMutation(() => {
+      if (
+        this.pendingFunding !== pending ||
+        this.retired ||
+        !storageRepository.isGenerationCurrent(generation)
+      )
+        return;
       try {
         if (outcome.warning) this.reportFundingWarning(outcome.warning);
         if (!this.cradle) {
@@ -620,7 +673,7 @@ export class SessionController implements PollingGameSession {
           throw error;
         }
       } finally {
-        this.pendingFunding = null;
+        if (this.pendingFunding === pending) this.pendingFunding = null;
         this.requestCommit();
       }
     });
@@ -1442,6 +1495,7 @@ export class SessionController implements PollingGameSession {
             'SessionController terminal persistence sealing requires an active runtime',
           );
         }
+        storageRepository.retireSessionWalletReservations(this.reliableState.sessionId);
         this.terminalSealed = true;
         this.reliableTransport.detachCommitCoordinator(runtime);
         this.persistenceSessionRuntime = null;
@@ -1632,7 +1686,7 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  private trackEffect(effect: Promise<void>): void {
+  private trackEffect(effect: Promise<void>): Promise<void> {
     const tracked = effect
       .then(
         () => {},
@@ -1642,6 +1696,7 @@ export class SessionController implements PollingGameSession {
         this.pendingEffects.delete(tracked);
       });
     this.pendingEffects.add(tracked);
+    return tracked;
   }
 
   private queueCoinSolutionRequest(coin: string): void {
