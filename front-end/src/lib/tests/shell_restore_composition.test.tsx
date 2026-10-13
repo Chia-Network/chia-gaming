@@ -13,6 +13,47 @@ import { SESSION_DB_NAME } from '../session/indexedDb';
 import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
 import { calpokerStateCodec } from './game_state_helpers';
 
+import type { HubConnection } from '../../services/HubConnection';
+import type { GameSessionProps } from '../../components/GameSession';
+import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
+
+jest.mock('../../components/GameSession', () => {
+  const actual = jest.requireActual('../../components/GameSession');
+  return {
+    ...actual,
+    __esModule: true,
+    default: function MockRestoredHandshake({ onSessionModelChange }: GameSessionProps) {
+      const React = jest.requireActual<typeof import('react')>('react');
+      React.useEffect(() => {
+        onSessionModelChange?.(
+          createSessionModel({
+            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+          }),
+        );
+      }, [onSessionModelChange]);
+      return null;
+    },
+  };
+});
+
+let mockHubCallbacks: ConstructorParameters<typeof HubConnection>[2] | null = null;
+const mockSetBusy = jest.fn();
+jest.mock('../../services/HubConnection', () => {
+  const actual = jest.requireActual('../../services/HubConnection');
+  return {
+    ...actual,
+    HubConnection: jest.fn((_origin, _sessionId, callbacks) => {
+      mockHubCallbacks = callbacks;
+      return {
+        disconnect: jest.fn(),
+        setBusy: mockSetBusy,
+        getPlayerId: () => 'p_' + '11'.repeat(16),
+        sendToPeer: jest.fn(() => true),
+      };
+    }),
+  };
+});
+
 function storage(): Storage {
   const values = new Map<string, string>();
   return {
@@ -73,6 +114,8 @@ describe('Shell production restore composition', () => {
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
   beforeEach(async () => {
+    mockHubCallbacks = null;
+    mockSetBusy.mockClear();
     globalThis.requestAnimationFrame = () => 0;
     globalThis.cancelAnimationFrame = () => {};
     Object.defineProperty(globalThis, 'localStorage', {
@@ -192,6 +235,122 @@ describe('Shell production restore composition', () => {
     expect(requestTrust).toHaveBeenCalledWith('https://hub.example.test');
     await flushEffects();
     expect(unhandledRejections).toEqual([]);
+  });
+
+  it.each([
+    { peerId: undefined, ready: true, busy: false },
+    { peerId: 'p_' + '22'.repeat(16), ready: true, busy: true },
+    { peerId: undefined, ready: false, busy: true },
+  ])(
+    'reports restored consent presence peer=$peerId ready=$ready busy=$busy',
+    async ({ peerId, ready, busy }) => {
+      requestTrust.mockResolvedValue('trusted');
+      jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+        qrUri: '',
+        skipQr: true,
+        finalize: async () => {},
+      });
+      jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+      jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(ready);
+      jest
+        .spyOn(realBlockchainInfo, 'getHeightInfo')
+        .mockImplementation(() => new Promise<never>(() => {}));
+      jest
+        .spyOn(realBlockchainInfo, 'getBalance')
+        .mockImplementation(() => new Promise<never>(() => {}));
+      await storageRepository.claimApplicationState();
+      const save = baseSave({
+        blockchainType: 'walletconnect',
+        hubUrl: 'https://hub.example.test',
+        pairingToken: 'cancelled-pairing',
+        gameSessionId: '33'.repeat(16),
+        myContribution: '1000',
+        theirContribution: '1000',
+        perGameAmount: '100',
+        iStarted: false,
+        transportDisposition: 'proposal-received',
+        sessionPeerId: peerId,
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      act(() => {
+        renderer = create(React.createElement(Shell));
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      });
+      for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+      await flushEffects();
+      expect(mockHubCallbacks).not.toBeNull();
+      expect(mockHubCallbacks!.getPresence()).toEqual({ busy: !ready });
+      mockSetBusy.mockClear();
+      act(() => {
+        mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
+      });
+      expect(mockSetBusy).toHaveBeenLastCalledWith(busy);
+    },
+  );
+
+  it('lets a restored handshake be cancelled when its peer remains unavailable', async () => {
+    requestTrust.mockResolvedValue('trusted');
+    jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+      qrUri: '',
+      skipQr: true,
+      finalize: async () => {},
+    });
+    jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+    jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
+    jest
+      .spyOn(realBlockchainInfo, 'getHeightInfo')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    jest
+      .spyOn(realBlockchainInfo, 'getBalance')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    await storageRepository.claimApplicationState();
+    const save = baseSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      pairingToken: 'stale-handshake',
+      gameSessionId: '33'.repeat(16),
+      sessionPeerId: 'p_' + '22'.repeat(16),
+      myContribution: '1000',
+      theirContribution: '1000',
+      perGameAmount: '100',
+      iStarted: true,
+      transportDisposition: 'active',
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    act(() => {
+      renderer = create(React.createElement(Shell));
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    await waitForText(renderer!, 'Handshaking');
+    for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+    act(() => {
+      mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
+      mockHubCallbacks!.onPeerUnavailable('p_' + '22'.repeat(16));
+    });
+    expect(mockSetBusy).toHaveBeenLastCalledWith(true);
+    expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');
+    const cancel = renderer!.root.findByProps({ children: 'Cancel' });
+    expect(cancel.props.disabled).toBe(false);
+    await act(async () => {
+      cancel.props.onClick();
+      await storageRepository.inspect();
+    });
+    await waitForText(renderer!, 'No Session');
+    expect(storageRepository.loadState().session).toBeNull();
+    expect(storageRepository.loadState().rejectionTransports).toHaveLength(1);
+    expect(mockSetBusy).toHaveBeenLastCalledWith(false);
   });
 
   it('retires the live protocol owner before starting destructive storage reset', async () => {
