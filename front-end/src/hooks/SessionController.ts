@@ -270,7 +270,6 @@ export class SessionController implements PollingGameSession {
   private channelFundingUnsubscribe: (() => void) | null = null;
   private fundingRuntime: ChannelFundingRuntime | null;
   private walletProviderScope: WalletProviderScope | null = null;
-  private walletScopeMismatchReported = false;
   private protocolStopped = false;
   private retired = false;
   private terminalHandoff: SessionTerminalHandoffSave | null = null;
@@ -494,7 +493,16 @@ export class SessionController implements PollingGameSession {
     }
     const pending = this.pendingFunding;
     if (!pending) return;
-    pending.owner ??= this.currentProviderOwnerForRead();
+    if (
+      !pending.owner ||
+      !entryForOperation(
+        storageRepository.channelFundingOperations(),
+        pending.owner,
+        pending.purpose,
+      )
+    ) {
+      pending.owner = this.currentProviderOwnerForRead();
+    }
     if (!pending.owner) return;
     if (
       !this.fundingRuntime.providerScopeKeys().has(providerScopeKey(pending.owner.providerScope))
@@ -703,6 +711,8 @@ export class SessionController implements PollingGameSession {
       typeof readinessUnsubscribe === 'function' ? readinessUnsubscribe : null;
     const alreadyAttached = this.blockchain === blockchain && this.blockchainAttached;
     this.blockchain = blockchain;
+    const owner = this.currentProviderOwner();
+    if (owner) storageRepository.setWalletContext(owner.providerScope);
     this.submissionPump.providerReady(blockchain.rpc.isReadyForPlay?.() !== false);
     if (!this.fundingRuntime) {
       this.fundingRuntime = blockchain.channelFundingRuntime;
@@ -1017,28 +1027,8 @@ export class SessionController implements PollingGameSession {
   private currentProviderOwner(): ProviderOwner | null {
     const connected =
       this.blockchain?.resolveProviderOwner(this.walletProviderOwnerSelector()) ?? null;
-    if (!this.walletProviderScope) {
-      this.walletProviderScope = connected ? structuredClone(connected.providerScope) : null;
-    }
+    if (connected) this.walletProviderScope = structuredClone(connected.providerScope);
     if (!this.walletProviderScope) return null;
-    if (
-      connected &&
-      providerScopeKey(connected.providerScope) !== providerScopeKey(this.walletProviderScope)
-    ) {
-      if (!this.walletScopeMismatchReported) {
-        this.walletScopeMismatchReported = true;
-        this.rxjsEmitter?.next({
-          type: 'error',
-          error:
-            'Internal wallet consistency error: the connected wallet does not match this session. Reset or reconnect the original wallet.',
-        });
-      }
-      return {
-        ...this.walletProviderOwnerSelector(),
-        providerScope: structuredClone(this.walletProviderScope),
-      };
-    }
-    this.walletScopeMismatchReported = false;
     return {
       ...this.walletProviderOwnerSelector(),
       providerScope: structuredClone(this.walletProviderScope),

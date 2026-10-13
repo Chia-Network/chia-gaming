@@ -1,8 +1,9 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { SessionController } from '../../hooks/SessionController';
+import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { storageRepository } from '../session/storageRepository';
-import type { TransactionSubmission } from '../../types/ChiaGaming';
-import { submissionDrain, wasmResult } from './message_protocol.harness';
+import type { InternalBlockchainInterface, TransactionSubmission } from '../../types/ChiaGaming';
+import { mockRpc, submissionDrain, wasmResult } from './message_protocol.harness';
 import {
   bestEffortWalletRpc,
   commitRuntime,
@@ -19,6 +20,148 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe('submission pump delivery and runtime replacement', () => {
+  it('does not recreate an unresolved fee reservation through a different wallet', async () => {
+    const { blockchain, controller, submit } = setup(
+      jest.fn().mockResolvedValue({ status: 'acknowledged' }),
+    );
+    const owner = {
+      installationPlayerId: 'submission-handoff',
+      peerSessionId: '00'.repeat(16),
+      providerScope: controller.getWalletProviderScope(),
+    };
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: owner.providerScope,
+      feeAttachments: [
+        {
+          owner,
+          submissionId: 'pending-fee',
+          stage: 'creating',
+          disposition: 'active',
+          recoveryId: 'original-recovery',
+          request: {
+            kind: 'fee',
+            uniqueId: owner.installationPlayerId,
+            fee: 10n,
+            concurrentSpendCoinId: '22'.repeat(32),
+          },
+          reason: 'awaiting-wallet-response',
+        },
+      ],
+    });
+    controller.detachBlockchain(blockchain);
+    blockchain.detachProvider();
+    const beginCreation = jest.fn();
+    const cancel = jest.fn();
+    const replacement = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend: jest.fn().mockResolvedValue({ status: 'acknowledged' }),
+        getWalletOfferProvider: () => ({
+          capability: 'best-effort',
+          scope: { provider: 'cloud', walletId: 'Wallet_other' },
+          beginCreation,
+          cancel,
+        }),
+      } as InternalBlockchainInterface,
+      60_000,
+    );
+    try {
+      replacement.refreshProviderReadiness();
+      controller.attachBlockchain(replacement);
+      const lease = new ControlledRuntime();
+      commitRuntime(controller, lease);
+      submit({
+        ...submission('pending-fee'),
+        fee_request: { target: '22'.repeat(32), amount: '10' },
+      });
+      await lease.launch('submission:pending-fee');
+      await controller.flushPendingWork();
+      expect(beginCreation).not.toHaveBeenCalled();
+      expect(cancel).not.toHaveBeenCalled();
+      expect(storageRepository.feeAttachments()).toEqual([
+        expect.objectContaining({ owner, recoveryId: 'original-recovery', stage: 'creating' }),
+      ]);
+    } finally {
+      controller.cleanup();
+      replacement.detachProvider();
+    }
+  });
+
+  it('uses the new wallet for new fees while retiring old fees through their original wallet', async () => {
+    const oldBegin = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-old' },
+      tradeId: 'old-trade',
+    });
+    const oldCancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    const { blockchain, controller, cradle, submit } = setup(
+      jest.fn().mockResolvedValue({ status: 'acknowledged' }),
+      bestEffortWalletRpc(oldBegin, oldCancel),
+    );
+    const lease = new ControlledRuntime();
+    const scope = { provider: 'cloud' as const, walletId: 'Wallet_new' };
+    const newBegin = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-new' },
+      tradeId: 'new-trade',
+    });
+    const newCancel = jest.fn();
+    const replacement = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend: jest.fn().mockResolvedValue({ status: 'acknowledged' }),
+        getWalletOfferProvider: () => ({
+          capability: 'best-effort',
+          scope,
+          beginCreation: newBegin,
+          cancel: newCancel,
+        }),
+      } as InternalBlockchainInterface,
+      60_000,
+    );
+    try {
+      commitRuntime(controller, lease);
+      submit({ ...submission('old-fee'), fee_request: { target: '22'.repeat(32), amount: '10' } });
+      await lease.launch('submission:old-fee');
+      await controller.flushPendingWork();
+      expect(oldBegin).toHaveBeenCalledTimes(1);
+      const oldOwner = storageRepository.feeAttachments()[0].owner;
+      controller.detachBlockchain(blockchain);
+      blockchain.detachProvider();
+      replacement.refreshProviderReadiness();
+      controller.attachBlockchain(replacement);
+      (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(submissionDrain([], ['old-fee']));
+      controller.processResult(wasmResult());
+      submit({ ...submission('new-fee'), fee_request: { target: '33'.repeat(32), amount: '10' } });
+      await lease.launch('submission:new-fee');
+      await controller.flushPendingWork();
+      expect(newBegin).toHaveBeenCalledTimes(1);
+      expect(newCancel).not.toHaveBeenCalled();
+      expect(oldCancel).not.toHaveBeenCalled();
+      expect(storageRepository.feeAttachments()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            owner: oldOwner,
+            stage: 'cancel-required',
+            providerReservationId: 'old-trade',
+          }),
+          expect.objectContaining({
+            owner: { ...oldOwner, providerScope: scope },
+            providerReservationId: 'new-trade',
+          }),
+        ]),
+      );
+      blockchain.refreshProviderReadiness();
+      await waitFor(() => oldCancel.mock.calls.length === 1);
+      expect(oldCancel).toHaveBeenCalledWith('old-trade');
+      expect(newCancel).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+      replacement.detachProvider();
+    }
+  });
   it('retires a delivery before persistence-gated launch', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);

@@ -2,10 +2,8 @@ import type { WalletOfferRequest } from '../../types/ChiaGaming';
 import {
   MAX_FEE_ATTACHMENT_REASON_LENGTH,
   feeAttachmentEntryKey,
-  feeAttachmentOperationKey,
   type FeeAttachment,
 } from './feeAttachmentStore';
-import { providerScopeKey } from './providerKeys';
 import {
   boundedString,
   decodeProviderOwner,
@@ -107,23 +105,19 @@ export function decodeFeeAttachments(value: unknown, label = 'feeAttachments'): 
   if (!Array.isArray(value)) throw new Error(`Garbled save: invalid ${label}`);
   const entries = new Set<string>();
   const operations = new Set<string>();
-  const sessionScopes = new Map<string, string>();
   return value.map((item, index) => {
     const entry = decodeFeeAttachment(item, `${label}[${index}]`);
     const entryKey = feeAttachmentEntryKey(entry);
-    const operation = feeAttachmentOperationKey(entry.owner, entry.submissionId);
+    const operation = JSON.stringify([
+      entry.owner.installationPlayerId,
+      entry.owner.peerSessionId,
+      entry.submissionId,
+    ]);
     if (entries.has(entryKey) || operations.has(operation)) {
       throw new Error(`Garbled save: duplicate ${label} entry`);
     }
     entries.add(entryKey);
     operations.add(operation);
-    const session = `${entry.owner.installationPlayerId}:${entry.owner.peerSessionId}`;
-    const scope = providerScopeKey(entry.owner.providerScope);
-    const prior = sessionScopes.get(session);
-    if (prior && prior !== scope) {
-      throw new Error(`Garbled save: fee attachments for one session span provider scopes`);
-    }
-    sessionScopes.set(session, scope);
     return entry;
   });
 }
