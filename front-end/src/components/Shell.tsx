@@ -1077,7 +1077,7 @@ const Shell = () => {
         persistInFlight: freshStartPersistInFlightRef.current,
       });
     },
-    [],
+    [freshStartPersistInFlightRef],
   );
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
   const [activeBlockchainPoller, setActiveBlockchainPoller] = useState<BlockchainPoller | null>(
@@ -1653,6 +1653,7 @@ const Shell = () => {
       cancelAttemptedSession,
       endPersistFlight,
       freshStartPersistCommittedRef,
+      hubPresenceNow,
       presenceBusy,
       markPersistCommitted,
       sendSessionReject,
@@ -2313,7 +2314,6 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
-      freshStartPersistInFlightRef,
       hubPresenceNow,
       isAvailableForNewSessionPrompt,
       presenceBusy,
@@ -2448,13 +2448,7 @@ const Shell = () => {
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
     },
-    [
-      freshStartPersistInFlightRef,
-      hubPresenceNow,
-      startBalancePolling,
-      setConnecting,
-      setActiveTab,
-    ],
+    [hubPresenceNow, startBalancePolling, setConnecting, setActiveTab],
   );
 
   // --- Unified connection flow ---
