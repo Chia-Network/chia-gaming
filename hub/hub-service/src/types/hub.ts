@@ -1,3 +1,5 @@
+import type { BusyReason } from '../busyReasons';
+
 export type PlayerStatus = 'waiting' | 'playing' | 'busy';
 
 export interface Player {
@@ -5,6 +7,8 @@ export interface Player {
   alias: string;
   status: PlayerStatus;
   opponent_alias?: string;
+  /** Present only while `status === 'busy'` with a non-empty reason set. */
+  busy_reasons?: BusyReason[];
 }
 
 export interface Challenge {

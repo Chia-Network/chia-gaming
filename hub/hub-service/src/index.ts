@@ -20,6 +20,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Hub } from './hubState';
 import { deadlineReached, RetentionTimeline } from './retentionTimeline';
+import { type BusyReason, normalizeBusyReasons } from './busyReasons';
 import type { Challenge } from './types/hub';
 
 const hub = new Hub();
@@ -59,9 +60,9 @@ type HubInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; busy?: boolean }
+  | { type: 'identify'; session_id: string; busy?: boolean; reasons: BusyReason[] }
   | { type: 'close' }
-  | { type: 'set_busy'; busy: boolean }
+  | { type: 'set_busy'; busy: boolean; reasons: BusyReason[] }
   | { type: 'relay'; to: string; payload: Uint8Array }
   | { type: 'keepalive' };
 
@@ -86,6 +87,7 @@ interface GameConnMeta {
   sessionId: string;
   playerId: string;
   busy?: boolean;
+  reasons?: BusyReason[];
 }
 
 interface RateLimit {
@@ -894,10 +896,10 @@ function retirePlayerArtifacts(playerId: string, retirement: PlayerRetirement): 
   return removedPlayer;
 }
 
-function applyPlayerBusy(playerId: string, busy: boolean): void {
+function applyPlayerBusy(playerId: string, busy: boolean, reasons: BusyReason[] = []): void {
   const status = busy ? 'busy' : 'waiting';
   // Not in hub yet: busy is held on game meta and applied on join.
-  if (!hub.setPlayerStatus(playerId, status)) {
+  if (!hub.setPlayerStatus(playerId, status, undefined, busy ? reasons : undefined)) {
     return;
   }
   if (busy) {
@@ -975,7 +977,7 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
     const meta = wsGameMeta.get(gameWs);
     if (meta) meta.playerId = playerId;
     if (meta?.busy !== undefined) {
-      applyPlayerBusy(playerId, meta.busy);
+      applyPlayerBusy(playerId, meta.busy, meta.reasons);
       broadcastHubUpdate();
     }
   }
@@ -1378,12 +1380,12 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
       previousGameConn.close(4001, 'replaced_by_new_connection');
     } catch {}
   }
-  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
+  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy, reasons: msg.reasons });
   gameConnections.set(msg.session_id, ws);
 
   // Apply busy status if hub player exists
   if (msg.busy !== undefined && hub.players[playerId]) {
-    applyPlayerBusy(playerId, msg.busy);
+    applyPlayerBusy(playerId, msg.busy, msg.reasons);
     broadcastHubUpdate();
   }
 
@@ -1458,8 +1460,9 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
   }
   const playerId = meta.playerId;
   meta.busy = msg.busy;
-  logHub('set_busy', { player_id: playerId, busy: msg.busy });
-  applyPlayerBusy(playerId, msg.busy);
+  meta.reasons = msg.reasons;
+  logHub('set_busy', { player_id: playerId, busy: msg.busy, reasons: msg.reasons });
+  applyPlayerBusy(playerId, msg.busy, msg.reasons);
   broadcastHubUpdate();
 }
 
@@ -1493,6 +1496,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
           type: 'identify',
           session_id: sessionIdFromWire(requireFixedBytes(decoded, 'si', SESSION_ID_BYTES)),
           busy: getBoolean(decoded, 'b'),
+          reasons: normalizeBusyReasons(decoded.get('br')),
         };
       case 'SB': {
         const busy = getBoolean(decoded, 'b');
@@ -1500,6 +1504,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
         return {
           type: 'set_busy',
           busy,
+          reasons: normalizeBusyReasons(decoded.get('br')),
         };
       }
       case 'R':

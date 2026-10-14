@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { Player, PlayerStatus, Challenge } from './types/hub';
+import type { BusyReason } from './busyReasons';
 
 function randomHex(): string {
   return crypto.randomBytes(16).toString('hex');
@@ -27,11 +28,18 @@ export class Hub {
   }
 
   /** Returns false when the player is not in the hub (busy deferred until join). */
-  setPlayerStatus(playerId: string, status: PlayerStatus, opponentAlias?: string): boolean {
+  setPlayerStatus(
+    playerId: string,
+    status: PlayerStatus,
+    opponentAlias?: string,
+    busyReasons?: BusyReason[],
+  ): boolean {
     const player = this.players[playerId];
     if (!player) return false;
     player.status = status;
     player.opponent_alias = opponentAlias;
+    player.busy_reasons =
+      status === 'busy' && busyReasons && busyReasons.length > 0 ? busyReasons : undefined;
     return true;
   }
 
