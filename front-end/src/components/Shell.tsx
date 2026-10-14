@@ -2448,7 +2448,13 @@ const Shell = () => {
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
     },
-    [freshStartPersistInFlightRef, hubPresenceNow, startBalancePolling, setConnecting, setActiveTab],
+    [
+      freshStartPersistInFlightRef,
+      hubPresenceNow,
+      startBalancePolling,
+      setConnecting,
+      setActiveTab,
+    ],
   );
 
   // --- Unified connection flow ---

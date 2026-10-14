@@ -649,7 +649,10 @@ test('busy reasons are filtered, broadcast, and cleared with availability', asyn
     const bob = await joinHub(hub.origin, 'secret-bob-reasons', 'Bob');
     const playerFrom = (update) => update.players.find((p) => p.id === alice.id);
 
-    let update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy');
+    let update = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy',
+    );
     sendGame(aliceGame, {
       type: 'set_busy',
       busy: true,
@@ -662,17 +665,26 @@ test('busy reasons are filtered, broadcast, and cleared with availability', asyn
       busy_reasons: ['in-session', 'wallet-disconnected'],
     });
 
-    update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting');
+    update = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting',
+    );
     sendGame(aliceGame, { type: 'set_busy', busy: false, reasons: ['in-session'] });
     assert.deepEqual(playerFrom(await update), { id: alice.id, alias: 'Alice', status: 'waiting' });
 
     // A boolean-only client (no `br`) is still busy, with no reason list.
-    update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy');
+    update = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy',
+    );
     sendGame(aliceGame, { type: 'set_busy', busy: true });
     assert.deepEqual(playerFrom(await update), { id: alice.id, alias: 'Alice', status: 'busy' });
 
     // A non-list `br` does not drop the message.
-    update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting');
+    update = nextJson(
+      bob.ws,
+      (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting',
+    );
     sendRawGame(aliceGame, { t: 'SB', b: false, br: 'in-session' });
     await update;
 

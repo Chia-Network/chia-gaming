@@ -205,7 +205,13 @@ describe('restore lifecycle gates', () => {
       }),
     ).toEqual({
       busy: true,
-      reasons: ['in-session', 'restoring', 'starting', 'wallet-disconnected', 'blockchain-not-ready'],
+      reasons: [
+        'in-session',
+        'restoring',
+        'starting',
+        'wallet-disconnected',
+        'blockchain-not-ready',
+      ],
     });
     expect(computeHubPresence({ sessionPhase: 'on-chain', walletConnected: false })).toEqual({
       busy: true,
