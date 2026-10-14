@@ -18,6 +18,7 @@ import {
   shouldSwitchToHubOnResolved,
   shouldWarnOnSessionUnload,
 } from '../restoreLifecycle';
+import { computeHubPresence, normalizeBusyReasons } from '../hubPresence';
 
 describe('restore lifecycle gates', () => {
   it('reveals locally restored presentation without waiting for hub or wallet reconnection', () => {
@@ -126,7 +127,6 @@ describe('restore lifecycle gates', () => {
     // means we must not advertise available.
     expect(
       shouldReportHubBusyPresence('none', true, {
-        restoring: true,
         terminalSave: false,
         hasCradle: true,
       }),
@@ -134,29 +134,25 @@ describe('restore lifecycle gates', () => {
     // Terminal Failed/Resolved* cradle must not keep us busy once wallet is back.
     expect(
       shouldReportHubBusyPresence('none', true, {
-        restoring: true,
         terminalSave: true,
         hasCradle: true,
       }),
     ).toBe(false);
     expect(
       shouldReportHubBusyPresence('resolved', true, {
-        restoring: true,
         terminalSave: true,
         hasCradle: true,
       }),
     ).toBe(false);
-    // No cradle / not restoring: phase alone decides (with wallet).
+    // No cradle: phase alone decides (with wallet).
     expect(
       shouldReportHubBusyPresence('none', true, {
-        restoring: false,
         terminalSave: false,
         hasCradle: false,
       }),
     ).toBe(false);
     expect(
       shouldReportHubBusyPresence('off-chain', true, {
-        restoring: false,
         terminalSave: false,
         hasCradle: false,
       }),
@@ -164,7 +160,6 @@ describe('restore lifecycle gates', () => {
     // Walletless still forces busy even with no cradle.
     expect(
       shouldReportHubBusyPresence('none', false, {
-        restoring: false,
         terminalSave: false,
         hasCradle: false,
       }),
@@ -172,7 +167,6 @@ describe('restore lifecycle gates', () => {
     // A not-ready backend holds busy even with wallet + no cradle.
     expect(
       shouldReportHubBusyPresence('none', true, {
-        restoring: false,
         terminalSave: false,
         hasCradle: false,
         blockchainReady: false,
@@ -181,12 +175,53 @@ describe('restore lifecycle gates', () => {
     // Backend ready must not clear restore obligation while phase is still none.
     expect(
       shouldReportHubBusyPresence('none', true, {
-        restoring: true,
         terminalSave: false,
         hasCradle: true,
         blockchainReady: true,
       }),
     ).toBe(true);
+  });
+
+  it('reports restoring for a live save even after the restoring flag clears', () => {
+    // Registration marks a live cradle busy without consulting a restoring flag;
+    // a later reconnect identify must not clear it.
+    expect(computeHubPresence({ sessionPhase: 'none', hasCradle: true })).toEqual({
+      busy: true,
+      reasons: ['restoring'],
+    });
+    expect(
+      computeHubPresence({ sessionPhase: 'none', hasCradle: true, terminalSave: true }),
+    ).toEqual({ busy: false });
+  });
+
+  it('reports every overlapping busy reason in canonical order', () => {
+    expect(
+      computeHubPresence({
+        sessionPhase: 'off-chain',
+        walletConnected: false,
+        blockchainReady: false,
+        hasCradle: true,
+        persistInFlight: true,
+      }),
+    ).toEqual({
+      busy: true,
+      reasons: ['in-session', 'restoring', 'starting', 'wallet-disconnected', 'blockchain-not-ready'],
+    });
+    expect(computeHubPresence({ sessionPhase: 'on-chain', walletConnected: false })).toEqual({
+      busy: true,
+      reasons: ['in-session', 'wallet-disconnected'],
+    });
+    expect(computeHubPresence({ sessionPhase: 'none', pending: true })).toEqual({
+      busy: true,
+      reasons: ['starting'],
+    });
+    expect(computeHubPresence({ sessionPhase: 'resolved' })).toEqual({ busy: false });
+  });
+
+  it('normalizes busy reasons to the known set in canonical order', () => {
+    expect(
+      normalizeBusyReasons(['blockchain-not-ready', 'bogus', 'in-session', 'in-session', 7]),
+    ).toEqual(['in-session', 'blockchain-not-ready']);
   });
 
   it('rejects inbound matchmaking while the backend is not ready or walletless', () => {

@@ -97,6 +97,7 @@ Field keys:
 | `alias` | `a` | alias |
 | `session_id` | `si` | session ID |
 | `busy` | `b` | busy |
+| `busy_reasons` | `br` | busy reasons |
 | `player_id` | `pi` | player ID |
 | `peer_id` | `pi` | peer ID |
 | `peer_alias` | `pa` | peer alias |
@@ -163,12 +164,14 @@ Sent once whenever a game WebSocket opens.
 {
   "t":  Text("I"),
   "si": SessionID,
-  "b":  Bool       // optional in the decoder; always sent by the current client
+  "b":  Bool,      // optional in the decoder; always sent by the current client
+  "br": [Text]     // optional; only sent when "b" is true
 }
 ```
 
 `session_id` is required. `busy` reports whether the player application is
-currently unavailable for matchmaking.
+currently unavailable for matchmaking. `busy_reasons` optionally explains a
+busy report; see [6.2](#62-set_busy).
 
 The player derives a distinct `SessionID` for each canonical HTTP(S) hub origin.
 The URL path, query, fragment, host casing, and default port do not create new
@@ -184,8 +187,9 @@ Updates player-reported matchmaking availability.
 
 ```text
 {
-  "t": Text("SB"),
-  "b": Bool
+  "t":  Text("SB"),
+  "b":  Bool,
+  "br": [Text]     // optional; only sent when "b" is true
 }
 ```
 
@@ -195,6 +199,14 @@ WebSocket by `identify`.
 
 The player application is authoritative for this availability bit. How the hub
 uses it internally is out of scope.
+
+`busy` alone decides availability. `busy_reasons` is display-only: a list drawn
+from the closed set `in-session`, `restoring`, `starting`,
+`wallet-disconnected`, and `blockchain-not-ready`, in that order. Several may
+apply at once. A receiver drops unknown tokens and duplicates and re-sorts to
+that order. A missing, non-list, or empty value means a generic busy report
+with no explanation; it never invalidates the message. Reasons are ignored when
+`busy` is false.
 
 ### 6.3 `close`
 

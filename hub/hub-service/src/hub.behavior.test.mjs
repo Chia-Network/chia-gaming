@@ -117,9 +117,14 @@ function sendJson(ws, payload) {
 function compactGameInbound(payload) {
   switch (payload.type) {
     case 'identify':
-      return { t: 'I', si: payload.session_id, b: payload.busy };
+      return {
+        t: 'I',
+        si: payload.session_id,
+        b: payload.busy,
+        ...(payload.reasons ? { br: payload.reasons } : {}),
+      };
     case 'set_busy':
-      return { t: 'SB', b: payload.busy };
+      return { t: 'SB', b: payload.busy, ...(payload.reasons ? { br: payload.reasons } : {}) };
     case 'relay':
       return { t: 'R', to: payload.to, p: payload.payload };
     case 'close':
@@ -631,6 +636,77 @@ test('challenge authority and availability come from bound sessions', async () =
     await closeWs(aliceGame);
     await closeWs(bobGame);
     await closeWs(carolGame);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('busy reasons are filtered, broadcast, and cleared with availability', async () => {
+  const hub = await startHub();
+  try {
+    const alice = await joinHub(hub.origin, 'secret-alice-reasons', 'Alice');
+    const aliceGame = await identifyGame(hub.origin, 'secret-alice-reasons');
+    const bob = await joinHub(hub.origin, 'secret-bob-reasons', 'Bob');
+    const playerFrom = (update) => update.players.find((p) => p.id === alice.id);
+
+    let update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy');
+    sendGame(aliceGame, {
+      type: 'set_busy',
+      busy: true,
+      reasons: ['wallet-disconnected', 'bogus', 'in-session', 'in-session'],
+    });
+    assert.deepEqual(playerFrom(await update), {
+      id: alice.id,
+      alias: 'Alice',
+      status: 'busy',
+      busy_reasons: ['in-session', 'wallet-disconnected'],
+    });
+
+    update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting');
+    sendGame(aliceGame, { type: 'set_busy', busy: false, reasons: ['in-session'] });
+    assert.deepEqual(playerFrom(await update), { id: alice.id, alias: 'Alice', status: 'waiting' });
+
+    // A boolean-only client (no `br`) is still busy, with no reason list.
+    update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy');
+    sendGame(aliceGame, { type: 'set_busy', busy: true });
+    assert.deepEqual(playerFrom(await update), { id: alice.id, alias: 'Alice', status: 'busy' });
+
+    // A non-list `br` does not drop the message.
+    update = nextJson(bob.ws, (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting');
+    sendRawGame(aliceGame, { t: 'SB', b: false, br: 'in-session' });
+    await update;
+
+    await closeWs(alice.ws);
+    await closeWs(bob.ws);
+    await closeWs(aliceGame);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('busy reasons sent on identify apply when the player joins the hub', async () => {
+  const hub = await startHub();
+  try {
+    const sessionId = 'secret-identify-reasons';
+    const game = await openWs(hub.origin, '/ws/game');
+    sendGame(game, {
+      type: 'identify',
+      session_id: sessionBytes(sessionId),
+      busy: true,
+      reasons: ['restoring'],
+    });
+    await nextGame(game, (msg) => msg.type === 'registered');
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const update = nextJson(
+      ws,
+      (msg) => msg.type === 'hub_update' && msg.players.some((p) => p.status === 'busy'),
+    );
+    sendJson(ws, { type: 'join', session_id: sessionKey(sessionId), alias: 'Restorer' });
+    const player = (await update).players.find((p) => p.alias === 'Restorer');
+    assert.deepEqual(player.busy_reasons, ['restoring']);
+
+    await closeWs(ws);
+    await closeWs(game);
   } finally {
     await hub.stop();
   }

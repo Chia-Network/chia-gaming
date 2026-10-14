@@ -190,6 +190,7 @@ const originalWebSocketDescriptor = Object.getOwnPropertyDescriptor(globalThis, 
 // ---------------------------------------------------------------------------
 
 import { HubConnection, HubConnectionCallbacks } from '../../services/HubConnection';
+import type { HubPresence } from '../hubPresence';
 
 let hubDisconnectCount = 0;
 let expectedHubDisconnects = 0;
@@ -211,9 +212,7 @@ afterAll(() => {
   }
 });
 
-function makeCallbacks(presence?: {
-  busy: boolean;
-}): HubConnectionCallbacks & Record<string, jest.Mock> {
+function makeCallbacks(presence?: HubPresence): HubConnectionCallbacks & Record<string, jest.Mock> {
   return {
     onAdvisoryStart: jest.fn(),
     onPeerMessage: jest.fn(),
@@ -287,8 +286,8 @@ describe('connection setup', () => {
     );
   });
 
-  it('sends identify with busy=true from getPresence over ws on open', async () => {
-    const cb = makeCallbacks({ busy: true });
+  it('sends identify with busy=true and reasons from getPresence over ws on open', async () => {
+    const cb = makeCallbacks({ busy: true, reasons: ['in-session', 'wallet-disconnected'] });
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
 
@@ -298,6 +297,7 @@ describe('connection setup', () => {
         t: 'I',
         si: Uint8Array.from({ length: 16 }, (_, index) => index),
         b: true,
+        br: ['in-session', 'wallet-disconnected'],
       },
     ]);
   });
@@ -593,18 +593,18 @@ describe('setBusy', () => {
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
-    conn.setBusy(false);
+    conn.setBusy({ busy: false });
     expect(ws.sentControl).toEqual([{ t: 'SB', b: false }]);
   });
 
-  it('sends set_busy with busy=true', async () => {
+  it('sends set_busy with busy=true and its reasons', async () => {
     const cb = makeCallbacks();
     const conn = makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     const ws = MockWebSocket.instance!;
     ws.sentControl = [];
-    conn.setBusy(true);
-    expect(ws.sentControl).toEqual([{ t: 'SB', b: true }]);
+    conn.setBusy({ busy: true, reasons: ['starting'] });
+    expect(ws.sentControl).toEqual([{ t: 'SB', b: true, br: ['starting'] }]);
   });
 
   it('sends compact keepalive on the interval', async () => {
@@ -623,7 +623,7 @@ describe('setBusy', () => {
   it('uses getPresence for identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
-    (cb.getPresence as jest.Mock).mockReturnValue({ busy: true });
+    (cb.getPresence as jest.Mock).mockReturnValue({ busy: true, reasons: ['restoring'] });
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedHubDisconnects = 1;
@@ -639,13 +639,14 @@ describe('setBusy', () => {
     const identifyMsg = ws2.sentControl.find((m: any) => m.t === 'I') as any;
     expect(identifyMsg).toBeDefined();
     expect(identifyMsg.b).toBe(true);
+    expect(identifyMsg.br).toEqual(['restoring']);
     jest.useRealTimers();
   });
 
   it('does not include an alias in identify on reconnect', async () => {
     jest.useFakeTimers();
     const cb = makeCallbacks();
-    (cb.getPresence as jest.Mock).mockReturnValue({ busy: true });
+    (cb.getPresence as jest.Mock).mockReturnValue({ busy: true, reasons: ['in-session'] });
     makeConnection('http://t', 's1', cb);
     await Promise.resolve();
     expectedHubDisconnects = 1;
