@@ -1,3 +1,5 @@
+import { PEAR_LOBBY_ORIGIN } from './PearHubConnection';
+
 const encoder = new TextEncoder();
 const CONTEXT = 'chia-gaming hub session v1\0';
 
@@ -17,6 +19,7 @@ function hexFromBytes(value: Uint8Array): string {
 }
 
 export function canonicalHubOrigin(hubUrl: string): string {
+  if (hubUrl === PEAR_LOBBY_ORIGIN) return hubUrl;
   const url = new URL(hubUrl);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`unsupported hub URL protocol: ${url.protocol}`);

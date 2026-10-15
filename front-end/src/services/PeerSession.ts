@@ -1,5 +1,5 @@
 import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
-import { HubConnection } from './HubConnection';
+import type { GameHubConnection } from './HubConnection';
 import { log } from './log';
 import {
   DEFAULT_SESSION_RECEIVE_POLICY,
@@ -561,7 +561,7 @@ export class PeerSession implements PeerConnectionResult {
   readonly sessionId: string;
   readonly peerId: string;
   readonly receivePolicy: ReadonlySessionReceivePolicy;
-  private hubConn: HubConnection;
+  private hubConn: GameHubConnection;
   private _liveness: PeerLiveness = null;
   private _lastActivity: number = 0;
   private messageHandler: MessageHandler | null = null;
@@ -575,7 +575,7 @@ export class PeerSession implements PeerConnectionResult {
   constructor(
     peerId: string,
     sessionId: string,
-    hubConn: HubConnection,
+    hubConn: GameHubConnection,
     receivePolicy: ReadonlySessionReceivePolicy = DEFAULT_SESSION_RECEIVE_POLICY,
     initialState?: Omit<ReliableTransportState, 'sessionId'>,
   ) {

@@ -9,7 +9,7 @@ import {
 } from '../lib/session/saveEnvelope';
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
 import { storageRepository } from '../lib/session/storageRepository';
-import type { HubConnection } from '../services/HubConnection';
+import type { GameHubConnection } from '../services/HubConnection';
 import {
   decodePeerAppMessage,
   decodeReliableFrame,
@@ -133,7 +133,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
   }, []);
 
   const rejectUnknownProposal = useCallback(
-    (conn: HubConnection, fromId: string, sessionId: string, payload: Uint8Array): void => {
+    (conn: GameHubConnection, fromId: string, sessionId: string, payload: Uint8Array): void => {
       const key = rejectionTransportKey(fromId, sessionId);
       const existing = peersRef.current.get(key);
       if (existing) {
@@ -158,7 +158,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const installInboundReceipt = useCallback(
     (
-      conn: HubConnection,
+      conn: GameHubConnection,
       peerId: string,
       sessionId: string,
       messageNumber: bigint,
@@ -192,7 +192,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const bindInboundProposal = useCallback(
     (args: {
-      conn: HubConnection;
+      conn: GameHubConnection;
       peer: PeerSession;
       persistProposal(): Promise<void>;
       rejected(): void;
@@ -313,7 +313,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
   }, []);
 
   const restore = useCallback(
-    async (conn: HubConnection, descriptors: readonly DurableRejectionTransport[]) => {
+    async (conn: GameHubConnection, descriptors: readonly DurableRejectionTransport[]) => {
       const tombstones = structuredClone(descriptors);
       for (const tombstone of tombstones) {
         if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {

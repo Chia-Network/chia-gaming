@@ -8,3 +8,8 @@
 export function isElectronDistribution(): boolean {
   return typeof window !== 'undefined' && window.__chiaDistribution === 'electron';
 }
+
+/** SPIKE: the desktop dev build was started against a local simulator. */
+export function isDevSimulatorEnabled(): boolean {
+  return typeof window !== 'undefined' && window.__chiaDevSimulator === true;
+}

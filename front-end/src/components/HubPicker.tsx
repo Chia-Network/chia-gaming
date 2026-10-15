@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { Button } from './button';
+import { isPearLobbyAvailable } from '../services/PearHubConnection';
 
 const DEV_HUB = 'http://localhost:3003';
 
@@ -44,10 +45,11 @@ function insecureHubWarning(raw: string): string | null {
 
 interface HubPickerProps {
   onConnect: (origin: string) => void;
+  onConnectPearLobby: () => void;
   connectionError?: string | null;
 }
 
-export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
+export function HubPicker({ onConnect, onConnectPearLobby, connectionError }: HubPickerProps) {
   const [customUrl, setCustomUrl] = useState('');
   const [error, setError] = useState('');
   const insecureWarning = insecureHubWarning(customUrl);
@@ -75,6 +77,18 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
             games.
           </p>
         </div>
+
+        {isPearLobbyAvailable() && (
+          <div className="flex flex-col items-center gap-2 w-full">
+            <Button variant="solid" fullWidth onClick={onConnectPearLobby}>
+              Join peer-to-peer lobby
+            </Button>
+            <p className="text-xs text-canvas-solid text-center">
+              No hub: players find each other over Hyperswarm and connect directly, end-to-end
+              encrypted. Other players in the lobby see your alias and your network address.
+            </p>
+          </div>
+        )}
 
         <div className="flex flex-col gap-1 w-full">
           <div className="flex gap-2 w-full">

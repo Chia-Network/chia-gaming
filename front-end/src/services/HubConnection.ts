@@ -36,6 +36,18 @@ export interface HubConnectionCallbacks {
   getPresence: () => { busy: boolean };
 }
 
+/**
+ * What the session layer needs from a hub connection. `HubConnection` provides
+ * it over the hub's WebSocket; `PearHubConnection` over the desktop app's
+ * peer-to-peer Pear worker.
+ */
+export interface GameHubConnection {
+  sendToPeer(targetId: string, payload: Uint8Array): boolean;
+  getPlayerId(): string | null;
+  setBusy(busy: boolean): void;
+  disconnect(): void;
+}
+
 type HubEnvelope =
   | {
       type: 'advisory_start';
@@ -200,7 +212,7 @@ function decodeGameEnvelope(input: ArrayBuffer): HubEnvelope | null {
   }
 }
 
-export class HubConnection {
+export class HubConnection implements GameHubConnection {
   private hubUrl: string;
   private sessionId: string;
   private callbacks: HubConnectionCallbacks;
