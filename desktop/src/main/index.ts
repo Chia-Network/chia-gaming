@@ -105,7 +105,7 @@ if (!app.requestSingleInstanceLock()) {
   };
 
   app.on('second-instance', focusMainWindow);
-  installCloudWalletBrowser(policy, focusMainWindow);
+  installCloudWalletBrowser(policy);
 
   // Closing the window quits on macOS too, unlike the platform convention: this
   // is a single-window app with no document model and no tray presence, so a

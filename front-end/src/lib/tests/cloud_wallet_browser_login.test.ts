@@ -20,7 +20,7 @@ setTestGlobal('localStorage', makeStorage());
 setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
 
-import { beginOAuthPopupLogin, signatureRequestApproveUrl } from '../../hooks/cloudWalletOAuth';
+import { beginOAuthLogin, signatureRequestApproveUrl } from '../../hooks/cloudWalletOAuth';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 
 const REDIRECT_URI = 'http://127.0.0.1:5555/oauth/callback';
@@ -67,7 +67,7 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
       postToken,
     });
 
-    const login = await beginOAuthPopupLogin();
+    const login = await beginOAuthLogin();
 
     expect(new URL(authorizeUrl).searchParams.get('redirect_uri')).toBe(REDIRECT_URI);
     expect(openPopup).not.toHaveBeenCalled();
@@ -93,7 +93,7 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
       openInBrowser: async () => true,
     });
 
-    await expect(beginOAuthPopupLogin()).rejects.toThrow(/unexpected state/);
+    await expect(beginOAuthLogin()).rejects.toThrow(/unexpected state/);
     expect(requests).toEqual([]);
   });
 
@@ -109,7 +109,7 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
       postToken: async () => ({ transportError: 'net::ERR_CONNECTION_REFUSED' }),
     });
 
-    await expect(beginOAuthPopupLogin()).rejects.toThrow(
+    await expect(beginOAuthLogin()).rejects.toThrow(
       'Cloud Wallet token transport failed: net::ERR_CONNECTION_REFUSED',
     );
   });
@@ -122,7 +122,7 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
       openInBrowser: async () => true,
     });
 
-    await expect(beginOAuthPopupLogin()).rejects.toThrow('access_denied: user cancelled');
+    await expect(beginOAuthLogin()).rejects.toThrow('access_denied: user cancelled');
   });
 });
 
@@ -147,6 +147,22 @@ describe('desktop Cloud Wallet signature approval through the system browser', (
     ).resolves.toBe('signed-offer');
     expect(openInBrowser).toHaveBeenCalledWith(signatureRequestApproveUrl('sr-1'));
     expect(openPopup).not.toHaveBeenCalled();
+  });
+
+  it('opens each approval once even when reconciliation retries it', async () => {
+    const openInBrowser = jest.fn(async () => true);
+    setTestGlobal('__chiaCloudWallet', { openInBrowser });
+    const cloud = new CloudBlockchainInterface() as unknown as Tracker;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await cloud.trackSignatureRequest('sr-1', 'offer', async () => 'signed-offer');
+    }
+    await cloud.trackSignatureRequest('sr-2', 'offer', async () => 'signed-offer');
+
+    expect(openInBrowser.mock.calls).toEqual([
+      [signatureRequestApproveUrl('sr-1')],
+      [signatureRequestApproveUrl('sr-2')],
+    ]);
   });
 
   it('does not poll when the browser could not be opened', async () => {

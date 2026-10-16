@@ -402,21 +402,10 @@ export function waitForOAuthCode(
  * Desktop bridge (desktop/src/preload/index.ts). Electron has no passkey
  * support, so the desktop app signs in and approves in the system browser.
  */
-export interface DesktopCloudWalletBridge {
-  beginBrowserLogin(): Promise<{ flowId: string; redirectUri: string } | null>;
-  completeBrowserLogin(
-    flowId: string,
-    authorizeUrl: string,
-  ): Promise<{ code: string; state: string } | { error: string }>;
-  openInBrowser(url: string): Promise<boolean>;
-  postToken(
-    tokenUrl: string,
-    body: string,
-  ): Promise<{ status: number; text: string } | { transportError: string }>;
-}
+export type DesktopCloudWalletBridge = NonNullable<Window['__chiaCloudWallet']>;
 
 export function desktopCloudWalletBridge(): DesktopCloudWalletBridge | null {
-  return (window as { __chiaCloudWallet?: DesktopCloudWalletBridge }).__chiaCloudWallet ?? null;
+  return window.__chiaCloudWallet ?? null;
 }
 
 /** Sign in through the system browser; the consent wallet arrives via the grant lookup. */
@@ -433,7 +422,8 @@ async function browserLoginCode(
   return { code: result.code, redirectUri: flow.redirectUri };
 }
 
-export async function beginOAuthPopupLogin(): Promise<{
+/** Sign in to Cloud Wallet: system browser on desktop, popup on the web. */
+export async function beginOAuthLogin(): Promise<{
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
@@ -514,7 +504,7 @@ export async function beginOAuthPopupLogin(): Promise<{
  * The popup cannot validate `state` itself. Its `sessionStorage` is a clone
  * taken when the popup's browsing context was created, so when `window.open`
  * reuses a popup left over from an earlier attempt the clone still holds that
- * attempt's record. `beginOAuthPopupLogin` keeps the authoritative `state` and
+ * attempt's record. `beginOAuthLogin` keeps the authoritative `state` and
  * `codeVerifier` in the opener, and `waitForOAuthCode` drops any message whose
  * state does not match.
  */

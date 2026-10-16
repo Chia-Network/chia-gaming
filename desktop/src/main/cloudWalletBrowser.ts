@@ -1,14 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
-import { ipcMain, net, shell, type IpcMainInvokeEvent } from 'electron';
-
-import { isAppUrl } from './appProtocol';
 import {
-  isAuthorizeUrlForCallback,
-  isCloudWalletTokenUrl,
-  startLoopbackCallback,
-  type LoopbackCallback,
-} from './cloudWalletLoopback';
+  BrowserWindow,
+  app,
+  ipcMain,
+  net,
+  shell,
+  type IpcMainInvokeEvent,
+  type WebContents,
+} from 'electron';
+
+import { startLoopbackCallback, type LoopbackCallback } from './cloudWalletLoopback';
+import { authorizeRequestState, cloudWalletUrl, isCloudWalletTokenUrl } from './cloudWalletPolicy';
+import { describeSender, isPlayerDocumentSender } from './ipcSender';
 import { log } from './log';
 import { type PolicyRef } from './networkPolicy';
 import {
@@ -21,45 +25,54 @@ import {
   type CloudWalletTokenResponse,
 } from '../shared/ipc';
 
-const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
-const MAX_TOKEN_REQUEST_BYTES = 8 * 1024;
+/** Matches the web popup's OAuth wait (`waitForOAuthCode`). */
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+/** Form bodies carry a code or refresh token plus fixed fields; this is generous. */
+const MAX_TOKEN_REQUEST_LENGTH = 8 * 1024;
 
-function fromPlayerDocument(event: IpcMainInvokeEvent, channel: string): boolean {
-  const frame = event.senderFrame;
-  if (frame === null || frame !== event.sender.mainFrame || !isAppUrl(frame.url)) {
-    log.warn(`ignored ${channel} from ${frame === null ? 'a gone frame' : frame.url}`);
-    return false;
+/** Bring back the window that started sign-in once the browser hands control back. */
+function focusWindowOf(contents: WebContents): void {
+  const window = BrowserWindow.fromWebContents(contents);
+  if (window !== null && !window.isDestroyed()) {
+    if (window.isMinimized()) window.restore();
+    window.focus();
   }
-  return true;
-}
-
-function isCloudWalletPage(url: string, policy: PolicyRef): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' && policy.current.allowedPopupOrigins.has(parsed.origin);
-  } catch {
-    return false;
-  }
+  // A plain focus() does not raise a background app on macOS.
+  if (process.platform === 'darwin') app.focus({ steal: true });
 }
 
 /**
  * Cloud Wallet sign-in and signature approval run in the system browser, where
  * passkeys work. Electron's WebAuthn has no platform authenticator, so the same
- * pages in an Electron popup wait forever. Sign-in returns through a loopback
- * redirect bound per login; approvals need no return path because the player
+ * pages in an Electron window wait forever. Sign-in returns through a loopback
+ * redirect bound per sign-in; approvals need no return path because the player
  * polls the signature request.
  */
-export function installCloudWalletBrowser(policy: PolicyRef, focusMainWindow: () => void): void {
-  const flows = new Map<string, LoopbackCallback>();
+export function installCloudWalletBrowser(policy: PolicyRef): void {
+  // One sign-in at a time: starting another cancels the previous one, so an
+  // abandoned browser tab can neither hold a listener nor complete later.
+  let pending: { flowId: string; callback: LoopbackCallback } | null = null;
+
+  const fromPlayer = (event: IpcMainInvokeEvent, channel: string): boolean => {
+    if (isPlayerDocumentSender(event)) return true;
+    log.warn(`ignored ${channel} from ${describeSender(event)}`);
+    return false;
+  };
 
   ipcMain.handle(
     CLOUD_WALLET_BEGIN_LOGIN_CHANNEL,
     async (event): Promise<CloudWalletLoginFlow | null> => {
-      if (!fromPlayerDocument(event, CLOUD_WALLET_BEGIN_LOGIN_CHANNEL)) return null;
+      if (!fromPlayer(event, CLOUD_WALLET_BEGIN_LOGIN_CHANNEL)) return null;
+      pending?.callback.close();
       const flowId = randomUUID();
-      const callback = await startLoopbackCallback(LOGIN_TIMEOUT_MS, focusMainWindow);
-      flows.set(flowId, callback);
-      void callback.result.finally(() => flows.delete(flowId));
+      const callback = await startLoopbackCallback(LOGIN_TIMEOUT_MS, () =>
+        focusWindowOf(event.sender),
+      );
+      const flow = { flowId, callback };
+      pending = flow;
+      void callback.result.finally(() => {
+        if (pending === flow) pending = null;
+      });
       return { flowId, redirectUri: callback.redirectUri };
     },
   );
@@ -67,24 +80,30 @@ export function installCloudWalletBrowser(policy: PolicyRef, focusMainWindow: ()
   ipcMain.handle(
     CLOUD_WALLET_COMPLETE_LOGIN_CHANNEL,
     async (event, flowId: unknown, authorizeUrl: unknown): Promise<CloudWalletLoginResult> => {
-      if (!fromPlayerDocument(event, CLOUD_WALLET_COMPLETE_LOGIN_CHANNEL)) {
+      if (!fromPlayer(event, CLOUD_WALLET_COMPLETE_LOGIN_CHANNEL)) {
         return { error: 'Cloud Wallet sign-in is only available to the player app' };
       }
-      const callback = typeof flowId === 'string' ? flows.get(flowId) : undefined;
-      if (callback === undefined) return { error: 'Unknown Cloud Wallet sign-in' };
-      if (
-        typeof authorizeUrl !== 'string' ||
-        !isAuthorizeUrlForCallback(
-          authorizeUrl,
-          callback.redirectUri,
-          policy.current.allowedPopupOrigins,
-        )
-      ) {
+      if (pending === null || pending.flowId !== flowId) {
+        return { error: 'Cloud Wallet sign-in was superseded or has ended' };
+      }
+      const { callback } = pending;
+      const state = authorizeRequestState(
+        authorizeUrl,
+        callback.redirectUri,
+        policy.current.cloudWalletOrigins,
+      );
+      if (state === null) {
         callback.close();
         log.warn(`refused Cloud Wallet sign-in URL ${String(authorizeUrl)}`);
         return { error: 'Cloud Wallet sign-in URL is not allowed' };
       }
-      await shell.openExternal(authorizeUrl);
+      callback.expectState(state);
+      try {
+        await shell.openExternal(authorizeUrl as string);
+      } catch (error) {
+        callback.close();
+        return { error: `Could not open the browser: ${(error as Error).message}` };
+      }
       return callback.result;
     },
   );
@@ -95,20 +114,19 @@ export function installCloudWalletBrowser(policy: PolicyRef, focusMainWindow: ()
   ipcMain.handle(
     CLOUD_WALLET_TOKEN_CHANNEL,
     async (event, tokenUrl: unknown, body: unknown): Promise<CloudWalletTokenResponse> => {
-      if (!fromPlayerDocument(event, CLOUD_WALLET_TOKEN_CHANNEL)) {
+      if (!fromPlayer(event, CLOUD_WALLET_TOKEN_CHANNEL)) {
         return { transportError: 'Cloud Wallet tokens are only available to the player app' };
       }
       if (
-        typeof tokenUrl !== 'string' ||
         typeof body !== 'string' ||
-        body.length > MAX_TOKEN_REQUEST_BYTES ||
-        !isCloudWalletTokenUrl(tokenUrl, policy.current.allowedPopupOrigins)
+        body.length > MAX_TOKEN_REQUEST_LENGTH ||
+        !isCloudWalletTokenUrl(tokenUrl, policy.current.cloudWalletOrigins)
       ) {
         log.warn(`refused Cloud Wallet token request to ${String(tokenUrl)}`);
         return { transportError: 'Cloud Wallet token request is not allowed' };
       }
       try {
-        const response = await net.fetch(tokenUrl, {
+        const response = await net.fetch(tokenUrl as string, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body,
@@ -121,12 +139,18 @@ export function installCloudWalletBrowser(policy: PolicyRef, focusMainWindow: ()
   );
 
   ipcMain.handle(CLOUD_WALLET_OPEN_CHANNEL, async (event, url: unknown): Promise<boolean> => {
-    if (!fromPlayerDocument(event, CLOUD_WALLET_OPEN_CHANNEL)) return false;
-    if (typeof url !== 'string' || !isCloudWalletPage(url, policy)) {
+    if (!fromPlayer(event, CLOUD_WALLET_OPEN_CHANNEL)) return false;
+    const page = cloudWalletUrl(url, policy.current.cloudWalletOrigins);
+    if (page === null) {
       log.warn(`refused to open ${String(url)} in the browser`);
       return false;
     }
-    await shell.openExternal(url);
-    return true;
+    try {
+      await shell.openExternal(page.toString());
+      return true;
+    } catch (error) {
+      log.warn(`could not open ${page.toString()}: ${(error as Error).message}`);
+      return false;
+    }
   });
 }

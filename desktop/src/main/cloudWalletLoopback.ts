@@ -1,13 +1,14 @@
 import http from 'node:http';
 
-/** Outcome of one browser login, as reported by the authorization server's redirect. */
-export type LoopbackCallbackResult = { code: string; state: string } | { error: string };
+import type { CloudWalletLoginResult } from '../shared/ipc.ts';
 
 export type LoopbackCallback = {
-  /** `http://127.0.0.1:<port>/oauth/callback`, bound for this one login. */
+  /** `http://127.0.0.1:<port>/oauth/callback`, bound for this one sign-in. */
   redirectUri: string;
-  /** Settles with the first callback, or with an error on timeout or close. */
-  result: Promise<LoopbackCallbackResult>;
+  /** Settles with the matching callback, or with an error on timeout or close. */
+  result: Promise<CloudWalletLoginResult>;
+  /** The OAuth `state` this sign-in sent; only a callback carrying it settles. */
+  expectState: (state: string) => void;
   close: () => void;
 };
 
@@ -21,78 +22,77 @@ function page(title: string, detail: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body style="font-family:-apple-system,system-ui,sans-serif;max-width:32rem;margin:15vh auto;text-align:center"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></body></html>`;
 }
 
-/** Read the authorization response from a request to the loopback callback. */
-export function parseCallbackRequest(requestUrl: string): LoopbackCallbackResult | null {
+/**
+ * Read the authorization response from a request to the loopback callback.
+ * Null for any other path.
+ */
+export function parseCallbackRequest(
+  requestUrl: string,
+): { state: string | null; outcome: CloudWalletLoginResult } | null {
   const url = new URL(requestUrl, 'http://127.0.0.1');
   if (url.pathname !== CALLBACK_PATH) return null;
+  const state = url.searchParams.get('state');
   const error = url.searchParams.get('error');
   if (error) {
     const description = url.searchParams.get('error_description');
-    return { error: description ? `${error}: ${description}` : error };
+    return { state, outcome: { error: description ? `${error}: ${description}` : error } };
   }
   const code = url.searchParams.get('code');
-  const state = url.searchParams.get('state');
-  if (!code || !state) return { error: 'Missing authorization code or state' };
-  return { code, state };
-}
-
-/**
- * True when `authorizeUrl` is on an allowed Cloud Wallet origin and redirects
- * back to exactly this login's loopback callback.
- */
-export function isAuthorizeUrlForCallback(
-  authorizeUrl: string,
-  redirectUri: string,
-  allowedOrigins: ReadonlySet<string>,
-): boolean {
-  let url: URL;
-  try {
-    url = new URL(authorizeUrl);
-  } catch {
-    return false;
+  if (!code || !state) {
+    return { state, outcome: { error: 'Missing authorization code or state' } };
   }
-  return (
-    url.protocol === 'https:' &&
-    allowedOrigins.has(url.origin) &&
-    url.searchParams.get('redirect_uri') === redirectUri
-  );
+  return { state, outcome: { code, state } };
 }
 
 /**
  * Listen on an ephemeral 127.0.0.1 port for one OAuth redirect (RFC 8252
  * §7.3). The authorization server accepts any loopback port for a client that
- * registered `http://127.0.0.1/oauth/callback`. The listener serves a single
- * callback and then closes.
+ * registered `http://127.0.0.1/oauth/callback`. Only a callback carrying the
+ * expected `state` settles the sign-in, so a stray or forged local request
+ * cannot consume it; the listener then closes.
  */
 export async function startLoopbackCallback(
   timeoutMs: number,
   onCallback: () => void = () => {},
 ): Promise<LoopbackCallback> {
-  let settle: (result: LoopbackCallbackResult) => void = () => {};
-  const result = new Promise<LoopbackCallbackResult>((resolve) => {
+  let settle: (result: CloudWalletLoginResult) => void = () => {};
+  const result = new Promise<CloudWalletLoginResult>((resolve) => {
     settle = resolve;
   });
   let settled = false;
+  let expectedState: string | null = null;
   const server = http.createServer((request, response) => {
     const callback = parseCallbackRequest(request.url ?? '/');
     if (request.method !== 'GET' || callback === null || settled) {
       response.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
       return;
     }
-    const ok = !('error' in callback);
+    if (expectedState === null || callback.state !== expectedState) {
+      response
+        .writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end(
+          page(
+            'Unexpected sign-in response',
+            'This is not the Cloud Wallet sign-in Chia Gaming is waiting for.',
+          ),
+        );
+      return;
+    }
+    const { outcome } = callback;
+    const ok = !('error' in outcome);
     response
       .writeHead(ok ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8' })
       .end(
         ok
           ? page('Signed in to Cloud Wallet', 'You can close this tab and return to Chia Gaming.')
-          : page('Cloud Wallet sign-in failed', callback.error),
+          : page('Cloud Wallet sign-in failed', outcome.error),
       );
-    finish(callback);
+    finish(outcome);
     onCallback();
   });
 
   const timer = setTimeout(() => finish({ error: 'Cloud Wallet sign-in timed out' }), timeoutMs);
-  function finish(outcome: LoopbackCallbackResult): void {
+  function finish(outcome: CloudWalletLoginResult): void {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
@@ -112,26 +112,9 @@ export async function startLoopbackCallback(
   return {
     redirectUri: `http://127.0.0.1:${address.port}${CALLBACK_PATH}`,
     result,
+    expectState: (state) => {
+      expectedState = state;
+    },
     close: () => finish({ error: 'Cloud Wallet sign-in was cancelled' }),
   };
-}
-
-/** True for exactly the `/token` endpoint of an allowed Cloud Wallet origin. */
-export function isCloudWalletTokenUrl(
-  tokenUrl: string,
-  allowedOrigins: ReadonlySet<string>,
-): boolean {
-  let url: URL;
-  try {
-    url = new URL(tokenUrl);
-  } catch {
-    return false;
-  }
-  return (
-    url.protocol === 'https:' &&
-    allowedOrigins.has(url.origin) &&
-    url.pathname === '/token' &&
-    url.search === '' &&
-    url.hash === ''
-  );
 }

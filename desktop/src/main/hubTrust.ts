@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 
-import { isAppUrl } from './appProtocol';
 import { hubOriginSchema, persistHubOrigins, type DesktopConfig } from './config';
+import { describeSender, isPlayerDocumentSender } from './ipcSender';
 import { log } from './log';
 import { buildNetworkPolicy, type PolicyRef } from './networkPolicy';
 import { HUB_TRUST_CHANNEL, type HubTrustOutcome } from '../shared/ipc';
@@ -25,9 +25,8 @@ import { HUB_TRUST_CHANNEL, type HubTrustOutcome } from '../shared/ipc';
  */
 export function installHubTrustHandler(config: DesktopConfig, policy: PolicyRef): void {
   ipcMain.handle(HUB_TRUST_CHANNEL, (event, rawOrigin: unknown): HubTrustOutcome => {
-    const frame = event.senderFrame;
-    if (frame === null || frame !== event.sender.mainFrame || !isAppUrl(frame.url)) {
-      log.warn(`ignored hub trust request from ${frame === null ? 'a gone frame' : frame.url}`);
+    if (!isPlayerDocumentSender(event)) {
+      log.warn(`ignored hub trust request from ${describeSender(event)}`);
       return 'invalid';
     }
 
