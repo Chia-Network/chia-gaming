@@ -226,9 +226,9 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
   const blockchainType =
     fields.blockchainType === undefined
       ? undefined
-      : parseDiscriminant<'simulator' | 'walletconnect' | 'cloud'>(
+      : parseDiscriminant<'simulator' | 'walletconnect' | 'sage' | 'cloud'>(
           fields.blockchainType,
-          new Set(['simulator', 'walletconnect', 'cloud']),
+          new Set(['simulator', 'walletconnect', 'sage', 'cloud']),
           'preferences.blockchainType',
         );
   const network =

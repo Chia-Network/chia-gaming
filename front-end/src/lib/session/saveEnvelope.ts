@@ -20,7 +20,7 @@ export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' 
 export const DURABLE_APPLICATION_STATE_VERSION = 5n;
 export const MAX_DURABLE_REJECTION_TRANSPORTS = 8;
 
-export type BlockchainType = 'simulator' | 'walletconnect' | 'cloud';
+export type BlockchainType = 'simulator' | 'walletconnect' | 'sage' | 'cloud';
 
 export type ChiaNetwork = 'mainnet' | 'testnet';
 

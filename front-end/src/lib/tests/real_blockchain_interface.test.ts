@@ -38,6 +38,8 @@ const mockWalletConnectState = {
   getSession: jest.fn(() => mockWalletSession),
   getAddress: jest.fn(() => mockWalletFingerprint),
   supportsMethod: jest.fn(() => mockSupportsPeerCount),
+  getProfile: jest.fn(() => 'chia-wallet'),
+  useProfile: jest.fn(),
   startConnect: jest.fn(async () => ({
     uri: 'wc:pairingtopic@2?relay-protocol=irn&symKey=deadbeef',
     approval: async () => ({}),

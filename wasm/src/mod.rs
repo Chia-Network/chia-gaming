@@ -43,6 +43,9 @@ mod gaming_wasm {
         SubmissionAttemptRelationship, SubmissionAttemptStatus, SubmissionFeeSource,
         TransactionManager,
     };
+    use chia_gaming::wallet_spend::{
+        build_unsigned_wallet_spends, WalletCoinCandidate, WalletSpendPurpose,
+    };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
     use chia_traits::Streamable;
     use clvm_traits::{ClvmEncoder, ToClvm};
@@ -1786,6 +1789,116 @@ mod gaming_wasm {
         );
         let coin_string_bytes = coin_string.to_bytes();
         Ok(hex::encode(coin_string_bytes))
+    }
+
+    #[derive(Deserialize)]
+    struct JsWalletCoin {
+        parent_coin_info: String,
+        puzzle_hash: String,
+        amount: String,
+    }
+
+    #[derive(Deserialize)]
+    struct JsWalletCoinCandidate {
+        coin: JsWalletCoin,
+        puzzle_reveal: String,
+    }
+
+    #[derive(Deserialize)]
+    struct JsWalletCondition {
+        opcode: u32,
+        args: Vec<String>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(tag = "kind", rename_all = "lowercase")]
+    enum JsWalletSpendPurpose {
+        Funding {
+            amount: String,
+            conditions: Vec<JsWalletCondition>,
+            max_height: Option<String>,
+        },
+        Fee {
+            fee: String,
+            target_coin_id: String,
+        },
+    }
+
+    #[derive(Deserialize)]
+    struct JsWalletSpendRequest {
+        coins: Vec<JsWalletCoinCandidate>,
+        change_puzzle_hash: String,
+        purpose: JsWalletSpendPurpose,
+    }
+
+    fn parse_decimal_u64(value: &str, field: &str) -> Result<u64, JsValue> {
+        value
+            .parse::<u64>()
+            .map_err(|e| js_error(&format!("invalid {field} {value:?}: {e}")))
+    }
+
+    fn parse_hash32(value: &str) -> Result<Hash, JsValue> {
+        Hash::from_slice(&check_for_hex(value)?).into_js()
+    }
+
+    /// Select standard-puzzle inputs from a signer-only wallet's coin list and
+    /// build the unsigned funding or fee spends it must sign. Returns coinset
+    /// JSON whose `coin_spends` go to the wallet for signing.
+    #[wasm_bindgen]
+    pub fn build_wallet_spend(request_json: &str) -> Result<String, JsValue> {
+        let request: JsWalletSpendRequest = serde_json::from_str(request_json)
+            .map_err(|e| js_error(&format!("bad wallet spend request json: {e}")))?;
+        let mut candidates = Vec::with_capacity(request.coins.len());
+        for candidate in &request.coins {
+            candidates.push(WalletCoinCandidate {
+                coin: CoinString::from_parts(
+                    &CoinID::new(parse_hash32(&candidate.coin.parent_coin_info)?),
+                    &PuzzleHash::from_hash(parse_hash32(&candidate.coin.puzzle_hash)?),
+                    &Amount::new(parse_decimal_u64(&candidate.coin.amount, "coin amount")?),
+                ),
+                puzzle: Puzzle::from_bytes(&check_for_hex(&candidate.puzzle_reveal)?).into_js()?,
+            });
+        }
+        let purpose = match request.purpose {
+            JsWalletSpendPurpose::Funding {
+                amount,
+                conditions,
+                max_height,
+            } => WalletSpendPurpose::Funding {
+                amount: parse_decimal_u64(&amount, "funding amount")?,
+                conditions: conditions
+                    .iter()
+                    .map(|condition| {
+                        Ok(RawCoinCondition {
+                            opcode: condition.opcode,
+                            args: condition
+                                .args
+                                .iter()
+                                .map(|arg| check_for_hex(arg))
+                                .collect::<Result<Vec<_>, JsValue>>()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, JsValue>>()?,
+                max_height: max_height
+                    .map(|height| parse_decimal_u64(&height, "max height"))
+                    .transpose()?,
+            },
+            JsWalletSpendPurpose::Fee {
+                fee,
+                target_coin_id,
+            } => WalletSpendPurpose::Fee {
+                fee: parse_decimal_u64(&fee, "fee")?,
+                target: CoinID::new(parse_hash32(&target_coin_id)?),
+            },
+        };
+        let change_puzzle_hash = PuzzleHash::from_hash(parse_hash32(&request.change_puzzle_hash)?);
+        let mut allocator = AllocEncoder::new();
+        let spends =
+            build_unsigned_wallet_spends(&mut allocator, candidates, &purpose, &change_puzzle_hash)
+                .into_js()?;
+        let unsigned = spend_bundle_to_coinset_js(&SpendBundle { name: None, spends })?;
+        serde_json::to_string(&unsigned)
+            .map_err(|e| js_error(&format!("wallet spend serialization failed: {e}")))
     }
 
     #[wasm_bindgen]

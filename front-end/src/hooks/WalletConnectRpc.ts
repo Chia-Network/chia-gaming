@@ -1,4 +1,4 @@
-import { ChiaMethod } from '../constants/wallet-connect';
+import { ChiaMethod, SageMethod } from '../constants/wallet-connect';
 import {
   CreateOfferForIdsRequest,
   CreateOfferForIdsResponse,
@@ -93,11 +93,15 @@ export class WalletConnectResponseError extends Error {
   }
 }
 
-function transportError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+type WalletConnectMethod = ChiaMethod | SageMethod;
+
+const CHIA_WALLET_METHODS = new Set<string>(Object.values(ChiaMethod));
+
+function transportError(method: WalletConnectMethod, detail: string, cause?: unknown): Error {
   return new WalletConnectTransportError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
 }
 
-function responseError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+function responseError(method: WalletConnectMethod, detail: string, cause?: unknown): Error {
   return new WalletConnectResponseError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
 }
 
@@ -110,16 +114,17 @@ function isNarrowWalletConnectTransportFailure(error: unknown): boolean {
   );
 }
 
-function shouldLogRpcError(method: ChiaMethod): boolean {
+function shouldLogRpcError(method: WalletConnectMethod): boolean {
   return method !== ChiaMethod.GetCoinRecordsByNames;
 }
 
 /** High-frequency poll methods — skip success traces to avoid drowning the log. */
-function shouldLogRpcTraffic(method: ChiaMethod): boolean {
+function shouldLogRpcTraffic(method: WalletConnectMethod): boolean {
   return (
     method !== ChiaMethod.GetCoinRecordsByNames &&
     method !== ChiaMethod.GetHeightInfo &&
-    method !== ChiaMethod.GetWalletBalance
+    method !== ChiaMethod.GetWalletBalance &&
+    method !== SageMethod.GetAssetBalance
   );
 }
 
@@ -180,7 +185,7 @@ async function waitForRelayerConnected(): Promise<void> {
 }
 
 type PreparedRpc = {
-  method: ChiaMethod;
+  method: WalletConnectMethod;
   params: Record<string, unknown>;
   data: object;
   paramKeys: string;
@@ -188,7 +193,7 @@ type PreparedRpc = {
 };
 
 class WalletConnectRpcClient {
-  request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
+  request<T, D extends object = object>(method: WalletConnectMethod, data: D): Promise<T> {
     let prepared: PreparedRpc;
     try {
       prepared = this.prepareRpc(method, data);
@@ -205,7 +210,7 @@ class WalletConnectRpcClient {
     });
   }
 
-  private prepareRpc<D extends object>(method: ChiaMethod, data: D): PreparedRpc {
+  private prepareRpc<D extends object>(method: WalletConnectMethod, data: D): PreparedRpc {
     if (!walletConnectState.getClient()) {
       throw transportError(method, 'WalletConnect is not initialized');
     }
@@ -213,19 +218,22 @@ class WalletConnectRpcClient {
       throw transportError(method, 'Session is not connected');
     }
 
-    const address = walletConnectState.getAddress();
-    if (!address) {
-      throw new Error('no fingerprint set in walletconnect');
-    }
-    const fingerprint = Number.parseInt(address, 10);
-    if (!Number.isFinite(fingerprint)) {
-      throw new Error('walletconnect fingerprint is not a valid integer');
+    // The Chia reference wallet routes each request to a key by fingerprint;
+    // Sage serves its active wallet and validates params strictly.
+    let routed: object = data;
+    if (CHIA_WALLET_METHODS.has(method)) {
+      const address = walletConnectState.getAddress();
+      if (!address) {
+        throw new Error('no fingerprint set in walletconnect');
+      }
+      const fingerprint = Number.parseInt(address, 10);
+      if (!Number.isFinite(fingerprint)) {
+        throw new Error('walletconnect fingerprint is not a valid integer');
+      }
+      routed = { ...data, fingerprint };
     }
 
-    const params = negativeBigintsToDecimalStrings({
-      ...data,
-      fingerprint,
-    }) as Record<string, unknown>;
+    const params = negativeBigintsToDecimalStrings(routed) as Record<string, unknown>;
     const paramKeys = Object.keys(params).join(',');
     const enqueuedAt = Date.now();
 
@@ -317,7 +325,10 @@ class WalletConnectRpcClient {
 
 export const walletConnectRpcClient = new WalletConnectRpcClient();
 
-async function request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
+async function request<T, D extends object = object>(
+  method: WalletConnectMethod,
+  data: D,
+): Promise<T> {
   return walletConnectRpcClient.request<T, D>(method, data);
 }
 
@@ -381,6 +392,50 @@ async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
 async function getFullNodePeerCount(data: GetFullNodePeerCountRequest) {
   return await request<GetFullNodePeerCountResponse>(ChiaMethod.GetFullNodePeerCount, data);
 }
+
+/** Sage coin JSON after integer normalization; amounts may also be decimal strings. */
+export interface SageCoin {
+  parent_coin_info: string;
+  puzzle_hash: string;
+  amount: bigint | string;
+}
+
+export interface SageSpendableCoin {
+  coin: SageCoin;
+  coinName: string;
+  puzzle: string;
+  confirmedBlockIndex: bigint;
+  locked: boolean;
+}
+
+export interface SageCoinSpend {
+  coin: SageCoin;
+  puzzle_reveal: string;
+  solution: string;
+}
+
+export const sageRpc = {
+  getAddress: () => request<{ address: string }>(SageMethod.GetAddress, {}),
+  getAssetBalance: () =>
+    request<{ confirmed: string; spendable: string; spendableCoinCount: bigint }>(
+      SageMethod.GetAssetBalance,
+      { type: null, assetId: null },
+    ),
+  getAssetCoins: (offset: number, limit: number) =>
+    request<SageSpendableCoin[]>(SageMethod.GetAssetCoins, {
+      type: null,
+      assetId: null,
+      offset,
+      limit,
+    }),
+  signCoinSpends: (coinSpends: SageCoinSpend[]) =>
+    request<string>(SageMethod.SignCoinSpends, { coinSpends, partialSign: false }),
+  /** Mempool inclusion status: 1 success, 2 pending, 3 failed (or no peer answered). */
+  sendTransaction: (spendBundle: { coin_spends: SageCoinSpend[]; aggregated_signature: string }) =>
+    request<{ status: bigint; error: string | null }>(SageMethod.SendTransaction, {
+      spendBundle,
+    }),
+};
 
 export const rpc = {
   getWallets,

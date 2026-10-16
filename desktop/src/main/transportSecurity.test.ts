@@ -34,6 +34,19 @@ describe('desktop transport security', () => {
     assert.equal(appliedPolicy, 'disable_non_proxied_udp');
   });
 
+  it('lets the player app reach Coinset but keeps it out of hub documents', () => {
+    const policy = buildNetworkPolicy({
+      hubOrigins: ['https://hub.example'],
+      cloudWalletOrigins: ['https://wallet.example'],
+    });
+
+    for (const origin of ['https://api.coinset.org', 'https://testnet11.api.coinset.org']) {
+      assert.ok(policy.allowedRequestOrigins.has(origin));
+      assert.match(policy.contentSecurityPolicy, new RegExp(`connect-src [^;]*${origin}`));
+      assert.doesNotMatch(policy.hubContentSecurityPolicy, new RegExp(origin));
+    }
+  });
+
   it('replaces hub transport headers with enforceable WebRTC and WebTransport policy', () => {
     const policy = buildNetworkPolicy({
       hubOrigins: ['https://hub.example'],
