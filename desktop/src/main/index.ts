@@ -16,12 +16,14 @@ import { loadDesktopConfig, type DesktopConfig } from './config';
 import { installHubTrustHandler } from './hubTrust';
 import { log } from './log';
 import { createMainWindow } from './mainWindow';
+import { installPearWorker } from './pearWorker';
 import { buildNetworkPolicy, type PolicyRef } from './networkPolicy';
 import { installSessionSecurity, installWebContentsSecurity } from './security';
 import { installProcessTransportSecurity } from './transportSecurity';
 
-// Dev-only Cloud Wallet endpoint overrides (desktop/src/preload/index.ts).
+// Dev-only overrides: the simulator (SPIKE) and local Cloud Wallet endpoints.
 if (app.isPackaged) {
+  delete process.env.CHIA_GAMING_DEV_SIMULATOR_URL;
   delete process.env.CHIA_GAMING_CLOUD_WALLET_API_URL;
   delete process.env.CHIA_GAMING_CLOUD_WALLET_UI_URL;
   delete process.env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID;
@@ -88,6 +90,7 @@ if (!app.requestSingleInstanceLock()) {
 
   installWebContentsSecurity(policy);
   installHubTrustHandler(config, policy);
+  installPearWorker();
 
   // The window is looked up in the live list rather than held in a variable: a
   // saved handle would be a destroyed BrowserWindow after a close, and every

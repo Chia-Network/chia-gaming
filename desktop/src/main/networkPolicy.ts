@@ -92,6 +92,15 @@ function buildContentSecurityPolicy(
   ].join('; ');
 }
 
+/**
+ * SPIKE: a local simulator for driving two desktop instances through a whole
+ * game without a wallet. main/index.ts clears the variable in packaged builds.
+ */
+function devSimulatorOrigins(): string[] {
+  const url = process.env.CHIA_GAMING_DEV_SIMULATOR_URL;
+  return url ? [new URL(url).origin, webSocketOrigin(url)] : [];
+}
+
 export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
   const uniqueHubOrigins = [...new Set(config.hubOrigins)].sort();
   const hubRequestOrigins = [...uniqueHubOrigins, ...uniqueHubOrigins.map(webSocketOrigin)];
@@ -100,6 +109,7 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
     ...WALLET_CONNECT_REQUEST_ORIGINS,
     ...COINSET_REQUEST_ORIGINS,
     ...config.cloudWalletOrigins,
+    ...devSimulatorOrigins(),
   ];
   const frameOrigins = [...config.hubOrigins, ...WALLET_CONNECT_FRAME_ORIGINS];
 

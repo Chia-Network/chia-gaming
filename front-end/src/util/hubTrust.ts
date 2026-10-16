@@ -5,9 +5,16 @@
 // The web build has no such boundary — the browser already lets the page talk
 // to any origin — so there is nothing to ask and every hub reports as trusted.
 
+import { PEAR_LOBBY_ORIGIN } from '../services/PearHubConnection';
+
 type HubTrustOutcome = 'trusted' | 'granted' | 'invalid' | 'persist-failed';
 
 export async function requestHubTrust(origin: string): Promise<HubTrustOutcome> {
+  // The P2P lobby is not a network origin: it is reached through the desktop
+  // app's own Pear worker, outside the renderer's egress allowlist.
+  if (origin === PEAR_LOBBY_ORIGIN) {
+    return 'trusted';
+  }
   const bridge = typeof window === 'undefined' ? undefined : window.__chiaHub;
   if (bridge === undefined) {
     return 'trusted';

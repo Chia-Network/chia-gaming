@@ -37,10 +37,17 @@ import {
   PeerLiveness,
   CoinOfInterestEntry,
 } from '../types/ChiaGaming';
-import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
+import {
+  HubConnection,
+  type AdvisoryStartParams,
+  type GameHubConnection,
+  type HubConnectionCallbacks,
+} from '../services/HubConnection';
+import { PEAR_LOBBY_ORIGIN, PearHubConnection } from '../services/PearHubConnection';
 import { deriveHubSessionId } from '../services/hubSessionCredential';
 import { installHubIframeAuthentication } from '../services/hubIframeAuthentication';
 import { HubIframe } from './HubIframe';
+import { PearLobby } from './PearLobby';
 import {
   PeerSession,
   decodePeerAppMessage,
@@ -143,7 +150,7 @@ import {
 import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { needsConnectionSetupPrompt, needsWalletPairing } from '../util/connectionSetup';
-import { isElectronDistribution } from '../util/distribution';
+import { isDevSimulatorEnabled, isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
 
@@ -1208,7 +1215,7 @@ const Shell = () => {
     }
   }, [isDark]);
 
-  const hubConnRef = useRef<HubConnection | null>(null);
+  const hubConnRef = useRef<GameHubConnection | null>(null);
   const activeTabRef = useRef<TabId>(activeTab);
   activeTabRef.current = activeTab;
   const historyRef = useRef<string[]>(history);
@@ -1904,6 +1911,8 @@ const Shell = () => {
   ]);
 
   const [hubOrigin, setHubOrigin] = useState<string | null>(null);
+  // The P2P lobby renders from its connection rather than from an iframe.
+  const [pearConn, setPearConn] = useState<PearHubConnection | null>(null);
   const [hubConnectionError, setHubConnectionError] = useState<string | null>(null);
   const hubConnectAttemptRef = useRef(0);
   const invalidateHubConnectAttempts = useCallback(() => {
@@ -1936,13 +1945,14 @@ const Shell = () => {
 
       setHubOrigin(origin);
       storageRepository.updatePreference({ key: 'hubUrl', value: origin });
-      setIframeUrl(new URL('/', origin).toString());
+      setIframeUrl(origin === PEAR_LOBBY_ORIGIN ? 'about:blank' : new URL('/', origin).toString());
+      setPearConn(null);
 
       setHubLiveness('reconnecting');
 
-      let conn: HubConnection;
+      let conn: GameHubConnection;
       try {
-        conn = new HubConnection(origin, hubSessionId, {
+        const callbacks: HubConnectionCallbacks = {
           onAdvisoryStart: (params: AdvisoryStartParams) => {
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
@@ -2317,7 +2327,18 @@ const Shell = () => {
               ),
             };
           },
-        });
+        };
+        conn =
+          origin === PEAR_LOBBY_ORIGIN
+            ? new PearHubConnection(
+                hubSessionId,
+                storageRepository.query('blockchainType') === 'simulator'
+                  ? 'simulator'
+                  : storageRepository.query('network'),
+                storageRepository.query('alias'),
+                callbacks,
+              )
+            : new HubConnection(origin, hubSessionId, callbacks);
       } catch (err) {
         console.error('[Shell] HubConnection failed for origin=%s', origin, err);
         storageRepository.updatePreference({ key: 'hubUrl', value: undefined });
@@ -2330,6 +2351,7 @@ const Shell = () => {
         return;
       }
       hubConnRef.current = conn;
+      if (conn instanceof PearHubConnection) setPearConn(conn);
       void restoreRejections(conn, bootRejectionDescriptorsRef.current).catch((error) => {
         console.error('[Shell] failed to restore rejection tombstones', error);
       });
@@ -4207,7 +4229,7 @@ const Shell = () => {
                   )}
                 </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
-                  {!isElectronDistribution() && (
+                  {(!isElectronDistribution() || isDevSimulatorEnabled()) && (
                     <>
                       <Button
                         variant="solid"
@@ -4293,10 +4315,18 @@ const Shell = () => {
                     {hubConnectionError}
                   </p>
                 )}
-                <HubIframe iframeUrl={iframeUrl} />
+                {hubOrigin === PEAR_LOBBY_ORIGIN ? (
+                  pearConn && <PearLobby conn={pearConn} />
+                ) : (
+                  <HubIframe iframeUrl={iframeUrl} />
+                )}
               </>
             ) : (
-              <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
+              <HubPicker
+                onConnect={requestHubConnect}
+                onConnectPearLobby={() => requestHubConnect(PEAR_LOBBY_ORIGIN)}
+                connectionError={hubConnectionError}
+              />
             )}
           </div>
 
