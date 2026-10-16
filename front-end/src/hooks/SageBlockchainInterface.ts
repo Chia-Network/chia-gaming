@@ -1,7 +1,7 @@
 import {
   sageRpc,
   WalletConnectTransportError,
-  type SageCoin,
+  type SageCoinSpend,
   type SageSpendableCoin,
 } from './WalletConnectRpc';
 import {
@@ -13,6 +13,7 @@ import {
   WalletOfferRequest,
   WalletOfferCancellationOutcome,
   WalletSubmitOutcome,
+  WasmConnection,
 } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
@@ -43,12 +44,14 @@ function errorText(error: unknown): string {
 }
 
 /**
- * Coins this page has handed to a signed Sage spend. Sage locks coins only for
- * transactions it submits itself, so without this ledger two concurrent
- * operations could select the same coin. Reserved coins return to selection
- * when their reservation is cancelled; coins in a broadcast bundle stay
- * excluded for the life of the page because they are being spent, and Sage
- * has not recorded that spend if the broadcast fell back to Coinset.
+ * Coins this page has committed to a Sage spend. Sage locks coins only for
+ * transactions it submits itself, so without this ledger a later operation
+ * could select a coin an earlier one is still signing or spending. Inputs are
+ * reserved as soon as Rust builds the spend and return to selection when the
+ * reservation is cancelled. Inputs of a broadcast bundle stay excluded while
+ * it may be spending them, which covers a Coinset fallback Sage never
+ * recorded; a definitive rejection returns them. The ledger is per page:
+ * after a reload only Sage's own locks remain.
  */
 export class SageCoinLedger {
   private nextId = 0;
@@ -76,6 +79,35 @@ export class SageCoinLedger {
   markBroadcast(keys: Iterable<string>): void {
     for (const key of keys) this.broadcast.add(key);
   }
+
+  unmarkBroadcast(keys: Iterable<string>): void {
+    for (const key of keys) this.broadcast.delete(key);
+  }
+}
+
+/** Sage's coin-spend JSON, amounts as decimal strings (`safeAmount`). */
+function toSageCoinSpend(cs: WalletSpendBundle['coin_spends'][number]): SageCoinSpend {
+  return {
+    coin: {
+      parent_coin_info: cs.coin.parent_coin_info,
+      puzzle_hash: cs.coin.puzzle_hash,
+      amount: BigInt(cs.coin.amount).toString(),
+    },
+    puzzle_reveal: cs.puzzle_reveal,
+    solution: cs.solution,
+  };
+}
+
+/** The candidate list `build_wallet_spend` and `spendable_standard_total` read. */
+function walletCoinCandidates(coins: SageSpendableCoin[]) {
+  return coins.map(({ coin, puzzle }) => ({
+    coin: {
+      parent_coin_info: coin.parent_coin_info,
+      puzzle_hash: coin.puzzle_hash,
+      amount: coin.amount.toString(),
+    },
+    puzzle_reveal: puzzle,
+  }));
 }
 
 /**
@@ -167,23 +199,26 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
     if (!bundle?.coin_spends?.length) {
       return { status: 'rejected', detail: 'sendTransaction: empty spend bundle' };
     }
-    this.ledger.markBroadcast(bundle.coin_spends.map((cs) => coinKey(cs.coin)));
-    const from = source ?? 'unknown';
+    const inputs = bundle.coin_spends.map((cs) => coinKey(cs.coin));
+    this.ledger.markBroadcast(inputs);
+    const outcome = await this.broadcast(bundle, source ?? 'unknown', fee || 0n);
+    // A definitive rejection spent nothing; anything else may still be spending.
+    if (outcome.status === 'rejected') this.ledger.unmarkBroadcast(inputs);
+    return outcome;
+  }
+
+  private async broadcast(
+    bundle: WalletSpendBundle,
+    from: string,
+    fee: bigint,
+  ): Promise<WalletSubmitOutcome> {
     try {
       const { status, error } = await sageRpc.sendTransaction({
-        coin_spends: bundle.coin_spends.map((cs) => ({
-          coin: {
-            parent_coin_info: cs.coin.parent_coin_info,
-            puzzle_hash: cs.coin.puzzle_hash,
-            amount: BigInt(cs.coin.amount).toString(),
-          },
-          puzzle_reveal: cs.puzzle_reveal,
-          solution: cs.solution,
-        })),
+        coin_spends: bundle.coin_spends.map(toSageCoinSpend),
         aggregated_signature: bundle.aggregated_signature,
       });
       log(
-        `[sage-blockchain] sendTransaction from=${from} status=${status} error=${error ?? 'none'} spends=${bundle.coin_spends.length} fee=${fee || 0n}`,
+        `[sage-blockchain] sendTransaction from=${from} status=${status} error=${error ?? 'none'} spends=${bundle.coin_spends.length} fee=${fee}`,
       );
       if (status === 1n || status === 2n) {
         return { status: 'acknowledged', detail: status === 1n ? 'SUCCESS' : 'PENDING' };
@@ -200,7 +235,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       );
     }
     try {
-      return await this.chain.pushTx(bundle, source, fee || 0n);
+      return await this.chain.pushTx(bundle, from, fee);
     } catch (error) {
       const detail = errorText(error);
       log(`[sage-blockchain] push_tx error from=${from}: ${detail}`);
@@ -236,22 +271,26 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
     // Coinset is polled by coin name; nothing to register.
   }
 
-  /** Sage's unlocked standard-wallet XCH coins that this page has not committed. */
   /**
    * Sage's unlocked XCH coins that this page has not committed, paged until
-   * they cover `target` or the wallet runs out.
+   * Rust counts enough spendable standard coins among them to cover `target`,
+   * or the wallet runs out.
    */
-  private async availableCoins(target: bigint): Promise<SageSpendableCoin[]> {
+  private async availableCoins(target: bigint, wasm: WasmConnection): Promise<SageSpendableCoin[]> {
     const coins: SageSpendableCoin[] = [];
-    let total = 0n;
-    for (let page = 0; page < MAX_COIN_PAGES && total < target; page++) {
+    for (let page = 0; page < MAX_COIN_PAGES; page++) {
       const batch = await sageRpc.getAssetCoins(page * COIN_PAGE_SIZE, COIN_PAGE_SIZE);
-      for (const coin of batch) {
-        if (coin.locked || !this.ledger.isAvailable(coinKey(coin.coin))) continue;
-        coins.push(coin);
-        total += BigInt(coin.coin.amount);
-      }
+      const usable = batch.filter(
+        (coin) => !coin.locked && this.ledger.isAvailable(coinKey(coin.coin)),
+      );
+      coins.push(...usable);
       if (batch.length < COIN_PAGE_SIZE) break;
+      if (
+        usable.length > 0 &&
+        BigInt(wasm.spendable_standard_total(jsonStringify(walletCoinCandidates(coins)))) >= target
+      ) {
+        break;
+      }
     }
     return coins;
   }
@@ -289,10 +328,18 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       return { kind: 'unavailable', reason: 'Sage address is not resolved yet' };
     }
 
+    let wasm: WasmConnection;
+    try {
+      wasm = await ensureWasmLoaded();
+    } catch (error) {
+      return { kind: 'failure', reason: errorText(error) };
+    }
+
     let coins: SageSpendableCoin[];
     try {
       coins = await this.availableCoins(
         request.kind === 'fee' ? request.fee : absAmountFromOffer(request.offer),
+        wasm,
       );
     } catch (error) {
       return this.walletCallFailure('list coins', error);
@@ -300,18 +347,10 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
 
     let unsigned: UnsignedWalletSpend;
     try {
-      const wasm = await ensureWasmLoaded();
       unsigned = jsonParse(
         wasm.build_wallet_spend(
           jsonStringify({
-            coins: coins.map(({ coin, puzzle }) => ({
-              coin: {
-                parent_coin_info: coin.parent_coin_info,
-                puzzle_hash: coin.puzzle_hash,
-                amount: coin.amount.toString(),
-              },
-              puzzle_reveal: puzzle,
-            })),
+            coins: walletCoinCandidates(coins),
             change_puzzle_hash: changePuzzleHash,
             purpose: this.walletSpendPurpose(request),
           }),
@@ -323,36 +362,32 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       return { kind: 'failure', reason };
     }
 
-    const coinSpends = unsigned.coin_spends.map((cs) => ({
-      coin: {
-        parent_coin_info: cs.coin.parent_coin_info,
-        puzzle_hash: cs.coin.puzzle_hash,
-        amount: BigInt(cs.coin.amount).toString(),
-      } satisfies SageCoin,
-      puzzle_reveal: cs.puzzle_reveal,
-      solution: cs.solution,
-    }));
-    let signature: string;
-    try {
-      signature = await sageRpc.signCoinSpends(coinSpends);
-    } catch (error) {
-      return this.walletCallFailure('sign spend', error);
-    }
-
-    const bundle = {
-      coin_spends: unsigned.coin_spends,
-      aggregated_signature: `0x${normalizeHexString(signature)}`,
-    };
+    // Reserve before the signing prompt: another operation may list coins
+    // while the user is still approving this one in Sage.
     const reservationId = this.ledger.reserve(
       request.kind,
       new Set(unsigned.coin_spends.map((cs) => coinKey(cs.coin))),
     );
+    let signature: string;
+    try {
+      signature = await sageRpc.signCoinSpends(unsigned.coin_spends.map(toSageCoinSpend));
+    } catch (error) {
+      this.ledger.release(reservationId);
+      return this.walletCallFailure('sign spend', error);
+    }
+
     log(
       `[sage-blockchain] ${request.kind} spend signed inputs=${unsigned.coin_spends.length} reservation=${reservationId}`,
     );
     return {
       kind: 'created-reserved',
-      material: { kind: 'bundle', bundle },
+      material: {
+        kind: 'bundle',
+        bundle: {
+          coin_spends: unsigned.coin_spends,
+          aggregated_signature: `0x${normalizeHexString(signature)}`,
+        },
+      },
       tradeId: reservationId,
     };
   }
@@ -398,8 +433,12 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
     if (this.wcSubscription) return;
     this.wcSubscription = walletConnectState.getObservable().subscribe({
       next: (evt) => {
-        // The Chia reference wallet shares the WalletConnect client.
-        if (walletConnectState.getProfile() !== 'sage') return;
+        // The Chia reference wallet shares the WalletConnect client. While it
+        // holds the client this adapter has no session.
+        if (walletConnectState.getProfile() !== 'sage') {
+          this.markDisconnected();
+          return;
+        }
         if (evt.stateName === 'connected') {
           void this.startMonitoring().catch((err) => {
             log(`[sage-blockchain] monitoring setup after WalletConnect event failed: ${err}`);
@@ -417,7 +456,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
     await walletConnectState.init();
-    walletConnectState.useProfile('sage');
+    walletConnectState.selectProfile('sage');
     this.subscribeToWcEvents();
     if (fresh) {
       await walletConnectState.forgetSessions();

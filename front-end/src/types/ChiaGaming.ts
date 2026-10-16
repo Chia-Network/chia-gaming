@@ -339,6 +339,7 @@ export interface WasmConnection {
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
   build_wallet_spend: (request_json: string) => string;
+  spendable_standard_total: (coins_json: string) => string;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,

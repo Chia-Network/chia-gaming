@@ -5,7 +5,8 @@ import { log } from '../services/log';
 import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
-import { isTestnet } from '../constants/currency';
+import { TESTNET_CHAIN_ID } from '../constants/env';
+import { getChainId } from '../constants/wallet-connect';
 import { normalizeHex } from './cloudWalletOAuth';
 
 /**
@@ -115,7 +116,7 @@ export class CoinsetClient {
     const uniqueNames = [...new Set(names.map((n) => normalizeHex(n)).filter(Boolean))];
     if (uniqueNames.length === 0) return [];
     try {
-      // Watched coins may not exist yet. The singular RPC throws for absence;
+      // Watched coins may not exist yet. The singular RPC fails for absence;
       // the batch RPC returns only existing records, even for a single name.
       const response = await this.call<{
         success?: boolean;
@@ -203,9 +204,12 @@ export class CoinsetTransportError extends Error {
 const COINSET_MAINNET_URL = 'https://api.coinset.org';
 const COINSET_TESTNET_URL = 'https://testnet11.api.coinset.org';
 
-/** Public Coinset API for the currently selected network. */
+/**
+ * Public Coinset API for the chain the wallet session uses, so chain reads
+ * follow `CHAIN_ID_OVERRIDE` along with the WalletConnect chain id.
+ */
 export function coinsetApiUrl(): string {
-  return isTestnet() ? COINSET_TESTNET_URL : COINSET_MAINNET_URL;
+  return getChainId() === TESTNET_CHAIN_ID ? COINSET_TESTNET_URL : COINSET_MAINNET_URL;
 }
 
 /**

@@ -97,6 +97,13 @@ type WalletConnectMethod = ChiaMethod | SageMethod;
 
 const CHIA_WALLET_METHODS = new Set<string>(Object.values(ChiaMethod));
 
+/**
+ * Methods whose successful result legitimately carries an `error` field:
+ * `chip0002_sendTransaction` answers `{ status, error }` with the mempool's
+ * verdict, which the caller interprets.
+ */
+const RESULT_CARRIES_ERROR = new Set<string>([SageMethod.SendTransaction]);
+
 function transportError(method: WalletConnectMethod, detail: string, cause?: unknown): Error {
   return new WalletConnectTransportError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
 }
@@ -291,7 +298,7 @@ class WalletConnectRpcClient {
 
   private normalizeResult<T>(prepared: PreparedRpc, raw: unknown): T {
     const result = integersToBigInt(raw) as Record<string, unknown> | undefined;
-    if (result?.error) {
+    if (result?.error && !RESULT_CARRIES_ERROR.has(prepared.method)) {
       const errorText = toDebugJson(result.error);
       const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
       if (shouldLogRpcError(prepared.method)) {

@@ -1482,25 +1482,30 @@ Shell manages wallet connections through two abstractions defined in
   Cloud's wallet address, balance, consent, and offer operations remain on the
   wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
   Coinset GraphQL proxy and preserve the Coinset request and response shapes:
-  `get_blockchain_state`, `get_coin_record_by_name` /
-  `get_coin_records_by_names`, and `get_puzzle_and_solution`.
+  `get_blockchain_state`, `get_coin_records_by_names` (also for a single coin,
+  since the singular RPC fails for a coin that does not exist yet), and
+  `get_puzzle_and_solution`.
 
   Sage pairs over the same WalletConnect client under a separate `sage`
   method profile (`chip0002_getAssetCoins`, `chip0002_getAssetBalance`,
   `chip0002_signCoinSpends`, `chip0002_sendTransaction`, `chia_getAddress`);
-  `walletConnectState.useProfile`
-  selects which stored session is active, and each interface ignores events
-  for the other profile. Sage cannot build offers with protocol conditions, so
+  `walletConnectState.selectProfile`
+  selects which stored session is active, a fresh pairing forgets only that
+  profile's stored sessions, and each interface treats the other profile
+  holding the client as its own disconnect. Sage cannot build offers with protocol conditions, so
   its provider is `terminal`: the adapter lists Sage's unlocked XCH coins, Rust
   (`build_wallet_spend`, `src/wallet_spend.rs`) selects standard-puzzle inputs
   and builds the unsigned funding or fee spend in the simulator's offer shape,
   and Sage only signs it. The signed bundle enters the existing `bundle`
-  material path and is validated like any wallet bundle. Because Sage locks
-  coins only for transactions it submits, an in-memory `SageCoinLedger` holds
-  each signed spend's inputs under a synthetic reservation ID until the
-  runtime cancels it, and excludes broadcast inputs for the page's lifetime.
+  material path and is validated like any wallet bundle. Coins are listed ten
+  per page (each reply carries puzzle reveals and must fit one relay message)
+  until Rust's `spendable_standard_total` covers the amount. Because Sage locks
+  coins only for transactions it submits, an in-memory `SageCoinLedger`
+  reserves a spend's inputs as soon as Rust builds it, under a synthetic
+  reservation ID the runtime later cancels, and excludes broadcast inputs while
+  they may be spending; a definitive rejection returns them.
   Every public chain read goes directly to coinset.org (`api.coinset.org`, or
-  `testnet11.api.coinset.org` on testnet) through the same `CoinsetClient`
+  `testnet11.api.coinset.org` for the testnet chain id) through the same `CoinsetClient`
   that Cloud uses over its proxy. Broadcasts go through
   `chip0002_sendTransaction` so Sage records the pending transaction and locks
   its inputs. A peer-reported mempool status is final; a thrown error (Sage
