@@ -5,7 +5,8 @@ import { log } from '../services/log';
 import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
-import { isTestnet } from '../constants/currency';
+import { TESTNET_CHAIN_ID } from '../constants/env';
+import { getChainId } from '../constants/wallet-connect';
 import { normalizeHex } from './cloudWalletOAuth';
 
 /**
@@ -37,11 +38,6 @@ type CoinsetCoinRecord = {
   timestamp?: unknown;
 };
 
-type CoinsetFailure = {
-  success?: boolean;
-  structuredError?: { code?: unknown } | null;
-};
-
 function coinRecordFromCoinset(record: CoinsetCoinRecord): CoinRecord {
   const parentCoinInfo = normalizeHex(record.coin?.parent_coin_info);
   const puzzleHash = normalizeHex(record.coin?.puzzle_hash);
@@ -71,11 +67,6 @@ function coinRecordFromCoinset(record: CoinsetCoinRecord): CoinRecord {
   };
 }
 
-/** The full node reports an unknown coin as a failed lookup, not an empty one. */
-function isCoinRecordNotFound(response: CoinsetFailure): boolean {
-  return response.success === false && response.structuredError?.code === 'COIN_RECORD_NOT_FOUND';
-}
-
 /**
  * Coinset full-node reads and broadcast, independent of how requests reach
  * Coinset. Request and response shapes are Coinset's own.
@@ -102,15 +93,8 @@ export class CoinsetClient {
     const coinBytes = toUint8(coin);
     const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
     const coinName = toHexString(new Uint8Array(hashBuf));
-    const recordResponse = await this.call<
-      CoinsetFailure & { coin_record?: CoinsetCoinRecord | null }
-    >('get_coin_record_by_name', { name: coinName });
-    if (isCoinRecordNotFound(recordResponse)) return null;
-    if (recordResponse.success !== true) {
-      throw new Error('Coinset get_coin_record_by_name failed');
-    }
-    if (!recordResponse.coin_record) return null;
-    const record = coinRecordFromCoinset(recordResponse.coin_record);
+    const [record] = await this.getCoinRecordsByNames([coinName]);
+    if (!record) return null;
     if (!record.spent || record.spentBlockIndex === 0n) return null;
 
     const response = await this.call<{
@@ -132,17 +116,8 @@ export class CoinsetClient {
     const uniqueNames = [...new Set(names.map((n) => normalizeHex(n)).filter(Boolean))];
     if (uniqueNames.length === 0) return [];
     try {
-      if (uniqueNames.length === 1) {
-        const response = await this.call<
-          CoinsetFailure & { coin_record?: CoinsetCoinRecord | null }
-        >('get_coin_record_by_name', { name: uniqueNames[0] });
-        if (isCoinRecordNotFound(response)) return [];
-        if (response.success !== true) {
-          throw new Error('Coinset get_coin_record_by_name failed');
-        }
-        return response.coin_record ? [coinRecordFromCoinset(response.coin_record)] : [];
-      }
-
+      // Watched coins may not exist yet. The singular RPC fails for absence;
+      // the batch RPC returns only existing records, even for a single name.
       const response = await this.call<{
         success?: boolean;
         coin_records?: CoinsetCoinRecord[];
@@ -229,9 +204,12 @@ export class CoinsetTransportError extends Error {
 const COINSET_MAINNET_URL = 'https://api.coinset.org';
 const COINSET_TESTNET_URL = 'https://testnet11.api.coinset.org';
 
-/** Public Coinset API for the currently selected network. */
+/**
+ * Public Coinset API for the chain the wallet session uses, so chain reads
+ * follow `CHAIN_ID_OVERRIDE` along with the WalletConnect chain id.
+ */
 export function coinsetApiUrl(): string {
-  return isTestnet() ? COINSET_TESTNET_URL : COINSET_MAINNET_URL;
+  return getChainId() === TESTNET_CHAIN_ID ? COINSET_TESTNET_URL : COINSET_MAINNET_URL;
 }
 
 /**

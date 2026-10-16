@@ -815,6 +815,12 @@ identifying the exact same transaction as already included is idempotent
 success. Failure to complete communication with the wallet is unavailable; an
 error returned by the wallet is rejected. Adapters preserve that provenance
 instead of deriving retry policy from consensus, mempool, or coin-status text.
+Sage is the one adapter that sends exact bytes twice, and only when its own
+answer is not provenance: Sage records a transaction after its peers accept it,
+so a thrown error can follow a successful broadcast, and a failure without an
+error means no peer answered. Only then does the adapter resubmit the identical
+bundle through Coinset `push_tx`, whose answer (including "already included")
+is the outcome. A mempool status Sage's peers reported is final.
 Fee-bearing wallet outputs from either WalletConnect or Cloud Wallet are
 validated and aggregated by one Rust boundary, including complete aggregate
 signature verification for `AGG_SIG_UNSAFE`. JavaScript does not inspect

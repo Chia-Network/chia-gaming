@@ -77,7 +77,7 @@ export function getGenesisChallenge(): string {
 }
 
 export function getRequiredNamespaces(
-  profile: WalletConnectProfile = 'chia-wallet',
+  profile: WalletConnectProfile,
 ): ProposalTypes.RequiredNamespaces {
   return {
     chia: {
@@ -94,7 +94,7 @@ export function getRequiredNamespaces(
 }
 
 export function getOptionalNamespaces(
-  profile: WalletConnectProfile = 'chia-wallet',
+  profile: WalletConnectProfile,
 ): ProposalTypes.OptionalNamespaces {
   return {
     chia: {

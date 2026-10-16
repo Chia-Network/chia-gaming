@@ -7,6 +7,7 @@ import {
   getChainId,
   getOptionalNamespaces,
   getRequiredNamespaces,
+  SageMethod,
   type WalletConnectProfile,
 } from '../constants/wallet-connect';
 import { log } from '../services/log';
@@ -89,7 +90,7 @@ class WalletState {
    * adopts the newest stored session that grants the new surface, or reports
    * disconnected if none does; sessions for the other profile stay stored.
    */
-  useProfile(profile: WalletConnectProfile) {
+  selectProfile(profile: WalletConnectProfile) {
     if (profile === this.profile) return;
     this.profile = profile;
     if (!this.client) return;
@@ -196,10 +197,21 @@ class WalletState {
     }
   }
 
+  /** Which wallet RPC surface a stored session was paired for. */
+  private profileOf(session: SessionTypes.Struct): WalletConnectProfile {
+    return session.namespaces.chia?.methods?.includes(SageMethod.SignCoinSpends)
+      ? 'sage'
+      : 'chia-wallet';
+  }
+
+  /** Disconnect the stored sessions of the selected profile; the other's stay. */
   async forgetSessions() {
     const client = this.client;
     if (client) {
-      for (const topic of client.session.keys) {
+      const topics = client.session.keys.filter(
+        (topic) => this.profileOf(client.session.get(topic)) === this.profile,
+      );
+      for (const topic of topics) {
         try {
           await client.disconnect({
             topic,

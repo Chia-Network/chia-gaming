@@ -66,3 +66,29 @@ it('rejects a fee spend when no standard coin covers the fee in real WASM', () =
     ),
   ).toThrow(/needs 100/);
 });
+
+it('counts only spendable standard coins in real WASM', () => {
+  const identity = walletIdentity();
+  const total = WholeWasmObject.spendable_standard_total(
+    JSON.stringify([
+      {
+        coin: {
+          parent_coin_info: 'aa'.repeat(32),
+          puzzle_hash: identity.puzzle_hash,
+          amount: '700',
+        },
+        puzzle_reveal: identity.puzzle,
+      },
+      {
+        // A non-standard puzzle (`1`) is listed but cannot be spent here.
+        coin: {
+          parent_coin_info: 'bb'.repeat(32),
+          puzzle_hash: '9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2',
+          amount: '5000',
+        },
+        puzzle_reveal: '01',
+      },
+    ]),
+  );
+  expect(total).toBe('700');
+});

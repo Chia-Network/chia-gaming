@@ -45,6 +45,8 @@ pub enum WalletSpendPurpose {
     Fee { fee: u64, target: CoinID },
 }
 
+/// Rejects a reveal that does not hash to its coin's puzzle hash; otherwise
+/// reports whether the puzzle is the standard p2 puzzle.
 fn is_standard_wallet_puzzle(
     allocator: &mut AllocEncoder,
     candidate: &WalletCoinCandidate,
@@ -140,6 +142,32 @@ fn unsigned_spend(
     })
 }
 
+fn standard_candidates(
+    allocator: &mut AllocEncoder,
+    candidates: Vec<WalletCoinCandidate>,
+) -> Result<Vec<WalletCoinCandidate>, Error> {
+    let mut standard = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        if is_standard_wallet_puzzle(allocator, &candidate)? {
+            standard.push(candidate);
+        }
+    }
+    Ok(standard)
+}
+
+/// Total value of the candidates `build_unsigned_wallet_spends` can spend.
+/// Callers paging through a wallet's coins stop once this covers the target.
+pub fn spendable_standard_total(
+    allocator: &mut AllocEncoder,
+    candidates: Vec<WalletCoinCandidate>,
+) -> Result<u128, Error> {
+    let mut total = 0_u128;
+    for candidate in standard_candidates(allocator, candidates)? {
+        total += u128::from(coin_amount(&candidate.coin)?);
+    }
+    Ok(total)
+}
+
 /// Select standard-puzzle inputs from `candidates` and build unsigned spends
 /// for `purpose`, returning change to `change_puzzle_hash`.
 ///
@@ -152,12 +180,7 @@ pub fn build_unsigned_wallet_spends(
     purpose: &WalletSpendPurpose,
     change_puzzle_hash: &PuzzleHash,
 ) -> Result<Vec<CoinSpend>, Error> {
-    let mut standard = Vec::with_capacity(candidates.len());
-    for candidate in candidates {
-        if is_standard_wallet_puzzle(allocator, &candidate)? {
-            standard.push(candidate);
-        }
-    }
+    let standard = standard_candidates(allocator, candidates)?;
 
     let target = match purpose {
         WalletSpendPurpose::Funding { amount, .. } => *amount,
@@ -175,6 +198,10 @@ pub fn build_unsigned_wallet_spends(
             .checked_add(coin_amount(&candidate.coin)?)
             .ok_or_else(|| Error::StrErr("wallet input total overflowed".to_string()))?;
     }
+    game_assert!(
+        total >= target,
+        "coin selection returned {total} mojos for a {target} mojo spend"
+    );
     let change = total - target;
 
     let primary_id = selected[0].coin.to_coin_id();
@@ -442,6 +469,27 @@ mod tests {
             0,
         )
         .expect("signed wallet fee spend aggregates");
+    }
+
+    #[test]
+    fn spendable_total_counts_only_standard_coins() {
+        let mut allocator = AllocEncoder::new();
+        let wallet = wallet(&mut allocator);
+        let other = Puzzle::from_bytes(&[0x01]).expect("puzzle");
+        let foreign = WalletCoinCandidate {
+            coin: CoinString::from_parts(
+                &CoinID::new(Hash::from_bytes([4; 32])),
+                &other.sha256tree(&mut allocator),
+                &Amount::new(1000),
+            ),
+            puzzle: other,
+        };
+        let total = spendable_standard_total(
+            &mut allocator,
+            vec![foreign, candidate(&wallet, 1, 10), candidate(&wallet, 2, 5)],
+        )
+        .expect("total");
+        assert_eq!(total, 15);
     }
 
     #[test]

@@ -2,7 +2,7 @@ import type { WalletOfferRequest } from '../../types/ChiaGaming';
 
 jest.mock('../../services/log', () => ({ log: jest.fn() }));
 
-jest.mock('../../constants/currency', () => ({ isTestnet: () => false }));
+jest.mock('../../constants/wallet-connect', () => ({ getChainId: () => 'chia:mainnet' }));
 
 jest.mock('../../hooks/WalletConnectRpc', () => ({
   WalletConnectTransportError: class WalletConnectTransportError extends Error {},
@@ -28,9 +28,19 @@ jest.mock('../../hooks/useWalletConnect', () => ({
 }));
 
 const mockBuildWalletSpend = jest.fn();
+const mockSpendableTotal = jest.fn();
 jest.mock('../../hooks/WasmStateInit', () => ({
-  ensureWasmLoaded: async () => ({ build_wallet_spend: mockBuildWalletSpend }),
+  ensureWasmLoaded: async () => ({
+    build_wallet_spend: mockBuildWalletSpend,
+    spendable_standard_total: mockSpendableTotal,
+  }),
 }));
+
+/** Stand-in for Rust: every listed coin is a spendable standard coin. */
+function sumOfferedCoins(coinsJson: string): string {
+  const coins: Array<{ coin: { amount: string } }> = JSON.parse(coinsJson);
+  return coins.reduce((total, { coin }) => total + BigInt(coin.amount), 0n).toString();
+}
 
 import { sageRpc, WalletConnectTransportError } from '../../hooks/WalletConnectRpc';
 import { SageBlockchainInterface } from '../../hooks/SageBlockchainInterface';
@@ -106,6 +116,7 @@ describe('SageBlockchainInterface', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockBuildWalletSpend.mockImplementation(spendFirstOfferedCoin);
+    mockSpendableTotal.mockImplementation(sumOfferedCoins);
     jest.mocked(sageRpc.signCoinSpends).mockResolvedValue(SIGNATURE);
   });
 
@@ -168,7 +179,7 @@ describe('SageBlockchainInterface', () => {
     });
   });
 
-  it('lists coins in small pages and stops once unlocked coins cover the amount', async () => {
+  it('lists coins in small pages and stops once Rust counts enough spendable coins', async () => {
     const page = (start: number, lockedCount: number) =>
       Array.from({ length: 10 }, (_, i) =>
         walletCoin((start + i).toString(16).padStart(2, '0'), 100n, i < lockedCount),
@@ -197,6 +208,68 @@ describe('SageBlockchainInterface', () => {
       [10, 10],
     ]);
     expect(JSON.parse(mockBuildWalletSpend.mock.calls[0][0]).coins).toHaveLength(11);
+  });
+
+  it('keeps paging while Rust finds too few standard coins among the listed ones', async () => {
+    const page = (start: number) =>
+      Array.from({ length: 10 }, (_, i) =>
+        walletCoin((start + i).toString(16).padStart(2, '0'), 100n),
+      );
+    jest
+      .mocked(sageRpc.getAssetCoins)
+      .mockImplementation(async (offset: number) =>
+        offset === 0 ? (page(0) as never) : offset === 10 ? (page(16) as never) : ([] as never),
+      );
+    // The first page is clawback coins: 1000 mojos listed, none spendable.
+    mockSpendableTotal.mockReturnValueOnce('0').mockReturnValueOnce('1000');
+    const sage = await connectedSage();
+    const provider = sage.getWalletOfferProvider()!;
+    const owner = { installationPlayerId: 'p', peerSessionId: 's', providerScope: provider.scope };
+
+    await provider.beginCreation(
+      { owner, purpose: { kind: 'funding', operationId: 'op' } },
+      fundingRequest,
+    );
+
+    expect(jest.mocked(sageRpc.getAssetCoins).mock.calls).toEqual([
+      [0, 10],
+      [10, 10],
+    ]);
+    expect(JSON.parse(mockBuildWalletSpend.mock.calls[0][0]).coins).toHaveLength(20);
+  });
+
+  it('reserves inputs while Sage asks the user to sign, and releases them if signing fails', async () => {
+    jest.mocked(sageRpc.getAssetCoins).mockResolvedValue([walletCoin('bb', 900n)] as never);
+    let approve: (signature: string) => void = () => {};
+    jest.mocked(sageRpc.signCoinSpends).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          approve = resolve;
+        }),
+    );
+    const sage = await connectedSage();
+    const provider = sage.getWalletOfferProvider()!;
+    const owner = { installationPlayerId: 'p', peerSessionId: 's', providerScope: provider.scope };
+    const operation = { owner, purpose: { kind: 'fee' as const, operationId: 'fee' } };
+
+    const first = provider.beginCreation(operation, feeRequest);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    mockBuildWalletSpend.mockImplementationOnce(() => {
+      throw new Error('no coins');
+    });
+    await provider.beginCreation(operation, feeRequest);
+    // The coin awaiting the first signature is not offered to the second spend.
+    expect(JSON.parse(mockBuildWalletSpend.mock.calls[1][0]).coins).toEqual([]);
+    approve(SIGNATURE);
+    await expect(first).resolves.toMatchObject({ kind: 'created-reserved' });
+
+    jest.mocked(sageRpc.getAssetCoins).mockResolvedValue([walletCoin('cc', 900n)] as never);
+    jest.mocked(sageRpc.signCoinSpends).mockRejectedValueOnce(new Error('user declined'));
+    await expect(provider.beginCreation(operation, feeRequest)).resolves.toMatchObject({
+      kind: 'failure',
+    });
+    await provider.beginCreation(operation, feeRequest);
+    expect(JSON.parse(mockBuildWalletSpend.mock.calls.at(-1)![0]).coins).toHaveLength(1);
   });
 
   it('keeps reserved coins out of later spends until the reservation is cancelled', async () => {
@@ -314,6 +387,33 @@ describe('SageBlockchainInterface', () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it('returns the inputs of a rejected broadcast to coin selection', async () => {
+      jest
+        .mocked(sageRpc.sendTransaction)
+        .mockResolvedValue({ status: 3n, error: 'Err.INVALID_FEE_LOW_FEE' });
+      jest.mocked(sageRpc.getAssetCoins).mockResolvedValue([walletCoin('bb', 900n)] as never);
+      const sage = await connectedSage();
+      const provider = sage.getWalletOfferProvider()!;
+      if (provider.capability !== 'terminal') throw new Error('expected terminal provider');
+      const owner = {
+        installationPlayerId: 'p',
+        peerSessionId: 's',
+        providerScope: provider.scope,
+      };
+      const operation = { owner, purpose: { kind: 'fee' as const, operationId: 'fee' } };
+      const created = await provider.beginCreation(operation, feeRequest);
+      if (created.kind !== 'created-reserved' || created.material.kind !== 'bundle') {
+        throw new Error('expected a reserved bundle');
+      }
+
+      await expect(sage.spend('', created.material.bundle, '', 'test')).resolves.toMatchObject({
+        status: 'rejected',
+      });
+      await provider.cancel(created.tradeId);
+      await provider.beginCreation(operation, feeRequest);
+      expect(JSON.parse(mockBuildWalletSpend.mock.calls.at(-1)![0]).coins).toHaveLength(1);
+    });
+
     it('acknowledges a bundle the mempool already includes', async () => {
       jest
         .mocked(sageRpc.sendTransaction)
@@ -368,15 +468,10 @@ describe('SageBlockchainInterface', () => {
     mockFetchJson({ success: true, blockchain_state: { peak: { height: 777 } } });
     await expect(sage.getHeightInfo()).resolves.toBe(777n);
 
-    const notFound = {
-      success: false,
-      error: 'Coin record not found',
-      structuredError: { code: 'COIN_RECORD_NOT_FOUND' },
-    };
-    const fetchMock = mockFetchJson(notFound);
+    const fetchMock = mockFetchJson({ success: true, coin_records: [] });
     await expect(sage.getCoinRecordsByNames(['55'.repeat(32)])).resolves.toEqual([]);
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.coinset.org/get_coin_record_by_name',
+      'https://api.coinset.org/get_coin_records_by_names',
       expect.anything(),
     );
     await expect(sage.getPuzzleAndSolution('66'.repeat(72))).resolves.toBeNull();
