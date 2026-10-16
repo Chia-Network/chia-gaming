@@ -1403,8 +1403,9 @@ Shell manages wallet connections through two abstractions defined in
 `ChiaGaming.ts`:
 
 - **`InternalBlockchainInterface`** — the backend-specific implementation
-  (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
-  the simulator, `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
+  (`RealBlockchainInterface` for WalletConnect, `SageBlockchainInterface` for
+  Sage over WalletConnect, `FakeBlockchainInterface` for the simulator,
+  `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
   exposes `beginConnect()`, `disconnect()`, `isConnected()`, `spend()`, etc.
 - **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
   the QR code and a `finalize(values?)` promise that resolves when the wallet is
@@ -1483,6 +1484,29 @@ Shell manages wallet connections through two abstractions defined in
   Coinset GraphQL proxy and preserve the Coinset request and response shapes:
   `get_blockchain_state`, `get_coin_record_by_name` /
   `get_coin_records_by_names`, and `get_puzzle_and_solution`.
+
+  Sage pairs over the same WalletConnect client under a separate `sage`
+  method profile (`chip0002_getAssetCoins`, `chip0002_getAssetBalance`,
+  `chip0002_signCoinSpends`, `chip0002_sendTransaction`, `chia_getAddress`);
+  `walletConnectState.useProfile`
+  selects which stored session is active, and each interface ignores events
+  for the other profile. Sage cannot build offers with protocol conditions, so
+  its provider is `terminal`: the adapter lists Sage's unlocked XCH coins, Rust
+  (`build_wallet_spend`, `src/wallet_spend.rs`) selects standard-puzzle inputs
+  and builds the unsigned funding or fee spend in the simulator's offer shape,
+  and Sage only signs it. The signed bundle enters the existing `bundle`
+  material path and is validated like any wallet bundle. Because Sage locks
+  coins only for transactions it submits, an in-memory `SageCoinLedger` holds
+  each signed spend's inputs under a synthetic reservation ID until the
+  runtime cancels it, and excludes broadcast inputs for the page's lifetime.
+  Every public chain read goes directly to coinset.org (`api.coinset.org`, or
+  `testnet11.api.coinset.org` on testnet) through the same `CoinsetClient`
+  that Cloud uses over its proxy. Broadcasts go through
+  `chip0002_sendTransaction` so Sage records the pending transaction and locks
+  its inputs. A peer-reported mempool status is final; a thrown error (Sage
+  records the transaction only after peers accept it, so this can follow a
+  successful broadcast) or a failure with no peer answer falls back to Coinset
+  `push_tx` with the exact bytes, where a duplicate is acknowledged.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no

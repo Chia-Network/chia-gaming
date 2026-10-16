@@ -660,7 +660,10 @@ second fee. Cloud Wallet uses the same persisted-offer settlement shape as
 WalletConnect, including the protocol-provided CLVM conditions. Its wallet and
 offer operations use the Cloud Wallet GraphQL API, while peak, coin, puzzle,
 and transaction-submission traffic is relayed unchanged through that API's
-Coinset proxy.
+Coinset proxy. Sage cannot attach protocol conditions to offers, so Rust
+builds the same funding shape as standard-puzzle spends of Sage's coins, Sage
+signs and broadcasts them over WalletConnect CHIP-0002, and chain reads go
+directly to coinset.org.
 
 **Key code:** `src/session_phases/handshake_initiator.rs`,
 `src/session_phases/handshake_receiver.rs`,

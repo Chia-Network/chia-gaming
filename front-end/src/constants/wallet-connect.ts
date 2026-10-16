@@ -27,6 +27,22 @@ export enum ChiaMethod {
   GetFullNodePeerCount = 'chia_getFullNodePeerCount',
 }
 
+/** CHIP-0002 and high-level methods implemented by the Sage wallet. */
+export enum SageMethod {
+  GetAddress = 'chia_getAddress',
+  GetAssetCoins = 'chip0002_getAssetCoins',
+  GetAssetBalance = 'chip0002_getAssetBalance',
+  SignCoinSpends = 'chip0002_signCoinSpends',
+  SendTransaction = 'chip0002_sendTransaction',
+}
+
+/**
+ * Which wallet RPC surface a WalletConnect session must grant. The Chia
+ * reference wallet exposes offer and full-node RPCs; Sage only lists and
+ * signs coins, so its chain reads go to Coinset instead.
+ */
+export type WalletConnectProfile = 'chia-wallet' | 'sage';
+
 /**
  * WalletConnect CAIP-2 chain id for the currently-selected Chia network.
  * A build-time/window override wins over the persisted network preference.
@@ -60,22 +76,29 @@ export function getGenesisChallenge(): string {
   return isTestnet() ? TESTNET_GENESIS_CHALLENGE : MAINNET_GENESIS_CHALLENGE;
 }
 
-export function getRequiredNamespaces(): ProposalTypes.RequiredNamespaces {
+export function getRequiredNamespaces(
+  profile: WalletConnectProfile = 'chia-wallet',
+): ProposalTypes.RequiredNamespaces {
   return {
     chia: {
-      methods: Object.values(ChiaMethod).filter(
-        (method) => method !== ChiaMethod.GetFullNodePeerCount,
-      ),
+      methods:
+        profile === 'sage'
+          ? Object.values(SageMethod)
+          : Object.values(ChiaMethod).filter(
+              (method) => method !== ChiaMethod.GetFullNodePeerCount,
+            ),
       chains: [getChainId()],
       events: [],
     },
   };
 }
 
-export function getOptionalNamespaces(): ProposalTypes.OptionalNamespaces {
+export function getOptionalNamespaces(
+  profile: WalletConnectProfile = 'chia-wallet',
+): ProposalTypes.OptionalNamespaces {
   return {
     chia: {
-      methods: Object.values(ChiaMethod),
+      methods: profile === 'sage' ? Object.values(SageMethod) : Object.values(ChiaMethod),
       chains: [getChainId()],
       events: [],
     },
