@@ -1032,6 +1032,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     if (this.wcSubscription) return;
     this.wcSubscription = walletConnectState.getObservable().subscribe({
       next: (evt) => {
+        // Sage shares the WalletConnect client. While it holds the client this
+        // adapter has no session, so a later switch back reports a fresh connect.
+        if (walletConnectState.getProfile() !== 'chia-wallet') {
+          this.markDisconnected();
+          return;
+        }
         if (evt.stateName === 'connected') {
           void this.startMonitoring().catch((err) => {
             console.warn('[wc-blockchain] monitoring setup after WalletConnect event failed', err);
@@ -1052,6 +1058,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
     await walletConnectState.init();
+    walletConnectState.selectProfile('chia-wallet');
     this.subscribeToWcEvents();
     if (fresh) {
       await walletConnectState.forgetSessions();

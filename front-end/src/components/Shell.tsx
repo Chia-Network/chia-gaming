@@ -79,6 +79,7 @@ import {
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { cloudBlockchainInfo } from '../hooks/CloudBlockchainInterface';
+import { sageBlockchainInfo } from '../hooks/SageBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import {
   BALANCE_POLL_INTERVAL_MS,
@@ -150,11 +151,14 @@ import { HubPicker } from './HubPicker';
 
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
 
-type ShellBlockchainType = 'simulator' | 'walletconnect' | 'cloud';
+type ShellBlockchainType = 'simulator' | 'walletconnect' | 'sage' | 'cloud';
 
 function getInterface(bcType: ShellBlockchainType) {
   if (bcType === 'walletconnect') {
     return { iface: realBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS };
+  }
+  if (bcType === 'sage') {
+    return { iface: sageBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS };
   }
   if (bcType === 'cloud') {
     return { iface: cloudBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS };
@@ -4225,6 +4229,13 @@ const Shell = () => {
                     onClick={() => handleConnect('walletconnect', false, true)}
                   >
                     Link Wallet
+                  </Button>
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('sage', false, true)}
+                  >
+                    Sage Wallet
                   </Button>
                   <Button
                     variant="solid"

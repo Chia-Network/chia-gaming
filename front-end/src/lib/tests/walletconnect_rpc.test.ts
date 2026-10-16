@@ -29,6 +29,7 @@ jest.mock('../../services/log', () => ({
 import { ChiaMethod } from '../../constants/wallet-connect';
 import {
   rpc,
+  sageRpc,
   WalletConnectResponseError,
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
@@ -58,6 +59,27 @@ describe('WalletConnect RPC adapter', () => {
         },
       },
     });
+  });
+
+  it('returns a Sage mempool failure as the sendTransaction result', async () => {
+    requestMock.mockResolvedValueOnce({ status: 3, error: 'Err.DOUBLE_SPEND' });
+
+    await expect(
+      sageRpc.sendTransaction({ coin_spends: [], aggregated_signature: '0xc0' }),
+    ).resolves.toEqual({ status: 3n, error: 'Err.DOUBLE_SPEND' });
+    // Sage validates params strictly and serves its active wallet: no fingerprint.
+    expect(requestMock.mock.calls[0][0].request).toEqual({
+      method: 'chip0002_sendTransaction',
+      params: { spendBundle: { coin_spends: [], aggregated_signature: '0xc0' } },
+    });
+  });
+
+  it('still rejects an error field from methods whose result cannot carry one', async () => {
+    requestMock.mockResolvedValueOnce({ error: 'coins locked' });
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(sageRpc.signCoinSpends([])).rejects.toBeInstanceOf(WalletConnectResponseError);
+    consoleError.mockRestore();
   });
 
   it('unwraps WalletConnect data payloads', async () => {

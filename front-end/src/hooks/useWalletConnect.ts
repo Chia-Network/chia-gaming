@@ -7,6 +7,8 @@ import {
   getChainId,
   getOptionalNamespaces,
   getRequiredNamespaces,
+  SageMethod,
+  type WalletConnectProfile,
 } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
@@ -52,6 +54,7 @@ class WalletState {
   observable: Subject<WalletConnectOutboundState>;
   private initPromise: Promise<void> | null = null;
   private pendingPairingTopic?: string;
+  private profile: WalletConnectProfile = 'chia-wallet';
 
   constructor() {
     this.isConnected = false;
@@ -78,6 +81,24 @@ class WalletState {
     return this.address;
   }
 
+  getProfile(): WalletConnectProfile {
+    return this.profile;
+  }
+
+  /**
+   * Select which wallet RPC surface sessions must grant. Switching profiles
+   * adopts the newest stored session that grants the new surface, or reports
+   * disconnected if none does; sessions for the other profile stay stored.
+   */
+  selectProfile(profile: WalletConnectProfile) {
+    if (profile === this.profile) return;
+    this.profile = profile;
+    if (!this.client) return;
+    if (!this.restoreExistingSession(this.client)) {
+      this.resetSession();
+    }
+  }
+
   supportsMethod(method: string): boolean {
     return this.session?.namespaces.chia?.methods?.includes(method) ?? false;
   }
@@ -98,13 +119,13 @@ class WalletState {
     const chainId = getChainId();
     const account = accounts.find((candidate) => candidate.startsWith(`${chainId}:`)) ?? null;
     const chainGranted = chains.includes(chainId) || !!account;
-    const requiredMethods = getRequiredNamespaces().chia.methods ?? [];
+    const requiredMethods = getRequiredNamespaces(this.profile).chia.methods ?? [];
     const methodsGranted = requiredMethods.every((method) => methods.includes(method));
 
     return account && chainGranted && methodsGranted ? account : null;
   }
 
-  private async restoreExistingSession(signClient: InstanceType<typeof Client>): Promise<boolean> {
+  private restoreExistingSession(signClient: InstanceType<typeof Client>): boolean {
     const sessions = signClient.session.keys.map((key) => signClient.session.get(key));
     for (const session of sessions.reverse()) {
       const account = this.chiaAccountFor(session);
@@ -176,10 +197,21 @@ class WalletState {
     }
   }
 
+  /** Which wallet RPC surface a stored session was paired for. */
+  private profileOf(session: SessionTypes.Struct): WalletConnectProfile {
+    return session.namespaces.chia?.methods?.includes(SageMethod.SignCoinSpends)
+      ? 'sage'
+      : 'chia-wallet';
+  }
+
+  /** Disconnect the stored sessions of the selected profile; the other's stay. */
   async forgetSessions() {
     const client = this.client;
     if (client) {
-      for (const topic of client.session.keys) {
+      const topics = client.session.keys.filter(
+        (topic) => this.profileOf(client.session.get(topic)) === this.profile,
+      );
+      for (const topic of topics) {
         try {
           await client.disconnect({
             topic,
@@ -220,20 +252,25 @@ class WalletState {
 
       this.client = signClient;
 
+      // Stored sessions for the other wallet profile stay paired; only the
+      // active session's lifecycle changes the connection state.
       signClient.on('session_update', ({ topic, params }) => {
+        log(`[WC session] update topic=${topic}`);
+        if (topic !== this.session?.topic) return;
         const updated = signClient.session.get(topic);
         const merged = { ...updated, namespaces: params.namespaces };
-        log(`[WC session] update topic=${topic}`);
         this.onSessionConnected(merged);
       });
 
       signClient.on('session_delete', ({ topic }: { topic: string }) => {
         log(`[WC session] delete topic=${topic}`);
+        if (topic !== this.session?.topic) return;
         this.resetSession();
       });
 
       signClient.on('session_expire', ({ topic }: { topic: string }) => {
         log(`[WC session] expire topic=${topic}`);
+        if (topic !== this.session?.topic) return;
         this.resetSession();
       });
 
@@ -246,7 +283,7 @@ class WalletState {
       });
 
       if (signClient.session.length) {
-        const restored = await this.restoreExistingSession(signClient);
+        const restored = this.restoreExistingSession(signClient);
         if (!restored) {
           log('[WC session] no compatible restored Chia sessions found');
         }
@@ -302,7 +339,7 @@ class WalletState {
 
     try {
       const { uri, approval } = await this.client.connect({
-        optionalNamespaces: getOptionalNamespaces(),
+        optionalNamespaces: getOptionalNamespaces(this.profile),
       });
 
       this.observable.next({

@@ -13,6 +13,12 @@ const WALLET_CONNECT_REQUEST_ORIGINS = [
   'https://pulse.walletconnect.org',
 ];
 
+/**
+ * Public full-node API used for Sage chain reads and broadcast fallback.
+ * Matches `coinsetApiUrl()` in `front-end/src/hooks/coinsetClient.ts`.
+ */
+const COINSET_REQUEST_ORIGINS = ['https://api.coinset.org', 'https://testnet11.api.coinset.org'];
+
 /** The Verify API renders an attestation iframe inside the player document. */
 const WALLET_CONNECT_FRAME_ORIGINS = [
   'https://verify.walletconnect.com',
@@ -92,6 +98,7 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
   const requestOrigins = [
     ...hubRequestOrigins,
     ...WALLET_CONNECT_REQUEST_ORIGINS,
+    ...COINSET_REQUEST_ORIGINS,
     ...config.cloudWalletOrigins,
   ];
   const frameOrigins = [...config.hubOrigins, ...WALLET_CONNECT_FRAME_ORIGINS];

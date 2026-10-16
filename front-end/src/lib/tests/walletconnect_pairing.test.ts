@@ -20,6 +20,7 @@ jest.mock('../../hooks/saveHardReset', () => ({
 }));
 
 jest.mock('../../constants/wallet-connect', () => ({
+  SageMethod: { SignCoinSpends: 'chip0002_signCoinSpends' },
   getChainId: () => 'chia:mainnet',
   getRequiredNamespaces: () => ({
     chia: { methods: [], chains: ['chia:mainnet'], events: [] },
@@ -197,18 +198,25 @@ describe('WalletConnect pairing teardown', () => {
     expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'fff666' });
   });
 
-  it('disconnects every known session topic on forgetSessions', async () => {
+  it("disconnects the selected profile's stored sessions on forgetSessions", async () => {
     await walletConnectState.init();
-    mockClient.session.keys = ['topic-1', 'topic-2'];
+    mockClient.session.keys = ['topic-1', 'topic-2', 'sage-topic'];
+    const methods: Record<string, string[]> = {
+      'topic-1': ['chia_createOfferForIds'],
+      'topic-2': ['chia_createOfferForIds'],
+      'sage-topic': ['chip0002_signCoinSpends'],
+    };
+    mockClient.session.get.mockImplementation((topic: string) => ({
+      topic,
+      namespaces: { chia: { methods: methods[topic], accounts: [], events: [] } },
+    }));
 
+    // A fresh Chia-wallet pairing must not drop the stored Sage session.
     await walletConnectState.forgetSessions();
 
-    expect(mockClient.disconnect).toHaveBeenCalledTimes(2);
-    expect(mockClient.disconnect).toHaveBeenCalledWith(
-      expect.objectContaining({ topic: 'topic-1' }),
-    );
-    expect(mockClient.disconnect).toHaveBeenCalledWith(
-      expect.objectContaining({ topic: 'topic-2' }),
-    );
+    expect(mockClient.disconnect.mock.calls.map(([args]) => args.topic)).toEqual([
+      'topic-1',
+      'topic-2',
+    ]);
   });
 });
