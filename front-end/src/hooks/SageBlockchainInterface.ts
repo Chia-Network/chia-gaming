@@ -27,8 +27,10 @@ import { CoinsetClient, CoinsetTransportError, coinsetHttpCall } from './coinset
 import { absAmountFromOffer } from './cloudWalletHelpers';
 import { ensureWasmLoaded } from './WasmStateInit';
 
-const COIN_PAGE_SIZE = 100;
-const MAX_COIN_PAGES = 20;
+// Each listed coin carries its puzzle reveal, and Sage's WalletConnect reply
+// must fit in one relay message, so pages stay small.
+const COIN_PAGE_SIZE = 10;
+const MAX_COIN_PAGES = 100;
 
 type UnsignedWalletSpend = { coin_spends: WalletSpendBundle['coin_spends'] };
 
@@ -235,14 +237,23 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
   }
 
   /** Sage's unlocked standard-wallet XCH coins that this page has not committed. */
-  private async availableCoins(): Promise<SageSpendableCoin[]> {
+  /**
+   * Sage's unlocked XCH coins that this page has not committed, paged until
+   * they cover `target` or the wallet runs out.
+   */
+  private async availableCoins(target: bigint): Promise<SageSpendableCoin[]> {
     const coins: SageSpendableCoin[] = [];
-    for (let page = 0; page < MAX_COIN_PAGES; page++) {
+    let total = 0n;
+    for (let page = 0; page < MAX_COIN_PAGES && total < target; page++) {
       const batch = await sageRpc.getAssetCoins(page * COIN_PAGE_SIZE, COIN_PAGE_SIZE);
-      coins.push(...batch);
+      for (const coin of batch) {
+        if (coin.locked || !this.ledger.isAvailable(coinKey(coin.coin))) continue;
+        coins.push(coin);
+        total += BigInt(coin.coin.amount);
+      }
       if (batch.length < COIN_PAGE_SIZE) break;
     }
-    return coins.filter((coin) => !coin.locked && this.ledger.isAvailable(coinKey(coin.coin)));
+    return coins;
   }
 
   private walletSpendPurpose(request: WalletOfferRequest) {
@@ -280,7 +291,9 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
 
     let coins: SageSpendableCoin[];
     try {
-      coins = await this.availableCoins();
+      coins = await this.availableCoins(
+        request.kind === 'fee' ? request.fee : absAmountFromOffer(request.offer),
+      );
     } catch (error) {
       return this.walletCallFailure('list coins', error);
     }

@@ -168,6 +168,37 @@ describe('SageBlockchainInterface', () => {
     });
   });
 
+  it('lists coins in small pages and stops once unlocked coins cover the amount', async () => {
+    const page = (start: number, lockedCount: number) =>
+      Array.from({ length: 10 }, (_, i) =>
+        walletCoin((start + i).toString(16).padStart(2, '0'), 100n, i < lockedCount),
+      );
+    jest
+      .mocked(sageRpc.getAssetCoins)
+      .mockImplementation(async (offset: number) =>
+        offset === 0
+          ? (page(0, 9) as never)
+          : offset === 10
+            ? (page(16, 0) as never)
+            : ([] as never),
+      );
+    const sage = await connectedSage();
+    const provider = sage.getWalletOfferProvider()!;
+    const owner = { installationPlayerId: 'p', peerSessionId: 's', providerScope: provider.scope };
+
+    await provider.beginCreation(
+      { owner, purpose: { kind: 'funding', operationId: 'op' } },
+      fundingRequest,
+    );
+
+    // 1 unlocked coin on the first page, 10 on the second: 1100 >= 600, so no third page.
+    expect(jest.mocked(sageRpc.getAssetCoins).mock.calls).toEqual([
+      [0, 10],
+      [10, 10],
+    ]);
+    expect(JSON.parse(mockBuildWalletSpend.mock.calls[0][0]).coins).toHaveLength(11);
+  });
+
   it('keeps reserved coins out of later spends until the reservation is cancelled', async () => {
     jest.mocked(sageRpc.getAssetCoins).mockResolvedValue([walletCoin('bb', 900n)] as never);
     const sage = await connectedSage();
