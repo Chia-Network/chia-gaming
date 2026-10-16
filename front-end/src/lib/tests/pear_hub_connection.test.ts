@@ -63,6 +63,26 @@ describe('PearHubConnection', () => {
     ]);
   });
 
+  it('fails sends while the worker is down, like a hub with its socket closed', () => {
+    jest.useFakeTimers();
+    const bridge = installBridge();
+    const cb = callbacks();
+    const conn = new PearHubConnection(SESSION_ID, 'mainnet', undefined, cb);
+    bridge.fromWorker({ t: 'registered', player_id: ME });
+    expect(conn.sendToPeer(PEER, new Uint8Array([1]))).toBe(true);
+
+    bridge.fromWorker({ t: 'worker_exit' });
+    expect(cb.onHubDisconnected).toHaveBeenCalled();
+    expect(conn.sendToPeer(PEER, new Uint8Array([2]))).toBe(false);
+    expect(bridge.sent.filter((m) => m.t === 'relay')).toHaveLength(1);
+
+    jest.runOnlyPendingTimers();
+    bridge.fromWorker({ t: 'registered', player_id: ME });
+    expect(cb.onHubReconnected).toHaveBeenCalled();
+    expect(conn.sendToPeer(PEER, new Uint8Array([3]))).toBe(true);
+    conn.disconnect();
+  });
+
   it('maps worker messages onto the hub callbacks', () => {
     const bridge = installBridge();
     const cb = callbacks();

@@ -183,3 +183,50 @@ test('a player can be challenged without a prior connection', async () => {
     await closeAll(nodes, testnet);
   }
 });
+
+test('a challenge over an existing connection survives that connection dropping', async () => {
+  const testnet = await createTestnet(3);
+  const nodes = [];
+  try {
+    for (let i = 0; i < 2; i++) nodes.push(makeNode(testnet, i));
+    const [a, b] = nodes;
+    await until(
+      () =>
+        a.lobby.conns.has(b.lobby.myId) &&
+        b.lobby.conns.has(a.lobby.myId) &&
+        nodes.every((n) => n.lobby.snapshot().players.length === 1),
+      30_000,
+      'direct lobby connection and presence',
+    );
+    a.lobby.challenge({
+      to: b.lobby.myId,
+      challenger_amount: '100',
+      target_amount: '100',
+      channel_timeout: '15',
+      unroll_timeout: '15',
+    });
+    await until(() => b.lobby.challenges.size === 1, 10_000, 'challenge delivered');
+    assert.ok(a.lobby.pinned.has(b.lobby.myId), 'challenger pins the target');
+    assert.ok(b.lobby.pinned.has(a.lobby.myId), 'target pins the challenger');
+
+    // Flap the connection; Hyperswarm redials the pinned peer.
+    const before = a.lobby.conns.get(b.lobby.myId).conn;
+    before.destroy();
+    await until(
+      () => a.lobby.conns.get(b.lobby.myId)?.conn !== before && b.lobby.conns.has(a.lobby.myId),
+      30_000,
+      'reconnected',
+    );
+    assert.equal(a.lobby.challenges.size, 1, 'challenger keeps the challenge');
+    assert.equal(b.lobby.challenges.size, 1, 'target keeps the challenge');
+
+    b.lobby.acceptChallenge([...b.lobby.challenges.keys()][0]);
+    await until(
+      () => a.events.some((m) => m.t === 'challenge_resolved' && m.accepted),
+      10_000,
+      'accepted after the flap',
+    );
+  } finally {
+    await closeAll(nodes, testnet);
+  }
+});

@@ -106,6 +106,8 @@ export class PearHubConnection implements GameHubConnection {
   private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
   private myPlayerId: string | null = null;
+  /** False from a worker exit until the restarted worker registers again. */
+  private workerRegistered = false;
   private lobby: PearLobbyState = {
     me: null,
     online: 0,
@@ -157,6 +159,7 @@ export class PearHubConnection implements GameHubConnection {
       case 'registered': {
         const reconnected = this.myPlayerId !== null;
         this.myPlayerId = message.player_id;
+        this.workerRegistered = true;
         log(`[pear] registered as player_id=${message.player_id}`);
         this.startKeepalive();
         if (reconnected) this.callbacks.onHubReconnected();
@@ -219,6 +222,8 @@ export class PearHubConnection implements GameHubConnection {
         // Main starts a fresh worker on the next command; identify after a
         // pause so a crash loop cannot spin.
         log('[pear] worker exited; restarting');
+        // Like HubConnection with its socket down: sends fail until re-registered.
+        this.workerRegistered = false;
         this.stopKeepalive();
         this.callbacks.onHubDisconnected();
         this.restartTimer = setTimeout(() => {
@@ -256,7 +261,7 @@ export class PearHubConnection implements GameHubConnection {
   // --- GameHubConnection -----------------------------------------------------
 
   sendToPeer(targetId: string, payload: Uint8Array): boolean {
-    if (this.closed || this.myPlayerId === null) {
+    if (this.closed || !this.workerRegistered) {
       log(`[pear] sendToPeer dropped (not registered) to=${targetId}`);
       return false;
     }

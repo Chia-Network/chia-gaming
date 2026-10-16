@@ -4,7 +4,7 @@ import { app, ipcMain, webContents } from 'electron';
 import FramedStream from 'framed-stream';
 import PearRuntime from 'pear-runtime';
 
-import { isAppUrl } from './appProtocol';
+import { describeSender, isPlayerDocumentSender } from './ipcSender';
 import { log } from './log';
 import { isPlayerMainWebContents } from './mainWindow';
 import { PEAR_MESSAGE_CHANNEL, PEAR_SEND_CHANNEL } from '../shared/ipc';
@@ -59,9 +59,8 @@ export function installPearWorker(): void {
   };
 
   ipcMain.handle(PEAR_SEND_CHANNEL, (event, message: unknown): boolean => {
-    const frame = event.senderFrame;
-    if (frame === null || frame !== event.sender.mainFrame || !isAppUrl(frame.url)) {
-      log.warn(`ignored pear command from ${frame === null ? 'a gone frame' : frame.url}`);
+    if (!isPlayerDocumentSender(event)) {
+      log.warn(`ignored pear command from ${describeSender(event)}`);
       return false;
     }
     if (typeof message !== 'string' || message.length > MAX_COMMAND_LENGTH) {

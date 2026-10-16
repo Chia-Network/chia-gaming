@@ -271,6 +271,7 @@ class Lobby {
   _onConnection(conn, info) {
     const key = b4a.toString(info.publicKey, 'hex');
     const id = playerIdOf(key);
+    const previous = this.conns.get(id);
     const peer = {
       id,
       key,
@@ -278,11 +279,16 @@ class Lobby {
       info,
       outbox: [],
       openedAt: Date.now(),
-      lastRelayAt: this.conns.get(id)?.lastRelayAt ?? 0,
+      lastRelayAt: previous?.lastRelayAt ?? 0,
       degree: null, // the neighbour's own connection count, as it reports it
       pruning: false,
     };
     this.conns.set(id, peer);
+    // Hyperswarm already picked this connection over a duplicate (both ends
+    // agree via its tie-break); end the superseded one gracefully, so data the
+    // other end already wrote to it is still read, rather than leaving it open
+    // and invisible to pruning.
+    if (previous && previous.conn !== conn) previous.conn.end();
     this.stats.opened++;
     this.degreeDirty = true;
 
@@ -293,7 +299,10 @@ class Lobby {
       this.degreeDirty = true;
       // A player we are dialling or holding is expected back (Hyperswarm
       // redials it), and its challenges are resent on the next connection.
+      // Both ends pin the other for every open challenge; our own challenges
+      // re-arm the dial timer so an unreachable player still fails them.
       if (!this.pinned.has(id)) this._dropChallengesWith(id);
+      else if (this._hasOutgoingChallengeTo(id) && !this.destroyed) this._dial(id);
       if (!this.destroyed) {
         this.emit({ t: 'peer_unavailable', player_id: id });
         this._scheduleEmit();
@@ -432,6 +441,11 @@ class Lobby {
       channel_timeout: c.channel_timeout,
       unroll_timeout: c.unroll_timeout,
     };
+  }
+
+  _hasOutgoingChallengeTo(id) {
+    for (const c of this.challenges.values()) if (c.from === this.myId && c.to === id) return true;
+    return false;
   }
 
   // Dial a player by key for a challenge; _onConnection sends it.
@@ -624,6 +638,9 @@ class Lobby {
           this._write(peer, { t: 'challenge_decline', id: message.id });
           return;
         }
+        // Hold the connection, as the challenger does, so a flap does not
+        // drop the challenge before it is answered.
+        this._pin(id);
         this.challenges.set(message.id, {
           id: message.id,
           from: id,
@@ -716,18 +733,36 @@ class Lobby {
     };
     this.challenges.set(id, c);
     const peer = this.conns.get(to);
-    if (peer) this._write(peer, this._challengeMessage(c));
-    else this._dial(to);
+    if (peer) {
+      // Pin even over an existing lobby connection: unpinned challenges are
+      // dropped when that connection closes, and pinning brings it back.
+      this._pin(to);
+      this._write(peer, this._challengeMessage(c));
+    } else {
+      this._dial(to);
+    }
     this._scheduleEmit();
   }
 
   acceptChallenge(challengeId) {
     const c = this.challenges.get(challengeId);
-    const peer = c && this.conns.get(c.from);
-    if (!c || c.to !== this.myId || !peer || this.busy) {
-      if (c) this.challenges.delete(challengeId);
+    if (!c || c.to !== this.myId) {
       this.emit({ t: 'error', error: 'That challenge is no longer available.' });
-      this._scheduleEmit();
+      return;
+    }
+    if (this.busy) {
+      this._withdraw(challengeId, 'challenge_decline');
+      this.emit({ t: 'error', error: 'You are already in a game.' });
+      return;
+    }
+    const peer = this.conns.get(c.from);
+    if (!peer) {
+      // A redial gap, not a withdrawn challenge: keep it and reconnect.
+      this._pin(c.from);
+      this.emit({
+        t: 'error',
+        error: `Reconnecting to ${this._aliasOf(c.from)}; try accepting again in a moment.`,
+      });
       return;
     }
     this.challenges.delete(challengeId);
