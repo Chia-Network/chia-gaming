@@ -24,6 +24,7 @@ import {
   CloudWalletResponseError,
   CloudWalletTransportError,
   createAuthTokenProvider,
+  desktopCloudWalletBridge,
   fetchFirstConsentedWalletId,
   graphqlRequest,
   normalizeHex,
@@ -605,6 +606,18 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     source: string,
     poll: () => Promise<T>,
   ): Promise<T> {
+    const desktop = desktopCloudWalletBridge();
+    if (desktop) {
+      // Approval needs a passkey, so it runs in the system browser; polling
+      // observes the outcome, including rejection.
+      const opened = await desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId));
+      if (!opened) {
+        throw new SignatureRequestUnavailableError(
+          `Could not open the browser to approve Cloud Wallet ${source}`,
+        );
+      }
+      return poll();
+    }
     const popup = this.openApprovePopup(signatureRequestId);
     if (!popup) {
       throw new SignatureRequestUnavailableError(

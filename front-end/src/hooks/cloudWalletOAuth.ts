@@ -119,24 +119,45 @@ interface TokenResponse {
   token_type?: string;
 }
 
-async function postToken(body: Record<string, string>): Promise<TokenResponse> {
-  const apiBase = getCloudWalletApiUrl().replace(/\/$/, '');
+/**
+ * POST to the token endpoint. The desktop app relays through main: the
+ * endpoint allows CORS only from http(s) client origins, not `chiagaming:`.
+ */
+async function sendTokenRequest(
+  tokenUrl: string,
+  body: string,
+): Promise<{ status: number; ok: boolean; text: string }> {
+  const desktop = desktopCloudWalletBridge();
+  if (desktop) {
+    const relayed = await desktop.postToken(tokenUrl, body);
+    if ('transportError' in relayed) {
+      throw new CloudWalletTransportError(
+        `Cloud Wallet token transport failed: ${relayed.transportError}`,
+      );
+    }
+    return { ...relayed, ok: relayed.status >= 200 && relayed.status < 300 };
+  }
   let res: Response;
   try {
-    res = await fetch(`${apiBase}/token`, {
+    res = await fetch(tokenUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(body).toString(),
+      body,
     });
   } catch (error) {
     throw new CloudWalletTransportError('Cloud Wallet token transport failed', error);
   }
-  let text: string;
   try {
-    text = await res.text();
+    return { status: res.status, ok: res.ok, text: await res.text() };
   } catch (error) {
     throw new CloudWalletTransportError('Cloud Wallet token response transport failed', error);
   }
+}
+
+async function postToken(body: Record<string, string>): Promise<TokenResponse> {
+  const apiBase = getCloudWalletApiUrl().replace(/\/$/, '');
+  const res = await sendTokenRequest(`${apiBase}/token`, new URLSearchParams(body).toString());
+  const text = res.text;
   let json: any;
   try {
     json = text ? JSON.parse(text) : {};
@@ -377,6 +398,41 @@ export function waitForOAuthCode(
   });
 }
 
+/**
+ * Desktop bridge (desktop/src/preload/index.ts). Electron has no passkey
+ * support, so the desktop app signs in and approves in the system browser.
+ */
+export interface DesktopCloudWalletBridge {
+  beginBrowserLogin(): Promise<{ flowId: string; redirectUri: string } | null>;
+  completeBrowserLogin(
+    flowId: string,
+    authorizeUrl: string,
+  ): Promise<{ code: string; state: string } | { error: string }>;
+  openInBrowser(url: string): Promise<boolean>;
+  postToken(
+    tokenUrl: string,
+    body: string,
+  ): Promise<{ status: number; text: string } | { transportError: string }>;
+}
+
+export function desktopCloudWalletBridge(): DesktopCloudWalletBridge | null {
+  return (window as { __chiaCloudWallet?: DesktopCloudWalletBridge }).__chiaCloudWallet ?? null;
+}
+
+/** Sign in through the system browser; the consent wallet arrives via the grant lookup. */
+async function browserLoginCode(
+  desktop: DesktopCloudWalletBridge,
+  authorizeUrl: (redirectUri: string) => string,
+  state: string,
+): Promise<{ code: string; redirectUri: string }> {
+  const flow = await desktop.beginBrowserLogin();
+  if (!flow) throw new Error('Cloud Wallet browser sign-in is unavailable');
+  const result = await desktop.completeBrowserLogin(flow.flowId, authorizeUrl(flow.redirectUri));
+  if ('error' in result) throw new Error(result.error);
+  if (result.state !== state) throw new Error('Cloud Wallet sign-in returned an unexpected state');
+  return { code: result.code, redirectUri: flow.redirectUri };
+}
+
 export async function beginOAuthPopupLogin(): Promise<{
   accessToken: string;
   refreshToken: string;
@@ -390,27 +446,36 @@ export async function beginOAuthPopupLogin(): Promise<{
   const state = randomUrlSafe(16);
   const codeVerifier = randomUrlSafe(32);
   const codeChallenge = await createPkceChallenge(codeVerifier);
-  const redirectUri = oauthRedirectUri();
+  const authorizeUrl = (redirectUri: string) =>
+    buildAuthorizeUrl({
+      clientId,
+      redirectUri,
+      scope: CLOUD_WALLET_OAUTH_SCOPES,
+      state,
+      codeChallenge,
+    });
 
-  const authorizeUrl = buildAuthorizeUrl({
-    clientId,
-    redirectUri,
-    scope: CLOUD_WALLET_OAUTH_SCOPES,
-    state,
-    codeChallenge,
-  });
+  let redirectUri: string;
+  let code: string;
+  let consentWalletId: string | undefined;
+  let popup: Window | null = null;
+  const desktop = desktopCloudWalletBridge();
+  if (desktop) {
+    ({ code, redirectUri } = await browserLoginCode(desktop, authorizeUrl, state));
+  } else {
+    redirectUri = oauthRedirectUri();
+    popup = openOAuthPopup(authorizeUrl(redirectUri));
+    if (!popup) {
+      throw new Error('Popup blocked — allow popups for Cloud Wallet login');
+    }
 
-  const popup = openOAuthPopup(authorizeUrl);
-  if (!popup) {
-    throw new Error('Popup blocked — allow popups for Cloud Wallet login');
+    const consent = waitForGamingConsentWalletId(popup);
+    code = await waitForOAuthCode(state, popup);
+    // Code is in hand; give any in-flight consent message a short grace period
+    // rather than blocking on the full consent timeout.
+    consent.notifyCodeReceived();
+    consentWalletId = await consent.promise;
   }
-
-  const consent = waitForGamingConsentWalletId(popup);
-  const code = await waitForOAuthCode(state, popup);
-  // Code is in hand; give any in-flight consent message a short grace period
-  // rather than blocking on the full consent timeout.
-  consent.notifyCodeReceived();
-  const consentWalletId = await consent.promise;
 
   const tokens = await exchangeAuthorizationCode({
     code,
@@ -436,7 +501,7 @@ export async function beginOAuthPopupLogin(): Promise<{
   }
 
   try {
-    popup.close();
+    popup?.close();
   } catch {
     // ignore
   }

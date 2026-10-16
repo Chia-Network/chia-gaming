@@ -34,6 +34,18 @@ describe('desktop transport security', () => {
     assert.equal(appliedPolicy, 'disable_non_proxied_udp');
   });
 
+  it('allows WebSockets to configured Cloud Wallet origins but not to arbitrary hosts', () => {
+    const policy = buildNetworkPolicy({
+      hubOrigins: ['https://hub.example'],
+      cloudWalletOrigins: ['https://wallet.example', 'https://api.wallet.example:8443'],
+    });
+
+    assert.ok(policy.allowedRequestOrigins.has('wss://wallet.example'));
+    assert.ok(policy.allowedRequestOrigins.has('wss://api.wallet.example:8443'));
+    assert.ok(!policy.allowedRequestOrigins.has('wss://other.example'));
+    assert.doesNotMatch(policy.hubContentSecurityPolicy, /wallet\.example/);
+  });
+
   it('replaces hub transport headers with enforceable WebRTC and WebTransport policy', () => {
     const policy = buildNetworkPolicy({
       hubOrigins: ['https://hub.example'],

@@ -92,6 +92,9 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
     ...hubRequestOrigins,
     ...WALLET_CONNECT_REQUEST_ORIGINS,
     ...config.cloudWalletOrigins,
+    // Cloud Wallet pages may hold WebSockets to their own origin (for example
+    // the Next.js dev server's HMR socket, without which a dev UI never renders).
+    ...config.cloudWalletOrigins.map(webSocketOrigin),
   ];
   const frameOrigins = [...config.hubOrigins, ...WALLET_CONNECT_FRAME_ORIGINS];
   const popupOrigins = [...config.cloudWalletOrigins];

@@ -71,10 +71,18 @@ public internet, `front-end/src/util/walletConnectMetadata.ts` substitutes a
 public https identity when the page origin is not http(s) — the renderer origin
 here is `chiagaming://app`, which no wallet can open or fetch.
 
-Cloud Wallet OAuth uses that same custom-scheme origin as `redirect_uri`
-(`chiagaming://app/oauth/callback`). The protocol handler serves the player
-document at that path so the callback page can `postMessage` the authorization
-code to the opener. The Cloud Wallet OAuth client must allow that redirect URI.
+Cloud Wallet sign-in and signature approval run in the system browser, because
+Electron has no passkey support: WebAuthn requests in an Electron window stay
+pending with no UI. Sign-in returns through a one-time loopback listener on
+`127.0.0.1` (RFC 8252 §7.3). The Cloud Wallet OAuth client must register
+`http://127.0.0.1/oauth/callback`; the server accepts any loopback port for it.
+Approvals need no return path because the player polls the signature request.
+Token requests go through the main process, since the token endpoint answers
+CORS only for http(s) client origins and the player runs on `chiagaming://app`.
+
+For a local Cloud Wallet, set `CHIA_GAMING_CLOUD_WALLET_API_URL`,
+`CHIA_GAMING_CLOUD_WALLET_UI_URL` and `CHIA_GAMING_CLOUD_WALLET_CLIENT_ID` on an
+unpackaged run, and list both origins in `cloudWalletOrigins` (below).
 
 ## Configuration
 
