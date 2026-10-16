@@ -18,12 +18,13 @@ import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
 import {
-  beginOAuthPopupLogin,
+  beginOAuthLogin,
   canonicalSignatureRequestId,
   CloudWalletAuthError,
   CloudWalletResponseError,
   CloudWalletTransportError,
   createAuthTokenProvider,
+  desktopCloudWalletBridge,
   fetchFirstConsentedWalletId,
   graphqlRequest,
   normalizeHex,
@@ -189,6 +190,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   private auth: CloudWalletAuthState | null = null;
   private walletOfferProvider: WalletOfferProvider | null = null;
+  private readonly approvalsOpenedInBrowser = new Set<string>();
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
@@ -605,6 +607,24 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     source: string,
     poll: () => Promise<T>,
   ): Promise<T> {
+    const desktop = desktopCloudWalletBridge();
+    if (desktop) {
+      // Approval needs a passkey, so it runs in the system browser; polling
+      // observes the outcome, including rejection. Reconciliation retries this
+      // on every readiness epoch, so each request opens a browser tab once per
+      // run rather than on every retry.
+      const id = canonicalSignatureRequestId(signatureRequestId);
+      if (!this.approvalsOpenedInBrowser.has(id)) {
+        const opened = await desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId));
+        if (!opened) {
+          throw new SignatureRequestUnavailableError(
+            `Could not open the browser to approve Cloud Wallet ${source}`,
+          );
+        }
+        this.approvalsOpenedInBrowser.add(id);
+      }
+      return poll();
+    }
     const popup = this.openApprovePopup(signatureRequestId);
     if (!popup) {
       throw new SignatureRequestUnavailableError(
@@ -976,12 +996,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       qrUri: 'cloud-wallet://oauth',
       skipQr: true,
       title: 'Cloud Wallet',
-      description: 'Sign in to Cloud Wallet via the popup.',
+      description: desktopCloudWalletBridge()
+        ? 'Sign in to Cloud Wallet in your browser.'
+        : 'Sign in to Cloud Wallet via the popup.',
       // Empty but present: the modal's Connect click is the user gesture that
-      // lets the OAuth popup open, and it keeps silent resume from finalizing.
+      // lets the OAuth popup open (or the browser, on desktop), and it keeps
+      // silent resume from finalizing.
       fields: {},
       finalize: async () => {
-        const tokens = await beginOAuthPopupLogin();
+        const tokens = await beginOAuthLogin();
         this.auth = {
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
