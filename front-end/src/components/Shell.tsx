@@ -2647,7 +2647,7 @@ const Shell = () => {
           : undefined);
       // Terminal/clean finish must not send session_reject — that signal means
       // decline/abort. Cooperative close already completed through the protocol;
-      // the peer should keep pinging until its own local shutdown finishes.
+      // the peer may still need acknowledgement of its final reliable close.
       const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
       const finishCancellation = () => {
         if (!retainRejectTransport) {
