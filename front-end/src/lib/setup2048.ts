@@ -54,8 +54,12 @@ export function spawnSetup2048(
   const empty = board.flatMap((value, index) => (value === 0 ? [index] : []));
   if (empty.length === 0) return board;
   const next = [...board];
-  // A 2 would make 128 impossible with just six cells in this configuration.
-  const needsFour = [64, 32, 16, 8, 4].every((value) => board.includes(value));
+  // Filling the last cell with a 2 would leave six distinct tiles and no moves.
+  const needsFour =
+    empty.length === 1 &&
+    board.includes(4) &&
+    !board.includes(2) &&
+    new Set(board).size === board.length;
   next[empty[Math.floor(positionRandom * empty.length)]] = needsFour || valueRandom >= 0.9 ? 4 : 2;
   return next;
 }
