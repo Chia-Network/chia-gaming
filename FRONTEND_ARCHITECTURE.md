@@ -131,8 +131,9 @@ backend-readiness wait (and walletless busy) can still hold busy after a
 session ends. Showing a session-consent dialog does not set busy; local
 availability (`isAvailableForNewSessionPrompt`) still gates inbound
 advisories/proposals as above. When the app later reports that it is not busy,
-the hub sets the player back to `'waiting'`. The hub lobby labels a busy
-player with its reasons, or plain "Busy" when none were sent.
+the hub sets the player back to `'waiting'`. The hub lobby labels a player's own
+busy row with its reasons, or plain "Busy" when none were sent. Other players
+always see plain "Busy"; the hub never sends reasons to them.
 
 #### Game channel events
 

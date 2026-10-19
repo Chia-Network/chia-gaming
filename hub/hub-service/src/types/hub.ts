@@ -7,7 +7,10 @@ export interface Player {
   alias: string;
   status: PlayerStatus;
   opponent_alias?: string;
-  /** Present only while `status === 'busy'` with a non-empty reason set. */
+  /**
+   * Present only while `status === 'busy'` with a non-empty reason set. Sent
+   * only in the owner's own `hub_update` entry; other players never receive it.
+   */
   busy_reasons?: BusyReason[];
 }
 

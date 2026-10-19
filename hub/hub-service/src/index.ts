@@ -21,7 +21,7 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { Hub } from './hubState';
 import { deadlineReached, RetentionTimeline } from './retentionTimeline';
 import { type BusyReason, normalizeBusyReasons } from './busyReasons';
-import type { Challenge } from './types/hub';
+import type { Challenge, Player } from './types/hub';
 
 const hub = new Hub();
 const app = express();
@@ -788,10 +788,27 @@ function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknow
   sendGameWs(ws, type, payload);
 }
 
+function withoutBusyReasons({ busy_reasons: _busyReasons, ...rest }: Player): Player {
+  return rest;
+}
+
+/**
+ * Busy reasons are visible only to the busy player. Every other recipient sees
+ * a plain `busy` status.
+ */
 function broadcastHubUpdate(): void {
   const players = hub.getPlayers();
-  const serialized = JSON.stringify({ type: 'hub_update', players });
+  const publicSerialized = JSON.stringify({
+    type: 'hub_update',
+    players: players.map(withoutBusyReasons),
+  });
   for (const [playerId, ws] of hubConnections) {
+    const serialized = hub.players[playerId]?.busy_reasons
+      ? JSON.stringify({
+          type: 'hub_update',
+          players: players.map((p) => (p.id === playerId ? p : withoutBusyReasons(p))),
+        })
+      : publicSerialized;
     logHubVerbose('send_hub_event', {
       player_id: playerId,
       ws_id: wsId(ws),

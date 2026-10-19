@@ -641,7 +641,7 @@ test('challenge authority and availability come from bound sessions', async () =
   }
 });
 
-test('busy reasons are filtered, broadcast, and cleared with availability', async () => {
+test('busy reasons are filtered, shown only to their owner, and cleared with availability', async () => {
   const hub = await startHub();
   try {
     const alice = await joinHub(hub.origin, 'secret-alice-reasons', 'Alice');
@@ -653,18 +653,30 @@ test('busy reasons are filtered, broadcast, and cleared with availability', asyn
       bob.ws,
       (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy',
     );
+    let ownUpdate = nextJson(
+      alice.ws,
+      (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy',
+    );
     sendGame(aliceGame, {
       type: 'set_busy',
       busy: true,
       reasons: ['wallet-disconnected', 'bogus', 'in-session', 'in-session'],
     });
+    // Other players see a plain busy status with no description.
     assert.deepEqual(playerFrom(await update), {
+      id: alice.id,
+      alias: 'Alice',
+      status: 'busy',
+    });
+    // The busy player still sees their own filtered, sorted reasons.
+    assert.deepEqual(playerFrom(await ownUpdate), {
       id: alice.id,
       alias: 'Alice',
       status: 'busy',
       busy_reasons: ['in-session', 'wallet-disconnected'],
     });
 
+    // Becoming available clears the reasons.
     update = nextJson(
       bob.ws,
       (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'waiting',
@@ -677,8 +689,13 @@ test('busy reasons are filtered, broadcast, and cleared with availability', asyn
       bob.ws,
       (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy',
     );
+    ownUpdate = nextJson(
+      alice.ws,
+      (msg) => msg.type === 'hub_update' && playerFrom(msg)?.status === 'busy',
+    );
     sendGame(aliceGame, { type: 'set_busy', busy: true });
     assert.deepEqual(playerFrom(await update), { id: alice.id, alias: 'Alice', status: 'busy' });
+    assert.deepEqual(playerFrom(await ownUpdate), { id: alice.id, alias: 'Alice', status: 'busy' });
 
     // A non-list `br` does not drop the message.
     update = nextJson(
@@ -709,6 +726,11 @@ test('busy reasons sent on identify apply when the player joins the hub', async 
     });
     await nextGame(game, (msg) => msg.type === 'registered');
     const ws = await openWs(hub.origin, '/ws/hub');
+    const observer = await joinHub(hub.origin, 'secret-identify-observer', 'Observer');
+    const observed = nextJson(
+      observer.ws,
+      (msg) => msg.type === 'hub_update' && msg.players.some((p) => p.status === 'busy'),
+    );
     const update = nextJson(
       ws,
       (msg) => msg.type === 'hub_update' && msg.players.some((p) => p.status === 'busy'),
@@ -716,7 +738,11 @@ test('busy reasons sent on identify apply when the player joins the hub', async 
     sendJson(ws, { type: 'join', session_id: sessionKey(sessionId), alias: 'Restorer' });
     const player = (await update).players.find((p) => p.alias === 'Restorer');
     assert.deepEqual(player.busy_reasons, ['restoring']);
+    const seenByOther = (await observed).players.find((p) => p.alias === 'Restorer');
+    assert.equal(seenByOther.status, 'busy');
+    assert.equal('busy_reasons' in seenByOther, false);
 
+    await closeWs(observer.ws);
     await closeWs(ws);
     await closeWs(game);
   } finally {

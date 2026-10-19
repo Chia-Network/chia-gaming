@@ -206,7 +206,8 @@ from the closed set `in-session`, `restoring`, `starting`,
 apply at once. A receiver drops unknown tokens and duplicates and re-sorts to
 that order. A missing, non-list, or empty value means a generic busy report
 with no explanation; it never invalidates the message. Reasons are ignored when
-`busy` is false.
+`busy` is false. The hub shows reasons only to the reporting player; other
+players see a plain busy status with no explanation.
 
 ### 6.3 `close`
 

@@ -370,10 +370,11 @@ any pending hands having finished), the player app sends `set_busy` with
 `busy: false`. The hub sets the player back to `'waiting'` and broadcasts
 the update.
 
-The hub iframe receives the updated `Player.status` and `busy_reasons` via the
-normal `hub_update` broadcast and renders busy players as unavailable, labelled
-with their reasons ("In a session", "Wallet disconnected", and so on) or plain
-"Busy" when none were sent. It is read-only for this signal.
+The hub iframe receives the updated `Player.status` via the normal `hub_update`
+broadcast and renders busy players as unavailable. `busy_reasons` is included
+only in the busy player's own `hub_update` entry, so a player sees their own
+row labelled with their reasons ("In a session", "Wallet disconnected", and so
+on). Every other player sees plain "Busy". It is read-only for this signal.
 
 ### Proposal Handoff
 
