@@ -322,6 +322,7 @@ describe('Shell production restore composition', () => {
         await flushEffects();
       }
       expect(mockHubCallbacks!.getPresence().busy).toBe(false);
+      expect(storageRepository.loadState().session).toBeNull();
       await act(async () => {
         mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[1]);
         await storageRepository.inspect();

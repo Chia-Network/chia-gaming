@@ -342,19 +342,26 @@ session remains `on-chain` because a hand is still being settled.
 
 **Player app → Hub (game channel):**
 
-Logical bencodex dictionary: `{ type: "set_busy", busy: true }`. Identity comes
-from the `session_id` supplied earlier by `identify` on the same connection.
+Logical bencodex dictionary: `{ type: "set_busy", busy: true, busy_reasons:
+["in-session"] }`. Identity comes from the `session_id` supplied earlier by
+`identify` on the same connection. `busy` is the availability bit;
+`busy_reasons` is an optional, display-only list of every cause that applies
+(`in-session`, `restoring`, `starting`, `wallet-disconnected`,
+`blockchain-not-ready`). It is sent only with `busy: true`; a missing list means
+generic busy, which is how an older client appears.
 
 Sent when the user accepts a session start, when restore reconnection reports
 an unresolved session, and when the broader session phase ends or the user
 cancels.
-The same `busy` bit is also included in the initial `identify` message so the
+The same `busy` bit and reasons are also included in the initial `identify` message so the
 hub has correct status immediately after a game channel opens, reconnects,
 or restores. This avoids a brief `waiting` flicker for unresolved restored
 sessions.
 
-The hub updates the player's hub status to `'busy'` or `'playing'` while
-busy, or `'waiting'` when not busy, and broadcasts a hub update. When a player
+The hub updates the player's hub status to `'busy'` while busy, or `'waiting'`
+when not busy, and broadcasts a hub update. It drops unknown or duplicate
+reasons, sorts the rest into the order above, and stores them as
+`Player.busy_reasons` only while busy; `busy: false` clears them. When a player
 becomes busy, the hub cancels all pending challenges involving that player.
 Challenges to/from non-waiting players are rejected.
 
@@ -363,9 +370,11 @@ any pending hands having finished), the player app sends `set_busy` with
 `busy: false`. The hub sets the player back to `'waiting'` and broadcasts
 the update.
 
-The hub iframe receives the updated `Player.status` via the normal
-`hub_update` broadcast and renders busy players as unavailable. No
-iframe-side protocol changes are needed — it is read-only for this signal.
+The hub iframe receives the updated `Player.status` via the normal `hub_update`
+broadcast and renders busy players as unavailable. `busy_reasons` is included
+only in the busy player's own `hub_update` entry, so a player sees their own
+row labelled with their reasons ("In a session", "Wallet disconnected", and so
+on). Every other player sees plain "Busy". It is read-only for this signal.
 
 ### Proposal Handoff
 
@@ -543,12 +552,12 @@ The hub does not create a session. It can only advise and relay:
   messages to the WASM cradle, and `dispatchEvent()` suppresses outbound
   `OutboundMessage` events.
 
-- **Hub busy signaling**: `HubConnection.setBusy()`
-  sends a bencodex `{ type: "set_busy", busy }` dictionary over the game
-  WebSocket.
-  The `identify` message includes the current busy bit. Shell calls
-  `setBusy(!(sessionPhase === 'none' || sessionPhase === 'resolved'))` whenever
-  the broader session phase changes. Local game presentation depends only on
+- **Hub busy signaling**: `HubConnection.setBusy(presence)`
+  sends a bencodex `{ type: "set_busy", busy, busy_reasons? }` dictionary over
+  the game WebSocket, with reasons only when busy.
+  The `identify` message includes the current presence. Shell computes presence
+  with `computeHubPresence` (`lib/hubPresence.ts`) and reports it whenever the
+  broader session phase changes. Local game presentation depends only on
   the local restoring flag and WASM restore status; independent hub, wallet,
   and blockchain readiness continues to gate external actions and hub
   availability. A resolved session no longer has
@@ -557,7 +566,8 @@ The hub does not create a session. It can only advise and relay:
 
 - **Hub-side `set_busy` handler**: The hub server accepts bencodex
   `set_busy` messages on the game channel. It updates the player's hub
-  status to `'playing'`, `'busy'`, or `'waiting'` and broadcasts a hub update.
+  status to `'busy'` (with filtered, sorted `busy_reasons`) or `'waiting'`
+  and broadcasts a hub update.
   When busy becomes true, pending challenges involving that player are cancelled;
   challenges to/from non-waiting players are rejected. (`hub-service/src/index.ts`)
 

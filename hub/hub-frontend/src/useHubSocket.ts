@@ -6,6 +6,7 @@ export interface Player {
   walletAddress?: string;
   status: 'waiting' | 'playing' | 'busy';
   opponent_alias?: string;
+  busy_reasons?: string[];
   parameters: any;
 }
 
