@@ -238,12 +238,22 @@ describe('Shell production restore composition', () => {
   });
 
   it.each([
-    { peerId: undefined, ready: true, busy: false },
-    { peerId: 'p_' + '22'.repeat(16), ready: true, busy: true },
-    { peerId: undefined, ready: false, busy: true },
+    { peerId: undefined, ready: true, busy: false, presence: { busy: false } },
+    {
+      peerId: 'p_' + '22'.repeat(16),
+      ready: true,
+      busy: true,
+      presence: { busy: true, reasons: ['restoring'] },
+    },
+    {
+      peerId: undefined,
+      ready: false,
+      busy: true,
+      presence: { busy: true, reasons: ['blockchain-not-ready'] },
+    },
   ])(
     'reports restored consent presence peer=$peerId ready=$ready busy=$busy',
-    async ({ peerId, ready, busy }) => {
+    async ({ peerId, ready, presence }) => {
       requestTrust.mockResolvedValue('trusted');
       jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
         qrUri: '',
@@ -285,12 +295,12 @@ describe('Shell production restore composition', () => {
       for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
       await flushEffects();
       expect(mockHubCallbacks).not.toBeNull();
-      expect(mockHubCallbacks!.getPresence()).toEqual({ busy: !ready });
+      expect(mockHubCallbacks!.getPresence()).toEqual(presence);
       mockSetBusy.mockClear();
       act(() => {
         mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
       });
-      expect(mockSetBusy).toHaveBeenLastCalledWith(busy);
+      expect(mockSetBusy).toHaveBeenLastCalledWith(presence);
     },
   );
 
@@ -339,7 +349,7 @@ describe('Shell production restore composition', () => {
       mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
       mockHubCallbacks!.onPeerUnavailable('p_' + '22'.repeat(16));
     });
-    expect(mockSetBusy).toHaveBeenLastCalledWith(true);
+    expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
     expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');
     const cancel = renderer!.root.findByProps({ children: 'Cancel' });
     expect(cancel.props.disabled).toBe(false);
@@ -350,7 +360,7 @@ describe('Shell production restore composition', () => {
     await waitForText(renderer!, 'No Session');
     expect(storageRepository.loadState().session).toBeNull();
     expect(storageRepository.loadState().rejectionTransports).toHaveLength(1);
-    expect(mockSetBusy).toHaveBeenLastCalledWith(false);
+    expect(mockSetBusy).toHaveBeenLastCalledWith({ busy: false });
   });
 
   it('retires the live protocol owner before starting destructive storage reset', async () => {
