@@ -111,15 +111,29 @@ it (the backend can no longer vouch for readiness). The `HubConnection` uses a
 state at connect and reconnect time for the `identify` message; it reads
 `blockchainReadyRef` synchronously so a reconnect never reports a stale
 not-busy. Aliases originate on the hub's internal interface and reach the
-player app independently through `alias_updated`. Explicit
-`setBusy(true)` is called when the user accepts a session (not when a consent
-dialog is merely displayed). Idle / terminal clear paths must go through
-`presenceBusy(...)` rather than bare `setBusy(false)`, so the backend-readiness
-wait (and walletless busy) can still hold busy after a session ends. Showing a
-session-consent dialog does not set busy; local availability
-(`isAvailableForNewSessionPrompt`) still gates inbound advisories/proposals as
-above. When the app later reports that it is not busy, the hub sets the player
-back to `'waiting'`.
+player app independently through `alias_updated`.
+
+Presence is a `HubPresence` (`lib/hubPresence.ts`): `{ busy: false }` or
+`{ busy: true, reasons }`, where `reasons` is a non-empty canonical subset of
+`in-session`, `restoring`, `starting`, `wallet-disconnected`, and
+`blockchain-not-ready`. `computeHubPresence` is the single source for both the
+bit and the reasons; `shouldReportHubBusy` / `shouldReportHubBusyPresence`
+return its `busy`. The restore reason follows a non-terminal live or
+pre-handshake save, not the transient `restoring` flag, so a reconnect
+`identify` cannot clear busy that registration just set. Shell has two
+readers over it: `hubPresenceNow` (save, Accept transition, and persist
+flight included) for `getPresence`, wallet reconnect, play readiness,
+registration, and the busy report when a session starts; and `presenceBusy`
+(phase, wallet, backend only) for teardown and phase-change paths, where the
+just-dispatched transition ref is still stale. Idle / terminal clear paths must
+go through `presenceBusy(...)` rather than a bare `{ busy: false }`, so the
+backend-readiness wait (and walletless busy) can still hold busy after a
+session ends. Showing a session-consent dialog does not set busy; local
+availability (`isAvailableForNewSessionPrompt`) still gates inbound
+advisories/proposals as above. When the app later reports that it is not busy,
+the hub sets the player back to `'waiting'`. The hub lobby labels a player's own
+busy row with its reasons, or plain "Busy" when none were sent. Other players
+always see plain "Busy"; the hub never sends reasons to them.
 
 #### Game channel events
 
@@ -131,9 +145,9 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
 
 | Event      | Payload                             | Purpose                                                                                                                                               |
 | ---------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identify` | `{ session_id: Bytes(16), busy }`   | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                             |
+| `identify` | `{ session_id: Bytes(16), busy, busy_reasons? }` | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable, optionally with why. |
 | `relay`    | `{ to: Bytes(16), payload: Bytes }` | Send opaque peer bytes to a specific public player ID.                                                                                                |
-| `set_busy` | `{ busy }`                          | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
+| `set_busy` | `{ busy, busy_reasons? }`           | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting` and clears reasons. |
 
 **Hub → Player App:**
 

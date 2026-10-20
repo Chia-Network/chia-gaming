@@ -96,14 +96,13 @@ import {
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
-  shouldReportHubBusy,
-  shouldReportHubBusyPresence,
   shouldDeferHubRemapEscalation,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
   shouldWarnOnSessionUnload,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
+import { computeHubPresence, type HubPresence } from '../lib/hubPresence';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
@@ -339,26 +338,6 @@ function savedOpponentAlias(save: DurableApplicationState | null | undefined): s
   }
   if (save?.session?.phase === 'terminal') return save.session.terminal.opponentAlias ?? undefined;
   return undefined;
-}
-
-/** Hub busy from phase, wallet, backend readiness, restore cradle, and in-flight Accept work. */
-function hubBusyFromSessionState(
-  phase: SessionPhase,
-  walletConnected: boolean,
-  restoring: boolean,
-  save: DurableApplicationState | null | undefined,
-  extras?: { pending?: boolean; persistInFlight?: boolean; blockchainReady?: boolean },
-): boolean {
-  return (
-    !!extras?.pending ||
-    !!extras?.persistInFlight ||
-    shouldReportHubBusyPresence(phase, walletConnected, {
-      restoring,
-      terminalSave: save?.session?.phase === 'terminal',
-      hasCradle: save?.session?.phase === 'live' || save?.session?.phase === 'pre-handshake',
-      blockchainReady: extras?.blockchainReady ?? true,
-    })
-  );
 }
 
 /** Tab to show before any resume hydrate — session restores always open on Game. */
@@ -838,7 +817,7 @@ const Shell = () => {
   // Read synchronously by
   // getPresence (called from the HubConnection constructor and on every
   // reconnect) and by isAvailableForNewSessionPrompt, so it lives in a ref
-  // rather than state — no UI depends on it, only the hub busy bit does.
+  // for synchronous callbacks; the state mirror below refreshes consent controls.
   const blockchainReadyRef = useRef(false);
   const [blockchainReady, setBlockchainReady] = useState(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
@@ -1074,9 +1053,32 @@ const Shell = () => {
   // backend not yet ready for play. All setBusy paths that might clear
   // availability must go through this (not bare false / phase-only busy).
   const presenceBusy = useCallback(
-    (phase: SessionPhase) =>
-      shouldReportHubBusy(phase, walletConnectedRef.current, blockchainReadyRef.current),
+    (phase: SessionPhase, walletConnected?: boolean): HubPresence =>
+      computeHubPresence({
+        sessionPhase: phase,
+        walletConnected: walletConnected ?? walletConnectedRef.current,
+        blockchainReady: blockchainReadyRef.current,
+      }),
     [],
+  );
+  // Full presence reader for event-handler sites (getPresence, wallet
+  // reconnect, play-readiness, hub registration): folds in the restore cradle
+  // and in-flight Accept work. Not for teardown sites, where a just-dispatched
+  // transition ref is still stale — those use presenceBusy.
+  const hubPresenceNow = useCallback(
+    (phase?: SessionPhase, walletConnected?: boolean): HubPresence => {
+      const save = storageRepository.loadState();
+      return computeHubPresence({
+        sessionPhase: phase ?? sessionPhaseRef.current,
+        walletConnected: walletConnected ?? walletConnectedRef.current,
+        blockchainReady: blockchainReadyRef.current,
+        terminalSave: save?.session?.phase === 'terminal',
+        hasCradle: save?.session?.phase === 'live' || save?.session?.phase === 'pre-handshake',
+        pending: isAcceptSessionTransition(shellTransitionRef.current),
+        persistInFlight: freshStartPersistInFlightRef.current,
+      });
+    },
+    [freshStartPersistInFlightRef],
   );
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
   const [activeBlockchainPoller, setActiveBlockchainPoller] = useState<BlockchainPoller | null>(
@@ -1425,7 +1427,9 @@ const Shell = () => {
       // Stay busy while the aborted start may still be inside storageRepository.replaceSession.bind(storageRepository) /
       // restore — otherwise a new Accept can race checkpoint cleanup.
       hubConnRef.current?.setBusy(
-        freshStartPersistInFlightRef.current || presenceBusy(sessionPhaseRef.current),
+        freshStartPersistInFlightRef.current
+          ? { busy: true, reasons: ['starting'] as const }
+          : presenceBusy(sessionPhaseRef.current),
       );
     },
     [bumpStartEpoch, freshStartPersistInFlightRef, presenceBusy, resetPeerRelayState],
@@ -1516,7 +1520,7 @@ const Shell = () => {
           storageRepository.loadState().history.wasmNotificationHistory;
 
         const outcome = await transitionToFreshSession({
-          reportBusy: () => conn.setBusy(true),
+          reportBusy: () => conn.setBusy(hubPresenceNow()),
           shouldAbort: () => epoch !== sessionStartEpochRef.current,
           retireTerminalDisplay: () => {
             sessionStartedRef.current = false;
@@ -1648,6 +1652,7 @@ const Shell = () => {
       cancelAttemptedSession,
       endPersistFlight,
       freshStartPersistCommittedRef,
+      hubPresenceNow,
       presenceBusy,
       markPersistCommitted,
       sendSessionReject,
@@ -1862,19 +1867,7 @@ const Shell = () => {
         // Wallet reconnected: recompute presence (phase + restore cradle) so the
         // walletless busy override is lifted once we can fund/resolve again —
         // but stay busy mid-resume while phase is still none.
-        hubConnRef.current?.setBusy(
-          hubBusyFromSessionState(
-            sessionPhaseRef.current,
-            true,
-            !!sessionConfigRef.current?.restoring,
-            storageRepository.loadState(),
-            {
-              pending: isAcceptSessionTransition(shellTransitionRef.current),
-              persistInFlight: freshStartPersistInFlightRef.current,
-              blockchainReady: blockchainReadyRef.current,
-            },
-          ),
-        );
+        hubConnRef.current?.setBusy(hubPresenceNow(sessionPhaseRef.current, true));
         const poller = activeBlockchainPoller;
         if (poller && sessionController) {
           sessionController.attachBlockchain(poller);
@@ -1887,13 +1880,15 @@ const Shell = () => {
         walletConnectedRef.current = false;
         // Wallet dropped mid-session (not a user disconnect): stay on the hub
         // but advertise busy so the lobby will not offer new matches.
-        hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
+        hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current, false));
       }
     });
   }, [
     activeBlockchainPoller,
     blockchainType,
     freshStartPersistInFlightRef,
+    hubPresenceNow,
+    presenceBusy,
     setWalletAlert,
     startBalancePolling,
   ]);
@@ -2216,16 +2211,10 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            const terminalSave = save?.session?.phase === 'terminal';
-            // Match getPresence: session/restore obligation OR the full-node-peer wait.
-            // Broader than getPresence: also covers pairingToken-only / reserved peer
-            // before `restoring` is set on sessionConfig.
-            const restoreBusy =
-              presenceBusy(sessionPhaseRef.current) ||
-              (!terminalSave &&
-                (save?.session?.phase === 'live' ||
-                  save?.session?.phase === 'pre-handshake' ||
-                  !!pairing?.peerId));
+            // Match getPresence: session/restore obligation OR the full-node-peer
+            // wait. A non-terminal live / pre-handshake cradle (which is also the
+            // only source of `pairing?.peerId`) reports the restore reason.
+            const restoreBusy = hubPresenceNow();
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
                 pairing.peerId,
@@ -2292,25 +2281,12 @@ const Shell = () => {
             sessionController?.sendPeerKeepalive();
           },
           getPresence: () => {
-            const save = storageRepository.loadState();
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
             // Backend not ready for play also stays busy. Accept-pending + persist-drain
             // must also stay busy: identify/reconnect re-applies getPresence and would
             // otherwise undo explicit setBusy.
-            return {
-              busy: hubBusyFromSessionState(
-                sessionPhaseRef.current,
-                walletConnectedRef.current,
-                !!sessionConfigRef.current?.restoring,
-                save,
-                {
-                  pending: isAcceptSessionTransition(shellTransitionRef.current),
-                  persistInFlight: freshStartPersistInFlightRef.current,
-                  blockchainReady: blockchainReadyRef.current,
-                },
-              ),
-            };
+            return hubPresenceNow();
           },
         });
       } catch (err) {
@@ -2337,7 +2313,7 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
-      freshStartPersistInFlightRef,
+      hubPresenceNow,
       isAvailableForNewSessionPrompt,
       presenceBusy,
       setPendingAdvisoryState,
@@ -2467,23 +2443,11 @@ const Shell = () => {
       // often still `none` mid-resume). blockchainReadyRef was cleared on
       // disconnect, so we stay busy until the backend re-verifies readiness and
       // the readiness subscription pushes an update.
-      hubConnRef.current?.setBusy(
-        hubBusyFromSessionState(
-          sessionPhaseRef.current,
-          true,
-          !!sessionConfigRef.current?.restoring,
-          storageRepository.loadState(),
-          {
-            pending: isAcceptSessionTransition(shellTransitionRef.current),
-            persistInFlight: freshStartPersistInFlightRef.current,
-            blockchainReady: blockchainReadyRef.current,
-          },
-        ),
-      );
+      hubConnRef.current?.setBusy(hubPresenceNow(sessionPhaseRef.current, true));
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
     },
-    [freshStartPersistInFlightRef, startBalancePolling, setConnecting, setActiveTab],
+    [hubPresenceNow, startBalancePolling, setConnecting, setActiveTab],
   );
 
   // --- Unified connection flow ---
@@ -2932,24 +2896,18 @@ const Shell = () => {
     const applyReady = (ready: boolean) => {
       blockchainReadyRef.current = ready;
       setBlockchainReady(ready);
-      hubConnRef.current?.setBusy(
-        hubBusyFromSessionState(
-          sessionPhaseRef.current,
-          walletConnectedRef.current,
-          !!sessionConfigRef.current?.restoring,
-          storageRepository.loadState(),
-          {
-            pending: isAcceptSessionTransition(shellTransitionRef.current),
-            persistInFlight: freshStartPersistInFlightRef.current,
-            blockchainReady: ready,
-          },
-        ),
-      );
+      hubConnRef.current?.setBusy(hubPresenceNow());
     };
     applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
     const unsubscribe = activeBlockchainPoller.rpc.onPlayReadinessChange(applyReady);
     return unsubscribe;
-  }, [activeBlockchainPoller, freshStartPersistInFlightRef, hubOrigin, walletConnected]);
+  }, [
+    activeBlockchainPoller,
+    freshStartPersistInFlightRef,
+    hubOrigin,
+    hubPresenceNow,
+    walletConnected,
+  ]);
 
   const handleTabChange = useCallback(
     (tabId: TabId) => {
@@ -3375,8 +3333,8 @@ const Shell = () => {
     storageRepository.updateCommon({ preferences: { blockchainType: undefined } });
     // A wallet connection does not own the session or its pending consent.
     // Keep the handshake and peer transport; funding resumes when a wallet returns.
-    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
-  }, [stopBalancePolling, activeBlockchainPoller]);
+    hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current, false));
+  }, [stopBalancePolling, activeBlockchainPoller, presenceBusy]);
 
   const handleDisconnectWallet = useCallback(() => {
     // Wallet disconnect no longer cascades to the hub or peer: the session

@@ -1,6 +1,7 @@
 import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
 import type { DurableSessionPhase } from './session/saveEnvelope';
+import { computeHubPresence } from './hubPresence';
 import {
   createSessionModel,
   isPreCommitmentChannelStatus,
@@ -70,8 +71,7 @@ export function shouldReportHubBusy(
   walletConnected = true,
   blockchainReady = true,
 ): boolean {
-  if (!walletConnected || !blockchainReady) return true;
-  return sessionPhase !== 'none' && sessionPhase !== 'resolved';
+  return computeHubPresence({ sessionPhase, walletConnected, blockchainReady }).busy;
 }
 
 /** Native leave-page warning: an off-chain or on-chain session is still live. */
@@ -108,21 +108,27 @@ export function sessionLocksNetwork(
  * pairing token) must keep us busy so the lobby does not offer matches
  * mid-resume. Terminal Failed/Resolved* cradles do not. A backend that is not
  * yet ready for play (`blockchainReady === false`) also stays busy.
+ *
+ * The restore obligation follows the presence of a non-terminal cradle, not a
+ * transient `restoring` flag, so a reconnect `identify` cannot clear busy that
+ * session registration just set.
  */
 export function shouldReportHubBusyPresence(
   sessionPhase: SessionPhase,
   walletConnected: boolean,
   opts: {
-    restoring: boolean;
     terminalSave: boolean;
     hasCradle: boolean;
     blockchainReady?: boolean;
   },
 ): boolean {
-  return (
-    shouldReportHubBusy(sessionPhase, walletConnected, opts.blockchainReady ?? true) ||
-    (opts.restoring && !opts.terminalSave && opts.hasCradle)
-  );
+  return computeHubPresence({
+    sessionPhase,
+    walletConnected,
+    blockchainReady: opts.blockchainReady ?? true,
+    hasCradle: opts.hasCradle,
+    terminalSave: opts.terminalSave,
+  }).busy;
 }
 
 export async function transitionToFreshSession(dependencies: {

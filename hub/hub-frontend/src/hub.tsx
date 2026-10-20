@@ -38,6 +38,21 @@ function formatAmount(mojoStr: string): string {
   return `${whole.toLocaleString()}.${fracStr} XCH`;
 }
 
+const BUSY_REASON_LABELS: ReadonlyArray<[string, string]> = [
+  ['in-session', 'In a session'],
+  ['restoring', 'Restoring a session'],
+  ['starting', 'Starting a session'],
+  ['wallet-disconnected', 'Wallet disconnected'],
+  ['blockchain-not-ready', 'Blockchain not ready'],
+];
+
+function busyLabel(reasons: string[] | undefined): string {
+  const labels = BUSY_REASON_LABELS.filter(([id]) => reasons?.includes(id)).map(
+    ([, label]) => label,
+  );
+  return labels.length > 0 ? labels.join(', ') : 'Busy';
+}
+
 const HubScreen = ({ sessionId }: { sessionId: string }) => {
   const [myAlias, setMyAlias] = useState('');
   const [aliasConfirmed, setAliasConfirmed] = useState(false);
@@ -436,7 +451,9 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
 
                 {isUnavailable ? (
                   <span className="text-sm text-canvas-text italic">
-                    {player.status === 'playing' ? `Playing vs ${player.opponent_alias}` : 'Busy'}
+                    {player.status === 'playing'
+                      ? `Playing vs ${player.opponent_alias}`
+                      : busyLabel(player.busy_reasons)}
                   </span>
                 ) : (
                   !isMe && (
