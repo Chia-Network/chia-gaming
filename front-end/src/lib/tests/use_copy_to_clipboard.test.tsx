@@ -91,9 +91,7 @@ describe('useCopyToClipboard', () => {
     await copy('secret');
 
     expect(api.state).toBe('failed');
-    expect(hookErrors()).toEqual([
-      ['[useCopyToClipboard] write failed', expect.any(TypeError)],
-    ]);
+    expect(hookErrors()).toEqual([['[useCopyToClipboard] write failed', expect.any(TypeError)]]);
   });
 
   it('restarts the reset timer on a repeated copy', async () => {
