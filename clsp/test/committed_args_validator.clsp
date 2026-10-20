@@ -5,7 +5,8 @@
 ; that the committed-argument validation remains a distinct execution.
 (export
     (mod_hash
-     (mover_pk waiter_pk timeout amount referee_hash nonce move max_move_size infohash_b mover_share infohash_a)
+     ((((mover_pk . waiter_pk) . (timeout . amount)) . (referee_hash . nonce))
+     . ((move . max_move_size) . (infohash_b . (mover_share . infohash_a))))
      state
      this_validation_program
      evidence)

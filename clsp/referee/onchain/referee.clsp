@@ -43,8 +43,12 @@
 ; slash args: (previous_state previous_validation_program evidence mover_payout_ph)
 ; move args: (new_move infohash_c new_mover_share new_max_move_size)
 
-(export (@ all_args ((@ curried-args (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)) . args))
+; The curried argument is a balanced tree; every field is at most four edges
+; deep. Keep this shape aligned with RefereePuzzleArgs::to_clvm and validators.
+(export (@ all_args
+    ((@ curried-args
+        ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
+         . ((MOVE . MAX_MOVE_SIZE) . (INFOHASH_B . (MOVER_SHARE . INFOHASH_A))))) . args))
     (if (not (r (r args)))
         (assign
             (mover_payout_ph waiter_payout_ph) args
@@ -92,9 +96,12 @@
         )
         (assign
             (new_move infohash_c new_mover_share new_max_move_size . tail) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUBKEY MOVER_PUBKEY TIMEOUT
-                    AMOUNT MOD_HASH NONCE new_move new_max_move_size infohash_c new_mover_share
-                    INFOHASH_B)))
+            new_puzzle_hash (curry_hashes MOD_HASH
+                (shatree
+                    (c (c (c (c WAITER_PUBKEY MOVER_PUBKEY) (c TIMEOUT AMOUNT))
+                          (c MOD_HASH NONCE))
+                       (c (c new_move new_max_move_size)
+                          (c infohash_c (c new_mover_share INFOHASH_B))))))
             (assert
                 (not tail)
                 INFOHASH_B

@@ -39,8 +39,8 @@
 ; On a continue (clue), we transition back to guess. guess_hash is imported
 ; directly from games.krunk.clsp.onchain.guess.
 (export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
+     . ((MOVE . MAX_MOVE_SIZE) . (VALIDATION_INFO_HASH . (MOVER_SHARE . PREVIOUS_VALIDATION_INFO_HASH))))
     (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
     previous_validation_program evidence)
 

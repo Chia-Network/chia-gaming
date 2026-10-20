@@ -127,9 +127,9 @@ fn run_referee_slash_case(
         .new_atom(&[0x33; 32])
         .expect("payout ph atom");
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -142,7 +142,8 @@ fn run_referee_slash_case(
             mover_share,
             infohash_a_node,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let slash_args = list_from_nodes(
         allocator,
         &[previous_state, a_validator_clvm, evidence, payout_ph],
@@ -215,9 +216,9 @@ fn run_referee_move_case(
         .new_atom(new_max_move_size)
         .expect("new_max_move_size");
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -230,7 +231,8 @@ fn run_referee_move_case(
             mover_share,
             infohash_a,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let move_args = list_from_nodes(
         allocator,
         &[new_move, infohash_c, new_mover_share, new_max_move_size],
@@ -355,24 +357,27 @@ fn build_curry_args(
     } else {
         NodePtr::NIL
     };
-    // Build as nested pairs to avoid exceeding tuple ToClvm limit:
-    // (nil waiter_ph nil amount nil nil move max_move_size nil mover_share nil)
     let amount_node = AMOUNT.to_clvm(allocator).unwrap();
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
-    let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(ms_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(mms_node, tail).unwrap();
-    let tail = a.new_pair(move_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(amount_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(waiter_ph, tail).unwrap();
-    a.new_pair(NodePtr::NIL, tail).unwrap()
+    crate::referee::types::encode_referee_args(
+        allocator,
+        [
+            NodePtr::NIL,
+            waiter_ph,
+            NodePtr::NIL,
+            amount_node,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            move_node,
+            mms_node,
+            NodePtr::NIL,
+            ms_node,
+            NodePtr::NIL,
+        ],
+    )
+    .unwrap()
 }
 
 fn build_validator_args(
@@ -455,7 +460,11 @@ struct StepSpec {
     validator_name: &'static str,
 }
 
-fn infohash_b_node(allocator: &mut AllocEncoder, next_validator_hash: Option<[u8; 32]>, state: NodePtr) -> NodePtr {
+fn infohash_b_node(
+    allocator: &mut AllocEncoder,
+    next_validator_hash: Option<[u8; 32]>,
+    state: NodePtr,
+) -> NodePtr {
     match next_validator_hash {
         None => NodePtr::NIL,
         Some(hash) => {
@@ -511,16 +520,21 @@ fn run_game_referee_slash(
     let mover_share = mover_share.to_clvm(allocator).expect("mover_share");
     let infohash_a_node = hash_to_node(allocator, &infohash_a);
     let evidence = evidence
-        .map(|bytes| allocator.allocator().new_atom(bytes).expect("evidence atom"))
+        .map(|bytes| {
+            allocator
+                .allocator()
+                .new_atom(bytes)
+                .expect("evidence atom")
+        })
         .unwrap_or(NodePtr::NIL);
     let payout_ph = allocator
         .allocator()
         .new_atom(&[0x33; 32])
         .expect("payout ph atom");
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -533,7 +547,8 @@ fn run_game_referee_slash(
             mover_share,
             infohash_a_node,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let slash_args = list_from_nodes(
         allocator,
         &[previous_state, validator_clvm, evidence, payout_ph],
@@ -1517,9 +1532,9 @@ fn test_calpoker_e_nil_evidence_does_not_slash_honest_move() {
     let infohash_b = NodePtr::NIL;
     let mover_share = 100i64.to_clvm(&mut a).expect("mover_share");
     let infohash_a_node = hash_to_node(&mut a, &infohash_a);
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         &mut a,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -1532,7 +1547,8 @@ fn test_calpoker_e_nil_evidence_does_not_slash_honest_move() {
             mover_share,
             infohash_a_node,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
     let slash_args = list_from_nodes(
         &mut a,
@@ -1694,14 +1710,8 @@ fn test_move_rejects_noncanonical_new_max_move_size() {
 #[test]
 fn test_move_rejects_noncanonical_new_mover_share() {
     let mut allocator = AllocEncoder::new();
-    let result = run_referee_move_case(
-        &mut allocator,
-        8,
-        &[0xEF; 8],
-        Some(&[0x77; 32]),
-        &[0],
-        &[5],
-    );
+    let result =
+        run_referee_move_case(&mut allocator, 8, &[0xEF; 8], Some(&[0x77; 32]), &[0], &[5]);
     assert!(
         result.is_err(),
         "move path should reject a non-canonical new_mover_share"
@@ -1947,9 +1957,9 @@ fn test_terminal_coin_nil_infohash_b_slash() {
     let mover_share = 100i64.to_clvm(&mut a).expect("mover_share");
     let infohash_a_node = hash_to_node(&mut a, &infohash_a);
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         &mut a,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -1962,7 +1972,8 @@ fn test_terminal_coin_nil_infohash_b_slash() {
             mover_share,
             infohash_a_node,
         ],
-    );
+    )
+    .expect("referee argument tree");
 
     // Slash solution: (previous_state previous_validation_program evidence mover_payout_ph)
     let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
@@ -2049,9 +2060,9 @@ fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
     let mover_share = 0i64.to_clvm(&mut a).expect("mover_share");
     let infohash_a_node = hash_to_node(&mut a, &infohash_a);
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         &mut a,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -2064,7 +2075,8 @@ fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
             mover_share,
             infohash_a_node,
         ],
-    );
+    )
+    .expect("referee argument tree");
 
     let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
     let evidence = a

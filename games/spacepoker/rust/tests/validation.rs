@@ -109,18 +109,23 @@ fn build_curry_args(
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
-    let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(ms_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(mms_node, tail).unwrap();
-    let tail = a.new_pair(move_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(amount_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(waiter_ph, tail).unwrap();
-    a.new_pair(NodePtr::NIL, tail).unwrap()
+    crate::referee::types::encode_referee_args(
+        allocator,
+        [
+            NodePtr::NIL,
+            waiter_ph,
+            NodePtr::NIL,
+            amount_node,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            move_node,
+            mms_node,
+            NodePtr::NIL,
+            ms_node,
+            NodePtr::NIL,
+        ],
+    )
+    .unwrap()
 }
 
 fn build_validator_args(
@@ -310,9 +315,9 @@ fn run_referee_slash(
         .unwrap_or(NodePtr::NIL);
     let payout_ph = allocator.allocator().new_atom(&[0x33; 32]).unwrap();
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pubkey,
             waiter_pubkey,
             timeout,
@@ -325,7 +330,8 @@ fn run_referee_slash(
             mover_share,
             infohash_a,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let slash_args = list_from_nodes(
         allocator,
         &[previous_state, validator_clvm, evidence, payout_ph],

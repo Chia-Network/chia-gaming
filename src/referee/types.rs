@@ -371,7 +371,7 @@ where
     NodePtr: ToClvm<E>,
 {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
-        [
+        let fields = [
             self.mover_pubkey.to_clvm(encoder)?,
             self.waiter_pubkey.to_clvm(encoder)?,
             self.timeout.to_clvm(encoder)?,
@@ -383,9 +383,29 @@ where
             self.game_move.validation_info_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
-        ]
-        .to_clvm(encoder)
+        ];
+        encode_referee_args(encoder, fields)
     }
+}
+
+/// The referee and every validator share this balanced tree of eleven fields.
+/// The left branch holds identity / channel terms; the right holds move state.
+/// Field paths are at most four edges long (the old list needed eleven).
+pub(crate) fn encode_referee_args<E: ClvmEncoder<Node = NodePtr>>(
+    encoder: &mut E,
+    [mover, waiter, timeout, amount, mod_hash, nonce, game_move, max_move_size, infohash_b, mover_share, infohash_a]: [NodePtr; 11],
+) -> Result<NodePtr, ToClvmError>
+where
+    NodePtr: ToClvm<E>,
+{
+    (
+        (((mover, waiter), (timeout, amount)), (mod_hash, nonce)),
+        (
+            (game_move, max_move_size),
+            (infohash_b, (mover_share, infohash_a)),
+        ),
+    )
+        .to_clvm(encoder)
 }
 
 pub fn curry_referee_puzzle_hash(

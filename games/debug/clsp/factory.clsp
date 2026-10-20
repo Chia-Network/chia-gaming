@@ -12,18 +12,8 @@
 ; See RefereePuzzleArgs::to_clvm
 (defmac STATE_PACK ()
   (q @ state-pack
-       (MOVER_PUBKEY
-        WAITER_PUBKEY
-        TIMEOUT
-        AMOUNT
-        MOD_HASH
-        NONCE
-        MOVE
-        MAX_MOVE_SIZE
-        INFOHASH_B
-        MOVER_SHARE
-        INFOHASH_A
-        )
+       ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
+     . ((MOVE . MAX_MOVE_SIZE) . (INFOHASH_B . (MOVER_SHARE . INFOHASH_A))))
      )
   )
 

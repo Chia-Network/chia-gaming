@@ -605,6 +605,21 @@ RefereePuzzleArgs {
 }
 ```
 
+The eleven CLVM fields are curried as one balanced tree, shared by the referee,
+its successor-coin hash calculation, and every validator:
+
+```clojure
+((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
+ . ((MOVE . MAX_MOVE_SIZE) . (INFOHASH_B . (MOVER_SHARE . INFOHASH_A))))
+```
+
+The left branch holds player identities and channel terms; the right holds
+move state and validation commitments. Every field is at most four tree edges
+from the argument root. `RefereePuzzleArgs::to_clvm` encodes this shape; do not
+encode these fields as a proper list. Solutions remain lists. This layout is
+part of the on-chain puzzle interface and changes the referee and validator
+hashes; an already-created coin must still be spent with its original puzzle.
+
 Players are identified by **public keys** (not puzzle hashes) in the referee
 args. After each move, the new game coin swaps `mover_pubkey` and
 `waiter_pubkey` — the previous mover becomes the waiter, and vice versa. This

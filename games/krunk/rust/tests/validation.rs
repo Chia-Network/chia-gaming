@@ -42,18 +42,23 @@ fn build_curry_args(
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
-    let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(ms_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(mms_node, tail).unwrap();
-    let tail = a.new_pair(move_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(amount_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    a.new_pair(NodePtr::NIL, tail).unwrap()
+    crate::referee::types::encode_referee_args(
+        allocator,
+        [
+            NodePtr::NIL,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            amount_node,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            move_node,
+            mms_node,
+            NodePtr::NIL,
+            ms_node,
+            NodePtr::NIL,
+        ],
+    )
+    .unwrap()
 }
 
 fn run_validator_step(
@@ -187,9 +192,9 @@ fn run_referee_slash(
     let infohash_a = allocator.allocator().new_atom(&infohash_a).unwrap();
     let payout_ph = allocator.allocator().new_atom(&[0x33; 32]).unwrap();
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pubkey,
             waiter_pubkey,
             timeout,
@@ -202,7 +207,8 @@ fn run_referee_slash(
             mover_share,
             infohash_a,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let slash_args = list_from_nodes(
         allocator,
         &[previous_state, validator_clvm, evidence, payout_ph],
@@ -241,9 +247,7 @@ fn assert_successful_referee_slash(
         previous_state,
         evidence,
     ) {
-        Ok((MoveCode::MakeMove, result)) => {
-            commitments_from_validator_result(allocator, result)
-        }
+        Ok((MoveCode::MakeMove, result)) => commitments_from_validator_result(allocator, result),
         _ => (NodePtr::NIL, 0),
     };
     let output = run_referee_slash(
@@ -286,9 +290,7 @@ fn assert_referee_slash_rejected(
         Ok((MoveCode::Slash, _)) => {
             panic!("validator returned nil: this is a true slash, not a false-slash case")
         }
-        Ok((MoveCode::MakeMove, result)) => {
-            commitments_from_validator_result(allocator, result)
-        }
+        Ok((MoveCode::MakeMove, result)) => commitments_from_validator_result(allocator, result),
         Err(_) => (NodePtr::NIL, 0),
     };
     assert!(
@@ -411,13 +413,7 @@ fn test_krunk_commit_happy() {
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(int_from_atom(&mut allocator, items[2]), 5);
-    assert_false_slash_with_common_evidence(
-        &mut allocator,
-        &commit,
-        &move_bytes,
-        0,
-        initial_state,
-    );
+    assert_false_slash_with_common_evidence(&mut allocator, &commit, &move_bytes, 0, initial_state);
 }
 
 fn test_krunk_commit_slash_bad_move_size() {
@@ -494,15 +490,7 @@ fn test_krunk_guess_slash_bob_out_of_dict() {
         49,
         "AGG_SIG_UNSAFE code"
     );
-    assert_successful_referee_slash(
-        &mut allocator,
-        &guess,
-        b"xyzzy",
-        0,
-        state,
-        evidence,
-        3,
-    );
+    assert_successful_referee_slash(&mut allocator, &guess, b"xyzzy", 0, state, evidence, 3);
 }
 
 fn test_krunk_guess_bad_range_doesnt_bracket() {

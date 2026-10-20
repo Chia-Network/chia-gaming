@@ -349,14 +349,14 @@ tried in order through another slash invocation. These repeated validator runs
 are intentional and must all be safe for bounded adversarial move bytes.
 
 Validators run both off-chain when checking evidence and on-chain during a
-slash. Every validator has this input shape:
+slash. The referee fields use a balanced tree, with the same layout for off-chain
+inspection and on-chain slashing. Every validator has this input shape:
 
 ```clojure
 (export
   (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-     MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE
-     PREVIOUS_VALIDATION_INFO_HASH)
+    ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
+     . ((MOVE . MAX_MOVE_SIZE) . (VALIDATION_INFO_HASH . (MOVER_SHARE . PREVIOUS_VALIDATION_INFO_HASH))))
     previous_state previous_validation_program evidence)
   ...)
 ```
@@ -391,9 +391,8 @@ validator is a compact example:
 
 ```clojure
 (export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-     MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE
-     PREVIOUS_VALIDATION_INFO_HASH)
+    ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
+     . ((MOVE . MAX_MOVE_SIZE) . (VALIDATION_INFO_HASH . (MOVER_SHARE . PREVIOUS_VALIDATION_INFO_HASH))))
     previous_state previous_validation_program evidence)
   (if (= (strlen MOVE) 32)
       (list bhash MOVE 16)

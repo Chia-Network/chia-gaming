@@ -104,9 +104,9 @@ fn run_referee_slash_with_mock(
         .new_atom(&[0x33; 32])
         .expect("payout ph");
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -119,7 +119,8 @@ fn run_referee_slash_with_mock(
             mover_share,
             infohash_a_node,
         ],
-    );
+    )
+    .expect("referee argument tree");
     let slash_args = list_from_nodes(
         allocator,
         &[previous_state, mock_validator_clvm, evidence, payout_ph],
@@ -158,9 +159,9 @@ fn run_referee_move_with_max_size(new_max_move_size: &[u8]) -> Result<NodePtr, S
     let previous_infohash = allocator.allocator().new_atom(&[0x55; 32]).unwrap();
     let previous_mover_share = 0i64.to_clvm(&mut allocator).unwrap();
     let previous_validation_info = allocator.allocator().new_atom(&[0x66; 32]).unwrap();
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         &mut allocator,
-        &[
+        [
             mover_pk,
             waiter_pk,
             timeout,
@@ -173,7 +174,8 @@ fn run_referee_move_with_max_size(new_max_move_size: &[u8]) -> Result<NodePtr, S
             previous_mover_share,
             previous_validation_info,
         ],
-    );
+    )
+    .expect("referee argument tree");
 
     let new_move = allocator.allocator().new_atom(&[0x77]).unwrap();
     let new_infohash = allocator.allocator().new_atom(&[0x88; 32]).unwrap();
@@ -200,6 +202,122 @@ fn run_referee_move_with_max_size(new_max_move_size: &[u8]) -> Result<NodePtr, S
     ) {
         Ok(reduction) => Ok(reduction.1),
         Err(error) => Err(format!("CLVM error: {error:?}")),
+    }
+}
+
+/// Exercise the Rust encoder, CLVM successor hash, and timeout reader together.
+#[test]
+fn test_referee_tree_move_and_timeout_agree_with_rust() {
+    use crate::channel_state::types::StateUpdateProgram;
+    use crate::common::standard_coin::private_to_public_key;
+    use crate::common::types::{Amount, Hash, PrivateKey, Timeout};
+    use crate::referee::types::{
+        curry_referee_puzzle, curry_referee_puzzle_hash, GameMoveDetails, GameMoveStateInfo,
+        RefereePuzzleArgs, ValidationInfoHash,
+    };
+    use std::rc::Rc;
+
+    let mut allocator = AllocEncoder::new();
+    let referee = load_referee_puzzle(&mut allocator);
+    let referee_hash = referee.sha256tree(&mut allocator);
+    let initial = RefereePuzzleArgs {
+        mover_pubkey: private_to_public_key(&PrivateKey::from_bytes(&[7; 32]).unwrap()),
+        waiter_pubkey: private_to_public_key(&PrivateKey::from_bytes(&[8; 32]).unwrap()),
+        timeout: Timeout::new(258),
+        amount: Amount::new(1000),
+        nonce: u64::MAX,
+        game_move: GameMoveDetails {
+            basic: GameMoveStateInfo {
+                move_made: vec![0x44; 16],
+                max_move_size: 32,
+                mover_share: Amount::new(333),
+            },
+            validation_info_hash: ValidationInfoHash::Hash(Hash::from_bytes([0x55; 32])),
+            validation_program_hash: None,
+        },
+        validation_program: StateUpdateProgram::new(
+            &mut allocator,
+            "unused",
+            Rc::new(Program::from_hex("80").unwrap()),
+        ),
+        previous_validation_info_hash: ValidationInfoHash::Hash(Hash::from_bytes([0x66; 32])),
+        referee_coin_puzzle_hash: referee_hash.clone(),
+    };
+    let puzzle = curry_referee_puzzle(&mut allocator, &referee, &initial).unwrap();
+    assert_eq!(
+        puzzle.sha256tree(&mut allocator),
+        curry_referee_puzzle_hash(&mut allocator, &referee_hash, &initial).unwrap(),
+    );
+    for (next_info, next_max) in [(Some([0x88; 32]), 32767u32), (None, 0u32)] {
+        let info = next_info.map(Hash::from_bytes);
+        let info = info
+            .map(ValidationInfoHash::Hash)
+            .unwrap_or(ValidationInfoHash::None);
+        let move_atom = allocator.allocator().new_atom(&[0x77; 8]).unwrap();
+        let solution = (
+            move_atom,
+            (info.clone(), (Amount::new(601), (next_max, ()))),
+        );
+        let solution = solution.to_clvm(&mut allocator).unwrap();
+        let program = puzzle.to_clvm(&mut allocator).unwrap();
+        let result =
+            run_program(allocator.allocator(), &chia_dialect(), program, solution, 0).unwrap();
+        let conditions = proper_list(allocator.allocator(), result.1, true).unwrap();
+        let created = proper_list(allocator.allocator(), conditions[1], true).unwrap();
+        let next = RefereePuzzleArgs {
+            mover_pubkey: initial.waiter_pubkey.clone(),
+            waiter_pubkey: initial.mover_pubkey.clone(),
+            previous_validation_info_hash: initial.game_move.validation_info_hash.clone(),
+            game_move: GameMoveDetails {
+                basic: GameMoveStateInfo {
+                    move_made: vec![0x77; 8],
+                    max_move_size: next_max,
+                    mover_share: Amount::new(601),
+                },
+                validation_info_hash: info,
+                validation_program_hash: None,
+            },
+            ..initial.clone()
+        };
+        let next_puzzle = curry_referee_puzzle(&mut allocator, &referee, &next).unwrap();
+        let next_hash = next_puzzle.sha256tree(&mut allocator);
+        assert_eq!(
+            next_hash,
+            curry_referee_puzzle_hash(&mut allocator, &referee_hash, &next).unwrap()
+        );
+        assert_eq!(
+            allocator.allocator_ref().atom(created[1]).as_ref(),
+            next_hash.hash().bytes()
+        );
+        let signature = proper_list(allocator.allocator(), conditions[2], true).unwrap();
+        let mover = initial.mover_pubkey.to_clvm(&mut allocator).unwrap();
+        assert_eq!(
+            allocator.allocator_ref().atom(signature[1]),
+            allocator.allocator_ref().atom(mover)
+        );
+
+        let mover_payout = allocator.allocator().new_atom(&[0x99; 32]).unwrap();
+        let waiter_payout = allocator.allocator().new_atom(&[0xaa; 32]).unwrap();
+        let timeout = (mover_payout, (waiter_payout, ()))
+            .to_clvm(&mut allocator)
+            .unwrap();
+        let program = next_puzzle.to_clvm(&mut allocator).unwrap();
+        let result =
+            run_program(allocator.allocator(), &chia_dialect(), program, timeout, 0).unwrap();
+        let conditions = proper_list(allocator.allocator(), result.1, true).unwrap();
+        let amounts: Vec<u64> = conditions
+            .iter()
+            .filter_map(|condition| {
+                let parts = proper_list(allocator.allocator(), *condition, true).unwrap();
+                (allocator.allocator_ref().atom(parts[0]).as_ref() == [51]).then(|| {
+                    crate::common::types::u64_from_atom(
+                        allocator.allocator_ref().atom(parts[2]).as_ref(),
+                    )
+                    .unwrap()
+                })
+            })
+            .collect();
+        assert_eq!(amounts, vec![601, 399]);
     }
 }
 
@@ -471,6 +589,10 @@ fn test_referee_solution_parser_matches_puzzle_tail_rules() {
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
+        (
+            "test_referee_tree_move_and_timeout_agree_with_rust",
+            &test_referee_tree_move_and_timeout_agree_with_rust,
+        ),
         ("test_slash_succeeds_nil", &test_slash_succeeds_nil),
         (
             "test_negative_new_max_move_size_is_rejected",
