@@ -9,6 +9,7 @@
 (import games.krunk.clsp.krunk_dict_tree exposing dict_lookup)
 (import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)
 (import std.li)
+(import std.shatree)
 (import std.curry)
 (import std.assert)
 (import std.len)
@@ -19,8 +20,9 @@
 ;
 ; DICT_TREE and DICT_PUBKEY are curried in at startup from a single .dat file
 ; (48-byte BLS pubkey prefix + serialized CLVM tree).
-; The on-chain initial state is (DICT_PUBKEY base_unit); the full tree stays
-; off-chain.
+; The on-chain initial state is (DICT_PUBKEY base_unit clue_hash); the full
+; dictionary tree stays off-chain. Derive clue_hash from the registered
+; validator so every transition names its exact compiled program.
 
 (import games.krunk.clsp.onchain.commit exposing (program as val_commit))
 (import games.krunk.clsp.onchain.guess exposing (program as val_guess))
@@ -41,7 +43,7 @@
             (li 0 (> requested_stake proposer_reserve) (> requested_stake accepter_reserve))
             (assign
                 base_unit (/ requested_stake 100)
-                initial_state (li DICT_PUBKEY base_unit)
+                initial_state (li DICT_PUBKEY base_unit (shatree val_clue))
                 alice_handler (curry krunk_alice_handler_commit DICT_TREE)
                 bob_handler (curry krunk_bob_handler_commit DICT_TREE)
                 (li 1

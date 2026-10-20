@@ -20,8 +20,8 @@
 ; alice's new commit is a commit to discards that's not revealed yet.
 
 (export (mod_hash
-        ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
-     . ((MOVE . MAX_MOVE_SIZE) . (VALIDATION_INFO_HASH . (MOVER_SHARE . PREVIOUS_VALIDATION_INFO_HASH))))
+        #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
             (alice_commit bob_seed) previous_validation_program evidence)
 
     (if (!= (strlen MOVE) 48)

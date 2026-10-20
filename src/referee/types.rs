@@ -388,24 +388,25 @@ where
     }
 }
 
-/// The referee and every validator share this balanced tree of eleven fields.
-/// The left branch holds identity / channel terms; the right holds move state.
-/// Field paths are at most four edges long (the old list needed eleven).
+/// Encode the referee fields using Chialisp's `#(...)` tree-list layout.
 pub(crate) fn encode_referee_args<E: ClvmEncoder<Node = NodePtr>>(
     encoder: &mut E,
-    [mover, waiter, timeout, amount, mod_hash, nonce, game_move, max_move_size, infohash_b, mover_share, infohash_a]: [NodePtr; 11],
-) -> Result<NodePtr, ToClvmError>
-where
-    NodePtr: ToClvm<E>,
-{
-    (
-        (((mover, waiter), (timeout, amount)), (mod_hash, nonce)),
-        (
-            (game_move, max_move_size),
-            (infohash_b, (mover_share, infohash_a)),
-        ),
-    )
-        .to_clvm(encoder)
+    fields: [NodePtr; 11],
+) -> Result<NodePtr, ToClvmError> {
+    fn tree<E: ClvmEncoder<Node = NodePtr>>(
+        encoder: &mut E,
+        fields: &[NodePtr],
+    ) -> Result<NodePtr, ToClvmError> {
+        if let [field] = fields {
+            return Ok(*field);
+        }
+        // Match the language reader: split at len / 2, with no nil list tail.
+        let (left, right) = fields.split_at(fields.len() / 2);
+        let left = tree(encoder, left)?;
+        let right = tree(encoder, right)?;
+        encoder.encode_pair(left, right)
+    }
+    tree(encoder, &fields)
 }
 
 pub fn curry_referee_puzzle_hash(

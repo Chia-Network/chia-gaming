@@ -13,8 +13,8 @@
 ; MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
 ; evidence is waiter's card selection bitfield
 (export (mod_hash
-    ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
-     . ((MOVE . MAX_MOVE_SIZE) . (VALIDATION_INFO_HASH . (MOVER_SHARE . PREVIOUS_VALIDATION_INFO_HASH))))
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
         (half_pot mover_image waiter_preimage)
         previous_validation_program evidence)
 

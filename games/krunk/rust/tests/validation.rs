@@ -394,11 +394,13 @@ fn test_krunk_commit_happy() {
     let commit = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/commit.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
     let base_unit_node = BASE_UNIT.to_clvm(&mut allocator).unwrap();
-    let initial_state = {
-        let a = allocator.allocator();
-        let tail = a.new_pair(base_unit_node, NodePtr::NIL).unwrap();
-        a.new_pair(dict_pubkey, tail).unwrap()
-    };
+    // Match the factory: commit receives the registered clue program hash in its initial state.
+    let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
+    let clue_hash = clue
+        .sha256tree(&mut allocator)
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let initial_state = list_from_nodes(&mut allocator, &[dict_pubkey, base_unit_node, clue_hash]);
     let move_bytes = [0xAB; 32];
     let (code, result) = run_validator_step(
         &mut allocator,
@@ -413,6 +415,13 @@ fn test_krunk_commit_happy() {
     assert_eq!(code, MoveCode::MakeMove);
     let items = proper_list(allocator.allocator(), result, true).unwrap();
     assert_eq!(int_from_atom(&mut allocator, items[2]), 5);
+    let state = proper_list(allocator.allocator(), items[1], true).unwrap();
+    let a = allocator.allocator();
+    assert_eq!(
+        a.atom(state[5]),
+        a.atom(clue_hash),
+        "commit must retain the factory's registered clue hash"
+    );
     assert_false_slash_with_common_evidence(&mut allocator, &commit, &move_bytes, 0, initial_state);
 }
 
@@ -421,11 +430,13 @@ fn test_krunk_commit_slash_bad_move_size() {
     let commit = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/commit.hex").unwrap();
     let dict_pubkey = make_dict_pubkey(&mut allocator);
     let base_unit_node = BASE_UNIT.to_clvm(&mut allocator).unwrap();
-    let initial_state = {
-        let a = allocator.allocator();
-        let tail = a.new_pair(base_unit_node, NodePtr::NIL).unwrap();
-        a.new_pair(dict_pubkey, tail).unwrap()
-    };
+    // Match the factory: commit receives the registered clue program hash in its initial state.
+    let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
+    let clue_hash = clue
+        .sha256tree(&mut allocator)
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let initial_state = list_from_nodes(&mut allocator, &[dict_pubkey, base_unit_node, clue_hash]);
     let result = run_validator_step(
         &mut allocator,
         &commit,

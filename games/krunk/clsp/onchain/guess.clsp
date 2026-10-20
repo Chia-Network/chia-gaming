@@ -14,8 +14,8 @@
 ; an out-of-dictionary guess. A condition (AGG_SIG_UNSAFE dict_pubkey evidence)
 ; is emitted to prove the range was signed by both players.
 (export (mod_hash
-    ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
-     . ((MOVE . MAX_MOVE_SIZE) . (VALIDATION_INFO_HASH . (MOVER_SHARE . PREVIOUS_VALIDATION_INFO_HASH))))
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
     (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
     previous_validation_program evidence)
 

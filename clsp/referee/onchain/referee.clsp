@@ -7,6 +7,14 @@
 (import std.li)
 (import std.append)
 
+; Build a reader-expanded tree whose leaves are variable names. Unlike qq,
+; this walks both sides of each pair, including leaves in dotted tails.
+(defun compile-arg-tree (TREE)
+    (if (l TREE)
+        (list 4 (compile-arg-tree (f TREE)) (compile-arg-tree (r TREE)))
+        TREE))
+(defmac arg-tree (TREE) (compile-arg-tree TREE))
+
 ;
 ; Adjudicates a two-player turn-based game.
 ;
@@ -47,8 +55,8 @@
 ; deep. Keep this shape aligned with RefereePuzzleArgs::to_clvm and validators.
 (export (@ all_args
     ((@ curried-args
-        ((((MOVER_PUBKEY . WAITER_PUBKEY) . (TIMEOUT . AMOUNT)) . (MOD_HASH . NONCE))
-         . ((MOVE . MAX_MOVE_SIZE) . (INFOHASH_B . (MOVER_SHARE . INFOHASH_A))))) . args))
+        #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+          MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)) . args))
     (if (not (r (r args)))
         (assign
             (mover_payout_ph waiter_payout_ph) args
@@ -98,10 +106,10 @@
             (new_move infohash_c new_mover_share new_max_move_size . tail) args
             new_puzzle_hash (curry_hashes MOD_HASH
                 (shatree
-                    (c (c (c (c WAITER_PUBKEY MOVER_PUBKEY) (c TIMEOUT AMOUNT))
-                          (c MOD_HASH NONCE))
-                       (c (c new_move new_max_move_size)
-                          (c infohash_c (c new_mover_share INFOHASH_B))))))
+                    (arg-tree #(WAITER_PUBKEY MOVER_PUBKEY
+                                TIMEOUT AMOUNT MOD_HASH NONCE
+                                new_move new_max_move_size infohash_c
+                                new_mover_share INFOHASH_B))))
             (assert
                 (not tail)
                 INFOHASH_B
