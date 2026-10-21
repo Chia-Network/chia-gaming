@@ -25,6 +25,7 @@ import {
   CLOUD_WALLET_LOGIN_CANCELLED,
   signatureRequestApproveUrl,
 } from '../../hooks/cloudWalletOAuth';
+import { loadCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 
 const REDIRECT_URI = 'http://127.0.0.1:5555/oauth/callback';
@@ -160,6 +161,62 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
 
     await expect(finalize).rejects.toThrow('Cloud Wallet sign-in was cancelled');
     expect(cancelBrowserLogin).toHaveBeenCalledWith('flow-1');
+    expect(cloud.isConnected()).toBe(false);
+  });
+
+  it.each([
+    ['resolving the wallet', 'wallet(id: $id) { id }'],
+    ['starting monitoring', 'address { puzzleHash }'],
+  ])('stores nothing when cancelled while %s', async (_step, heldQuery) => {
+    // Hold one GraphQL query open so Cancel lands after the browser returned.
+    let release: () => void = () => {};
+    let reachedHeldQuery: () => void = () => {};
+    const atHeldQuery = new Promise<void>((resolve) => {
+      reachedHeldQuery = resolve;
+    });
+    setTestGlobal(
+      'fetch',
+      jest.fn(async (_url: string, init?: { body?: string }) => {
+        const body = String(init?.body ?? '');
+        if (body.includes(heldQuery)) {
+          reachedHeldQuery();
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        const data = body.includes('oauthConsentedWallets')
+          ? { oauthConsentedWallets: [{ id: 'Wallet_abc' }] }
+          : { wallet: { id: 'Wallet_abc', address: { puzzleHash: 'ab'.repeat(32) } } };
+        return { status: 200, ok: true, text: async () => JSON.stringify({ data }) };
+      }),
+    );
+    setTestGlobal('__chiaCloudWallet', {
+      beginBrowserLogin: async () => ({ flowId: 'flow-1', redirectUri: REDIRECT_URI }),
+      completeBrowserLogin: async (_flowId: string, url: string) => ({
+        code: 'the-code',
+        state: new URL(url).searchParams.get('state')!,
+      }),
+      cancelBrowserLogin: async () => {},
+      openInBrowser: async () => true,
+      postToken: async () => ({
+        status: 200,
+        text: JSON.stringify({
+          access_token: 'access',
+          refresh_token: 'refresh',
+          expires_in: 3600,
+        }),
+      }),
+    });
+    const cloud = new CloudBlockchainInterface();
+    const setup = await cloud.beginConnect('player', true);
+
+    const finalize = setup.finalize();
+    await atHeldQuery;
+    await cloud.disconnect();
+    release();
+
+    await expect(finalize).rejects.toThrow(CLOUD_WALLET_LOGIN_CANCELLED);
+    expect(loadCloudWalletAuth()).toBeNull();
     expect(cloud.isConnected()).toBe(false);
   });
 

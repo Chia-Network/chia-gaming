@@ -337,7 +337,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     return this.blockchainAddressData;
   }
 
-  async startMonitoring(): Promise<void> {
+  /** `beforeReady` runs once the wallet is fetched and may throw to stop. */
+  async startMonitoring(beforeReady: () => void = () => {}): Promise<void> {
     const walletId = this.requireWalletId();
     const data = await this.gql<{
       wallet: {
@@ -360,6 +361,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (!ph || ph.length !== 64) {
       throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
+    beforeReady();
     this.blockchainAddressData = { puzzleHash: ph };
     this.monitoringReady = true;
     this.fireConnectionChange(true);
@@ -1010,24 +1012,28 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         this.loginAbort?.abort();
         const loginAbort = new AbortController();
         this.loginAbort = loginAbort;
-        let tokens: Awaited<ReturnType<typeof beginOAuthLogin>>;
-        try {
-          tokens = await beginOAuthLogin(loginAbort.signal);
+        // Cancel can land during any await below; nothing may be stored after it.
+        const throwIfCancelled = () => {
           if (loginAbort.signal.aborted) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
+        };
+        try {
+          const tokens = await beginOAuthLogin(loginAbort.signal);
+          throwIfCancelled();
+          this.auth = {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+            walletId: tokens.walletId,
+          };
+          // Persist the id that actually resolved: the consent screen's choice can
+          // differ from what the grant will read back, and monitoring uses this id.
+          const walletId = await this.resolveWalletId();
+          throwIfCancelled();
+          this.persistAuth({ ...tokens, walletId });
+          await this.startMonitoring(throwIfCancelled);
         } finally {
           if (this.loginAbort === loginAbort) this.loginAbort = null;
         }
-        this.auth = {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt,
-          walletId: tokens.walletId,
-        };
-        // Persist the id that actually resolved: the consent screen's choice can
-        // differ from what the grant will read back, and monitoring uses this id.
-        const walletId = await this.resolveWalletId();
-        this.persistAuth({ ...tokens, walletId });
-        await this.startMonitoring();
       },
     };
   }
