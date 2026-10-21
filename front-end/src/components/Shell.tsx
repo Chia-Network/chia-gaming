@@ -646,6 +646,7 @@ const Shell = () => {
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
+  const [showTransactionPublishControl, setShowTransactionPublishControl] = useState(false);
   const peerConn = shellState.peerConn;
   const dashboardSessionModel = shellState.dashboardSessionModel;
   const dashboardSessionModelRef = useRef<SessionModel | null>(null);
@@ -831,6 +832,34 @@ const Shell = () => {
     setTransactionPublishNerfed(isTransactionPublishNerfed());
     return subscribeTransactionPublishNerfed(setTransactionPublishNerfed);
   }, []);
+  useEffect(() => {
+    if (showTransactionPublishControl) return;
+    const sequence = 'nerf^';
+    let buffer = '';
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        target?.closest?.(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+        )
+      ) {
+        buffer = '';
+        return;
+      }
+      if (event.key.length !== 1) return;
+      const next = buffer + event.key;
+      if (next === sequence) {
+        setShowTransactionPublishControl(true);
+      } else {
+        buffer = sequence.startsWith(next) ? next : sequence.startsWith(event.key) ? event.key : '';
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showTransactionPublishControl]);
   const toggleTransactionPublishNerf = useCallback(() => {
     if (isTransactionPublishNerfed()) {
       setTransactionPublishNerf(false);
@@ -3890,15 +3919,17 @@ const Shell = () => {
               overflow: 'auto',
             }}
           >
-            <Button
-              variant={transactionPublishNerfed ? 'solid' : 'outline'}
-              color={transactionPublishNerfed ? 'primary' : 'neutral'}
-              size="sm"
-              className="absolute right-4 top-4"
-              onClick={toggleTransactionPublishNerf}
-            >
-              Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
-            </Button>
+            {showTransactionPublishControl && (
+              <Button
+                variant={transactionPublishNerfed ? 'solid' : 'outline'}
+                color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                size="sm"
+                className="absolute right-4 top-4"
+                onClick={toggleTransactionPublishNerf}
+              >
+                Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+              </Button>
+            )}
             <ConnectionSetupModal
               open={showConnectionSetupModal && !!connectionSetup}
               title={connectionSetup?.title}
