@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (import games.spacepoker.clsp.onchain.begin_round exposing (program_hash as begin_hash))
 (import games.spacepoker.clsp.onchain.mid_round exposing (program_hash as mid_hash))

@@ -68,7 +68,8 @@ function classifyTransition(
   if (
     event.type === 'wasm-notification' &&
     'MoveRejected' in event.notification &&
-    event.notification.MoveRejected != null
+    event.notification.MoveRejected != null &&
+    previous.model.game.handState === transition.state.model.game.handState
   ) {
     return { ...transition, durability: 'projection-only' };
   }
@@ -158,6 +159,7 @@ export function reduceSessionMachine(
     case 'notification-accepted-group':
     case 'notification-game-status':
     case 'notification-game-terminal':
+    case 'notification-move-rejected':
     case 'notification-abandoned':
     case 'hand-state-changed':
     case 'local-game-action-committed':

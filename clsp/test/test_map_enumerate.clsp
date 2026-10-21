@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 (import std.map)
 (import std.deep_compare)
 

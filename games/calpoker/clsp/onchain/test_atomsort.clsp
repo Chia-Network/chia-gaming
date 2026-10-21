@@ -1,4 +1,4 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 (import onchain.calpoker.onehandcalc exposing atomsort)
 
 (export X (atomsort X))

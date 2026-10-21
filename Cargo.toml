@@ -26,13 +26,14 @@ used_linker = []
 [dependencies]
 bencodex = { path = "bencodex" }
 blst = { version = "=0.3.16", features = ["portable"] }
-chia-bls = "=0.38.2"
-chia-consensus = "=0.38.2"
-chia-protocol = "=0.38.2"
-chia-puzzles = "=0.20.2"
-clvm-traits = "=0.38.2"
-clvm-utils = "=0.38.2"
-clvmr = { version = "=0.17.7", features = ["pre-eval"] }
+chia-bls = "=0.51.0"
+chia-consensus = "=0.51.0"
+chia-protocol = "=0.51.0"
+chia-puzzles = "=0.20.3"
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb" }
+clvm-traits = "=0.51.0"
+clvm-utils = "=0.51.0"
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.0"
 num-bigint = "=0.4.6"
@@ -49,11 +50,18 @@ futures-util = { version = "=0.3.32", features = ["sink"], optional = true }
 axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
-chialisp = "0.5.0"
-clvm-utils = "=0.38.2"
-clvmr = { version = "=0.17.7" }
+# Chialisp emits an unhashed cdylib/rlib for host and target builds. Keep
+# shared dependency features aligned so those builds use identical types.
+getrandom = { version = "=0.4.3", features = ["std"] }
+rand_chacha = "=0.9.0"
+serde = { version = "=1.0.228", features = ["alloc", "rc"] }
+serde_core = "=1.0.228"
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb" }
+clvm-utils = "=0.51.0"
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd", features = ["pre-eval"] }
 hex = "=0.4.3"
 serde_json = "=1.0.145"
+sha2 = "=0.10.9"
 toml = "=0.8.23"
 
 [[bin]]
@@ -65,6 +73,13 @@ required-features = ["sim-server"]
 name = "gen-krunk-dict"
 path = "games/krunk/rust/bin_gen_krunk_dict.rs"
 
+[[bench]]
+name = "clvm_success"
+harness = false
+
 [lib]
 name = "chia_gaming"
 crate-type = ["rlib"]
+
+[patch.crates-io]
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd" }

@@ -17,6 +17,7 @@ export type DurableGameEvent = Extract<
   | { type: 'notification-accepted-group' }
   | { type: 'notification-game-status' }
   | { type: 'notification-game-terminal' }
+  | { type: 'notification-move-rejected' }
   | { type: 'notification-abandoned' }
   | { type: 'hand-state-changed' }
   | { type: 'local-game-action-committed' }
@@ -25,7 +26,7 @@ export type DurableGameEvent = Extract<
 
 export interface ActiveGameHandContext {
   create(gameType: RegisteredGameType, init: GameHandInitialization): PersistedGameState;
-  receive(update: GameUpdate): PersistedGameState;
+  receive(update: GameUpdate): PersistedGameState | null;
   clear(): void;
 }
 
@@ -58,7 +59,8 @@ function updateActiveHand(
   activeHand: ActiveGameHandContext | undefined,
 ): SessionMachineTransition {
   if (!activeHand) throw new Error('Game package mutation requires an active hand context');
-  return withHandState(state, activeHand.receive(update));
+  const handState = activeHand.receive(update);
+  return handState === null ? { state, effects: [] } : withHandState(state, handState);
 }
 
 function assertNever(event: never): never {
@@ -191,6 +193,15 @@ export function reduceDurableGameEvent(
       };
       return updateActiveHand(base, update, activeHand);
     }
+    case 'notification-move-rejected':
+      return updateActiveHand(
+        state,
+        {
+          type: 'move-rejected',
+          memberIndex: memberIndexForProtocolId(state, event.id),
+        },
+        activeHand,
+      );
     case 'notification-abandoned': {
       activeHand?.clear();
       const game = gameSliceReducer(state.model.game, { type: 'abandoned' });

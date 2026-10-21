@@ -3,10 +3,16 @@ use clvmr::error::EvalErr;
 use serde::{Deserialize, Serialize, Serializer};
 use std::io;
 
+use crate::clvm_execution::DiagnosticToken;
+
 /// Error type
 #[derive(Debug)]
 pub enum Error {
-    ClvmErr(EvalErr),
+    ClvmErr {
+        error: EvalErr,
+        diagnostic: Option<DiagnosticToken>,
+        context: Option<String>,
+    },
     IoErr(io::Error),
     BasicErr,
     EncodeErr(ToClvmError),
@@ -16,10 +22,41 @@ pub enum Error {
     JsonErr(serde_json::Error),
     HexErr(hex::FromHexError),
     Channel(String),
-    GameMoveRejected { tag: Vec<u8>, message: Vec<u8> },
+    GameMoveRejected {
+        tag: Vec<u8>,
+        message: Vec<u8>,
+    },
 }
 
 impl std::error::Error for Error {}
+
+impl Error {
+    pub fn with_context(self, context: impl Into<String>) -> Self {
+        let context = context.into();
+        match self {
+            Error::ClvmErr {
+                error,
+                diagnostic,
+                context: existing,
+            } => Error::ClvmErr {
+                error,
+                diagnostic,
+                context: Some(match existing {
+                    Some(existing) => format!("{context}: {existing}"),
+                    None => context,
+                }),
+            },
+            other => Error::StrErr(format!("{context}: {other:?}")),
+        }
+    }
+
+    pub fn diagnostic_token(&self) -> Option<DiagnosticToken> {
+        match self {
+            Error::ClvmErr { diagnostic, .. } => *diagnostic,
+            _ => None,
+        }
+    }
+}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -50,7 +87,17 @@ pub trait ErrToError {
 
 impl ErrToError for EvalErr {
     fn into_gen(self) -> Error {
-        Error::ClvmErr(self)
+        Error::ClvmErr {
+            error: self,
+            diagnostic: None,
+            context: None,
+        }
+    }
+}
+
+impl From<EvalErr> for Error {
+    fn from(error: EvalErr) -> Self {
+        error.into_gen()
     }
 }
 

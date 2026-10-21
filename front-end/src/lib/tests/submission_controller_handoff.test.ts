@@ -22,6 +22,22 @@ async function waitForCall(mock: jest.Mock, count = 1): Promise<void> {
 }
 
 describe('submission controller handoff and quiescence', () => {
+  it('records lazy CLVM diagnostics through the committed runtime', () => {
+    const { controller } = setup(jest.fn());
+    const runtime = new ControlledRuntime();
+    try {
+      expect(controller.recordClvmDiagnostic('before runtime')).toBe(false);
+      commitRuntime(controller, runtime);
+
+      const requestCommit = jest.spyOn(runtime, 'requestCommit');
+      expect(controller.recordClvmDiagnostic('consensus CLVM trace')).toBe(true);
+      expect(controller.diagnosticLog).toEqual(['consensus CLVM trace']);
+      expect(requestCommit).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.cleanup();
+    }
+  });
+
   it('keeps terminal quiescence blocked on the delivery entry and queue job', async () => {
     let resolveSpend!: (value: { status: 'acknowledged' }) => void;
     const spend = jest.fn(
