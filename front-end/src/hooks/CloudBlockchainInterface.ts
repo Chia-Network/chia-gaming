@@ -14,9 +14,9 @@ import {
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
-import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
+import { CoinsetClient } from './coinsetClient';
 import {
   beginOAuthLogin,
   CLOUD_WALLET_LOGIN_CANCELLED,
@@ -59,57 +59,6 @@ const TERMINAL_CANCELLATION_CODES = new Set([
   'UNKNOWN_OFFER',
 ]);
 const FAILED_SIGNATURE_REQUEST_STATUSES = new Set(['CANCELLED', 'REJECTED', 'FAILED']);
-
-const ACCEPTED_BROADCAST_STATUSES = new Set([
-  'SUCCESS',
-  'SUBMITTED',
-  'PENDING',
-  'PROCESSING',
-  'OK',
-]);
-const REJECTED_BROADCAST_STATUSES = new Set(['FAILED', 'REJECTED', 'REFUSED']);
-
-type CoinsetCoinRecord = {
-  coin?: {
-    parent_coin_info?: unknown;
-    puzzle_hash?: unknown;
-    amount?: unknown;
-  };
-  confirmed_block_index?: unknown;
-  spent_block_index?: unknown;
-  spent?: unknown;
-  coinbase?: unknown;
-  timestamp?: unknown;
-};
-
-function coinRecordFromCoinset(record: CoinsetCoinRecord): CoinRecord {
-  const parentCoinInfo = normalizeHex(record.coin?.parent_coin_info);
-  const puzzleHash = normalizeHex(record.coin?.puzzle_hash);
-  if (
-    parentCoinInfo.length !== 64 ||
-    puzzleHash.length !== 64 ||
-    record.coin?.amount == null ||
-    record.confirmed_block_index == null ||
-    record.spent_block_index == null ||
-    typeof record.spent !== 'boolean' ||
-    typeof record.coinbase !== 'boolean' ||
-    record.timestamp == null
-  ) {
-    throw new Error('Coinset returned an incomplete coin record');
-  }
-  return {
-    coin: {
-      parentCoinInfo,
-      puzzleHash,
-      amount: BigInt(record.coin.amount as string | number | bigint),
-    },
-    confirmedBlockIndex: BigInt(record.confirmed_block_index as string | number | bigint),
-    spentBlockIndex: BigInt(record.spent_block_index as string | number | bigint),
-    spent: record.spent,
-    coinbase: record.coinbase,
-    timestamp: BigInt(record.timestamp as string | number | bigint),
-  };
-}
 
 function cloudErrorDetail(error: unknown): string {
   const parts: string[] = [];
@@ -199,6 +148,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   /** The sign-in in progress; `disconnect` (the modal's Cancel) aborts it. */
   private loginAbort: AbortController | null = null;
   private tokenProvider: TokenProvider;
+  private readonly chain = new CoinsetClient(
+    (endpoint, request) => this.coinset(endpoint, request),
+    '[cloud-blockchain]',
+  );
 
   constructor() {
     this.auth = loadCloudWalletAuth();
@@ -383,78 +336,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<bigint> {
-    const response = await this.coinset<{
-      success?: boolean;
-      blockchain_state?: { peak?: { height?: unknown } | null };
-    }>('get_blockchain_state', {});
-    const height = response.blockchain_state?.peak?.height;
-    if (response.success !== true || height == null) {
-      throw new Error('Malformed Coinset get_blockchain_state response');
-    }
-    return BigInt(height as string | number | bigint);
+    return this.chain.getHeightInfo();
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    const coinBytes = toUint8(coin);
-    const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
-    const coinName = toHexString(new Uint8Array(hashBuf));
-    const recordResponse = await this.coinset<{
-      success?: boolean;
-      coin_record?: CoinsetCoinRecord | null;
-    }>('get_coin_record_by_name', { name: coinName });
-    if (recordResponse.success !== true) {
-      throw new Error('Coinset get_coin_record_by_name failed');
-    }
-    if (!recordResponse.coin_record) return null;
-    const record = coinRecordFromCoinset(recordResponse.coin_record);
-    if (!record.spent || record.spentBlockIndex === 0n) return null;
-
-    const response = await this.coinset<{
-      success?: boolean;
-      coin_solution?: { puzzle_reveal?: unknown; solution?: unknown } | null;
-    }>('get_puzzle_and_solution', {
-      coin_id: coinName,
-      height: Number(record.spentBlockIndex),
-    });
-    if (response.success !== true) {
-      throw new Error('Coinset get_puzzle_and_solution failed');
-    }
-    const payload = response.coin_solution;
-    if (!payload?.puzzle_reveal || !payload.solution) return null;
-    return [normalizeHex(payload.puzzle_reveal), normalizeHex(payload.solution)];
+    return this.chain.getPuzzleAndSolution(coin);
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
-    const uniqueNames = [...new Set(names.map((n) => normalizeHex(n)).filter(Boolean))];
-    if (uniqueNames.length === 0) return [];
-    try {
-      if (uniqueNames.length === 1) {
-        const response = await this.coinset<{
-          success?: boolean;
-          coin_record?: CoinsetCoinRecord | null;
-        }>('get_coin_record_by_name', { name: uniqueNames[0] });
-        if (response.success !== true) {
-          throw new Error('Coinset get_coin_record_by_name failed');
-        }
-        return response.coin_record ? [coinRecordFromCoinset(response.coin_record)] : [];
-      }
-
-      const response = await this.coinset<{
-        success?: boolean;
-        coin_records?: CoinsetCoinRecord[];
-      }>('get_coin_records_by_names', {
-        names: uniqueNames,
-        include_spent_coins: true,
-      });
-      if (response.success !== true || !Array.isArray(response.coin_records)) {
-        throw new Error('Malformed Coinset get_coin_records_by_names response');
-      }
-      return response.coin_records.map(coinRecordFromCoinset);
-    } catch (e) {
-      const message = `Coinset coin-record batch failed: ${String(e)}`;
-      log(`[cloud-blockchain] getCoinRecordsByNames error: ${message}`);
-      throw new Error(message, { cause: e });
-    }
+    return this.chain.getCoinRecordsByNames(names);
   }
 
   async registerCoins(_names: string[]): Promise<void> {
@@ -473,53 +363,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<WalletSubmitOutcome> {
     try {
-      const feeValue = fee || 0n;
-      const bundle = spendBundle as WalletSpendBundle;
-      if (!bundle?.coin_spends?.length) {
-        return { status: 'rejected', detail: 'push_tx: empty spend bundle' };
-      }
-
-      const response = await this.coinset<{
-        success?: unknown;
-        status?: unknown;
-        error?: unknown;
-      }>('push_tx', { spend_bundle: bundle });
-      const status = response.status;
-      log(
-        `[cloud-blockchain] push_tx from=${source ?? 'unknown'} success=${String(response.success)} status=${String(status)} spends=${bundle.coin_spends.length} fee=${feeValue}`,
-      );
-      const detail =
-        typeof response.error === 'string'
-          ? response.error
-          : typeof status === 'string'
-            ? status
-            : jsonStringify(response);
-      if (response.success === true) {
-        return { status: 'acknowledged', detail };
-      }
-      if (isExactDuplicateTransaction(detail)) {
-        return { status: 'acknowledged', detail };
-      }
-      if (response.success !== false) {
-        return {
-          status: 'rejected',
-          detail: 'Malformed Coinset push_tx response',
-        };
-      }
-      const normalizedStatus = typeof status === 'string' ? status.toUpperCase() : '';
-      if (ACCEPTED_BROADCAST_STATUSES.has(normalizedStatus)) {
-        return { status: 'acknowledged', detail: normalizedStatus };
-      }
-      if (REJECTED_BROADCAST_STATUSES.has(normalizedStatus)) {
-        return {
-          status: 'rejected',
-          detail: `Coinset push_tx rejected: status=${detail}`,
-        };
-      }
-      return {
-        status: 'rejected',
-        detail: `Coinset push_tx rejected: ${detail}`,
-      };
+      return await this.chain.pushTx(spendBundle as WalletSpendBundle, source, fee || 0n);
     } catch (error) {
       return classifyCloudWalletSubmitError(error);
     }
