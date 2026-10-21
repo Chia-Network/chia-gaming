@@ -51,6 +51,30 @@ describe('2x3 setup challenge', () => {
     expect(spawnSetup2048([64, 32, 16, 8, 0, 0], 0, 0)).toEqual([64, 32, 16, 8, 2, 0]);
   });
 
+  it.each([
+    [128, 32, 16, 8, 4],
+    [256, 32, 16, 8, 4],
+    [128, 64, 16, 8, 4],
+    [256, 128, 64, 32, 4],
+  ])('forces a 4 in a later-game pinch with tiles %j', (...tiles) => {
+    for (let emptyIndex = 0; emptyIndex < 6; emptyIndex++) {
+      const board = [...tiles];
+      board.splice(emptyIndex, 0, 0);
+      expect(spawnSetup2048(board, 0, 0)[emptyIndex]).toBe(4);
+    }
+  });
+
+  it.each([
+    [128, 32, 16, 8, 2, 0],
+    [128, 32, 16, 4, 4, 0],
+    [128, 32, 16, 8, 0, 0],
+    [128, 64, 32, 16, 8, 0],
+  ])('keeps normal spawning outside the forced-4 pinch: %j', (...board) => {
+    expect(spawnSetup2048(board, 0, 0).filter((value) => value === 2)).toHaveLength(
+      board.includes(2) ? 2 : 1,
+    );
+  });
+
   it('reaches 128, spawns normally, and allows play to continue', () => {
     const won = moveSetup2048([64, 64, 0, 0, 0, 0], 'left', 0, 0);
     expect(won).toEqual([128, 2, 0, 0, 0, 0]);
