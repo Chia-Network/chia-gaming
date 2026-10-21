@@ -3874,11 +3874,14 @@ const Shell = () => {
             <span className="text-2xl font-black tracking-wide text-canvas-text-contrast">
               BETA
             </span>
-            <img
-              src="images/chia_logo.png"
-              alt="Chia Logo"
-              className="max-w-12 h-auto"
-              style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
+            <span
+              role="img"
+              aria-label="Chia Logo"
+              className="block w-12 shrink-0 aspect-[96/37] bg-current text-canvas-text-contrast"
+              style={{
+                mask: 'url(images/chia-wordmark.svg) center / contain no-repeat',
+                WebkitMask: 'url(images/chia-wordmark.svg) center / contain no-repeat',
+              }}
             />
             <button
               onClick={() => setIsDark((d) => !d)}
