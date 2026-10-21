@@ -7,6 +7,37 @@ use clvmr::{run_program, ChiaDialect};
 use crate::utils::first;
 
 #[test]
+fn test_make() {
+    let mut allocator = AllocEncoder::new();
+    let program =
+        read_hex_puzzle(&mut allocator, "clsp/test/test_make.hex").expect("read make test");
+    let program_clvm = program.to_clvm(&mut allocator).expect("encode program");
+    let args = [11, 22, 33, 44]
+        .to_clvm(&mut allocator)
+        .expect("encode args");
+    let result = run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        program_clvm,
+        args,
+        0,
+    )
+    .expect("run make test")
+    .1;
+    let expected = ((11, 22), (((11, 22), (33, 44)), ([11, 22, 33, 44], ())))
+        .to_clvm(&mut allocator)
+        .expect("encode expected pair, tree, and list");
+    assert_eq!(
+        Node(result)
+            .to_hex(&mut allocator)
+            .expect("serialize result"),
+        Node(expected)
+            .to_hex(&mut allocator)
+            .expect("serialize expected")
+    );
+}
+
+#[test]
 fn test_make_cards() {
     let mut allocator = AllocEncoder::new();
     let program =

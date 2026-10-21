@@ -1,0 +1,8 @@
+(include *standard-cl-23*)
+(import std.make)
+
+(export (A B C D)
+    (list
+        (make A . B)
+        (make . #(A B C D))
+        (make A B C D)))
