@@ -17,6 +17,7 @@ import { log } from './log';
 import { type PolicyRef } from './networkPolicy';
 import {
   CLOUD_WALLET_BEGIN_LOGIN_CHANNEL,
+  CLOUD_WALLET_CANCEL_LOGIN_CHANNEL,
   CLOUD_WALLET_COMPLETE_LOGIN_CHANNEL,
   CLOUD_WALLET_OPEN_CHANNEL,
   CLOUD_WALLET_TOKEN_CHANNEL,
@@ -107,6 +108,13 @@ export function installCloudWalletBrowser(policy: PolicyRef): void {
       return callback.result;
     },
   );
+
+  // The browser cannot tell us its tab was closed, so the app's Cancel ends
+  // the sign-in instead of leaving it to the timeout.
+  ipcMain.handle(CLOUD_WALLET_CANCEL_LOGIN_CHANNEL, (event, flowId: unknown): void => {
+    if (!fromPlayer(event, CLOUD_WALLET_CANCEL_LOGIN_CHANNEL)) return;
+    if (pending !== null && pending.flowId === flowId) pending.callback.close();
+  });
 
   // The token endpoint answers CORS only for http(s) client origins, so the
   // player's `chiagaming:` document cannot call it. Main makes the request as

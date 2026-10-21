@@ -19,6 +19,7 @@ import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
 import {
   beginOAuthLogin,
+  CLOUD_WALLET_LOGIN_CANCELLED,
   canonicalSignatureRequestId,
   CloudWalletAuthError,
   CloudWalletResponseError,
@@ -195,6 +196,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private monitoringReady = false;
+  /** The sign-in in progress; `disconnect` (the modal's Cancel) aborts it. */
+  private loginAbort: AbortController | null = null;
   private tokenProvider: TokenProvider;
 
   constructor() {
@@ -1004,7 +1007,16 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       // silent resume from finalizing.
       fields: {},
       finalize: async () => {
-        const tokens = await beginOAuthLogin();
+        this.loginAbort?.abort();
+        const loginAbort = new AbortController();
+        this.loginAbort = loginAbort;
+        let tokens: Awaited<ReturnType<typeof beginOAuthLogin>>;
+        try {
+          tokens = await beginOAuthLogin(loginAbort.signal);
+          if (loginAbort.signal.aborted) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
+        } finally {
+          if (this.loginAbort === loginAbort) this.loginAbort = null;
+        }
         this.auth = {
           accessToken: tokens.accessToken,
           refreshToken: tokens.refreshToken,
@@ -1021,6 +1033,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async disconnect(): Promise<void> {
+    this.loginAbort?.abort();
+    this.loginAbort = null;
     clearCloudWalletAuth();
     this.auth = null;
     this.walletOfferProvider = null;

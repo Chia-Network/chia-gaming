@@ -398,6 +398,8 @@ export function waitForOAuthCode(
   });
 }
 
+export const CLOUD_WALLET_LOGIN_CANCELLED = 'Cloud Wallet sign-in was cancelled';
+
 /**
  * Desktop bridge (desktop/src/preload/index.ts). Electron has no passkey
  * support, so the desktop app signs in and approves in the system browser.
@@ -413,17 +415,30 @@ async function browserLoginCode(
   desktop: DesktopCloudWalletBridge,
   authorizeUrl: (redirectUri: string) => string,
   state: string,
+  signal?: AbortSignal,
 ): Promise<{ code: string; redirectUri: string }> {
   const flow = await desktop.beginBrowserLogin();
   if (!flow) throw new Error('Cloud Wallet browser sign-in is unavailable');
-  const result = await desktop.completeBrowserLogin(flow.flowId, authorizeUrl(flow.redirectUri));
+  // Cancelling closes the loopback listener, which settles completeBrowserLogin.
+  const cancel = () => void desktop.cancelBrowserLogin(flow.flowId);
+  if (signal?.aborted) {
+    cancel();
+    throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
+  }
+  signal?.addEventListener('abort', cancel, { once: true });
+  const result = await desktop
+    .completeBrowserLogin(flow.flowId, authorizeUrl(flow.redirectUri))
+    .finally(() => signal?.removeEventListener('abort', cancel));
   if ('error' in result) throw new Error(result.error);
   if (result.state !== state) throw new Error('Cloud Wallet sign-in returned an unexpected state');
   return { code: result.code, redirectUri: flow.redirectUri };
 }
 
-/** Sign in to Cloud Wallet: system browser on desktop, popup on the web. */
-export async function beginOAuthLogin(): Promise<{
+/**
+ * Sign in to Cloud Wallet: system browser on desktop, popup on the web.
+ * Aborting `signal` ends the sign-in and rejects.
+ */
+export async function beginOAuthLogin(signal?: AbortSignal): Promise<{
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
@@ -436,6 +451,7 @@ export async function beginOAuthLogin(): Promise<{
   const state = randomUrlSafe(16);
   const codeVerifier = randomUrlSafe(32);
   const codeChallenge = await createPkceChallenge(codeVerifier);
+  if (signal?.aborted) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
   const authorizeUrl = (redirectUri: string) =>
     buildAuthorizeUrl({
       clientId,
@@ -451,13 +467,16 @@ export async function beginOAuthLogin(): Promise<{
   let popup: Window | null = null;
   const desktop = desktopCloudWalletBridge();
   if (desktop) {
-    ({ code, redirectUri } = await browserLoginCode(desktop, authorizeUrl, state));
+    ({ code, redirectUri } = await browserLoginCode(desktop, authorizeUrl, state, signal));
   } else {
     redirectUri = oauthRedirectUri();
     popup = openOAuthPopup(authorizeUrl(redirectUri));
     if (!popup) {
       throw new Error('Popup blocked — allow popups for Cloud Wallet login');
     }
+    // Closing the popup rejects the waits below.
+    const openPopup = popup;
+    signal?.addEventListener('abort', () => openPopup.close(), { once: true });
 
     const consent = waitForGamingConsentWalletId(popup);
     code = await waitForOAuthCode(state, popup);

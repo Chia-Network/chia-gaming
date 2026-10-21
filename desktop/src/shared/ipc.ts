@@ -22,6 +22,9 @@ export const CLOUD_WALLET_BEGIN_LOGIN_CHANNEL = 'chia-gaming:cloud-wallet-begin-
 /** Opens the authorize URL in the system browser and waits for the callback. */
 export const CLOUD_WALLET_COMPLETE_LOGIN_CHANNEL = 'chia-gaming:cloud-wallet-complete-login';
 
+/** Ends a pending sign-in, e.g. when the user cancels in the app. */
+export const CLOUD_WALLET_CANCEL_LOGIN_CHANNEL = 'chia-gaming:cloud-wallet-cancel-login';
+
 /** Opens a Cloud Wallet page (signature approval) in the system browser. */
 export const CLOUD_WALLET_OPEN_CHANNEL = 'chia-gaming:cloud-wallet-open';
 

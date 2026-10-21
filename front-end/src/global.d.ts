@@ -20,6 +20,7 @@ declare global {
         flowId: string,
         authorizeUrl: string,
       ): Promise<{ code: string; state: string } | { error: string }>;
+      cancelBrowserLogin(flowId: string): Promise<void>;
       openInBrowser(url: string): Promise<boolean>;
       postToken(
         tokenUrl: string,

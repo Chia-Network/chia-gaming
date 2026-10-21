@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 import {
   CLOUD_WALLET_BEGIN_LOGIN_CHANNEL,
+  CLOUD_WALLET_CANCEL_LOGIN_CHANNEL,
   CLOUD_WALLET_COMPLETE_LOGIN_CHANNEL,
   CLOUD_WALLET_OPEN_CHANNEL,
   CLOUD_WALLET_TOKEN_CHANNEL,
@@ -44,6 +45,8 @@ if (window === window.top) {
         flowId,
         authorizeUrl,
       ) as Promise<CloudWalletLoginResult>,
+    cancelBrowserLogin: (flowId: string): Promise<void> =>
+      ipcRenderer.invoke(CLOUD_WALLET_CANCEL_LOGIN_CHANNEL, flowId) as Promise<void>,
     openInBrowser: (url: string): Promise<boolean> =>
       ipcRenderer.invoke(CLOUD_WALLET_OPEN_CHANNEL, url) as Promise<boolean>,
     postToken: (tokenUrl: string, body: string): Promise<CloudWalletTokenResponse> =>

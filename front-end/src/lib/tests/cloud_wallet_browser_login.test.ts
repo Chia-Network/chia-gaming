@@ -20,7 +20,11 @@ setTestGlobal('localStorage', makeStorage());
 setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
 
-import { beginOAuthLogin, signatureRequestApproveUrl } from '../../hooks/cloudWalletOAuth';
+import {
+  beginOAuthLogin,
+  CLOUD_WALLET_LOGIN_CANCELLED,
+  signatureRequestApproveUrl,
+} from '../../hooks/cloudWalletOAuth';
 import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
 
 const REDIRECT_URI = 'http://127.0.0.1:5555/oauth/callback';
@@ -123,6 +127,59 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
     });
 
     await expect(beginOAuthLogin()).rejects.toThrow('access_denied: user cancelled');
+  });
+
+  it('ends a pending sign-in when the user cancels in the app', async () => {
+    mockCloudWallet();
+    // The browser never calls back (e.g. the user closed the tab); only
+    // cancelling the flow in main settles it.
+    let settle: (result: { error: string }) => void = () => {};
+    let browserOpened: () => void = () => {};
+    const waitingForBrowser = new Promise<void>((resolve) => {
+      browserOpened = resolve;
+    });
+    const cancelBrowserLogin = jest.fn(async () => {
+      settle({ error: 'Cloud Wallet sign-in was cancelled' });
+    });
+    setTestGlobal('__chiaCloudWallet', {
+      beginBrowserLogin: async () => ({ flowId: 'flow-1', redirectUri: REDIRECT_URI }),
+      completeBrowserLogin: () =>
+        new Promise((resolve) => {
+          settle = resolve;
+          browserOpened();
+        }),
+      cancelBrowserLogin,
+      openInBrowser: async () => true,
+    });
+    const cloud = new CloudBlockchainInterface();
+    const setup = await cloud.beginConnect('player', true);
+
+    const finalize = setup.finalize();
+    await waitingForBrowser;
+    await cloud.disconnect();
+
+    await expect(finalize).rejects.toThrow('Cloud Wallet sign-in was cancelled');
+    expect(cancelBrowserLogin).toHaveBeenCalledWith('flow-1');
+    expect(cloud.isConnected()).toBe(false);
+  });
+
+  it('does not open the browser when cancelled while sign-in is starting', async () => {
+    const abort = new AbortController();
+    const completeBrowserLogin = jest.fn();
+    const cancelBrowserLogin = jest.fn(async () => {});
+    setTestGlobal('__chiaCloudWallet', {
+      beginBrowserLogin: async () => {
+        abort.abort();
+        return { flowId: 'flow-1', redirectUri: REDIRECT_URI };
+      },
+      completeBrowserLogin,
+      cancelBrowserLogin,
+      openInBrowser: async () => true,
+    });
+
+    await expect(beginOAuthLogin(abort.signal)).rejects.toThrow(CLOUD_WALLET_LOGIN_CANCELLED);
+    expect(completeBrowserLogin).not.toHaveBeenCalled();
+    expect(cancelBrowserLogin).toHaveBeenCalledWith('flow-1');
   });
 });
 
