@@ -468,6 +468,7 @@ export class FeeAttachmentRuntime {
     return this.flight(`cancel:${id}`, async () => {
       const generation = storageRepository.lifecycleGeneration;
       let outcome;
+      let cancellationStage: FeeAttachment['stage'] = entry.stage;
       try {
         outcome = await advanceProviderCancellation(
           generation,
@@ -475,9 +476,15 @@ export class FeeAttachmentRuntime {
           id,
           entry.stage === 'cancelling' ? entry.recoveryId : undefined,
         );
+        if (
+          !storageRepository.isGenerationCurrent(generation) ||
+          identifiedFeeAttachment(this.entries(), id)?.stage !== cancellationStage
+        )
+          return;
         if (outcome.status === 'pending') {
           const current = identifiedFeeAttachment(this.entries(), id);
           if (!current) return;
+          cancellationStage = 'cancelling';
           this.replace(current, {
             ...current,
             stage: 'cancelling',
@@ -506,6 +513,7 @@ export class FeeAttachmentRuntime {
       }
       if (
         storageRepository.isGenerationCurrent(generation) &&
+        identifiedFeeAttachment(this.entries(), id)?.stage === cancellationStage &&
         (outcome.status === 'cancelled' ||
           outcome.status === 'already-terminal' ||
           outcome.status === 'rejected')

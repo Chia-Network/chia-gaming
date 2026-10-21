@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { activeSave } from './session_save_envelope.fixtures';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import type { FeeAttachment, FeeAttachmentOwner } from '../session/feeAttachmentStore';
@@ -168,6 +169,10 @@ describe('FeeAttachmentRuntime lifecycle', () => {
         orphanRisk: 'pre-id-response-lost',
       },
     ]);
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      session: activeSave().session,
+    });
     await storageRepository.write(structuredClone(storageRepository.loadState()));
     const beginCreation = jest
       .fn()
@@ -218,6 +223,10 @@ describe('FeeAttachmentRuntime lifecycle', () => {
         reason: 'response-lost',
       },
     ]);
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      session: activeSave().session,
+    });
     await storageRepository.write(structuredClone(storageRepository.loadState()));
     const cancel = jest
       .fn()

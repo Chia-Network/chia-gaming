@@ -639,12 +639,7 @@ describe('submission pump delivery and runtime replacement', () => {
       await expect(controller.quiesceAndSealForTerminalFinalization()).resolves.toMatchObject({
         coinsOfInterest: [],
       });
-      expect(storageRepository.feeAttachments()).toEqual([
-        expect.objectContaining({
-          providerReservationId: 'trade-terminal-nonblocking',
-          stage: 'cancel-required',
-        }),
-      ]);
+      expect(storageRepository.feeAttachments()).toEqual([]);
     } finally {
       controller.cleanup();
     }
