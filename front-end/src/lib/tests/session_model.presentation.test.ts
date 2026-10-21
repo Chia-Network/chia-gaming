@@ -124,7 +124,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
     expect(
       selectGameDashboardView(null, { setupPending: true, peerLiveness: 'degraded' }),
-    ).toMatchObject({ bannerTone: 'pings-bad' });
+    ).toMatchObject({ bannerTone: 'playing' });
 
     const active = createSessionModel({
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
@@ -141,6 +141,24 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
     });
     expect(selectGameDashboardView(handshaking, { peerLiveness: null })).toMatchObject({
+      bannerTone: 'playing',
+    });
+    expect(selectGameDashboardView(handshaking, { peerLiveness: 'degraded' })).toMatchObject({
+      bannerTone: 'playing',
+    });
+
+    const waitingForSignature = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ShuttingDown' } },
+    });
+    expect(
+      selectGameDashboardView(waitingForSignature, { peerLiveness: 'degraded' }),
+    ).toMatchObject({
+      bannerTone: 'pings-bad',
+    });
+    const waitingForChain = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'ShutdownTransactionPending' } },
+    });
+    expect(selectGameDashboardView(waitingForChain, { peerLiveness: 'degraded' })).toMatchObject({
       bannerTone: 'playing',
     });
 

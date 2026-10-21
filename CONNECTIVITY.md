@@ -435,12 +435,16 @@ The hub does not create a session. It can only advise and relay:
   WASM consumer to that same transport after consent without resetting its
   counters.
 - **Peer liveness**: 30-second degradation threshold (no dead-from-timeout)
-  with 5-second polling interval managed by `PeerSession`. Yellow when the hub
+  with 5-second polling interval managed by Shell. Yellow when the hub
   reports the peer disconnected (`delivery_failure` / `peer_unavailable`) or
   no matching peer frame has arrived for 30 seconds. Either is reversible on
   inbound traffic or `peer_available`. Dead state only from explicit go-on-chain
   or FOAD signals. On-chain / unroll banner tone beats yellow. Hub liveness
   with 45-second timeout.
+  Expected silence during initial consent/handshake does not show the yellow
+  warning: the recipient starts sending keepalives only after Accept. Once
+  `ShutdownTransactionPending` reports a fully signed close awaiting chain
+  confirmation, outgoing peer keepalives stop and the warning is suppressed.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
 - **Application persistence**: `StorageRepository` atomically claims and reads
@@ -628,7 +632,7 @@ The session dashboard has a full-height left-edge color rail:
 | ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `idle`      | Gray   | No session / never set up                                                                                               |
 | `playing`   | Green  | Setup, handshake, off-chain play, cooperative shutdown                                                                  |
-| `pings-bad` | Yellow | Same as playing, but `peerLiveness === 'degraded'` (hub says the peer is disconnected, or no peer frame for 30 seconds) |
+| `pings-bad` | Yellow | `peerLiveness === 'degraded'` while peer cooperation is required, after initial consent/handshake and before the signed close is pending on-chain |
 | `on-chain`  | Red    | Going on-chain, unrolling, or a resolved unroll that still has games                                                    |
 | `ended`     | Blue   | Terminal dashboard still showing (clean resolve, failed, abandoned)                                                     |
 
@@ -644,9 +648,12 @@ hint.
 1. `sessionPhase === 'none' || 'resolved'`, or
 2. `peerLiveness === 'dead'`
 
-Clean shutdown does **not** mark the peer dead on its own. Keepalives and the
-small allowlist of shutdown-related peer messages continue until local
-shutdown completes. Successful/terminal session exit does not send
+Clean shutdown does **not** mark the peer dead on its own. Keepalives continue
+while `ShuttingDown` still requires a peer signature, then stop at
+`ShutdownTransactionPending`. Reliable shutdown-related messages, replay, and
+acknowledgements continue until local shutdown completes; incoming keepalives
+are still processed so they can retry pending durable acknowledgements.
+Successful/terminal session exit does not send
 `session_reject` (that signal means decline/abort). If a `session_reject`
 does arrive during pre-active matchmaking, it is honored as an abort: cancel
 the attempt (including any in-flight async session start), surface
