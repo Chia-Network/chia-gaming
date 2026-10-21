@@ -3,6 +3,6 @@
 
 (export (A B C D)
     (list
-        (make A . B)
-        (make . #(A B C D))
-        (make A B C D)))
+        (make (A . B))
+        (make #(A B C D))
+        (make (A B C D))))

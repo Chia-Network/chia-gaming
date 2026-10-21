@@ -1,7 +1,8 @@
-; Construct runtime values with the same pair structure as the argument tail.
-; (make A . B) expands to (c A B).
-; (make . #(A B C D)) expands to (c (c A B) (c C D)).
-; (make A B C D) constructs a proper list.
+; Construct runtime values with the same pair structure as a single template.
+; (make (A . B)) expands to (c A B).
+; (make #(A B C D)) expands to (c (c A B) (c C D)).
+; (make (A B C D)) constructs a proper list.
+; The template adds no runtime list wrapper.
 ; Leaves must be atoms (such as variable names); pairs describe tree structure,
 ; not function calls. Expansion happens entirely at compile time.
 (defun make-code (TREE)
@@ -9,4 +10,4 @@
         (list 4 (make-code (f TREE)) (make-code (r TREE)))
         TREE))
 
-(defmac make TREE (make-code TREE))
+(defmac make (TREE) (make-code TREE))

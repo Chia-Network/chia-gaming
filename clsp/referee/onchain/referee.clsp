@@ -99,7 +99,7 @@
             (new_move infohash_c new_mover_share new_max_move_size . tail) args
             new_puzzle_hash (curry_hashes MOD_HASH
                 (shatree
-                    (make . #(WAITER_PUBKEY MOVER_PUBKEY
+                    (make #(WAITER_PUBKEY MOVER_PUBKEY
                                 TIMEOUT AMOUNT MOD_HASH NONCE
                                 new_move new_max_move_size infohash_c
                                 new_mover_share INFOHASH_B))))
