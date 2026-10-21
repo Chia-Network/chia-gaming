@@ -1101,7 +1101,10 @@ const Shell = () => {
         walletConnected: walletConnected ?? walletConnectedRef.current,
         blockchainReady: blockchainReadyRef.current,
         terminalSave: save?.session?.phase === 'terminal',
-        hasCradle: save?.session?.phase === 'live' || save?.session?.phase === 'pre-handshake',
+        // A peerless pre-handshake record no longer reserves the lobby.
+        hasCradle:
+          save?.session?.phase === 'live' ||
+          (save?.session?.phase === 'pre-handshake' && !!save.session.pairing.peerId),
         pending: isAcceptSessionTransition(shellTransitionRef.current),
         persistInFlight: freshStartPersistInFlightRef.current,
       });
@@ -2241,9 +2244,7 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            // Match getPresence: session/restore obligation OR the full-node-peer
-            // wait. A non-terminal live / pre-handshake cradle (which is also the
-            // only source of `pairing?.peerId`) reports the restore reason.
+            // Registration uses the same presence calculation as reconnects.
             const restoreBusy = hubPresenceNow();
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
@@ -2267,10 +2268,7 @@ const Shell = () => {
               } else {
                 bindPeerMessageHandler(peerSessionRef.current);
               }
-              // Restore never goes through startFreshSessionWithPeer, which is
-              // otherwise the only place that marks the hub busy. Use restoreBusy
-              // (session/wallet/peer-wait); terminal saves stay available unless
-              // walletless or the full-node-peer wait still requires busy.
+              // Restore does not pass through the fresh-session busy update.
               conn.setBusy(restoreBusy);
             } else if (
               save?.session?.phase === 'live' ||
