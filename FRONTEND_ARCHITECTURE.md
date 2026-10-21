@@ -1374,7 +1374,12 @@ Shell manages wallet connections through two abstractions defined in
   `description` for the setup modal. Examples: the simulator's initial balance
   (`bigint`). Cloud Wallet sets `skipQr: true` with an empty `fields` record, so
   the modal is a sign-in prompt whose Connect click opens the OAuth popup from
-  `finalize()`. Its OAuth client id and API/UI URLs are fixed per build and
+  `finalize()`. The desktop app has no passkey support, so there `finalize()`
+  signs in through the system browser instead: the preload's `__chiaCloudWallet`
+  bridge binds a one-time `127.0.0.1` loopback callback (RFC 8252, registered as
+  `http://127.0.0.1/oauth/callback`), and token requests go through the main
+  process because the token endpoint's CORS excludes `chiagaming://app`. The
+  consented wallet then comes from the grant lookup. Its OAuth client id and API/UI URLs are fixed per build and
   chosen by the selected network at call time in `cloudWalletConfig.ts`
   (mainnet: `https://api.vault.chia.net`, `https://vault.chia.net`; testnet:
   `https://api.vault.chiatest.net`, `https://vault.chiatest.net`).
@@ -1401,7 +1406,9 @@ Shell manages wallet connections through two abstractions defined in
   `orphanRisk: 'pre-id-response-lost'` survives both paths and any eventual
   created trade, preserving a typed warning that the unidentified first request
   may still exist. Approval messages must match origin, popup source, and
-  canonical request ID, with exact cleanup. Deployed
+  canonical request ID, with exact cleanup. On desktop, approval opens in the
+  system browser once per signature request per run, and polling alone observes
+  the outcome. Deployed
   WalletConnect is best-effort throughout because it lacks end-to-end create
   idempotency and response-loss reconciliation. For either pre-ID Cloud
   uncertainty or WalletConnect uncertainty, `WalletProviderRegistry` readiness

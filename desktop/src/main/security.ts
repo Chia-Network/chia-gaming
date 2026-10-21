@@ -1,7 +1,5 @@
-import path from 'node:path';
-
 import { app } from 'electron';
-import type { Session, WebPreferences } from 'electron';
+import type { Session } from 'electron';
 
 import { isAppUrl } from './appProtocol';
 import { log } from './log';
@@ -72,39 +70,12 @@ export function installSessionSecurity(target: Session, policy: PolicyRef): void
   );
 }
 
-function popupWebPreferences(): WebPreferences {
-  return {
-    // Do not inherit the player preload; Cloud Wallet pages are remote.
-    preload: path.join(app.getAppPath(), 'dist', 'preload', 'empty.cjs'),
-    sandbox: true,
-    contextIsolation: true,
-    nodeIntegration: false,
-    nodeIntegrationInWorker: false,
-    nodeIntegrationInSubFrames: false,
-    webSecurity: true,
-    allowRunningInsecureContent: false,
-    experimentalFeatures: false,
-    webviewTag: false,
-    navigateOnDragDrop: false,
-    spellcheck: false,
-    devTools: !app.isPackaged,
-  };
-}
-
 export function installWebContentsSecurity(policy: PolicyRef): void {
   app.on('web-contents-created', (_event, contents) => {
     installWebContentsTransportSecurity(contents);
 
+    // Nothing opens in-app windows: Cloud Wallet pages go to the system browser.
     contents.setWindowOpenHandler((details) => {
-      const origin = originOfUrl(details.url);
-      if (origin !== null && policy.current.allowedPopupOrigins.has(origin)) {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            webPreferences: popupWebPreferences(),
-          },
-        };
-      }
       log.warn(`blocked window.open for ${details.url}`);
       return { action: 'deny' };
     });

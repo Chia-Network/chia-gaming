@@ -7,7 +7,6 @@ import {
   appAssetResponsePolicy,
   BoundedAssetReader,
   isAppSchemeRequestAllowed,
-  isOAuthCallbackPath,
 } from './appProtocolPolicy';
 import { APP_HOST, APP_ORIGIN, APP_SCHEME } from './appUrl';
 import { log } from './log';
@@ -104,15 +103,10 @@ export function serveAppScheme(rendererRoot: string, policy: PolicyRef): void {
       return textResponse('Forbidden', 403);
     }
 
-    let filePath = resolveRequestedFile(rendererRoot, url.pathname);
+    const filePath = resolveRequestedFile(rendererRoot, url.pathname);
     if (filePath === null) {
       log.warn(`rejected out-of-root request: ${url.pathname}`);
       return textResponse('Forbidden', 403);
-    }
-    // Cloud Wallet OAuth returns the popup to this path. There is no file at
-    // that name; serve the player document so App.tsx can render OAuthCallback.
-    if (isOAuthCallbackPath(url.pathname)) {
-      filePath = path.join(rendererRoot, 'index.html');
     }
     // Read through Node's fs rather than `net.fetch(file://…)`: asar support is
     // implemented as an fs shim, so this is what lets the renderer stay sealed

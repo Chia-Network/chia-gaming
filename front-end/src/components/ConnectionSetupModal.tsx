@@ -169,7 +169,7 @@ export function ConnectionSetupModal({
 
       <div className="flex items-center justify-center gap-2">
         {onCancel ? (
-          <Button variant="outline" onClick={onCancel} disabled={connecting}>
+          <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
         ) : null}

@@ -16,9 +16,11 @@ export function isNavigationAllowed(
   if (url === 'about:blank' || isAppUrl(url)) {
     return true;
   }
-  const origin = originOfUrl(url);
   if (!isMainFrame) {
+    const origin = originOfUrl(url);
     return origin !== null && policy.allowedFrameOrigins.has(origin);
   }
-  return origin !== null && policy.allowedPopupOrigins.has(origin);
+  // Only app documents load in top-level windows; Cloud Wallet pages open in
+  // the system browser instead.
+  return false;
 }
