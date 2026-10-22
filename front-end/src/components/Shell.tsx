@@ -646,6 +646,7 @@ const Shell = () => {
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
+  const [showTransactionPublishControl, setShowTransactionPublishControl] = useState(false);
   const peerConn = shellState.peerConn;
   const dashboardSessionModel = shellState.dashboardSessionModel;
   const dashboardSessionModelRef = useRef<SessionModel | null>(null);
@@ -831,6 +832,34 @@ const Shell = () => {
     setTransactionPublishNerfed(isTransactionPublishNerfed());
     return subscribeTransactionPublishNerfed(setTransactionPublishNerfed);
   }, []);
+  useEffect(() => {
+    if (showTransactionPublishControl) return;
+    const sequence = 'nerf^';
+    let buffer = '';
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        target?.closest?.(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+        )
+      ) {
+        buffer = '';
+        return;
+      }
+      if (event.key.length !== 1) return;
+      const next = buffer + event.key;
+      if (next === sequence) {
+        setShowTransactionPublishControl(true);
+      } else {
+        buffer = sequence.startsWith(next) ? next : sequence.startsWith(event.key) ? event.key : '';
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showTransactionPublishControl]);
   const toggleTransactionPublishNerf = useCallback(() => {
     if (isTransactionPublishNerfed()) {
       setTransactionPublishNerf(false);
@@ -1072,7 +1101,10 @@ const Shell = () => {
         walletConnected: walletConnected ?? walletConnectedRef.current,
         blockchainReady: blockchainReadyRef.current,
         terminalSave: save?.session?.phase === 'terminal',
-        hasCradle: save?.session?.phase === 'live' || save?.session?.phase === 'pre-handshake',
+        // A peerless pre-handshake record no longer reserves the lobby.
+        hasCradle:
+          save?.session?.phase === 'live' ||
+          (save?.session?.phase === 'pre-handshake' && !!save.session.pairing.peerId),
         pending: isAcceptSessionTransition(shellTransitionRef.current),
         persistInFlight: freshStartPersistInFlightRef.current,
       });
@@ -2214,9 +2246,7 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            // Match getPresence: session/restore obligation OR the full-node-peer
-            // wait. A non-terminal live / pre-handshake cradle (which is also the
-            // only source of `pairing?.peerId`) reports the restore reason.
+            // Registration uses the same presence calculation as reconnects.
             const restoreBusy = hubPresenceNow();
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
@@ -2240,10 +2270,7 @@ const Shell = () => {
               } else {
                 bindPeerMessageHandler(peerSessionRef.current);
               }
-              // Restore never goes through startFreshSessionWithPeer, which is
-              // otherwise the only place that marks the hub busy. Use restoreBusy
-              // (session/wallet/peer-wait); terminal saves stay available unless
-              // walletless or the full-node-peer wait still requires busy.
+              // Restore does not pass through the fresh-session busy update.
               conn.setBusy(restoreBusy);
             } else if (
               save?.session?.phase === 'live' ||
@@ -2614,7 +2641,7 @@ const Shell = () => {
           : undefined);
       // Terminal/clean finish must not send session_reject — that signal means
       // decline/abort. Cooperative close already completed through the protocol;
-      // the peer should keep pinging until its own local shutdown finishes.
+      // the peer may still need acknowledgement of its final reliable close.
       const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
       const finishCancellation = () => {
         if (!retainRejectTransport) {
@@ -3848,11 +3875,14 @@ const Shell = () => {
             <span className="text-2xl font-black tracking-wide text-canvas-text-contrast">
               BETA
             </span>
-            <img
-              src="images/chia_logo.png"
-              alt="Chia Logo"
-              className="max-w-12 h-auto"
-              style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
+            <span
+              role="img"
+              aria-label="Chia Logo"
+              className="block w-12 shrink-0 aspect-[96/37] bg-current text-canvas-text-contrast"
+              style={{
+                mask: 'url(images/chia-wordmark.svg) center / contain no-repeat',
+                WebkitMask: 'url(images/chia-wordmark.svg) center / contain no-repeat',
+              }}
             />
             <button
               onClick={() => setIsDark((d) => !d)}
@@ -3893,15 +3923,17 @@ const Shell = () => {
               overflow: 'auto',
             }}
           >
-            <Button
-              variant={transactionPublishNerfed ? 'solid' : 'outline'}
-              color={transactionPublishNerfed ? 'primary' : 'neutral'}
-              size="sm"
-              className="absolute right-4 top-4"
-              onClick={toggleTransactionPublishNerf}
-            >
-              Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
-            </Button>
+            {showTransactionPublishControl && (
+              <Button
+                variant={transactionPublishNerfed ? 'solid' : 'outline'}
+                color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                size="sm"
+                className="absolute right-4 top-4"
+                onClick={toggleTransactionPublishNerf}
+              >
+                Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+              </Button>
+            )}
             <ConnectionSetupModal
               open={showConnectionSetupModal && !!connectionSetup}
               title={connectionSetup?.title}

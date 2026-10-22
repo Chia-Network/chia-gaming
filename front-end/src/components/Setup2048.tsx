@@ -104,6 +104,7 @@ export function Setup2048() {
   const boardRef = useRef<HTMLDivElement>(null);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const status = setup2048Status(game.board);
+  const reachedGoal = game.board.some((value) => value >= 128);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -200,11 +201,19 @@ export function Setup2048() {
           ))}
         </div>
       </div>
-      <p role="status" className="text-sm" aria-live="polite">
+      <p
+        role="status"
+        className={
+          status !== 'over' && reachedGoal
+            ? 'text-base font-bold text-canvas-text-contrast'
+            : 'text-sm'
+        }
+        aria-live="polite"
+      >
         {status === 'over'
           ? 'No moves left. Try again!'
-          : game.board.some((value) => value >= 128)
-            ? 'You did it! See how far you can get!'
+          : reachedGoal
+            ? 'You won! Keep playing and see how far you can get!'
             : 'Combine matching tiles to reach 128.'}
       </p>
       {status === 'over' && !game.pending ? (

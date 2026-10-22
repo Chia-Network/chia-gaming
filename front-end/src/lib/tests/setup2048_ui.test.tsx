@@ -122,7 +122,7 @@ describe('setup challenge UI', () => {
     for (const direction of WINNING_RUN) move(direction);
     expect(board().some((cell) => cell.endsWith(': 128'))).toBe(true);
     expect(renderer.root.findByProps({ role: 'status' }).children.join('')).toBe(
-      'You did it! See how far you can get!',
+      'You won! Keep playing and see how far you can get!',
     );
     expect(buttons()).not.toContain('Play again');
     expect(buttons()).not.toContain('Keep playing');
@@ -130,7 +130,7 @@ describe('setup challenge UI', () => {
     move('right');
     expect(board()).not.toEqual(continued);
     expect(renderer.root.findByProps({ role: 'status' }).children.join('')).toBe(
-      'You did it! See how far you can get!',
+      'You won! Keep playing and see how far you can get!',
     );
   });
 
