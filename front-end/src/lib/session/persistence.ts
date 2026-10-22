@@ -73,7 +73,6 @@ import {
 } from './persistencePrimitives';
 import { decodeChannelFundingEntries } from './channelFundingValidation';
 import { decodeFeeAttachments } from './feeAttachmentValidation';
-import { providerScopeKey } from './providerKeys';
 import { decodeProviderScope } from './providerValidation';
 
 export { snapshotFromSessionModel } from './sessionSnapshot';
@@ -710,14 +709,8 @@ export function decodeDurableApplicationState(value: unknown): ParsedSessionSave
   ) {
     throw new Error('Garbled application state: provider-backed operations require walletContext');
   }
-  if (
-    walletContext &&
-    [...channelFundingOperations, ...feeAttachments].some(
-      (entry) => providerScopeKey(entry.owner.providerScope) !== providerScopeKey(walletContext),
-    )
-  ) {
-    throw new Error('Garbled application state: provider operation owner/context mismatch');
-  }
+  // walletContext identifies the current session's wallet. Retired sessions'
+  // unresolved operations retain their own provider scopes across wallet changes.
   const rejectionTransports = parseRejectionTransports(envelope.rejectionTransports);
   const common = {
     schema: DURABLE_APPLICATION_STATE_SCHEMA,

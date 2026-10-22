@@ -375,14 +375,10 @@ describe('DurableApplicationState strict validation', () => {
     expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
   });
 
-  it('rejects an operation whose provider scope differs from the aggregate context', () => {
+  it('preserves prior-wallet operations when the current session uses a different wallet', () => {
     const state = structuredClone(completeAggregate());
-    state.channelFundingOperations[0]!.owner.providerScope = {
-      provider: 'walletconnect',
-      fingerprint: '999',
-      chainId: 'chia:testnet11',
-    };
-    expect(() => decodeDurableApplicationState(state)).toThrow(/owner\/context mismatch/);
+    state.walletContext = { provider: 'cloud', walletId: 'new-wallet' };
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
 
   it('permits no session with unresolved channel funding operations', () => {

@@ -329,6 +329,39 @@ could be worse than asking.
 
 This is always-on — not a feature the user opts into.
 
+#### Session lifetime and wallet connectivity
+
+An ongoing session, its peer connection, and its wallet connection have separate
+lifetimes. A session owns its protocol state, channel keys, peer identity, and
+watched coins. Disconnecting a wallet does not end or abandon that session,
+including during a handshake. Wallet-dependent work pauses until a ready backend
+is attached; losing connectivity is not a terminal protocol event.
+
+Hub connectivity is completely independent of wallet connectivity. Wallet
+connect, disconnect, switch, and failure events must leave the hub lobby,
+relay, and reconnect lifecycle intact. The app can connect or reconnect to a
+hub without a wallet; hub changes must also leave wallet connectivity intact.
+The hub uses the app routing identity. Walletless presence is busy and Accept
+stays disabled until wallet readiness returns, but those availability gates
+must never establish or tear down the hub connection.
+
+Connecting another wallet on the same blockchain resumes the existing session.
+The new backend registers the session's watched coins and resumes chain queries
+and submissions. New wallet operations use the connected provider. Reservations
+already created by another wallet keep their original owner: reconnecting does
+not transfer that wallet's accounts, offer identifiers, or coin-spending authority.
+An unmet funding request may be reoffered through the current wallet; old wallet
+flights become obsolete and their late replies cannot advance the session.
+Already accepted funding material and exact transaction replay remain session-owned.
+Cancellation of superseded or retired reservations is best effort and never blocks
+work through the current wallet.
+
+Changing blockchains cannot resume the same channel. The network selector stays
+locked while a session is unfinished. Any future flow that permits this change
+must prominently warn that it interrupts the pending session and require an
+explicit choice before changing networks. Ending or abandoning a session is an
+explicit session action, separate from disconnecting its wallet.
+
 #### WASM–JS trust model
 
 The WASM module and its host JavaScript execute in the **same trust domain** —
@@ -558,8 +591,10 @@ orphan evidence and cannot synthesize a cancellation ID. An attached fee
 source remains retained while Rust may replay its current exact variant;
 wallet acknowledgement does not retire it, and Rust submission retirement
 moves its exact `providerReservationId` through typed cancellation before removal.
-Controller retirement promotes only `reserved` entries; replay-retained fee
-sources stay retained until Rust explicitly retires their stable submission.
+Ordinary controller replacement preserves replay-retained fee sources. Terminal
+completion and explicit abandonment discard replay ownership and forget the
+session's reservations. Cancellation through the original wallet is attempted
+where available, without awaiting success or retaining a recovery banner.
 Only reservation-creating offer, funding, or fee creation has this deliberate
 duplicate-reservation risk: before a provider returns an ID, a lost response
 can hide a successful external reservation, so one replacement is allowed on
@@ -570,19 +605,24 @@ no orphan-risk provenance.
 Wallet mutation starts only after the aggregate claim is installed. Malformation
 of any nested field rejects the whole root and remains visible on Resume /
 Start Over. A connected provider/account scope that differs from the durable
-owner is shown as a recovery mismatch rather than touching the wrong wallet.
+operation owner is shown as a recovery mismatch rather than touching the wrong wallet.
+`walletContext` identifies the current session's connected wallet; unresolved
+operations keep their own original provider scopes across wallet changes,
+while their session still owns unresolved protocol work or exact replay.
 
 The complete aggregate is written in one IndexedDB transaction. Strict
 validation rejects unknown or missing fields, duplicate identified
-`providerReservationId` values within or across both slices, provider scope
-mismatch, invalid discriminants, and non-current versions. Persistence failure does not gate
+`providerReservationId` values within or across both slices, malformed provider
+scopes, invalid discriminants, and non-current versions. Persistence failure does not gate
 offer use, transaction release, or cancellation; the latest in-memory root is
 captured again on later activity. Only the active-blockchain lifecycle attaches
-the cancellation RPC. A failed cancellation stays durable and retries only on
-restore or matching wallet reconnect/readiness. There is no timer, immediate
-retry loop, broad terminal sweep, or generic wallet-operation, settlement, or
-session cancellation path. Identified cleanup remains durable but does not
-block terminal capture; only funding material still owed to Rust blocks
+the cancellation RPC. While a session remains active, failed cancellation records may be retained as
+optional retry hints for restore or matching wallet reconnect/readiness. They
+never require reconnecting the old account, block the current wallet, or keep a
+recovery banner visible. There is no timer or immediate retry loop. Terminal completion or explicit
+abandonment retires both reservation slices with best-effort cancellation;
+cold terminal or empty-session restore forgets any leftover cleanup. Cancellation
+failure never prevents retirement or the use of another wallet; only funding material still owed to Rust blocks
 finalization. Going offline detaches the provider RPC without discarding
 cleanup; retirement records the required transitions, and the next matching
 lifecycle attachment drains them.
@@ -1346,7 +1386,7 @@ the projected `ChannelStatus` leaves Cancel-only setup states. The core remains
 authoritative for that commitment boundary.
 
 `abortAccept` is the single Accept abort API (Cancel, `session_reject`,
-`delivery_failure`, remap, disconnect-during-Accept). It owns `session_reject`
+`delivery_failure`, peer remap). It owns `session_reject`
 when a peer id is supplied and chooses freeze-safe disposition:
 pre-`replaceSession` → peer-only abandon via atomic `acceptAborted` (finished
 freeze + terminal IndexedDB stay); after the write lands → full attempt
@@ -1631,8 +1671,8 @@ both errors mean the old owner dies. A new claimant rehydrates the latest
 flushed durable whole root and independently finalizes, with no snapshot or
 transient work transferred across generations. Unresolved reservation creation
 or identification, funding material still owed to Rust, and other unresolved
-protocol work remain capture blockers. Identified funding or fee cancellation
-residue remains durable and may survive terminal capture.
+protocol work remain capture blockers. Identified funding or fee cancellation residue is retired at terminal capture;
+original-provider cancellation is best effort and does not gate completion.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes

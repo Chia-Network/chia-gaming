@@ -31,17 +31,22 @@ No connectivity decision affects the blockchain itself.
 
 ### Wallet
 
-The wallet is an interface to the blockchain. A durable session binds one
-canonical provider/account scope; reconnecting that scope resumes work, while a
-different connected scope is shown as a mismatch and performs no wallet RPC.
-This prevents funding and cleanup obligations from being applied to another
-account. Chain and peer protocols remain independent of wallet connectivity.
+The wallet is an interface to the blockchain. The connected provider supplies
+new wallet operations, while each existing funding or fee reservation retains
+its original provider/account ownership. Switching wallets does not transfer
+those reservations or their cancellation authority. Chain and peer protocols
+remain independent of wallet connectivity.
 
 The wallet is **orthogonal** to the other three axes. It can be connected or
 disconnected in any combination with hub, peer, and session state. No
 other connection depends on the wallet being up. The wallet affects only
 whether blockchain operations (signing transactions, reading balances) can
 make progress.
+
+The hub uses the app's routing identity. An existing peer session can continue
+communicating through the relay while wallet work is paused. Walletless presence
+is busy and Accept is disabled until a wallet is ready. These availability gates
+leave hub connectivity unchanged.
 
 WalletConnect is an external protocol. The player app can adapt around its
 quirks at the edges (for example BigInt serialization handling), but it does
@@ -56,6 +61,16 @@ A hub is a specific server. The hub is its matchmaking HTML UX (player list and 
 Hub A and Hub B are distinct entities — different lobbies, different
 pairings, different relay channels. The player connects to zero or one hub
 at a time.
+
+**Hub connectivity is completely independent of wallet connectivity.** Connecting,
+disconnecting, switching, or losing a wallet must leave the hub connection,
+lobby, relay, and reconnect lifecycle intact. The user can connect to a hub and
+remain connected without a wallet. Connecting, disconnecting, or switching hubs
+must likewise leave the wallet connection intact.
+
+Wallet readiness may change matchmaking availability and gate wallet-dependent
+actions. Reporting busy or disabling Accept must never disconnect the hub or
+prevent it from connecting or reconnecting.
 
 The hub connection auto-reconnects with backoff on transient failures. A
 hub is considered permanently dead only after the retry budget is
@@ -190,7 +205,9 @@ Specific rules:
   unchanged and stays mounted; blockchain operations just can't make progress
   until a wallet is reconnected. While walletless the app reports `busy` to the
   hub (it cannot fund or resolve a channel, so the lobby must not offer
-  matches), and any pending pre-Active matchmaking attempt is cancelled.
+  matches). Existing pending consent and handshakes remain intact; Accept stays
+  disabled until wallet readiness returns. Hub connection and reconnection remain
+  available throughout.
 
 ---
 
@@ -200,7 +217,7 @@ Specific rules:
 
 | Action                        | Allowed? | Warning                                                                                                                                     | Consequence                                                                                                                            |
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Disconnect                    | Always   | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection kept. Pending pre-Active matchmaking cancelled. App reports `busy`. Session save preserved. |
+| Disconnect                    | Always   | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection and reconnect lifecycle unchanged. Pending consent and handshakes retained; Accept disabled. App reports `busy`. Session save preserved. |
 | Reconnect (same or different) | Always   | None                                                                                                                                        | Stalled operations resume. `busy` recomputed from session phase and any in-progress non-terminal restore cradle. Session continues.    |
 
 ### Hub
@@ -488,7 +505,7 @@ The hub does not create a session. It can only advise and relay:
   save is preserved across wallet disconnects; blockchain operations stall
   until a wallet is reconnected. While walletless the app reports `busy`
   (`shouldReportHubBusy(phase, false)` forces busy regardless of phase) and
-  cancels any pending pre-Active matchmaking attempt; wallet reconnect
+  retains pending consent and handshakes with Accept disabled; wallet reconnect
   recomputes presence from the session phase and any in-progress non-terminal
   restore cradle (phase alone is often still `none` mid-resume). The Choose
   Connection network toggle is locked while a session binds a genesis
