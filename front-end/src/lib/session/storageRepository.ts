@@ -64,6 +64,7 @@ class StorageRepository {
   private fenced = false;
   private mutationTail: Promise<void> = Promise.resolve();
   private readonly authorityLostListeners = new Set<(reason: StorageAuthorityLossReason) => void>();
+  private readonly walletOperationListeners = new Set<() => void>();
   private readonly lifecycleListeners = new Set<
     (generation: number, event: StorageLifecycleEvent) => void
   >();
@@ -87,6 +88,15 @@ class StorageRepository {
   onLifecycle(listener: (generation: number, event: StorageLifecycleEvent) => void): () => void {
     this.lifecycleListeners.add(listener);
     return () => this.lifecycleListeners.delete(listener);
+  }
+
+  onWalletOperationsChange(listener: () => void): () => void {
+    this.walletOperationListeners.add(listener);
+    return () => this.walletOperationListeners.delete(listener);
+  }
+
+  private notifyWalletOperations(): void {
+    for (const listener of this.walletOperationListeners) listener();
   }
 
   hasAuthority(): boolean {
@@ -218,6 +228,7 @@ class StorageRepository {
     const next = sessionState.capSessionHistories(transform(structuredClone(this.root)));
     decodeDurableApplicationState(next);
     this.root = next;
+    this.notifyWalletOperations();
     return structuredClone(next);
   }
 
@@ -353,6 +364,7 @@ class StorageRepository {
     this.fenced = false;
     this.mutationTail = Promise.resolve();
     this.authorityLostListeners.clear();
+    this.walletOperationListeners.clear();
     this.lifecycleListeners.clear();
     this.pendingMutationBarrierForTests = null;
     this.pendingCheckpointHoldForTests = null;
@@ -398,6 +410,7 @@ class StorageRepository {
       throw new Error('Internal wallet consistency error: operations require walletContext');
     }
     this.root = { ...this.root, channelFundingOperations: structuredClone([...entries]) };
+    this.notifyWalletOperations();
     void this.persistDomainMutation().catch(() => {});
   }
 
@@ -407,6 +420,7 @@ class StorageRepository {
       throw new Error('Internal wallet consistency error: fee attachments require walletContext');
     }
     this.root = { ...this.root, feeAttachments: structuredClone([...entries]) };
+    this.notifyWalletOperations();
     void this.persistDomainMutation().catch(() => {});
   }
 
