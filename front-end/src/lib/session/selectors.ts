@@ -341,11 +341,18 @@ function selectBannerTone(
   options: GameDashboardSelectorOptions,
 ): BannerTone {
   if (options.setupPending) {
-    return options.peerLiveness === 'degraded' ? 'pings-bad' : 'playing';
+    return 'playing';
   }
   if (!model || options.hasSession === false) return 'idle';
   if (isOnChainBanner(model)) return 'on-chain';
   if (isTerminalChannelSnapshot(model.channel.status)) return 'ended';
+  // Initial consent can wait without a peer keepalive sender. A signed close
+  // waiting for chain confirmation no longer needs peer cooperation.
+  if (
+    model.channel.status.state === 'Handshaking' ||
+    model.channel.status.state === 'ShutdownTransactionPending'
+  )
+    return 'playing';
   if (options.peerLiveness === 'degraded') return 'pings-bad';
   return 'playing';
 }

@@ -429,6 +429,13 @@ transport.
 This keepalive is independent from the hub control keepalive described in
 `WEBSOCKET_PROTOCOL.md`. It is not a retransmission signal.
 
+The recipient does not start its keepalive sender until it accepts a session
+proposal, so silence during initial consent is not a liveness failure. After
+both closing signatures have been assembled and validated
+(`ShutdownTransactionPending`), outgoing keepalives stop: only chain
+confirmation remains. Reliable final messages, replay, acknowledgements, and
+incoming keepalive processing remain available until terminal cleanup.
+
 ### 5.6 Invalid reliable frames
 
 The host ignores:

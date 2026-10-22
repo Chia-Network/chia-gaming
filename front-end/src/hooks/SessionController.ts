@@ -837,7 +837,13 @@ export class SessionController implements PollingGameSession {
   sendPeerKeepalive(): void {
     // The hub's server heartbeat also calls this, so background timer
     // throttling cannot make an otherwise responsive peer appear stuck.
-    if (this.keepaliveTimer !== null) this.peerSendKeepalive?.();
+    // Once the signed close is ready, only chain confirmation remains. Keep
+    // reliable close-message delivery and acknowledgements independent of this.
+    if (
+      this.keepaliveTimer !== null &&
+      this.lastChannelStatus?.state !== 'ShutdownTransactionPending'
+    )
+      this.peerSendKeepalive?.();
   }
 
   private stopKeepaliveTimer() {
