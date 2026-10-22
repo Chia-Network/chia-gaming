@@ -1,5 +1,7 @@
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{
+    chia_dialect, AllocEncoder, Node, Program, Puzzle, Sha256Input, Sha256tree,
+};
 use crate::referee::types::{parse_validator_result, ParsedRefereeSolution};
 use crate::utils::proper_list;
 
@@ -121,10 +123,15 @@ fn run_referee_slash_with_mock(
         ],
     )
     .expect("referee argument tree");
-    let slash_args = list_from_nodes(
-        allocator,
-        &[previous_state, mock_validator_clvm, evidence, payout_ph],
-    );
+    let slash_args = (
+        (
+            Node(previous_state),
+            (Node(mock_validator_clvm), Node(evidence)),
+        ),
+        Node(payout_ph),
+    )
+        .to_clvm(allocator)
+        .unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -184,10 +191,12 @@ fn run_referee_move_with_max_size(new_max_move_size: &[u8]) -> Result<NodePtr, S
         .allocator()
         .new_atom(new_max_move_size)
         .expect("new max move size");
-    let move_args = list_from_nodes(
-        &mut allocator,
-        &[new_move, new_infohash, new_mover_share, new_max_move_size],
-    );
+    let move_args = (
+        (Node(new_move), Node(new_infohash)),
+        (Node(new_mover_share), Node(new_max_move_size)),
+    )
+        .to_clvm(&mut allocator)
+        .unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, move_args)
@@ -254,10 +263,7 @@ fn test_referee_tree_move_and_timeout_agree_with_rust() {
             .map(ValidationInfoHash::Hash)
             .unwrap_or(ValidationInfoHash::None);
         let move_atom = allocator.allocator().new_atom(&[0x77; 8]).unwrap();
-        let solution = (
-            move_atom,
-            (info.clone(), (Amount::new(601), (next_max, ()))),
-        );
+        let solution = ((move_atom, info.clone()), (Amount::new(601), next_max));
         let solution = solution.to_clvm(&mut allocator).unwrap();
         let program = puzzle.to_clvm(&mut allocator).unwrap();
         let result =
@@ -298,7 +304,7 @@ fn test_referee_tree_move_and_timeout_agree_with_rust() {
 
         let mover_payout = allocator.allocator().new_atom(&[0x99; 32]).unwrap();
         let waiter_payout = allocator.allocator().new_atom(&[0xaa; 32]).unwrap();
-        let timeout = (mover_payout, (waiter_payout, ()))
+        let timeout = (mover_payout, waiter_payout)
             .to_clvm(&mut allocator)
             .unwrap();
         let program = next_puzzle.to_clvm(&mut allocator).unwrap();
@@ -560,6 +566,10 @@ fn test_referee_solution_parser_matches_puzzle_tail_rules() {
         .allocator()
         .new_pair(state, program_and_rest)
         .unwrap();
+    let slash_node = allocator
+        .allocator()
+        .new_pair(slash_node, NodePtr::NIL)
+        .unwrap();
     let slash_solution = Program::from_nodeptr(&mut allocator, slash_node).unwrap();
 
     assert!(
@@ -575,15 +585,21 @@ fn test_referee_solution_parser_matches_puzzle_tail_rules() {
     let mover_share = 5_i64.to_clvm(&mut allocator).unwrap();
     let max_move_size = 10_i64.to_clvm(&mut allocator).unwrap();
     let extra = allocator.allocator().new_atom(b"extra").unwrap();
-    let move_with_tail = list_from_nodes(
-        &mut allocator,
-        &[move_field, infohash, mover_share, max_move_size, extra],
-    );
+    let invalid_max = allocator
+        .allocator()
+        .new_pair(max_move_size, extra)
+        .unwrap();
+    let move_with_tail = (
+        (Node(move_field), Node(infohash)),
+        (Node(mover_share), Node(invalid_max)),
+    )
+        .to_clvm(&mut allocator)
+        .unwrap();
     let move_solution = Program::from_nodeptr(&mut allocator, move_with_tail).unwrap();
 
     assert!(
         ParsedRefereeSolution::parse(&mut allocator, &move_solution).is_err(),
-        "the referee move branch rejects a trailing tail"
+        "the referee move branch rejects a pair in an atom field"
     );
 }
 

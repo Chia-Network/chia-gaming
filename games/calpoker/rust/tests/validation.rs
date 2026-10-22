@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Program, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Puzzle, Sha256Input, Sha256tree};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -52,16 +52,6 @@ fn sha256_concat(parts: &[&[u8]]) -> [u8; 32] {
     *Sha256Input::Array(inputs).hash().bytes()
 }
 
-fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
-    let mut tail = NodePtr::NIL;
-    for node in nodes.iter().rev() {
-        tail = allocator
-            .allocator()
-            .new_pair(*node, tail)
-            .expect("should build list");
-    }
-    tail
-}
 
 fn hash_to_node(allocator: &mut AllocEncoder, hash: &[u8; 32]) -> NodePtr {
     allocator
@@ -144,10 +134,7 @@ fn run_referee_slash_case(
         ],
     )
     .expect("referee argument tree");
-    let slash_args = list_from_nodes(
-        allocator,
-        &[previous_state, a_validator_clvm, evidence, payout_ph],
-    );
+    let slash_args = ((Node(previous_state), (Node(a_validator_clvm), Node(evidence))), Node(payout_ph)).to_clvm(allocator).unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -233,10 +220,7 @@ fn run_referee_move_case(
         ],
     )
     .expect("referee argument tree");
-    let move_args = list_from_nodes(
-        allocator,
-        &[new_move, infohash_c, new_mover_share, new_max_move_size],
-    );
+    let move_args = ((Node(new_move), Node(infohash_c)), (Node(new_mover_share), Node(new_max_move_size))).to_clvm(allocator).unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, move_args)
@@ -401,10 +385,9 @@ fn build_validator_args(
     let curry_args = build_curry_args(allocator, on_chain, move_node, max_move_size, mover_share);
 
     let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap(); // output_conditions
-    let tail = a.new_pair(evidence_node, tail).unwrap();
-    let tail = a.new_pair(validator_program, tail).unwrap();
-    let tail = a.new_pair(previous_state, tail).unwrap();
+    let tail = a.new_pair(validator_program, evidence_node).unwrap();
+    let payload = a.new_pair(previous_state, tail).unwrap();
+    let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     a.new_pair(vh_node, tail).unwrap()
 }
@@ -549,10 +532,7 @@ fn run_game_referee_slash(
         ],
     )
     .expect("referee argument tree");
-    let slash_args = list_from_nodes(
-        allocator,
-        &[previous_state, validator_clvm, evidence, payout_ph],
-    );
+    let slash_args = ((Node(previous_state), (Node(validator_clvm), Node(evidence))), Node(payout_ph)).to_clvm(allocator).unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -1550,10 +1530,7 @@ fn test_calpoker_e_nil_evidence_does_not_slash_honest_move() {
     )
     .expect("referee argument tree");
     let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
-    let slash_args = list_from_nodes(
-        &mut a,
-        &[after_d.state, e_validator_clvm, NodePtr::NIL, payout_ph],
-    );
+    let slash_args = ((Node(after_d.state), (Node(e_validator_clvm), Node(NodePtr::NIL))), Node(payout_ph)).to_clvm(&mut a).unwrap();
     let args = a
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -1975,16 +1952,13 @@ fn test_terminal_coin_nil_infohash_b_slash() {
     )
     .expect("referee argument tree");
 
-    // Slash solution: (previous_state previous_validation_program evidence mover_payout_ph)
+    // Slash solution: ((previous_state previous_validation_program . evidence) . mover_payout_ph)
     let payout_ph = a.allocator().new_atom(&[0x33; 32]).expect("payout ph");
     let evidence = a
         .allocator()
         .new_atom(&td.bob_good_selections)
         .expect("evidence");
-    let slash_args = list_from_nodes(
-        &mut a,
-        &[after_d.state, e_validator_clvm, evidence, payout_ph],
-    );
+    let slash_args = ((Node(after_d.state), (Node(e_validator_clvm), Node(evidence))), Node(payout_ph)).to_clvm(&mut a).unwrap();
     let args = a
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -2083,10 +2057,7 @@ fn test_terminal_coin_nil_infohash_b_slash_invalid_move() {
         .allocator()
         .new_atom(&td.bob_good_selections)
         .expect("evidence");
-    let slash_args = list_from_nodes(
-        &mut a,
-        &[after_d.state, e_validator_clvm, evidence, payout_ph],
-    );
+    let slash_args = ((Node(after_d.state), (Node(e_validator_clvm), Node(evidence))), Node(payout_ph)).to_clvm(&mut a).unwrap();
     let args = a
         .allocator()
         .new_pair(curried_args, slash_args)

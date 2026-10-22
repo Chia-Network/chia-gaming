@@ -1,5 +1,5 @@
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Puzzle, Sha256Input, Sha256tree};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -149,10 +149,9 @@ fn build_validator_args(
     let curry_args = build_curry_args(allocator, on_chain, move_node, max_move_size, mover_share);
 
     let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(evidence_node, tail).unwrap();
-    let tail = a.new_pair(validator_program, tail).unwrap();
-    let tail = a.new_pair(previous_state, tail).unwrap();
+    let tail = a.new_pair(validator_program, evidence_node).unwrap();
+    let payload = a.new_pair(previous_state, tail).unwrap();
+    let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     a.new_pair(vh_node, tail).unwrap()
 }
@@ -245,11 +244,6 @@ fn run_validator_step(
     }
 }
 
-fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
-    nodes.iter().rev().fold(NodePtr::NIL, |tail, node| {
-        allocator.allocator().new_pair(*node, tail).unwrap()
-    })
-}
 
 fn sha256_concat_bytes(parts: &[&[u8]]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -332,10 +326,7 @@ fn run_referee_slash(
         ],
     )
     .expect("referee argument tree");
-    let slash_args = list_from_nodes(
-        allocator,
-        &[previous_state, validator_clvm, evidence, payout_ph],
-    );
+    let slash_args = ((Node(previous_state), (Node(validator_clvm), Node(evidence))), Node(payout_ph)).to_clvm(allocator).unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, slash_args)

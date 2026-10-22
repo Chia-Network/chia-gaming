@@ -1,0 +1,106 @@
+# Shapes
+
+Import `(import std.shapes)` for `defun-shape`, `make`, `invoke`, and `if-shape`.
+Shapes describe pair structure once, for both constructing and reading values.
+The macros expand at compile time; there is no runtime shape registry. Import
+the whole bundle without `exposing`: inward expansion also uses its helper macros.
+
+```
+(defun-shape point #(x y z))
+(defun total (point a b c) (+ a b c))
+
+(make (point X Y Z))       ; (X . (Y . Z)), evaluated values, no outer list
+(invoke total (point X Y Z))
+(invoke total #(X Y Z))    ; same call: tree is the entire argument environment
+```
+
+A named shape with no arguments uses its declared names: `(point)` expands to
+`#(x y z)`. Field names in a declaration must be unique. Arguments replace them left to right. Shapes can nest inside
+other shapes, including at dotted tails. `#(...)` is the language's native
+balanced-tree reader syntax, not a different kind of runtime value.
+
+```
+(defun-shape branches #((point) (left . right)))
+(make (branches A B C D E))
+(make #((point A B C) (D . E)))   ; same tree
+```
+
+Templates treat pairs as structure, not executable expressions. Bind a compound
+expression to a name before putting it in a template. Literal `nil` and `()`
+construct nil; `(a b c)` includes its usual terminating nil, exactly like
+`(a b c . nil)`. `(a b . c)` has no terminating nil. Literal `nil`, `atom`, and
+`optional` are reserved in shape templates. Ordinary field names must not collide
+with macros that the compiler would expand in that position.
+
+## Constraints and optional subtrees
+
+- `a` names an unrestricted value at a required position.
+- `(atom a)` names an atom, including nil.
+- `nil` or `()` requires nil and binds no name.
+- `(optional TREE)` names the fields inside TREE but supplies **no constraints**
+  anywhere under it, including its pairs, atom labels, and implicit nils.
+- `(optional a b)` is shorthand for `(optional (a b))`.
+
+For example, `(a b . (optional c d))` requires the first two list cells. It names
+paths for `c` and `d` without requiring the remaining list cells to exist.
+Reading either name is the branch's responsibility: establish that the path is
+safe first. Unused bindings need not be read. A failed access aborts the whole
+CLVM evaluation; it cannot be caught or used to try another shape.
+
+`make` constructs the full described template, including optional structure.
+Optional means "no matching guarantees," not "omit this constructor argument."
+
+## Dispatch and destructuring
+
+```
+(defun-shape left ((a . b) . (atom c)))
+(defun-shape right ((atom d) . (e . f)))
+
+(if-shape VALUE
+    ((left) (+ a b c))
+    ((right) (+ d e f)))
+```
+
+Each branch is `(SHAPE BODY)`. Inline shapes work too:
+
+```
+(if-shape VALUE
+    (((a . b) . (atom c)) (+ a b c))
+    (((atom d) . (e . f)) (+ d e f)))
+```
+
+`if-shape` assumes VALUE belongs to one of the alternatives. It distinguishes
+cases; it does not validate the whole input. Once only one alternative remains,
+it enters that branch without checking its remaining constraints. The final
+alternative depends on the generated decision tree, not textual branch order.
+Overlapping or indistinguishable alternatives produce a compilation error.
+There is no catch-all clause.
+
+The planner first prefers a safe atom/pair or nil test that singles out one
+alternative. Otherwise it prefers a split with the smallest worst-case group,
+then recurses. If those tests are all too deep to read safely, it first checks a
+parent pair, even when that outcome does not eliminate any alternatives. This is
+a greedy heuristic, not a globally optimal search.
+Accesses are only generated when every ancestor is known to be a pair, from the
+remaining shapes or earlier tests. Optional structure never supplies that fact.
+
+The selected branch uses `assign` to destructure the value. Generated temporary
+names avoid names occurring in the input and branch bodies. Constraints are
+consumed by `make` and `if-shape`; an ordinary `defun` parameter pattern can use
+an unannotated named shape, as in `point` above.
+
+## Referee
+
+`clsp/referee/shapes.clinc` declares the referee's layouts. Its curried arguments
+remain the native eleven-field `#(...)` tree. The three solutions have no list
+terminators:
+
+```
+timeout: (mover_payout_ph . waiter_payout_ph)
+move:    #((atom new_move) (atom infohash_c) (atom new_mover_share) (atom new_max_move_size))
+slash:   ((previous_state previous_validation_program . evidence) . mover_payout_ph)
+```
+
+Timeout is two atoms, move is two pairs, slash is a pair followed by an atom.
+The classifier needs two pair tests and never inspects evidence. Rust's encoder,
+signature hashing, decoder, and validator argument builders use the same layouts.

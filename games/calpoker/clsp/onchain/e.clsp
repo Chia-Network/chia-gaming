@@ -1,4 +1,5 @@
 (include *standard-cl-23*)
+(import referee.shapes)
 
 (import games.calpoker.clsp.onchain.onehandcalc)
 (import games.calpoker.clsp.onchain.arrange_cards)
@@ -35,10 +36,10 @@
     )
 )
 
-(export (mod_hash
+(export (referee-validator-args mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections)
+    (bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections unused_payout)
     (if (or
             (!= (strlen MOVE) 18)
             (!= (popcount (substr MOVE 16 17)) 4)

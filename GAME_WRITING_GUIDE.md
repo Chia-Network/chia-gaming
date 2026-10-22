@@ -357,7 +357,7 @@ inspection and on-chain slashing. Every validator has this input shape:
   (mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    previous_state previous_validation_program evidence)
+    (previous_state previous_validation_program . evidence) . unused_payout)
   ...)
 ```
 
@@ -393,7 +393,7 @@ validator is a compact example:
 (export (mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    previous_state previous_validation_program evidence)
+    (previous_state previous_validation_program . evidence) . unused_payout)
   (if (= (strlen MOVE) 32)
       (list bhash MOVE 16)
       0))

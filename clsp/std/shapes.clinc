@@ -1,0 +1,218 @@
+; Shape templates are compile-time syntax. See clsp/std/shapes.md.
+; Facts use masks: pair=1, non-nil atom=2, nil=4; unconstrained=7.
+; Paths are binary heap indices (root=1, left=2*p, right=2*p+1).
+
+(defun shapes-append (A B)
+    (if A (c (f A) (shapes-append (r A) B)) B))
+
+(defun shapes-tag (TREE TAG)
+    (if (l TREE) (if (l (f TREE)) 0 (= (f TREE) TAG)) 0))
+
+(defun shapes-optional (ARGS)
+    (if ARGS (if (r ARGS) ARGS (f ARGS)) ()))
+
+(defun shapes-literal-nil (TREE)
+    (if (l TREE) 0 (if TREE (= TREE (q . nil)) 1)))
+
+; Keep pair traversal in a separate helper: the cl-23 optimizer can hoist
+; repeated tail access across sibling branches. Enter only after testing l.
+; Return (facts stripped-pattern names). Optional suppresses every fact below it.
+(defun shapes-parse (TREE PATH OPTIONAL)
+    (if (l TREE) (shapes-parse-pair TREE PATH OPTIONAL)
+        (if (shapes-literal-nil TREE)
+            (list (if OPTIONAL () (list (list PATH 4))) () ())
+            (list () TREE (list TREE)))))
+
+(defun shapes-parse-pair (TREE PATH OPTIONAL)
+    (if (shapes-tag TREE (q . optional))
+        (shapes-parse (shapes-optional (r TREE)) PATH 1)
+        (shapes-tag TREE (q . atom))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (f (r TREE)) PATH 1)
+            (if (r (r TREE)) (x (q . "atom takes one name"))
+                (list (if OPTIONAL () (list (list PATH 6))) PATTERN NAMES)))
+        (assign
+            (LF LP LN) (shapes-parse (f TREE) (* PATH 2) OPTIONAL)
+            (RF RP RN) (shapes-parse (r TREE) (+ (* PATH 2) 1) OPTIONAL)
+            (list (shapes-append (if OPTIONAL () (list (list PATH 1)))
+                                (shapes-append LF RF))
+                  (c LP RP) (shapes-append LN RN)))))
+
+(defun shapes-lookup (KEY ENTRIES DEFAULT)
+    (if ENTRIES
+        (if (= KEY (f (f ENTRIES))) (f (r (f ENTRIES)))
+            (shapes-lookup KEY (r ENTRIES) DEFAULT))
+        DEFAULT))
+
+(defun shapes-zip (NAMES VALUES)
+    (if NAMES
+        (if VALUES (c (list (f NAMES) (f VALUES)) (shapes-zip (r NAMES) (r VALUES)))
+            (x (q . "too few shape arguments")))
+        (if VALUES (x (q . "too many shape arguments")) ())))
+
+(defun shapes-substitute (TREE VALUES)
+    (if (l TREE) (shapes-substitute-pair TREE VALUES)
+        (if (shapes-literal-nil TREE) TREE (shapes-lookup TREE VALUES TREE))))
+
+(defun shapes-substitute-pair (TREE VALUES)
+    (if (shapes-tag TREE (q . optional))
+        (c (q . optional) (shapes-substitute (r TREE) VALUES))
+        (shapes-tag TREE (q . atom))
+        (list (q . atom) (shapes-substitute (f (r TREE)) VALUES))
+        (c (shapes-substitute (f TREE) VALUES) (shapes-substitute (r TREE) VALUES))))
+
+(defun shapes-instantiate (TREE VALUES)
+    (if VALUES
+        (assign (_ _ NAMES) (shapes-parse TREE 1 0)
+            (shapes-substitute TREE (shapes-zip NAMES VALUES)))
+        TREE))
+
+; Expose dotted tails as standalone forms so nested shape macros expand there,
+; too. The compiler's ordinary inward expansion walks proper-list elements.
+(defmac shapes-join (LEFT RIGHT) (c LEFT RIGHT))
+(defmac shapes-normalize (TREE)
+    (if (l TREE)
+        (list (q . shapes-join)
+            (list (q . shapes-normalize) (f TREE))
+            (list (q . shapes-normalize) (r TREE)))
+        TREE))
+
+(defmac defun-shape (NAME TREE)
+    (list (q . shapes-define-expanded) NAME (list (q . shapes-normalize) TREE)))
+
+(defun shapes-unique (NAMES)
+    (if NAMES
+        (if (shapes-contains (f NAMES) (r NAMES)) 0 (shapes-unique (r NAMES)))
+        1))
+
+(defmac shapes-define-expanded (NAME TREE)
+    (assign (_ _ NAMES) (shapes-parse TREE 1 0)
+        (if (shapes-unique NAMES)
+            (list (q . defmac) NAME (q . shapes-values)
+                (list (q . shapes-instantiate) (c 1 TREE) (q . shapes-values)))
+            (x (q . "shape field names must be unique")))))
+
+(defun shapes-make (TREE)
+    (if (l TREE) (shapes-make-pair TREE)
+        (if (shapes-literal-nil TREE) () TREE)))
+
+(defun shapes-make-pair (TREE)
+    (if (shapes-tag TREE (q . optional))
+        (shapes-make (shapes-optional (r TREE)))
+        (shapes-tag TREE (q . atom)) (shapes-make (f (r TREE)))
+        (list 4 (shapes-make (f TREE)) (shapes-make (r TREE)))))
+
+(defmac make (TREE)
+    (list (q . shapes-make-expanded) (list (q . shapes-normalize) TREE)))
+(defmac shapes-make-expanded (TREE) (shapes-make TREE))
+
+(defmac invoke (FUNCTION TREE)
+    (list FUNCTION (q . &rest) (list (q . make) TREE)))
+
+(defun shapes-access (PATH VALUE)
+    (if (= PATH 1) VALUE
+        (list (if (logand PATH 1) 6 5) (shapes-access (/ PATH 2) VALUE))))
+
+(defun shapes-cases (CASES)
+    (if CASES
+        (assign
+            (TREE BODY) (f CASES)
+            (FACTS PATTERN _) (shapes-parse TREE 1 0)
+            (c (list FACTS PATTERN BODY) (shapes-cases (r CASES))))
+        ()))
+
+; Common guarantees are usable under the closed-union contract. Optional paths
+; contribute none. Facts learned by actual tests refine each surviving case.
+(defun shapes-common-pair (PATH CASES)
+    (if CASES
+        (if (= (shapes-lookup PATH (f (f CASES)) 7) 1)
+            (shapes-common-pair PATH (r CASES)) 0)
+        1))
+
+(defun shapes-safe (PATH CASES)
+    (if (= PATH 1) 1
+        (if (shapes-common-pair (/ PATH 2) CASES)
+            (shapes-safe (/ PATH 2) CASES) 0)))
+
+(defun shapes-tests-for (FACTS)
+    (if FACTS
+        (assign
+            (PATH MASK) (f FACTS)
+            REST (shapes-tests-for (r FACTS))
+            (c (list PATH 1) (if (= MASK 4) (c (list PATH 4) REST) REST)))
+        ()))
+
+(defun shapes-tests (CASES)
+    (if CASES (shapes-append (shapes-tests-for (f (f CASES))) (shapes-tests (r CASES))) ()))
+
+(defun shapes-refine (CASES PATH MASK)
+    (if CASES
+        (assign
+            (FACTS PATTERN BODY) (f CASES)
+            NARROW (logand (shapes-lookup PATH FACTS 7) MASK)
+            REST (shapes-refine (r CASES) PATH MASK)
+            (if NARROW (c (list (c (list PATH NARROW) FACTS) PATTERN BODY) REST) REST))
+        ()))
+
+(defun shapes-length (XS)
+    (if XS (+ 1 (shapes-length (r XS))) 0))
+
+; Prefer a singleton split first, then the split with the smallest worst side.
+; If no separating test is safe, allow a parent guard whose pair outcome keeps
+; every candidate but makes a deeper test safe. At least one outcome must remove
+; a candidate; refining facts prevents the same guard being selected again.
+(defun shapes-best (TESTS CASES COUNT BEST SCORE)
+    (if TESTS
+        (assign
+            (PATH MASK) (f TESTS)
+            YES (shapes-length (shapes-refine CASES PATH MASK))
+            NO (shapes-length (shapes-refine CASES PATH (logxor 7 MASK)))
+            WORST (if (> YES NO) YES NO)
+            BEST-SIDE (if (> YES NO) NO YES)
+            RANK (if (> COUNT WORST)
+                (if (if (= YES 1) 1 (= NO 1)) 0 WORST)
+                (* COUNT 2))
+            USE (if (shapes-safe PATH CASES)
+                (if YES (if NO (if (> COUNT BEST-SIDE) (> SCORE RANK) 0) 0) 0) 0)
+            (shapes-best (r TESTS) CASES COUNT
+                (if USE (f TESTS) BEST) (if USE RANK SCORE)))
+        BEST))
+
+(defun shapes-dispatch (VALUE CASES)
+    (if (r CASES)
+        (assign
+            TEST (shapes-best (shapes-tests CASES) CASES (shapes-length CASES) () 0x7fffffff)
+            (if TEST
+                (assign
+                    (PATH MASK) TEST
+                    ACCESS (shapes-access PATH VALUE)
+                    (list (q . if) (list (if (= MASK 1) 7 32) ACCESS)
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
+                (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
+        (assign (_ PATTERN BODY) (f CASES)
+            (list (q . assign) PATTERN VALUE BODY))))
+
+; Pick a binding name absent from the entire input, including nested dispatches.
+(defun shapes-contains (NAME TREE)
+    (if (l TREE)
+        (if (shapes-contains NAME (f TREE)) 1 (shapes-contains NAME (r TREE)))
+        (= NAME TREE)))
+
+(defun shapes-fresh (NAME TREE)
+    (if (shapes-contains NAME TREE) (shapes-fresh (concat NAME 0x5f) TREE) NAME))
+
+(defun shapes-normalize-cases (CASES)
+    (if CASES
+        (c (list (list (q . shapes-normalize) (f (f CASES))) (f (r (f CASES))))
+            (shapes-normalize-cases (r CASES)))
+        ()))
+
+(defmac if-shape (VALUE . CASES)
+    (c (q . shapes-if-expanded) (c VALUE (shapes-normalize-cases CASES))))
+
+(defmac shapes-if-expanded (VALUE . CASES)
+    (if CASES
+        (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
+            (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+        (x (q . "if-shape needs at least one alternative"))))

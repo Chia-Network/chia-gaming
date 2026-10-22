@@ -1,5 +1,5 @@
 (include *standard-cl-23*)
-(import std.make)
+(import std.shapes)
 
 (export (A B C D)
     (list

@@ -141,10 +141,9 @@ fn run_validator(
     .unwrap();
     let a = allocator.allocator();
 
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(evidence, tail).unwrap();
-    let tail = a.new_pair(validator_program, tail).unwrap();
-    let tail = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(validator_program, evidence).unwrap();
+    let payload = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     let args = a.new_pair(validator_hash, tail).unwrap();
 
@@ -1508,10 +1507,9 @@ fn test_krunk_bob_detects_wrong_clue() {
     };
     let args = {
         let a = allocator.allocator();
-        let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(evidence, tail).unwrap();
-        let tail = a.new_pair(clue_clvm, tail).unwrap();
-        let tail = a.new_pair(state, tail).unwrap();
+        let tail = a.new_pair(clue_clvm, evidence).unwrap();
+        let payload = a.new_pair(state, tail).unwrap();
+        let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
         let tail = a.new_pair(curry_args, tail).unwrap();
         a.new_pair(clue_hash_node, tail).unwrap()
     };

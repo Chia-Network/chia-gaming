@@ -1,4 +1,5 @@
 (include *standard-cl-23*)
+(import referee.shapes)
 
 (import std.if_any_fail)
 (import std.assert)
@@ -13,11 +14,10 @@
 ; evidence is a 10-byte atom (begin_range || end_range) when Alice slashes
 ; an out-of-dictionary guess. A condition (AGG_SIG_UNSAFE dict_pubkey evidence)
 ; is emitted to prove the range was signed by both players.
-(export (mod_hash
+(export (referee-validator-args mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
-    previous_validation_program evidence)
+    (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash) previous_validation_program evidence unused_payout)
 
     (if_any_fail
         (= (strlen MOVE) 5)

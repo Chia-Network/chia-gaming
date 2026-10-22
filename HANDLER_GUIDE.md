@@ -575,9 +575,8 @@ aborts). If the validator hard-fails, the slash transaction never exists;
 that is also a valid way to reject a slash of an honest move.
 
 Slash-solution classification is deliberately less strict than move-solution
-parsing. The second solution element being a validation program is enough for
-an observer to identify a confirmed slash; it does not traverse or impose a
-local shape on the remaining arguments. A slash can reach the chain only when
+parsing. A payload pair on the left and payout atom on the right identify a
+confirmed slash; the observer does not traverse the payload or optional evidence. A slash can reach the chain only when
 the previous move was actually slashable, so this permissiveness cannot be used
 to punish an honest mover. Rejecting a chain-accepted slash locally would only
 break bookkeeping for the player whose illegal move was already punished.

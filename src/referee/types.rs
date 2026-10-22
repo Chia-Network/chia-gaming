@@ -163,62 +163,60 @@ pub struct RefereeFixedContext {
 /// the solution rather than from REMARK conditions in the output.
 #[derive(Debug, Clone)]
 pub enum ParsedRefereeSolution {
-    /// `(mover_payout_ph waiter_payout_ph)` — 2 elements
+    /// `(mover_payout_ph . waiter_payout_ph)` — two atoms
     Timeout,
-    /// `(new_move infohash_c new_mover_share new_max_move_size)` — 4 atom elements
+    /// `#(new_move infohash_c new_mover_share new_max_move_size)` — 4 atom elements
     Move {
         new_move: Vec<u8>,
         validation_info_hash_raw: Vec<u8>,
         new_mover_share_raw: Vec<u8>,
         max_move_size: u32,
     },
-    /// `(previous_state previous_validation_program evidence mover_payout_ph)` —
-    /// second element is a pair (a program)
+    /// `((previous_state previous_validation_program . evidence) . mover_payout_ph)` —
+    /// left is a payload pair, right is a payout atom
     Slash,
 }
 
 impl ParsedRefereeSolution {
-    /// Parse a referee solution using the same dispatch logic as `referee.clsp`:
-    /// - exactly 2 elements -> Timeout
-    /// - otherwise, a pair in the second element -> Slash; do not traverse its tail
-    /// - otherwise, exactly 4 atom elements -> Move
+    /// Parse the layouts declared in `clsp/referee/shapes.clinc`.
+    /// Slash classification does not inspect the payload or optional evidence.
     pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
-        let mut tail = solution.to_nodeptr(allocator)?;
-        let mut elements = Vec::with_capacity(4);
-        for _ in 0..2 {
-            let clvmr::allocator::SExp::Pair(first, rest) = allocator.allocator().sexp(tail) else {
-                return Err(Error::StrErr(
-                    "referee solution has fewer than 2 elements".to_string(),
-                ));
-            };
-            elements.push(first);
-            tail = rest;
-        }
-
-        if !crate::utils::non_nil(allocator.allocator(), tail) {
-            return Ok(ParsedRefereeSolution::Timeout);
-        }
-
-        if matches!(
-            allocator.allocator().sexp(elements[1]),
+        let node = solution.to_nodeptr(allocator)?;
+        let pair = |node| match allocator.allocator_ref().sexp(node) {
+            clvmr::allocator::SExp::Pair(left, right) => Ok((left, right)),
+            _ => Err(Error::StrErr(
+                "referee solution requires a pair".to_string(),
+            )),
+        };
+        let (left, right) = pair(node)?;
+        // Match referee.shapes: timeout is two atoms; slash is a payload pair
+        // and payout atom; move is a balanced tree of four atoms.
+        if !matches!(
+            allocator.allocator_ref().sexp(right),
             clvmr::allocator::SExp::Pair(_, _)
         ) {
-            return Ok(ParsedRefereeSolution::Slash);
+            return Ok(
+                if matches!(
+                    allocator.allocator_ref().sexp(left),
+                    clvmr::allocator::SExp::Pair(_, _)
+                ) {
+                    ParsedRefereeSolution::Slash
+                } else {
+                    ParsedRefereeSolution::Timeout
+                },
+            );
         }
-
-        for _ in 2..4 {
-            let clvmr::allocator::SExp::Pair(first, rest) = allocator.allocator().sexp(tail) else {
-                return Err(Error::StrErr(
-                    "referee solution has fewer than 4 elements".to_string(),
-                ));
-            };
-            elements.push(first);
-            tail = rest;
-        }
-
-        if crate::utils::non_nil(allocator.allocator(), tail) {
+        let (move_node, infohash) = pair(left)?;
+        let (share, max_size) = pair(right)?;
+        let elements = [move_node, infohash, share, max_size];
+        if elements.iter().any(|node| {
+            matches!(
+                allocator.allocator_ref().sexp(*node),
+                clvmr::allocator::SExp::Pair(_, _)
+            )
+        }) {
             return Err(Error::StrErr(
-                "move referee solution has a trailing tail".to_string(),
+                "referee move fields must be atoms".to_string(),
             ));
         }
         let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
@@ -315,13 +313,13 @@ pub fn parse_validator_result(
 /// MOD_HASH should be the shatree of referee itself.
 /// NONCE is for anti-replay prevention.
 ///
-/// If action is timeout, args is (mover_payout_ph waiter_payout_ph).
+/// If action is timeout, args is (mover_payout_ph . waiter_payout_ph).
 ///   Authorized via AGG_SIG_UNSAFE with pre-signed payout signatures.
 ///
-/// If action is slash, args is (state validation_program evidence mover_payout_ph).
+/// If action is slash, args is ((state validation_program . evidence) . mover_payout_ph).
 ///   Authorized via AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph).
 ///
-/// If action is move, args is (new_move infohash_c new_mover_share new_max_move_size).
+/// If action is move, args is #(new_move infohash_c new_mover_share new_max_move_size).
 ///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RefereePuzzleArgs {
@@ -450,7 +448,7 @@ impl StateUpdateMoveArgs {
         allocator: &mut AllocEncoder,
         me: StateUpdateProgram,
     ) -> Result<NodePtr, Error> {
-        (&self.state, (me, (&self.evidence, ())))
+        ((&self.state, (me, &self.evidence)), ())
             .to_clvm(allocator)
             .into_gen()
     }
@@ -537,16 +535,13 @@ impl OnChainRefereeMoveData {
                 .into_gen()?,
         );
         let solution_args_node = (
-            allocator
-                .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
-                .into_gen()?,
             (
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
+                    .into_gen()?,
                 self.new_move.validation_info_hash.clone(),
-                (
-                    self.new_move.basic.mover_share.clone(),
-                    (max_move_size_node, ()),
-                ),
             ),
+            (self.new_move.basic.mover_share.clone(), max_move_size_node),
         )
             .to_clvm(allocator)
             .into_gen()?;
@@ -604,9 +599,9 @@ pub struct OnChainRefereeSlash {
 
 /// onchain referee solution
 ///
-/// Timeout: (mover_payout_ph waiter_payout_ph)
-/// Move: (new_move infohash_c new_mover_share new_max_move_size)
-/// Slash: (previous_state previous_validation_program evidence mover_payout_ph)
+/// Timeout: (mover_payout_ph . waiter_payout_ph)
+/// Move: #(new_move infohash_c new_mover_share new_max_move_size)
+/// Slash: ((previous_state previous_validation_program . evidence) . mover_payout_ph)
 #[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
     Timeout {
@@ -640,7 +635,7 @@ impl OnChainRefereeSolution {
                 mover_payout_ph,
                 waiter_payout_ph,
                 ..
-            } => (mover_payout_ph.as_ref(), (waiter_payout_ph.as_ref(), ()))
+            } => (mover_payout_ph.as_ref(), waiter_payout_ph.as_ref())
                 .to_clvm(encoder)
                 .into_gen(),
             OnChainRefereeSolution::Move(refmove) => {
@@ -658,27 +653,24 @@ impl OnChainRefereeSolution {
                         .into_gen()?,
                 );
                 (
-                    move_atom,
+                    (move_atom, refmove.game_move.validation_info_hash.clone()),
                     (
-                        refmove.game_move.validation_info_hash.clone(),
-                        (
-                            refmove.game_move.basic.mover_share.clone(),
-                            (max_move_size_node, ()),
-                        ),
+                        refmove.game_move.basic.mover_share.clone(),
+                        max_move_size_node,
                     ),
                 )
                     .to_clvm(encoder)
                     .into_gen()
             }
             OnChainRefereeSolution::Slash(refslash) => (
-                refslash.state.clone(),
                 (
-                    refslash.validation_program.clone(),
+                    refslash.state.clone(),
                     (
+                        refslash.validation_program.clone(),
                         refslash.evidence.clone(),
-                        (refslash.reward_puzzle_hash.clone(), ()),
                     ),
                 ),
+                refslash.reward_puzzle_hash.clone(),
             )
                 .to_clvm(encoder)
                 .into_gen(),
