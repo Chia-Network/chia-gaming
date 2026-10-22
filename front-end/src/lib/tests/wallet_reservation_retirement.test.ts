@@ -222,6 +222,121 @@ describe('wallet reservation retirement', () => {
     expect(storageRepository.feeAttachments()).toEqual([]);
   });
 
+  it.each(['funding', 'fee'] as const)(
+    'retired creation cannot cancel a newer %s reservation with a reused ID',
+    async (engine) => {
+      let complete!: (value: unknown) => void;
+      const reconcileCreation = jest.fn(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
+      const beginCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+      walletProviderRegistry.attach({
+        scope,
+        capability: 'recoverable-after-begin',
+        beginCreation: jest.fn(),
+        reconcileCreation,
+        beginCancellation,
+        reconcileCancellation: jest.fn(),
+      });
+      install([
+        {
+          owner,
+          submissionId: 'old-submission',
+          stage: 'creating',
+          disposition: 'cancel-on-create',
+          recoveryId: 'old-request',
+          request: {
+            kind: 'fee',
+            uniqueId: 'old-submission',
+            fee: 1n,
+            concurrentSpendCoinId: '11'.repeat(32),
+          },
+          reason: 'abandoned',
+        },
+      ]);
+      storageRepository.retireSessionWalletReservations(owner.peerSessionId);
+      await waitForCall(reconcileCreation);
+      const freshOwner = { ...owner, peerSessionId: 'new-session' };
+      if (engine === 'fee') {
+        storageRepository.replaceFeeAttachments([{ ...fee, owner: freshOwner }]);
+      } else {
+        storageRepository.replaceChannelFunding([
+          {
+            owner: freshOwner,
+            purpose: { kind: 'funding', operationId: 'new-funding' },
+            stage: 'awaiting-channel',
+            providerReservationId: 'trade',
+            request: { kind: 'funding', canonical: { amount: '100', fee: '0', conditions: [] } },
+            reason: 'fresh funding',
+          },
+        ]);
+      }
+      const freshState = structuredClone(storageRepository.loadState());
+      complete({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'old-offer' },
+        tradeId: 'trade',
+      });
+      await flush();
+      expect(beginCancellation).not.toHaveBeenCalled();
+      expect(storageRepository.loadState()).toEqual(freshState);
+    },
+  );
+
+  it.each([true, false])(
+    'identified retirement checks current ownership in the same provider scope: %s',
+    async (sameScope) => {
+      const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+      walletProviderRegistry.attach(provider(cancel));
+      install();
+      storageRepository.retireSessionWalletReservations(owner.peerSessionId);
+      const fresh: FeeAttachment = {
+        ...fee,
+        owner: {
+          ...owner,
+          peerSessionId: 'new-session',
+          providerScope: sameScope ? scope : { ...scope, fingerprint: 'other-account' },
+        },
+      };
+      storageRepository.replaceFeeAttachments([fresh]);
+      await flush();
+      if (sameScope) expect(cancel).not.toHaveBeenCalled();
+      else expect(cancel).toHaveBeenCalledWith('trade');
+      expect(storageRepository.feeAttachments()).toEqual([fresh]);
+    },
+  );
+
+  it('pending retired cancellation does not reconcile a reused live reservation', async () => {
+    let complete!: (value: unknown) => void;
+    const beginCancellation = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const reconcileCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    walletProviderRegistry.attach({
+      scope,
+      capability: 'recoverable-after-begin',
+      beginCreation: jest.fn(),
+      reconcileCreation: jest.fn(),
+      beginCancellation,
+      reconcileCancellation,
+    });
+    install();
+    storageRepository.retireSessionWalletReservations(owner.peerSessionId);
+    await waitForCall(beginCancellation);
+    const fresh: FeeAttachment = { ...fee, owner: { ...owner, peerSessionId: 'new-session' } };
+    storageRepository.replaceFeeAttachments([fresh]);
+    complete({ status: 'pending', recoveryId: 'old-cancellation' });
+    await flush();
+    expect(reconcileCancellation).not.toHaveBeenCalled();
+    expect(storageRepository.feeAttachments()).toEqual([fresh]);
+  });
+
   it('late uncertainty replacement cannot recreate a retired funding operation', async () => {
     let complete!: (value: unknown) => void;
     const beginCreation = jest.fn(

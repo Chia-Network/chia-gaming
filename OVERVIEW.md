@@ -921,6 +921,13 @@ cradle have hydrated, the saved shell, game, and dashboard are visible even
 when the hub, wallet, or blockchain is still unavailable. Actions requiring
 those services remain gated until their independent reconciliation succeeds.
 
+Hub connectivity is completely independent of wallet connectivity. Wallet
+connect, disconnect, switch, and failure events must leave the hub connection
+and reconnect lifecycle intact; hub changes must likewise leave the wallet
+connection intact. The app can use the hub lobby and relay without a wallet.
+Wallet readiness gates wallet-dependent actions and matchmaking availability,
+while hub connectivity remains unchanged.
+
 Session lifetime is independent of wallet connectivity. Disconnecting a wallet
 pauses wallet-dependent work without abandoning the handshake or live session.
 Attaching a wallet on the same blockchain resumes monitoring of the session's

@@ -225,6 +225,8 @@ export function useGameSession(
     };
   }, [runtime]);
   useLayoutEffect(() => {
+    // Shell publishes terminal presentation only after finalization tears down the controller.
+    // Its effect cleanup is therefore a no-op; never attach a backend to the retained result.
     if (!blockchain || terminalMode) return;
     controller.attachBlockchain(blockchain);
     return () => controller.detachBlockchain(blockchain);

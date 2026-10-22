@@ -337,6 +337,14 @@ watched coins. Disconnecting a wallet does not end or abandon that session,
 including during a handshake. Wallet-dependent work pauses until a ready backend
 is attached; losing connectivity is not a terminal protocol event.
 
+Hub connectivity is completely independent of wallet connectivity. Wallet
+connect, disconnect, switch, and failure events must leave the hub lobby,
+relay, and reconnect lifecycle intact. The app can connect or reconnect to a
+hub without a wallet; hub changes must also leave wallet connectivity intact.
+The hub uses the app routing identity. Walletless presence is busy and Accept
+stays disabled until wallet readiness returns, but those availability gates
+must never establish or tear down the hub connection.
+
 Connecting another wallet on the same blockchain resumes the existing session.
 The new backend registers the session's watched coins and resumes chain queries
 and submissions. New wallet operations use the connected provider. Reservations
