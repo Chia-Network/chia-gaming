@@ -1,5 +1,5 @@
 (import std.shapes)
-(import games.calpoker.clsp.shapes)
+(import games.calpoker.clsp.onchain.shapes)
 (import std.assert)
 (import std.popcount)
 (import std.map)

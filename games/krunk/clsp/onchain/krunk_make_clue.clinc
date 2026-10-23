@@ -1,5 +1,5 @@
 (import std.shapes)
-(import games.krunk.clsp.shapes)
+(import games.krunk.clsp.onchain.shapes)
 (defun make_clue (word guess)
     (assign
         (krunk-green not_green_word not_green_guess green) (make_green (expand_word word) (expand_word guess))

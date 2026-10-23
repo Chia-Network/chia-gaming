@@ -1,7 +1,7 @@
 (include *standard-cl-26*)
 (import std.shapes)
-(import games.spacepoker.clsp.shapes)
-(import referee.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.spacepoker.clsp.onchain.begin_round exposing (program_hash as begin_hash))
 (import games.spacepoker.clsp.onchain.mid_round exposing (program_hash as mid_hash))

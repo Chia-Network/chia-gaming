@@ -1,6 +1,6 @@
 (include *standard-cl-26*)
 (import std.shapes)
-(import referee.shapes)
+(import referee.onchain.shapes)
 
 (defun-shape debug-state #(count slashable mover_share))
 (defun-inline make-debug-state (count slashable mover_share) (make (debug-state)))

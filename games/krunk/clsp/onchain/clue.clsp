@@ -1,7 +1,7 @@
 (include *standard-cl-26*)
 (import std.shapes)
-(import games.krunk.clsp.shapes)
-(import referee.shapes)
+(import games.krunk.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.krunk.clsp.onchain.guess exposing (program_hash as guess_hash))
 (import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)

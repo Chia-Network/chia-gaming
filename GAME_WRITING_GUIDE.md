@@ -367,7 +367,7 @@ referee puzzle. `MOVE`,
 committed by the move being challenged. The final arguments provide the
 previous state, the previous validator program, and the proposed evidence.
 
-Import `referee.shapes` and return a fixed result tree for a valid move:
+Import `referee.onchain.shapes` and return a fixed result tree for a valid move:
 
 ```clojure
 (validator-result next_validation_program_hash new_state next_max_move_size conditions)

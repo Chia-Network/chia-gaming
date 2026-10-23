@@ -1,5 +1,5 @@
 (include *standard-cl-26*)
-(import referee.shapes)
+(import referee.onchain.shapes)
 
 ; Parameter inspection supplies nil INFOHASH_B. Once Rust has derived and
 ; committed INFOHASH_B, this validator raises. The regression test verifies

@@ -1,6 +1,6 @@
 (include *standard-cl-26*)
 (import std.shapes)
-(import games.spacepoker.clsp.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
 
 (import games.spacepoker.clsp.onchain.commitA exposing (program as val_commitA))
 (import games.spacepoker.clsp.onchain.commitB exposing (program as val_commitB))

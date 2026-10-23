@@ -616,7 +616,7 @@ its successor-coin hash calculation, and every validator:
 Chialisp’s `#(...)` reader syntax selects the balanced layout automatically.
 Every field is at most four tree edges from the argument root.
 `RefereePuzzleArgs::to_clvm` encodes this shape; do not encode these fields as a proper list. Solution shapes are declared in
-`clsp/referee/shapes.clinc` and have no terminating list nils. This layout is
+`clsp/referee/onchain/shapes.clinc` and have no terminating list nils. This layout is
 part of the on-chain puzzle interface and changes the referee and validator
 hashes; an already-created coin must still be spent with its original puzzle.
 

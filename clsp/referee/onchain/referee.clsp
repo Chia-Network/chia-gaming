@@ -7,7 +7,7 @@
 (import std.li)
 (import std.append)
 (import std.shapes)
-(import referee.shapes)
+(import referee.onchain.shapes)
 
 ;
 ; Adjudicates a two-player turn-based game.
@@ -37,7 +37,7 @@
 ; NONCE is for anti-replay prevention.
 ;
 ; Validation programs get (mod_hash . all_args) where all_args is
-; (curried_args . slash_solution_args). See referee.shapes for the shared
+; (curried_args . slash_solution_args). See referee.onchain.shapes for the shared
 ; layouts. Validators ignore the payout field.
 
 ; The curried argument is a balanced tree; every field is at most four edges

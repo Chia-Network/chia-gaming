@@ -91,7 +91,7 @@ an unannotated named shape, as in `point` above.
 
 ## Referee
 
-`clsp/referee/shapes.clinc` declares the referee's layouts. Its curried arguments
+`clsp/referee/onchain/shapes.clinc` declares the referee's layouts. Its curried arguments
 remain the native eleven-field `#(...)` tree. The three solutions have no list
 terminators:
 
@@ -107,10 +107,12 @@ signature hashing, decoder, and validator argument builders use the same layouts
 
 ## On-chain game records
 
-The games' `clsp/shapes.clinc` bundles declare their fixed state records and
+The games' `clsp/onchain/shapes.clinc` bundles declare their fixed state records and
 shared helper results with `#`. Inline `make-...` constructors evaluate field
 expressions before passing their names to `make`. Validators and off-chain
-handlers use the same declarations when reading these records. UI-facing
+handlers import these on-chain declarations when reading the same records.
+Shared game layouts belong under `onchain`: off-chain code may import them,
+but on-chain code must not import off-chain modules. UI-facing
 lists and handler calling conventions are unchanged.
 
 Card sequences, hand rankings consumed by list comparison, Krunk's guess/clue

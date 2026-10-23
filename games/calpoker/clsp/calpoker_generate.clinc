@@ -1,5 +1,5 @@
 (import std.shapes)
-(import games.calpoker.clsp.shapes)
+(import games.calpoker.clsp.onchain.shapes)
 
 (import games.calpoker.clsp.onchain.a exposing (program as pokera))
 (import games.calpoker.clsp.onchain.b exposing (program as pokerb))

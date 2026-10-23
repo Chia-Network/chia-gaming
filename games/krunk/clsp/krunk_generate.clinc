@@ -1,5 +1,5 @@
 (import std.shapes)
-(import games.krunk.clsp.shapes)
+(import games.krunk.clsp.onchain.shapes)
 (include *standard-cl-26*)
 
 (import games.krunk.clsp.krunk_helpers exposing

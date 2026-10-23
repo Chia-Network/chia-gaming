@@ -177,7 +177,7 @@ pub enum ParsedRefereeSolution {
 }
 
 impl ParsedRefereeSolution {
-    /// Parse the layouts declared in `clsp/referee/shapes.clinc`.
+    /// Parse the layouts declared in `clsp/referee/onchain/shapes.clinc`.
     /// Slash classification does not inspect the payload or optional evidence.
     pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
         let node = solution.to_nodeptr(allocator)?;
@@ -188,7 +188,7 @@ impl ParsedRefereeSolution {
             )),
         };
         let (left, right) = pair(node)?;
-        // Match referee.shapes: timeout is two atoms; slash is a payload pair
+        // Match referee.onchain.shapes: timeout is two atoms; slash is a payload pair
         // and payout atom; move is a balanced tree of four atoms.
         if !matches!(
             allocator.allocator_ref().sexp(right),
