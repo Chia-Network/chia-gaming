@@ -50,7 +50,7 @@ fn test_shapes_reject_ambiguous_or_incorrect_templates() {
             "field names must be unique",
         ),
     ] {
-        let source = format!("(include *standard-cl-23*)\n(import std.shapes)\n{body}");
+        let source = format!("(include *standard-cl-26*)\n(import std.shapes)\n{body}");
         let opts = Rc::new(DefaultCompilerOpts::new("shape-errors.clsp"))
             .set_search_paths(&["clsp".to_string(), ".".to_string()]);
         let result = compile_file(
@@ -175,7 +175,7 @@ fn assert_dispatch(branches: &[String], examples: &[(String, usize)]) {
     use std::{collections::HashMap, rc::Rc};
 
     let source = format!(
-        "(include *standard-cl-23*) (import std.shapes)\n(export VALUE (if-shape VALUE {}))",
+        "(include *standard-cl-26*) (import std.shapes)\n(export VALUE (if-shape VALUE {}))",
         branches.join(" ")
     );
     let arguments = HashMap::from([
