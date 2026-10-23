@@ -1,0 +1,15 @@
+(import std.shapes)
+
+; Fixed records shared by on-chain validators and their callers.
+
+(defun-shape krunk-initial #(dict_pubkey base_unit clue_hash))
+(defun-inline make-krunk-initial (dict_pubkey base_unit clue_hash)
+    (make (krunk-initial)))
+
+(defun-shape krunk-state #(dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash))
+(defun-inline make-krunk-state (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
+    (make (krunk-state)))
+
+(defun-shape krunk-green #(remaining_word remaining_guess green))
+(defun-inline make-krunk-green (remaining_word remaining_guess green)
+    (make (krunk-green)))

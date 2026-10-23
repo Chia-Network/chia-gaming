@@ -97,10 +97,29 @@ terminators:
 
 ```
 timeout: (mover_payout_ph . waiter_payout_ph)
-move:    #((atom new_move) (atom infohash_c) (atom new_mover_share) (atom new_max_move_size))
+move:    ((new_move . infohash_c) . (new_mover_share . new_max_move_size))
 slash:   ((previous_state previous_validation_program . evidence) . mover_payout_ph)
 ```
 
 Timeout is two atoms, move is two pairs, slash is a pair followed by an atom.
 The classifier needs two pair tests and never inspects evidence. Rust's encoder,
 signature hashing, decoder, and validator argument builders use the same layouts.
+
+## On-chain game records
+
+The games' `clsp/shapes.clinc` bundles declare their fixed state records and
+shared helper results with `#`. Inline `make-...` constructors evaluate field
+expressions before passing their names to `make`. Validators and off-chain
+handlers use the same declarations when reading these records. UI-facing
+lists and handler calling conventions are unchanged.
+
+Card sequences, hand rankings consumed by list comparison, Krunk's guess/clue
+histories, and conditions remain lists: these are traversed sequences, not
+fixed records. Currying is unchanged.
+
+Validator results use the explicit pair layout `referee-result`:
+`((next_validator_hash . new_state) . (max_move_size . extra_conditions))`.
+`validator-transition` supplies an empty conditions list; `validator-result`
+accepts the conditions explicitly. Terminal success is
+`(validator-transition 0 0 0)`; bare nil means slash. Referee distinguishes nil
+from the result record with `if-shape`. Rust decodes the same pair layout.

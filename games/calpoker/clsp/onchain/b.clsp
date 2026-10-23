@@ -1,4 +1,6 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import games.calpoker.clsp.shapes)
 (import referee.shapes)
 
 (import games.calpoker.clsp.onchain.c exposing (program_hash as chash))
@@ -17,7 +19,7 @@
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
     alice_commit previous_validation_program evidence unused_payout)
     (if (= (strlen MOVE) 16)
-        (list chash (list alice_commit MOVE) 48)
+        (validator-transition chash (make-calpoker-seeds alice_commit MOVE) 48)
         0
     )
 )

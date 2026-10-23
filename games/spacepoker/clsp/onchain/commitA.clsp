@@ -1,4 +1,6 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import games.spacepoker.clsp.shapes)
 (import referee.shapes)
 
 (import games.spacepoker.clsp.onchain.commitB exposing (program_hash as commitB_hash))
@@ -18,6 +20,6 @@
         (= (strlen MOVE) 32)
         (= MOVER_SHARE (/ AMOUNT 2))
         0
-        (list commitB_hash (list bet_unit MOVE) 32)
+        (validator-transition commitB_hash (make-space-commit bet_unit MOVE) 32)
     )
 )

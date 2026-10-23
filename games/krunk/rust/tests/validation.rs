@@ -95,7 +95,7 @@ fn run_validator_step(
     ) {
         Ok(reduction) => {
             let result = reduction.1;
-            let items = proper_list(allocator.allocator(), result, true).unwrap();
+            let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
             if items.is_empty() {
                 Ok((MoveCode::Slash, result))
             } else {
@@ -104,12 +104,6 @@ fn run_validator_step(
         }
         Err(e) => Err(format!("CLVM error: {e:?}")),
     }
-}
-
-fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
-    nodes.iter().rev().fold(NodePtr::NIL, |tail, node| {
-        allocator.allocator().new_pair(*node, tail).unwrap()
-    })
 }
 
 fn sha256_concat_bytes(parts: &[&[u8]]) -> [u8; 32] {
@@ -125,7 +119,7 @@ fn commitments_from_validator_result(
     allocator: &mut AllocEncoder,
     result: NodePtr,
 ) -> (NodePtr, i64) {
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     if items.is_empty() {
         return (NodePtr::NIL, 0);
     }
@@ -342,12 +336,7 @@ fn make_state_after_commit(
     let a = allocator.allocator();
     let commit_node = a.new_atom(&commit).unwrap();
     let dummy_clue_hash = a.new_atom(&[0xEE; 32]).unwrap();
-    let tail = a.new_pair(dummy_clue_hash, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(commit_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(base_unit_node, tail).unwrap();
-    a.new_pair(dict_pubkey, tail).unwrap()
+    crate::tests::shape_tree(allocator, &[dict_pubkey, base_unit_node, NodePtr::NIL, NodePtr::NIL, commit_node, dummy_clue_hash])
 }
 
 /// Build state with guesses: (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
@@ -362,12 +351,7 @@ fn make_state_with_guesses(
     let a = allocator.allocator();
     let commit_node = a.new_atom(&commit).unwrap();
     let dummy_clue_hash = a.new_atom(&[0xEE; 32]).unwrap();
-    let tail = a.new_pair(dummy_clue_hash, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(commit_node, tail).unwrap();
-    let tail = a.new_pair(alice_clues, tail).unwrap();
-    let tail = a.new_pair(bob_guesses, tail).unwrap();
-    let tail = a.new_pair(base_unit_node, tail).unwrap();
-    a.new_pair(dict_pubkey, tail).unwrap()
+    crate::tests::shape_tree(allocator, &[dict_pubkey, base_unit_node, bob_guesses, alice_clues, commit_node, dummy_clue_hash])
 }
 
 fn make_dict_pubkey(allocator: &mut AllocEncoder) -> NodePtr {
@@ -396,7 +380,7 @@ fn test_krunk_commit_happy() {
         .sha256tree(&mut allocator)
         .to_clvm(&mut allocator)
         .unwrap();
-    let initial_state = list_from_nodes(&mut allocator, &[dict_pubkey, base_unit_node, clue_hash]);
+    let initial_state = crate::tests::shape_tree(&mut allocator, &[dict_pubkey, base_unit_node, clue_hash]);
     let move_bytes = [0xAB; 32];
     let (code, result) = run_validator_step(
         &mut allocator,
@@ -409,9 +393,9 @@ fn test_krunk_commit_happy() {
     )
     .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     assert_eq!(int_from_atom(&mut allocator, items[2]), 5);
-    let state = proper_list(allocator.allocator(), items[1], true).unwrap();
+    let state = crate::tests::shape_fields(allocator.allocator(), items[1], 6);
     let a = allocator.allocator();
     assert_eq!(
         a.atom(state[5]),
@@ -432,7 +416,7 @@ fn test_krunk_commit_slash_bad_move_size() {
         .sha256tree(&mut allocator)
         .to_clvm(&mut allocator)
         .unwrap();
-    let initial_state = list_from_nodes(&mut allocator, &[dict_pubkey, base_unit_node, clue_hash]);
+    let initial_state = crate::tests::shape_tree(&mut allocator, &[dict_pubkey, base_unit_node, clue_hash]);
     let result = run_validator_step(
         &mut allocator,
         &commit,
@@ -455,7 +439,7 @@ fn test_krunk_guess_happy() {
     let (code, result) =
         run_validator_step(&mut allocator, &guess, b"crane", 5, 0, state, NodePtr::NIL).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     assert_eq!(
         items.len(),
         3,
@@ -484,7 +468,7 @@ fn test_krunk_guess_slash_bob_out_of_dict() {
     let (code, result) =
         run_validator_step(&mut allocator, &guess, b"xyzzy", 5, 0, state, evidence).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     assert_eq!(
         items.len(),
         4,
@@ -520,7 +504,7 @@ fn test_krunk_guess_bad_range_doesnt_bracket() {
                 .as_ref()
                 .map(|(code, node)| {
                     *code == MoveCode::MakeMove
-                        && proper_list(allocator.allocator(), *node, true)
+                        && crate::tests::validator_fields(allocator.allocator(), *node)
                             .map(|items| items.len() == 3)
                             .unwrap_or(false)
                 })
@@ -550,7 +534,7 @@ fn test_krunk_clue_nonterminal_happy() {
     let (code, result) =
         run_validator_step(&mut allocator, &clue, &[0x42], 21, 0, state, NodePtr::NIL).unwrap();
     assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     assert_eq!(items.len(), 3, "clue returns 3 elements");
     assert_eq!(
         int_from_atom(&mut allocator, items[2]),
@@ -638,7 +622,7 @@ fn test_krunk_reveal_slash_alice_out_of_dict() {
         )
         .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     assert_eq!(
         items.len(),
         4,
@@ -757,10 +741,10 @@ fn test_krunk_reveal_valid() {
     .expect("nil evidence must return the terminal transition");
     assert_eq!(nil_code, MoveCode::MakeMove);
     assert_eq!(
-        proper_list(allocator.allocator(), nil_result, true)
+        crate::tests::validator_fields(allocator.allocator(), nil_result)
             .unwrap()
             .len(),
-        1
+        3
     );
     assert_false_slash_with_common_evidence(
         &mut allocator,
@@ -796,10 +780,10 @@ fn test_krunk_reveal_valid() {
     .expect("an unsupported evidence length should behave like nil evidence");
     assert_eq!(unsupported_code, MoveCode::MakeMove);
     assert_eq!(
-        proper_list(allocator.allocator(), unsupported_result, true)
+        crate::tests::validator_fields(allocator.allocator(), unsupported_result)
             .unwrap()
             .len(),
-        1
+        3
     );
     assert_referee_slash_rejected(
         &mut allocator,
@@ -1077,10 +1061,10 @@ fn test_krunk_premature_reveal_concedes_scheduled_payout() {
     .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     assert_eq!(
-        proper_list(allocator.allocator(), result, true)
+        crate::tests::validator_fields(allocator.allocator(), result)
             .unwrap()
             .len(),
-        1,
+        3,
         "a correctly funded premature reveal should be accepted as terminal"
     );
     assert_referee_slash_rejected(
@@ -1233,7 +1217,7 @@ fn test_krunk_reveal_wrong_clue_at_index_zero_slashes() {
     );
     match result {
         Ok((code, node)) => {
-            let items = proper_list(allocator.allocator(), node, true).unwrap();
+            let items = crate::tests::validator_fields(allocator.allocator(), node).unwrap();
             assert!(
                 items.is_empty() || code == MoveCode::Slash,
                 "wrong clue evidence should produce unconditional slash (nil)"
@@ -1298,10 +1282,10 @@ fn test_krunk_reveal_correct_clue_no_slash() {
     .unwrap();
     assert_eq!(code, MoveCode::MakeMove);
     assert_eq!(
-        proper_list(allocator.allocator(), result, true)
+        crate::tests::validator_fields(allocator.allocator(), result)
             .unwrap()
             .len(),
-        1,
+        3,
         "correct-clue evidence should not authorize a slash"
     );
     assert_referee_slash_rejected(
@@ -1367,11 +1351,11 @@ fn test_reveal_payout_at_depth(depth: usize, expected_mover_share: i64) {
     )
     .unwrap_or_else(|e| panic!("depth {depth} reveal failed: {e}"));
     assert_eq!(code, MoveCode::MakeMove, "depth {depth} should succeed");
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     assert_eq!(
         items.len(),
-        1,
-        "depth {depth} should return terminal (0)"
+        3,
+        "depth {depth} should return terminal result with nil hash and zero size"
     );
     assert_false_slash_with_common_evidence(
         &mut allocator,

@@ -96,7 +96,7 @@ struct ValidatorResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     if items.is_empty() {
         ValidatorResult {
             code: MoveCode::Slash,

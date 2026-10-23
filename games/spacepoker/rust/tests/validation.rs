@@ -164,7 +164,7 @@ struct MoveResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> MoveResult {
-    let items = proper_list(allocator.allocator(), result, true)
+    let items = crate::tests::validator_fields(allocator.allocator(), result)
         .expect("validator output should be a proper list");
     if items.is_empty() {
         MoveResult {
@@ -535,8 +535,7 @@ fn make_end_state(
     let mover_image_node = allocator.allocator().new_atom(&mover_image).unwrap();
     let waiter_preimage_node = allocator.allocator().new_atom(waiter_preimage).unwrap();
     let a = allocator.allocator();
-    let tail = a.new_pair(waiter_preimage_node, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(mover_image_node, tail).unwrap();
+    let tail = a.new_pair(mover_image_node, waiter_preimage_node).unwrap();
     let state = a.new_pair(half_pot_node, tail).unwrap();
 
     MoveResult {

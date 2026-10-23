@@ -85,7 +85,7 @@ struct ValidatorResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     if items.is_empty() {
         ValidatorResult {
             code: MoveCode::Slash,
@@ -937,7 +937,7 @@ fn test_krunk_bob_invalid_guess_slash() {
         MoveCode::MakeMove,
         "conditional slash returns non-empty list"
     );
-    let items = proper_list(allocator.allocator(), result.output, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result.output).unwrap();
     assert_eq!(
         items.len(),
         4,
@@ -1463,15 +1463,7 @@ fn test_krunk_bob_detects_wrong_clue() {
         .allocator()
         .new_atom(clue_hash_val.hash().bytes())
         .unwrap();
-    let state = {
-        let a = allocator.allocator();
-        let tail = a.new_pair(clue_hash_node, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(commit_node, tail).unwrap();
-        let tail = a.new_pair(alice_clues, tail).unwrap();
-        let tail = a.new_pair(bob_guesses, tail).unwrap();
-        let tail = a.new_pair(base_unit_node, tail).unwrap();
-        a.new_pair(dict_pubkey, tail).unwrap()
-    };
+    let state = crate::tests::shape_tree(&mut allocator, &[dict_pubkey, base_unit_node, bob_guesses, alice_clues, commit_node, clue_hash_node]);
 
     // Reveal move
     let mut reveal_move = Vec::new();

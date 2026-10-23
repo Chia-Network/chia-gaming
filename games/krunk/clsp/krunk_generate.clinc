@@ -1,3 +1,5 @@
+(import std.shapes)
+(import games.krunk.clsp.shapes)
 (include *standard-cl-23*)
 
 (import games.krunk.clsp.krunk_helpers exposing
@@ -43,7 +45,7 @@
             (li 0 (> requested_stake proposer_reserve) (> requested_stake accepter_reserve))
             (assign
                 base_unit (/ requested_stake 100)
-                initial_state (li DICT_PUBKEY base_unit (shatree val_clue))
+                initial_state (make-krunk-initial DICT_PUBKEY base_unit (shatree val_clue))
                 alice_handler (curry krunk_alice_handler_commit DICT_TREE)
                 bob_handler (curry krunk_bob_handler_commit DICT_TREE)
                 (li 1
@@ -89,7 +91,7 @@
 
 (defun krunk_alice_handler_guess (SALT WORD DICT_TREE amount pre_state state move validation_info_hash mover_share)
     (assign
-        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
         lookup_result (dict_lookup MIN_WORD MAX_WORD move DICT_TREE)
         (if lookup_result
             (list 0
@@ -111,7 +113,7 @@
 
 (defun krunk_alice_handler_clue (SALT WORD CLUE DICT_TREE local_move amount state mover_share entropy)
     (assign
-        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
         num_guesses (len bob_guesses)
         latest_guess (f bob_guesses)
         (if (krunk_should_reveal latest_guess WORD num_guesses)
@@ -149,7 +151,7 @@
 
 (defun krunk_bob_handler_guess (DICT_TREE local_move amount state mover_share entropy)
     (assign
-        (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+        (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
         guess local_move
         (if (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE)
             (list "not_in_dictionary" guess)
@@ -170,7 +172,7 @@
     (if (= (strlen move) 1)
         ; Non-terminal clue: state is valid.
         (assign
-            (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) state
+            (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
             (list
                 (expand_clue move)
                 0
@@ -179,7 +181,7 @@
         )
         ; Terminal reveal: framework passes nil state, use pre_state.
         (assign
-            (dict_pubkey base_unit bob_guesses alice_clues alice_commit . _rest) pre_state
+            (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) pre_state
             word (substr move 16 21)
             reveal_clue (if mover_share
                 (expand_clue 0x72)

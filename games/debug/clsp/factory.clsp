@@ -1,4 +1,9 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import referee.shapes)
+
+(defun-shape debug-state #(count slashable mover_share))
+(defun-inline make-debug-state (count slashable mover_share) (make (debug-state)))
 
 (import std.or)
 (import std.and)
@@ -107,9 +112,9 @@
     (assign
      slashable-move (substr MOVE (- move-len 1) move-len)
      mover-share (+ 0 (substr MOVE (print "getting mover share" move-counter-data-len) (print "mover share ends at" (- move-len 1))))
-     (list
+     (validator-transition
       (validator-hash (curry-args-incr curry-args))
-      (list (+ count 1) slashable-move mover-share)
+      (make-debug-state (+ count 1) slashable-move mover-share)
       512
       )
      )
@@ -158,7 +163,7 @@
     ((CURRY_PACK)
      amount
      pre_state
-     (@ state (count smove mshare))
+     (@ state (debug-state count smove mshare))
      move
      validation_program_hash
      split
@@ -214,7 +219,7 @@
         1
         ()
         512
-        (list () () ())
+        (make-debug-state 0 0 0)
         0
         (curry SELF_PROG "myturn" curry-args)
         (curry SELF_PROG "theirturn" curry-args)

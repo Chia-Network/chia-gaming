@@ -194,13 +194,14 @@
             (list (q . assign) PATTERN VALUE BODY))))
 
 ; Pick a binding name absent from the entire input, including nested dispatches.
+; Preserve its symbol type: concat yields a numeric atom, not a variable name.
 (defun shapes-contains (NAME TREE)
     (if (l TREE)
         (if (shapes-contains NAME (f TREE)) 1 (shapes-contains NAME (r TREE)))
         (= NAME TREE)))
 
 (defun shapes-fresh (NAME TREE)
-    (if (shapes-contains NAME TREE) (shapes-fresh (concat NAME 0x5f) TREE) NAME))
+    (if (shapes-contains NAME TREE) (shapes-fresh (string->symbol (string-append (symbol->string NAME) "_")) TREE) NAME))
 
 (defun shapes-normalize-cases (CASES)
     (if CASES

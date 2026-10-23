@@ -367,14 +367,14 @@ referee puzzle. `MOVE`,
 committed by the move being challenged. The final arguments provide the
 previous state, the previous validator program, and the proposed evidence.
 
-Return a nonempty proper list for a valid move:
+Import `referee.shapes` and return a fixed result tree for a valid move:
 
 ```clojure
-(next_validation_program_hash new_state next_max_move_size optional_conditions...)
+(validator-result next_validation_program_hash new_state next_max_move_size conditions)
 ```
 
 Return nil when the move is illegal for that evidence and should slash.
-`(list 0)` means the next validator hash is nil (no further moves). Check
+`(validator-transition 0 0 0)` means the next validator hash is nil (no further moves). Check
 move shape before operations such as `substr`. A nil-evidence run that
 finds no slash must return a valid payload, including a next state when
 there is one, because the receiver uses that run to derive the transition

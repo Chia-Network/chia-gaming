@@ -1,0 +1,23 @@
+(import std.shapes)
+
+; Fixed records shared by on-chain validators and their callers.
+
+(defun-shape calpoker-seeds #(alice_commit bob_seed))
+(defun-inline make-calpoker-seeds (alice_commit bob_seed)
+    (make (calpoker-seeds)))
+
+(defun-shape calpoker-deal #(alice_commit alice_cards bob_cards))
+(defun-inline make-calpoker-deal (alice_commit alice_cards bob_cards)
+    (make (calpoker-deal)))
+
+(defun-shape calpoker-discard-state #(bob_discards alice_cards bob_cards alice_commit))
+(defun-inline make-calpoker-discard-state (bob_discards alice_cards bob_cards alice_commit)
+    (make (calpoker-discard-state)))
+
+(defun-shape calpoker-hands #(alice_cards bob_cards))
+(defun-inline make-calpoker-hands (alice_cards bob_cards)
+    (make (calpoker-hands)))
+
+(defun-shape calpoker-draw #(cards randomness))
+(defun-inline make-calpoker-draw (cards randomness)
+    (make (calpoker-draw)))

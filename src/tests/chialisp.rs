@@ -112,6 +112,9 @@ fn test_shapes_construct_invoke_and_dispatch() {
         Node(1.to_clvm(&mut allocator).unwrap()),
         Node(2.to_clvm(&mut allocator).unwrap()),
         Node(3.to_clvm(&mut allocator).unwrap()),
+        Node(33.to_clvm(&mut allocator).unwrap()),
+        Node(66.to_clvm(&mut allocator).unwrap()),
+        Node(110.to_clvm(&mut allocator).unwrap()),
     ]
     .to_clvm(&mut allocator)
     .unwrap();
@@ -172,7 +175,7 @@ fn test_make_cards() {
     .1;
     let compare_result = (
         [5, 22, 23, 25, 27, 31, 32, 35],
-        ([0, 6, 7, 20, 44, 45, 47, 51], ()),
+        [0, 6, 7, 20, 44, 45, 47, 51],
     )
         .to_clvm(&mut allocator)
         .expect("cvt");

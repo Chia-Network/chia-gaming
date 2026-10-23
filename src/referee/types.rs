@@ -18,7 +18,6 @@ use crate::common::types::{
     IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
     Timeout, MAX_BLOCK_COST_CLVM,
 };
-use crate::utils::proper_list;
 
 // =============================================================================
 // SHARED TYPES
@@ -243,52 +242,56 @@ pub struct ParsedValidatorResult {
     pub next_max_move_size: u32,
 }
 
+/// Decode `referee-result`: ((next hash . state) . (size . conditions)).
+/// Nil is a slash result; the conditions remain a proper, variable-length list.
+pub(crate) fn validator_result_fields(
+    allocator: &clvmr::Allocator,
+    node: NodePtr,
+) -> Result<Option<[NodePtr; 4]>, Error> {
+    if node == NodePtr::NIL {
+        return Ok(None);
+    }
+    let pair = |node| match allocator.sexp(node) {
+        clvmr::allocator::SExp::Pair(left, right) => Ok((left, right)),
+        _ => Err(Error::StrErr("invalid validator result tree".to_string())),
+    };
+    let (transition, effects) = pair(node)?;
+    let (hash, state) = pair(transition)?;
+    let (size, conditions) = pair(effects)?;
+    if crate::utils::proper_list(allocator, conditions, true).is_none() {
+        return Err(Error::StrErr(
+            "validator conditions must be a list".to_string(),
+        ));
+    }
+    Ok(Some([hash, state, size, conditions]))
+}
+
 pub fn parse_validator_result(
     allocator: &mut AllocEncoder,
     node: NodePtr,
 ) -> Result<ParsedValidatorResult, Error> {
-    let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
-        p
-    } else {
-        return Err(Error::StrErr("non-list in validator result".to_string()));
-    };
-
-    if lst.is_empty() {
+    let Some([hash_node, state_node, size_node, _conditions]) =
+        validator_result_fields(allocator.allocator_ref(), node)?
+    else {
         return Ok(ParsedValidatorResult {
             new_state: None,
             next_validator_hash: None,
             next_max_move_size: 0,
         });
-    }
-
-    if lst.len() == 2 {
-        return Err(Error::StrErr(
-            "validator returned 2 elements; expected 1 (terminal) or at least 3".to_string(),
-        ));
-    }
-
-    // Mirror referee.clsp destructuring of
-    // (next_validator_hash new_state max_move_size . extra_conditions):
-    // a one-element list is terminal, and trailing slash conditions do not
-    // change the transition fields extracted here.
-    let next_validator_hash = if Program::from_nodeptr(allocator, lst[0])?.is_nil() {
+    };
+    let next_validator_hash = if Program::from_nodeptr(allocator, hash_node)?.is_nil() {
         None
     } else {
-        Some(Hash::from_nodeptr(allocator, lst[0])?)
+        Some(Hash::from_nodeptr(allocator, hash_node)?)
     };
-    let state_node = if lst.len() > 1 { lst[1] } else { NodePtr::NIL };
-    let next_max_move_size = if lst.len() > 2 {
-        let clvmr::allocator::SExp::Atom = allocator.allocator().sexp(lst[2]) else {
-            return Err(Error::StrErr(
-                "validator max move size is not an atom".to_string(),
-            ));
-        };
-        u64_from_atom(allocator.allocator().atom(lst[2]).as_ref())
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| Error::StrErr("validator max move size exceeds u32".to_string()))?
-    } else {
-        0
+    let clvmr::allocator::SExp::Atom = allocator.allocator_ref().sexp(size_node) else {
+        return Err(Error::StrErr(
+            "validator max move size is not an atom".to_string(),
+        ));
     };
+    let next_max_move_size = u64_from_atom(allocator.allocator_ref().atom(size_node).as_ref())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| Error::StrErr("validator max move size exceeds u32".to_string()))?;
     Ok(ParsedValidatorResult {
         new_state: Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)),
         next_validator_hash,

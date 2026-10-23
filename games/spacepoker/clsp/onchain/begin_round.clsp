@@ -1,4 +1,6 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import games.spacepoker.clsp.shapes)
 (import referee.shapes)
 
 (import games.game_codes)
@@ -35,7 +37,7 @@
 (export (referee-validator-args mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash) previous_validation_program evidence unused_payout)
+    (space-open bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash) previous_validation_program evidence unused_payout)
 
     (if (< (strlen MOVE) 32)
         0
@@ -56,16 +58,12 @@
                         (>= raise_amount 0)
                         (<= (+ half_pot raise_amount) (/ AMOUNT 2))
                         0
-                        (list mid_hash
-                            (li bet_unit half_pot raise_amount
-                                waiter_image_N mover_image_N N)
-                            42)
+                        (validator-transition mid_hash (make-space-raise bet_unit half_pot raise_amount
+                                waiter_image_N mover_image_N N) 42)
                     )
                     (if (= (strlen MOVE) 32)
-                        (list mod_hash
-                            (li bet_unit half_pot
-                                (sha256 waiter_image_N) mover_image_N N mid_hash)
-                            42)
+                        (validator-transition mod_hash (make-space-open bet_unit half_pot
+                                (sha256 waiter_image_N) mover_image_N N mid_hash) 42)
                         0
                     )
                 )

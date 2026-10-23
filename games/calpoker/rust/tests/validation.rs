@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Node, Program, Puzzle, Sha256Input, Sha256tree};
-use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
 use clvmr::allocator::{NodePtr, SExp};
@@ -291,7 +290,7 @@ fn int_from_atom(allocator: &mut AllocEncoder, node: NodePtr) -> i64 {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> MoveResult {
-    let items = proper_list(allocator.allocator(), result, true)
+    let items = crate::tests::validator_fields(allocator.allocator(), result)
         .expect("validator output should be a proper list");
     if items.is_empty() {
         MoveResult {

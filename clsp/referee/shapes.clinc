@@ -9,7 +9,7 @@
     ((atom mover_payout_ph) . (atom waiter_payout_ph)))
 
 (defun-shape referee-move
-    #((atom new_move) (atom infohash_c) (atom new_mover_share) (atom new_max_move_size)))
+    (((atom new_move) . (atom infohash_c)) . ((atom new_mover_share) . (atom new_max_move_size))))
 
 ; A pair on the left and an atom on the right distinguishes slash from both
 ; timeout (two atoms) and move (two pairs). Evidence contributes no constraints.
@@ -20,3 +20,12 @@
 ; validators; off-chain calls supply nil there. No terminating list nils.
 (defun-shape referee-validator-args
     (validator_hash curried_args (state validation_program . evidence) . payout))
+
+; Non-nil validator result. The conditions tail is a variable-length list.
+; Terminal success has nil hash/state and zero size; nil itself means slash.
+(defun-shape referee-result
+    ((next_validator_hash . new_state) . (max_move_size . extra_conditions)))
+(defun-inline validator-result (next_validator_hash new_state max_move_size extra_conditions)
+    (make (referee-result)))
+(defun-inline validator-transition (next_validator_hash new_state max_move_size)
+    (validator-result next_validator_hash new_state max_move_size ()))

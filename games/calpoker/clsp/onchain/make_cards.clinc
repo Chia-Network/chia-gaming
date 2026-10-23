@@ -1,10 +1,12 @@
+(import std.shapes)
+(import games.calpoker.clsp.shapes)
 (import std.relops)
 
 (defun make_cards (randomness)
     (assign
-        (handa newrandomness) (choose 52 8 randomness)
-        (handb newrandomness2) (choose (- 52 8) 8 newrandomness)
-        (list handa (mergeover handa handb 0))
+        (calpoker-draw handa newrandomness) (choose 52 8 randomness)
+        (calpoker-draw handb newrandomness2) (choose (- 52 8) 8 newrandomness)
+        (make-calpoker-hands handa (mergeover handa handb 0))
     )
 )
 
@@ -13,13 +15,13 @@
 (defun choose (numcards numchoose randomness)
     (if (= numchoose 1)
         (assign (newrandomness . card) (divmod randomness numcards)
-            (list (list card) newrandomness)
+            (make-calpoker-draw (list card) newrandomness)
         )
         (assign 
             half (lsh numchoose -1)
-            (cards1 newrandomness2) (choose numcards half randomness)
-            (cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
-            (list (mergein cards1 cards2 0) newrandomness3)
+            (calpoker-draw cards1 newrandomness2) (choose numcards half randomness)
+            (calpoker-draw cards2 newrandomness3) (choose (- numcards half) (- numchoose half) newrandomness2)
+            (make-calpoker-draw (mergein cards1 cards2 0) newrandomness3)
         )
     )
 )

@@ -217,8 +217,8 @@ for the handler, and every handler evidence candidate causes another ordered
 slash invocation. Handlers only propose evidence; they do not replace these
 validator executions.
 
-Validator return values are untagged: a non-nil payload list for valid moves
-`(next_validation_program_hash new_state max_move_size ...)`, or nil for slash.
+Validator return values are untagged: a non-nil result tree for valid moves
+`((next_validation_program_hash . new_state) . (max_move_size . conditions))`, or nil for slash.
 Nil means the move is illegal for the supplied evidence. A non-nil result means
 the move is valid only if the returned values match the next-state commitments
 accepted by the move path; mismatched infohash or max-move-size values are

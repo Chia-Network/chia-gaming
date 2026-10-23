@@ -1,4 +1,6 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import games.calpoker.clsp.shapes)
 (import referee.shapes)
 
 (import games.calpoker.clsp.onchain.b exposing (program_hash as bhash))
@@ -19,7 +21,7 @@
 
     ;; First their turn for the second player
     (if (= (strlen MOVE) 32)
-        (list bhash MOVE 16)
+        (validator-transition bhash MOVE 16)
         0
     )
 )

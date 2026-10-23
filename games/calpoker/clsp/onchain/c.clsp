@@ -1,4 +1,6 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import games.calpoker.clsp.shapes)
 (import referee.shapes)
 
 (import std.assert)
@@ -23,16 +25,17 @@
 (export (referee-validator-args mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (alice_commit bob_seed) previous_validation_program evidence unused_payout)
+    (calpoker-seeds alice_commit bob_seed) previous_validation_program evidence unused_payout)
 
     (if (!= (strlen MOVE) 48)
         0
         (assign
-            new_state (c (substr MOVE 16 48) (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT)))
+            (calpoker-hands) (make_cards (sha256 (substr MOVE 0 16) bob_seed AMOUNT))
+            new_state (make-calpoker-deal (substr MOVE 16 48) alice_cards bob_cards)
             (if_any_fail
                 (= (sha256 (substr MOVE 0 16)) alice_commit)
                 0
-                (list dhash new_state 1)
+                (validator-transition dhash new_state 1)
             )
         )
     )

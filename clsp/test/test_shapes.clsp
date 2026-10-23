@@ -53,6 +53,15 @@
         (#(((a . b) . c) (optional y) ((atom d) . e)) 2)
         (#((optional x) ((atom a) . b) ((c . d) . e)) 3)))
 
+; Nested dispatch and a caller binding force multiple fresh symbol names.
+(defun nested-dispatch (VALUE shapes-value)
+    (if-shape VALUE
+        ((atom a) (+ a shapes-value))
+        ((a . b)
+            (if-shape b
+                ((atom c) (+ a c shapes-value))
+                ((d . e) (+ a d e shapes-value))))))
+
 (export (A B C D)
     (list
         (make (triple A B C))
@@ -83,4 +92,7 @@
         (make #(A B C D A B C D A B C))
         (guarded-groups &rest (make #((A . B) ((C . D) . A) nil)))
         (guarded-groups &rest (make #(((A . B) . C) nil (D . A))))
-        (guarded-groups &rest (make #(nil (A . B) ((C . D) . A))))))
+        (guarded-groups &rest (make #(nil (A . B) ((C . D) . A))))
+        (nested-dispatch A B)
+        (nested-dispatch (make (A . B)) C)
+        (nested-dispatch (make (A . (B . C))) D)))

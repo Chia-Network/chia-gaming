@@ -66,7 +66,7 @@ struct ValidatorResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     if items.is_empty() {
         ValidatorResult {
             code: MoveCode::Slash,
@@ -1401,8 +1401,7 @@ fn test_end_validator_allows_extra_for_new_mover() {
         let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
         let wp = allocator.allocator().new_atom(bob_pre).unwrap();
         let a = allocator.allocator();
-        let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(mi, tail).unwrap();
+        let tail = a.new_pair(mi, wp).unwrap();
         a.new_pair(hp, tail).unwrap()
     };
 
@@ -1436,8 +1435,7 @@ fn test_end_validator_slashes_underpayment_to_new_mover() {
         let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
         let wp = allocator.allocator().new_atom(bob_pre).unwrap();
         let a = allocator.allocator();
-        let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(mi, tail).unwrap();
+        let tail = a.new_pair(mi, wp).unwrap();
         a.new_pair(hp, tail).unwrap()
     };
 

@@ -1,4 +1,6 @@
 (include *standard-cl-23*)
+(import std.shapes)
+(import games.calpoker.clsp.shapes)
 (import referee.shapes)
 
 (import games.calpoker.clsp.onchain.e exposing (program_hash as ehash))
@@ -19,11 +21,11 @@
 (export (referee-validator-args mod_hash
     #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
        bob_discards MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (@ state (alice_commit alice_cards bob_cards)) previous_validation_program evidence unused_payout)
+    (@ state (calpoker-deal alice_commit alice_cards bob_cards)) previous_validation_program evidence unused_payout)
     (if_any_fail
         (= (strlen bob_discards) 1)
         (= (popcount bob_discards) 4)
         0
-        (list ehash (list bob_discards alice_cards bob_cards alice_commit) 18)
+        (validator-transition ehash (make-calpoker-discard-state bob_discards alice_cards bob_cards alice_commit) 18)
     )
 )
