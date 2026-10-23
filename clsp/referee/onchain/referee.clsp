@@ -71,7 +71,9 @@
                 (assert
                     (= INFOHASH_A (sha256 previous_validation_program_hash (shatree previous_state)))
                     (if-shape validator_result
-                        (nil payout_conditions)
+                        ; if-shape assumes its closed union; reject other atoms
+                        ; rather than treating a malformed validator result as nil.
+                        (nil (assert (not validator_result) payout_conditions))
                         ((referee-result)
                             (if (not (logand
                                     (= (i next_validator_hash

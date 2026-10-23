@@ -337,6 +337,21 @@ fn test_slash_succeeds_nil() {
     assert_eq!(items.len(), 2, "should have 2 payout conditions");
 }
 
+/// Among atom results, only nil authorizes a slash; other atoms are invalid
+/// validator results both off chain and in the actual referee puzzle.
+#[test]
+fn test_slash_rejects_non_nil_atom_results() {
+    for bytes in [vec![1], vec![0], vec![0xff], vec![0x42; 32]] {
+        let mut allocator = AllocEncoder::new();
+        let value = allocator.allocator().new_atom(&bytes).unwrap();
+        assert!(parse_validator_result(&mut allocator, value).is_err());
+        assert!(
+            run_referee_slash_with_mock(&mut allocator, value, Some(&[0; 32]), &[5]).is_err(),
+            "non-nil atom {bytes:?} must not authorize a slash"
+        );
+    }
+}
+
 #[test]
 fn test_negative_new_max_move_size_is_rejected() {
     assert!(
@@ -608,6 +623,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             &test_referee_tree_move_and_timeout_agree_with_rust,
         ),
         ("test_slash_succeeds_nil", &test_slash_succeeds_nil),
+        (
+            "test_slash_rejects_non_nil_atom_results",
+            &test_slash_rejects_non_nil_atom_results,
+        ),
         (
             "test_negative_new_max_move_size_is_rejected",
             &test_negative_new_max_move_size_is_rejected,
