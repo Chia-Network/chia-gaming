@@ -123,3 +123,16 @@ Validator results use the explicit pair layout `referee-result`:
 accepts the conditions explicitly. Terminal success is
 `(validator-transition 0 0 0)`; bare nil means slash. Referee distinguishes nil
 from the result record with `if-shape`. Rust decodes the same pair layout.
+
+## Library tests
+
+`src/tests/shapes.rs` tests the bundle independently of any game or referee.
+`clsp/test/test_shapes.clsp` and `test_make.clsp` provide production-built
+constructor, invocation, destructuring, hygiene, and dispatch fixtures.
+The Rust tests also compile generated unions with the production compiler
+options and execute their exported programs. They cover every ordering of a
+four-way atom/pair matrix, eight-way dispatch requiring three checks, guarded
+nested paths, nil tests, and absent or malformed optional subtrees. Compile-time
+negative cases check overlapping alternatives and invalid declarations/calls.
+
+Run `./ct-automation.sh` to include these tests in the full suite.
