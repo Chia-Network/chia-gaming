@@ -1551,9 +1551,10 @@ host-side coordinator for chain observations. It separates three concerns:
    WASM interest set, not the per-sweep source of truth.
 2. **Scheduling** — `BlockchainPoller` owns two independent serialized
    `AsyncJobQueue` lanes per active backend: one for reads and background polls,
-   and one for wallet mutations. A hung provider read therefore cannot block a
-   spend, offer, selection, or other mutation. Both lanes pass every adapter
-   request through one global request-start gate, which applies the backend's
+   and one for wallet mutations. These adapter lanes run independently;
+   WalletConnect additionally serializes its transport as described below.
+   Both lanes pass every adapter request through one global request-start gate,
+   which applies the backend's
    requested gap between starts without waiting for prior requests to finish.
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
    work on the read lane. On disconnect, active reads are abandoned and queued
@@ -1571,8 +1572,21 @@ host-side coordinator for chain observations. It separates three concerns:
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
-   registration shape, but it does not own scheduling or coin lifecycle
-   semantics.
+   registration shape, but it does not own polling interest or coin lifecycle
+   semantics. WalletConnect can garble or lose responses when more than one
+   request is pending. Only one request may be outstanding per connection;
+   serialization is a correctness requirement, not merely rate limiting.
+   Its transport has one consumer for separate mutation and read
+   queues: a queued mutation runs before queued reads, without interrupting the
+   active request. This serializes all actual WalletConnect calls, including
+   direct setup and peer-readiness queries, and preserves 50ms between requests.
+   A read or exact-transaction post that takes 30 seconds replaces the relay
+   connection before the next request can run, retaining the approved session
+   and pairing. Relay recovery fences queued work and late results from the old
+   connection; a failed recovery leaves the wallet unavailable.
+   Reservation mutations such as offer creation
+   retain their SDK completion lifetime. The optional peer-count fallback uses
+   this active-query deadline, excluding time spent queued behind wallet work.
 
 Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic

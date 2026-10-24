@@ -41,6 +41,7 @@ export interface WalletConnectOutboundState {
   connected?: boolean;
   sessions?: number;
   address?: string;
+  timedOutMethod?: string;
 }
 
 class WalletState {
@@ -52,6 +53,9 @@ class WalletState {
   observable: Subject<WalletConnectOutboundState>;
   private initPromise: Promise<void> | null = null;
   private pendingPairingTopic?: string;
+  private relayAvailable = true;
+  private requestEpoch = 0;
+  private relayRecovery: Promise<void> | null = null;
 
   constructor() {
     this.isConnected = false;
@@ -67,7 +71,47 @@ class WalletState {
   }
 
   getSession() {
-    return this.session;
+    return this.relayAvailable ? this.session : undefined;
+  }
+
+  getRequestEpoch(): number {
+    return this.requestEpoch;
+  }
+
+  recoverRelay(
+    client: InstanceType<typeof Client>,
+    topic: string,
+    timedOutMethod?: string,
+  ): Promise<void> {
+    if (this.relayRecovery) return this.relayRecovery;
+    if (this.client !== client || this.session?.topic !== topic) {
+      return Promise.reject(new Error('WalletConnect session changed before relay recovery'));
+    }
+    const epoch = ++this.requestEpoch;
+    this.relayAvailable = false;
+    this.isConnected = false;
+    this.observable.next({
+      stateName: 'reconnecting',
+      connected: false,
+      sessions: 1,
+      timedOutMethod,
+    });
+    const isCurrent = () =>
+      this.client === client && this.session?.topic === topic && this.requestEpoch === epoch;
+    const recovery = (async () => {
+      log('[WC session] restarting relay after stalled request');
+      await client.core.relayer.transportClose();
+      if (!isCurrent()) throw new Error('WalletConnect session changed during relay recovery');
+      await client.core.relayer.transportOpen();
+      if (!isCurrent()) throw new Error('WalletConnect session changed during relay recovery');
+      this.relayAvailable = true;
+      this.relayRecovery = null;
+      this.onSessionConnected(this.session!);
+    })().finally(() => {
+      if (this.relayRecovery === recovery) this.relayRecovery = null;
+    });
+    this.relayRecovery = recovery;
+    return recovery;
   }
 
   getChainId() {
@@ -128,6 +172,7 @@ class WalletState {
     const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
 
     this.isConnected = true;
+    this.relayAvailable = true;
     this.address = address;
     this.chainId = detectedChain;
     this.session = session;
@@ -145,6 +190,7 @@ class WalletState {
   }
 
   private resetSession() {
+    this.requestEpoch++;
     this.logSessionIds('before-reset');
     this.isConnected = false;
     this.session = undefined;
@@ -221,9 +267,14 @@ class WalletState {
       this.client = signClient;
 
       signClient.on('session_update', ({ topic, params }) => {
+        if (this.session?.topic !== topic) return;
         const updated = signClient.session.get(topic);
         const merged = { ...updated, namespaces: params.namespaces };
         log(`[WC session] update topic=${topic}`);
+        if (this.relayRecovery) {
+          this.session = merged;
+          return;
+        }
         this.onSessionConnected(merged);
       });
 

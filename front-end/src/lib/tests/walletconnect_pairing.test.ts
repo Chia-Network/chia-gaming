@@ -1,9 +1,22 @@
+import 'fake-indexeddb/auto';
+
+const mockSessionHandlers = new Map<string, (value: unknown) => void>();
 const mockClient = {
   session: { keys: [] as string[], get: jest.fn(), length: 0 },
-  on: jest.fn(),
+  on: jest.fn((event: string, listener: (value: unknown) => void) => {
+    mockSessionHandlers.set(event, listener);
+  }),
   connect: jest.fn(),
+  request: jest.fn(),
   disconnect: jest.fn(async () => {}),
-  core: { pairing: { disconnect: jest.fn(async () => {}) } },
+  core: {
+    pairing: { disconnect: jest.fn(async () => {}) },
+    relayer: {
+      connected: true,
+      transportClose: jest.fn(async () => {}),
+      transportOpen: jest.fn(async () => {}),
+    },
+  },
 };
 
 const mockInit = jest.fn(async () => mockClient);
@@ -13,13 +26,14 @@ jest.mock('@walletconnect/sign-client', () => ({
   default: { init: (...args: unknown[]) => mockInit(...args) },
 }));
 
-jest.mock('../../services/log', () => ({ log: jest.fn() }));
+jest.mock('../../services/log', () => ({ log: jest.fn(), diagStack: jest.fn() }));
 
 jest.mock('../../hooks/saveHardReset', () => ({
   startPendingWalletConnectWipe: jest.fn(async () => {}),
 }));
 
 jest.mock('../../constants/wallet-connect', () => ({
+  ...jest.requireActual('../../constants/wallet-connect'),
   getChainId: () => 'chia:mainnet',
   getRequiredNamespaces: () => ({
     chia: { methods: [], chains: ['chia:mainnet'], events: [] },
@@ -44,6 +58,23 @@ jest.mock('../../util/walletConnectMetadata', () => ({
 
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { walletConnectState } from '../../hooks/useWalletConnect';
+import type { SessionTypes } from '@walletconnect/types';
+import { ChiaMethod } from '../../constants/wallet-connect';
+import { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
+import { encodePuzzleHashToBech32m } from '../../util/bech32m';
+import { rpc } from '../../hooks/WalletConnectRpc';
+
+const connectedSession = {
+  topic: 'session-topic',
+  pairingTopic: 'pairing-topic',
+  namespaces: { chia: { accounts: ['chia:mainnet:123'], chains: ['chia:mainnet'], methods: [] } },
+} as unknown as SessionTypes.Struct;
+
+async function establishSession(session = connectedSession): Promise<void> {
+  await walletConnectState.init();
+  await walletConnectState.connect(async () => session);
+}
 
 describe('WalletConnect pairing teardown', () => {
   beforeEach(async () => {
@@ -55,6 +86,9 @@ describe('WalletConnect pairing teardown', () => {
     mockClient.on.mockClear();
     mockClient.disconnect.mockClear();
     mockClient.core.pairing.disconnect.mockClear();
+    mockClient.request.mockReset();
+    mockClient.core.relayer.transportClose.mockReset().mockResolvedValue();
+    mockClient.core.relayer.transportOpen.mockReset().mockResolvedValue();
   });
 
   it('cancels a pending pairing on disconnect when no session exists', async () => {
@@ -211,4 +245,184 @@ describe('WalletConnect pairing teardown', () => {
       expect.objectContaining({ topic: 'topic-2' }),
     );
   });
+
+  it('replaces the relay in order while preserving the approved session and pairing', async () => {
+    await establishSession();
+    let finishClose!: () => void;
+    let finishOpen!: () => void;
+    mockClient.core.relayer.transportClose.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    mockClient.core.relayer.transportOpen.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    const states: boolean[] = [];
+    const subscription = walletConnectState.getObservable().subscribe((state) => {
+      if (state.connected !== undefined) states.push(state.connected);
+    });
+    try {
+      const epoch = walletConnectState.getRequestEpoch();
+      const recovery = walletConnectState.recoverRelay(
+        walletConnectState.getClient()!,
+        connectedSession.topic,
+      );
+      expect(walletConnectState.getSession()).toBeUndefined();
+      expect(walletConnectState.getRequestEpoch()).toBe(epoch + 1);
+      expect(mockClient.core.relayer.transportOpen).not.toHaveBeenCalled();
+      finishClose();
+      await Promise.resolve();
+      expect(mockClient.core.relayer.transportOpen).toHaveBeenCalledTimes(1);
+      expect(walletConnectState.getSession()).toBeUndefined();
+
+      // An SDK session update during reconnect must not unmask the transport.
+      mockClient.session.get.mockReturnValue(connectedSession);
+      mockSessionHandlers.get('session_update')!({
+        topic: connectedSession.topic,
+        params: { namespaces: connectedSession.namespaces },
+      });
+      expect(walletConnectState.getSession()).toBeUndefined();
+      finishOpen();
+      await recovery;
+      expect(walletConnectState.getSession()?.topic).toBe(connectedSession.topic);
+      expect(walletConnectState.getSession()?.pairingTopic).toBe('pairing-topic');
+      expect(walletConnectState.getAddress()).toBe('123');
+      expect(states).toEqual([false, true]);
+      expect(mockClient.disconnect).not.toHaveBeenCalled();
+      expect(mockClient.core.pairing.disconnect).not.toHaveBeenCalled();
+    } finally {
+      subscription.unsubscribe();
+    }
+  });
+
+  it('leaves the wallet unavailable when relay replacement fails', async () => {
+    await establishSession();
+    mockClient.core.relayer.transportOpen.mockRejectedValueOnce(new Error('relay unavailable'));
+    await expect(
+      walletConnectState.recoverRelay(walletConnectState.getClient()!, connectedSession.topic),
+    ).rejects.toThrow('relay unavailable');
+    expect(walletConnectState.getSession()).toBeUndefined();
+    expect(walletConnectState.isConnected).toBe(false);
+    expect(mockClient.disconnect).not.toHaveBeenCalled();
+    await expect(rpc.getHeightInfo({})).rejects.toThrow('Session is not connected');
+    expect(mockClient.request).not.toHaveBeenCalled();
+  });
+
+  it('does not reconnect a session the user disconnects during relay replacement', async () => {
+    await establishSession();
+    let finishClose!: () => void;
+    mockClient.core.relayer.transportClose.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    const recovery = walletConnectState.recoverRelay(
+      walletConnectState.getClient()!,
+      connectedSession.topic,
+    );
+    const rejected = expect(recovery).rejects.toThrow('session changed during relay recovery');
+    await walletConnectState.disconnect();
+    finishClose();
+    await rejected;
+    expect(mockClient.core.relayer.transportOpen).not.toHaveBeenCalled();
+    expect(walletConnectState.getSession()).toBeUndefined();
+  });
+
+  it.each([
+    ChiaMethod.GetHeightInfo,
+    ChiaMethod.GetCoinRecordsByNames,
+    ChiaMethod.GetFullNodePeerCount,
+  ])(
+    'resumes actual chain polling after replacing a relay with a stalled %s',
+    async (stalledMethod) => {
+      jest.useFakeTimers();
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+      let finishOld!: (value: unknown) => void;
+      let stalled = false;
+      mockClient.request.mockImplementation(({ request }) => {
+        if (request.method === stalledMethod && !stalled) {
+          stalled = true;
+          return new Promise((resolve) => {
+            finishOld = resolve;
+          });
+        }
+        switch (request.method) {
+          case ChiaMethod.GetNextAddress:
+            return Promise.resolve(encodePuzzleHashToBech32m('11'.repeat(32)));
+          case ChiaMethod.GetWallets:
+            return Promise.resolve([{ id: 2, type: 205 }]);
+          case ChiaMethod.GetHeightInfo:
+            return Promise.resolve({ height: 100 });
+          case ChiaMethod.GetCoinRecordsByNames:
+            return Promise.resolve({ coinRecords: [] });
+          default:
+            return Promise.resolve({ success: true });
+        }
+      });
+      await establishSession(
+        stalledMethod === ChiaMethod.GetFullNodePeerCount
+          ? {
+              ...connectedSession,
+              namespaces: {
+                chia: {
+                  ...connectedSession.namespaces.chia,
+                  methods: [ChiaMethod.GetFullNodePeerCount],
+                },
+              },
+            }
+          : connectedSession,
+      );
+      const blockchain = new RealBlockchainInterface();
+      const poller = new BlockchainPoller(blockchain, 1000);
+      const heights: bigint[] = [];
+      const snapshots: bigint[] = [];
+      poller.attachGameSession({
+        snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+        reportNewBlock: (height) => {
+          heights.push(height);
+        },
+        reportCoinStates: (height) => {
+          snapshots.push(height);
+        },
+      });
+      try {
+        const monitoring = blockchain.startMonitoring();
+        await jest.advanceTimersByTimeAsync(1000);
+        await monitoring;
+        poller.start();
+        await jest.advanceTimersByTimeAsync(10000);
+        expect(stalled).toBe(true);
+        expect(snapshots).toEqual([]);
+        await jest.advanceTimersByTimeAsync(30000);
+        expect(mockClient.core.relayer.transportClose).toHaveBeenCalledTimes(1);
+        expect(mockClient.core.relayer.transportOpen).toHaveBeenCalledTimes(1);
+        expect(heights.length).toBeGreaterThan(0);
+        expect(snapshots.length).toBeGreaterThan(0);
+        expect(walletConnectState.getSession()?.topic).toBe(connectedSession.topic);
+        if (stalledMethod === ChiaMethod.GetFullNodePeerCount) {
+          expect(
+            mockClient.request.mock.calls.filter(
+              ([call]) => call.request.method === ChiaMethod.GetFullNodePeerCount,
+            ),
+          ).toHaveLength(1);
+          expect(blockchain.isReadyForPlay()).toBe(true);
+        }
+        finishOld({ height: 999, coinRecords: [] });
+        await jest.advanceTimersByTimeAsync(0);
+        expect(poller.getPeak()).toBe(100n);
+      } finally {
+        poller.stop();
+        await blockchain.disconnect();
+        await jest.advanceTimersByTimeAsync(1000);
+        consoleError.mockRestore();
+        jest.useRealTimers();
+      }
+    },
+  );
 });
