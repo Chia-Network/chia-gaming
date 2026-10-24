@@ -34,7 +34,6 @@ import { walletConnectState } from './useWalletConnect';
 import { jsonStringify } from '../util/jsonSafe';
 
 const PEER_READINESS_POLL_MS = 5000;
-const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
@@ -368,6 +367,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
+  private unsupportedPeerCountScope: string | null = null;
   private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
   private peerPollEpoch = 0;
   private wcSubscription: { unsubscribe: () => void } | null = null;
@@ -949,7 +949,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     // Use peer-backed readiness when the wallet granted that optional method.
     // Wallets without it are assumed ready once connected.
     if (connected) {
-      if (walletConnectState.supportsMethod(ChiaMethod.GetFullNodePeerCount)) {
+      const scope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
+      if (
+        this.unsupportedPeerCountScope !== scope &&
+        walletConnectState.supportsMethod(ChiaMethod.GetFullNodePeerCount)
+      ) {
         this.startPeerReadinessPoll();
       } else {
         this.setReadyForPlay(true);
@@ -973,23 +977,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   private startPeerReadinessPoll() {
     const epoch = ++this.peerPollEpoch;
+    const scope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
     const check = async () => {
-      let timeout: ReturnType<typeof setTimeout> | null = null;
       try {
-        const peerCount = await Promise.race([
-          rpc.getFullNodePeerCount({}),
-          new Promise<null>((resolve) => {
-            timeout = setTimeout(() => resolve(null), PEER_READINESS_RPC_TIMEOUT_MS);
-          }),
-        ]);
+        const peerCount = await rpc.getFullNodePeerCount({});
         if (epoch !== this.peerPollEpoch) return;
-        if (peerCount === null) {
-          log(
-            '[wc-blockchain] full node peer count unsupported (request timed out); assuming ready',
-          );
-          this.setReadyForPlay(true);
-          return;
-        }
         log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
         if (peerCount > 0n) {
           this.setReadyForPlay(true);
@@ -1004,13 +996,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           errorText.includes('unsupported method') ||
           errorText.includes('method unsupported')
         ) {
+          this.unsupportedPeerCountScope = scope;
           log('[wc-blockchain] full node peer count unsupported; assuming ready');
           this.setReadyForPlay(true);
           return;
         }
         log(`[wc-blockchain] full node peer poll error: ${String(e)}`);
-      } finally {
-        if (timeout !== null) clearTimeout(timeout);
       }
       if (epoch !== this.peerPollEpoch) return;
       this.setReadyForPlay(false);
@@ -1032,6 +1023,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     if (this.wcSubscription) return;
     this.wcSubscription = walletConnectState.getObservable().subscribe({
       next: (evt) => {
+        if (evt.timedOutMethod === ChiaMethod.GetFullNodePeerCount) {
+          this.unsupportedPeerCountScope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
+          log(
+            '[wc-blockchain] full node peer count unsupported (query timed out); assuming ready after relay recovery',
+          );
+        }
         if (evt.stateName === 'connected') {
           void this.startMonitoring().catch((err) => {
             console.warn('[wc-blockchain] monitoring setup after WalletConnect event failed', err);
@@ -1075,11 +1072,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       };
     }
 
-    const { uri, approval } = await walletConnectState.startConnect();
+    const { uri, approval, skipQr } = await walletConnectState.startConnect();
     return {
       qrUri: uri,
+      skipQr,
       finalize: async () => {
-        await walletConnectState.connect(approval);
+        if (!skipQr) await walletConnectState.connect(approval);
         await this.startMonitoring();
       },
     };

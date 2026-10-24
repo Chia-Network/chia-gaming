@@ -288,7 +288,7 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
-  it('assumes enough peers when an advertised peer-count method never responds', async () => {
+  it('waits for query timeout recovery before assuming an unresponsive peer-count method is unsupported', async () => {
     jest.useFakeTimers();
     try {
       mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
@@ -304,7 +304,19 @@ describe('RealBlockchainInterface', () => {
 
       jest.advanceTimersByTime(7_000);
       for (let i = 0; i < 10; i++) await Promise.resolve();
-
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      // Only the active transport query's deadline can identify a timed-out
+      // method; time spent queued behind wallet work is not an unsupported RPC.
+      for (const next of mockWalletListeners) {
+        next({
+          stateName: 'reconnecting',
+          connected: false,
+          timedOutMethod: 'chia_getFullNodePeerCount',
+        });
+      }
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      for (const next of mockWalletListeners) next({ stateName: 'connected', connected: true });
+      await jest.advanceTimersByTimeAsync(1000);
       expect(blockchain.isReadyForPlay()).toBe(true);
       expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
     } finally {
