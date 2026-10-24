@@ -49,6 +49,98 @@ fn test_shapes_reject_ambiguous_or_incorrect_templates() {
             "(defun-shape duplicate (a . a)) (export () 0)",
             "field names must be unique",
         ),
+        (
+            "(defun-shape bad atom) (export () 0)",
+            "reserved shape field name",
+        ),
+        (
+            "(defun-shape bad (a . optional)) (export () 0)",
+            "reserved shape field name",
+        ),
+        (
+            "(defun-shape atom (a . b)) (export () 0)",
+            "shape name cannot",
+        ),
+        (
+            "(defun-shape optional (a . b)) (export () 0)",
+            "shape name cannot",
+        ),
+        (
+            "(defun-shape nil (a . b)) (export () 0)",
+            "shape name cannot",
+        ),
+        (
+            "(export () (make (atom)))",
+            "atom takes exactly one",
+        ),
+        (
+            "(export (a b) (make (atom a b)))",
+            "atom takes exactly one",
+        ),
+        (
+            "(export a (make (atom . a)))",
+            "atom takes exactly one",
+        ),
+        (
+            "(defun-shape bad (atom (a . b))) (export () 0)",
+            "atom field must be a leaf",
+        ),
+        (
+            "(defun-shape bad (atom nil)) (export () 0)",
+            "atom field cannot",
+        ),
+        (
+            "(defun-shape bad (atom atom)) (export () 0)",
+            "atom field cannot",
+        ),
+        (
+            "(export () (make (optional)))",
+            "optional needs at least one",
+        ),
+        (
+            "(export a (make (optional . a)))",
+            "optional needs at least one",
+        ),
+        (
+            "(export (a b) (make (optional a . b)))",
+            "optional needs a proper list",
+        ),
+        (
+            "(export a (make (optional (atom))))",
+            "atom takes exactly one",
+        ),
+        (
+            "(defun-shape leaf a) (export VALUE (if-shape VALUE ((leaf optional) 1)))",
+            "reserved shape field name",
+        ),
+        (
+            "(defun-shape leaf a) (export VALUE (if-shape VALUE ((leaf atom) 1)))",
+            "reserved shape field name",
+        ),
+        (
+            "(defun f a a) (export () (invoke f (atom)))",
+            "atom takes exactly one",
+        ),
+        (
+            "(export VALUE (if-shape VALUE (((a . a) . b) a)))",
+            "field names must be unique",
+        ),
+        (
+            "(export VALUE (if-shape VALUE (((atom) . b) 1)))",
+            "atom takes exactly one",
+        ),
+        (
+            "(export VALUE (if-shape VALUE ((atom a))))",
+            "branch needs a template and one body",
+        ),
+        (
+            "(export VALUE (if-shape VALUE ((atom a) 1 2)))",
+            "branch needs a template and one body",
+        ),
+        (
+            "(export VALUE (if-shape VALUE ((atom a) . 1)))",
+            "branch needs a template and one body",
+        ),
     ] {
         let source = format!("(include *standard-cl-26*)\n(import std.shapes)\n{body}");
         let opts = Rc::new(DefaultCompilerOpts::new("shape-errors.clsp"))
@@ -168,16 +260,19 @@ fn test_make() {
 /// Use the same compiler entry point/options as build.rs, including modern
 /// optimization. Compile once per union, then run every example against it.
 fn assert_dispatch(branches: &[String], examples: &[(String, usize)]) {
+    assert_shape_program(
+        &format!("(export VALUE (if-shape VALUE {}))", branches.join(" ")),
+        examples,
+    );
+}
+
+fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
     use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
     use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
     use chialisp::classic::platform::argparse::ArgumentValue;
     use chialisp::compiler::{clvm::run, sexp::parse_sexp, srcloc::Srcloc};
     use std::{collections::HashMap, rc::Rc};
-
-    let source = format!(
-        "(include *standard-cl-26*) (import std.shapes)\n(export VALUE (if-shape VALUE {}))",
-        branches.join(" ")
-    );
+    let source = format!("(include *standard-cl-26*) (import std.shapes) {body}");
     let arguments = HashMap::from([
         (
             "path_or_code".into(),
@@ -355,4 +450,19 @@ fn test_shapes_nil_and_optional_subtrees_in_every_order() {
     for order in permutations(&branches) {
         assert_dispatch(&order, &examples);
     }
+}
+
+#[test]
+fn test_shapes_make_allows_annotation_names_as_values() {
+    assert_shape_program(
+        "(defun-shape single value)
+         (defun-shape annotated ((atom a) . (optional b)))
+         (defun add (a . b) (+ a b))
+         (export (atom optional)
+             (+ (make atom) (make optional)
+                (make (single atom)) (make (single optional))
+                (invoke add (annotated atom optional))
+                (make (atom nil))))",
+        &[("(11 22)".into(), 99)],
+    );
 }

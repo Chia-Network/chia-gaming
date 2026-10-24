@@ -14,6 +14,43 @@
 (defun shapes-literal-nil (TREE)
     (if (l TREE) 0 (if TREE (= TREE (q . nil)) 1)))
 
+; Validation runs on macro syntax only, never on runtime values.
+(defun shapes-reserved-name (NAME)
+    (if (l NAME) 0
+        (if (shapes-literal-nil NAME) 1
+            (if (= NAME (q . atom)) 1 (= NAME (q . optional))))))
+
+(defun shapes-proper-list (XS)
+    (if (l XS) (shapes-proper-list (r XS)) (not XS)))
+
+(defun shapes-check (TREE BINDING)
+    (if (l TREE) (shapes-check-pair TREE BINDING)
+        (if (shapes-literal-nil TREE) TREE
+            (if (if BINDING (shapes-reserved-name TREE) 0)
+                (x (q . "reserved shape field name: atom or optional")) TREE))))
+
+(defun shapes-check-atom (ARGS BINDING)
+    (if (l ARGS)
+        (if (r ARGS) (x (q . "atom takes exactly one field"))
+            (assign FIELD (f ARGS)
+                (if (l FIELD) (x (q . "atom field must be a leaf"))
+                    (if (if BINDING (shapes-reserved-name FIELD) 0)
+                        (x (q . "atom field cannot be nil, atom, or optional"))
+                        (list (q . atom) FIELD)))))
+        (x (q . "atom takes exactly one field"))))
+
+(defun shapes-check-optional (ARGS BINDING)
+    (if (l ARGS)
+        (if (shapes-proper-list ARGS)
+            (list (q . optional) (shapes-check (shapes-optional ARGS) BINDING))
+            (x (q . "optional needs a proper list of template arguments")))
+        (x (q . "optional needs at least one template"))))
+
+(defun shapes-check-pair (TREE BINDING)
+    (if (shapes-tag TREE (q . atom)) (shapes-check-atom (r TREE) BINDING)
+        (shapes-tag TREE (q . optional)) (shapes-check-optional (r TREE) BINDING)
+        (c (shapes-check (f TREE) BINDING) (shapes-check (r TREE) BINDING))))
+
 ; Keep pair traversal in a separate helper: the cl-23 optimizer can hoist
 ; repeated tail access across sibling branches. Enter only after testing l.
 ; Return (facts stripped-pattern names). Optional suppresses every fact below it.
@@ -78,7 +115,9 @@
         TREE))
 
 (defmac defun-shape (NAME TREE)
-    (list (q . shapes-define-expanded) NAME (list (q . shapes-normalize) TREE)))
+    (if (shapes-reserved-name NAME)
+        (x (q . "shape name cannot be nil, atom, or optional"))
+        (list (q . shapes-define-expanded) NAME (list (q . shapes-normalize) TREE))))
 
 (defun shapes-unique (NAMES)
     (if NAMES
@@ -86,7 +125,7 @@
         1))
 
 (defmac shapes-define-expanded (NAME TREE)
-    (assign (_ _ NAMES) (shapes-parse TREE 1 0)
+    (assign (_ _ NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
         (if (shapes-unique NAMES)
             (list (q . defmac) NAME (q . shapes-values)
                 (list (q . shapes-instantiate) (c 1 TREE) (q . shapes-values)))
@@ -104,7 +143,7 @@
 
 (defmac make (TREE)
     (list (q . shapes-make-expanded) (list (q . shapes-normalize) TREE)))
-(defmac shapes-make-expanded (TREE) (shapes-make TREE))
+(defmac shapes-make-expanded (TREE) (shapes-make (shapes-check TREE 0)))
 
 (defmac invoke (FUNCTION TREE)
     (list FUNCTION (q . &rest) (list (q . make) TREE)))
@@ -117,8 +156,10 @@
     (if CASES
         (assign
             (TREE BODY) (f CASES)
-            (FACTS PATTERN _) (shapes-parse TREE 1 0)
-            (c (list FACTS PATTERN BODY) (shapes-cases (r CASES))))
+            (FACTS PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (c (list FACTS PATTERN BODY) (shapes-cases (r CASES)))
+                (x (q . "shape field names must be unique"))))
         ()))
 
 ; Common guarantees are usable under the closed-union contract. Optional paths
@@ -203,10 +244,17 @@
 (defun shapes-fresh (NAME TREE)
     (if (shapes-contains NAME TREE) (shapes-fresh (string->symbol (string-append (symbol->string NAME) "_")) TREE) NAME))
 
+(defun shapes-check-case (CASE)
+    (if (shapes-proper-list CASE)
+        (if (= (shapes-length CASE) 2) CASE
+            (x (q . "if-shape branch needs a template and one body")))
+        (x (q . "if-shape branch needs a template and one body"))))
+
 (defun shapes-normalize-cases (CASES)
     (if CASES
-        (c (list (list (q . shapes-normalize) (f (f CASES))) (f (r (f CASES))))
-            (shapes-normalize-cases (r CASES)))
+        (assign CASE (shapes-check-case (f CASES))
+            (c (list (list (q . shapes-normalize) (f CASE)) (f (r CASE)))
+                (shapes-normalize-cases (r CASES))))
         ()))
 
 (defmac if-shape (VALUE . CASES)

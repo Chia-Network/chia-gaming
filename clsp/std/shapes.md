@@ -29,7 +29,21 @@ Templates treat pairs as structure, not executable expressions. Bind a compound
 expression to a name before putting it in a template. Literal `nil` and `()`
 construct nil; `(a b c)` includes its usual terminating nil, exactly like
 `(a b c . nil)`. `(a b . c)` has no terminating nil. Literal `nil`, `atom`, and
-`optional` are reserved in shape templates. Ordinary field names must not collide
+`optional` are reserved as declaration/destructuring field names. Macro
+expansion rejects reserved field and shape names, malformed annotations, and
+duplicate names in declarations or dispatch patterns. `atom` takes exactly one
+leaf; in a binding pattern that leaf must be a non-reserved field name.
+`optional` takes one or more template arguments in a proper list. `if-shape`
+branches require exactly a template and one body. Consumers check expanded
+named shapes, so substitution cannot bypass their checks.
+
+`make` and `invoke` check annotation syntax but allow bare `atom` and `optional`
+as value expressions at leaf positions, including inside valid annotations.
+Literal `nil` always constructs nil. The macros cannot distinguish valid
+annotation syntax from an accidentally identical pair template. All validation
+happens during macro expansion and adds no runtime checks.
+
+Ordinary field names must not collide
 with macros that the compiler would expand in that position.
 
 ## Constraints and optional subtrees
