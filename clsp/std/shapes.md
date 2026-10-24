@@ -46,6 +46,28 @@ happens during macro expansion and adds no runtime checks.
 Ordinary field names must not collide
 with macros that the compiler would expand in that position.
 
+## Raw construction with pack
+
+Import `(import std.pack)` when you just want to construct the written tree,
+without shape annotations or field-name rules:
+
+```
+(pack (d . (a . b)))  ; equivalent to (c d (c a b))
+(pack (a b c))        ; proper list
+(pack #(a b c d))     ; balanced tree
+(pack (atom a))       ; ordinary list of the values atom and a
+```
+
+`pack` has no dependency on `std.shapes`. Every pair in its input is structure;
+leaves are ordinary Chialisp expressions. In particular, `nil` is an ordinary
+identifier here, not a shape annotation: use `()` for a literal empty atom.
+Bind compound expressions before using them as leaves.
+
+Construction uses the inline `li` argument-identity idiom, with `&rest` for a
+dotted tail. For example, `(pack (d a . b))` emits the equivalent of
+`(li d a &rest b)`. `make` first strips its shape annotations and uses the same
+builder. No shape checks are added to the runtime program.
+
 ## Constraints and optional subtrees
 
 - `a` names an unrestricted value at a required position.

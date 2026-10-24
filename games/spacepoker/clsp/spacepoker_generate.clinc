@@ -1,5 +1,6 @@
 (include *standard-cl-26*)
 (import std.shapes)
+(import std.pack)
 (import games.spacepoker.clsp.onchain.shapes)
 
 (import games.spacepoker.clsp.onchain.commitA exposing (program as val_commitA))
@@ -265,7 +266,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos (image_at CHAIN (- N 1)) move (- N 1))
-                    (make ("call" new_half_pot N . new_cards))
+                    (pack ("call" new_half_pot N . new_cards))
                 )
             )
             (if (= N 1)
@@ -350,7 +351,7 @@
             (list "open" raise_amount _half_pot)
             (assign
                 new_cards (community_cards_for_pos (image_at CHAIN N) mover_image_N N)
-                (make ("open" raise_amount _half_pot . new_cards)))
+                (pack ("open" raise_amount _half_pot . new_cards)))
         )
         (list
             readable
@@ -513,7 +514,7 @@
                     )
                     (assign
                         new_cards (community_cards_for_pos (image_at CHAIN N) mover_image_N N)
-                        (make ("open" raise_amount _half_pot . new_cards)))
+                        (pack ("open" raise_amount _half_pot . new_cards)))
                 )
                 (list
                     readable
@@ -605,7 +606,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos move (image_at CHAIN (- N 1)) (- N 1))
-                    (make ("call" new_half_pot N . new_cards))
+                    (pack ("call" new_half_pot N . new_cards))
                 )
             )
             (if (= N 1)

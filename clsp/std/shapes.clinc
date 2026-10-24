@@ -1,3 +1,8 @@
+(import std.pack)
+
+; Generated constructors need an identity in this directly imported namespace.
+(defun-inline shapes-li VALUES VALUES)
+
 ; Shape templates are compile-time syntax. See clsp/std/shapes.md.
 ; Facts use masks: pair=1, non-nil atom=2, nil=4; unconstrained=7.
 ; Paths are binary heap indices (root=1, left=2*p, right=2*p+1).
@@ -131,19 +136,11 @@
                 (list (q . shapes-instantiate) (c 1 TREE) (q . shapes-values)))
             (x (q . "shape field names must be unique")))))
 
-(defun shapes-make (TREE)
-    (if (l TREE) (shapes-make-pair TREE)
-        (if (shapes-literal-nil TREE) () TREE)))
-
-(defun shapes-make-pair (TREE)
-    (if (shapes-tag TREE (q . optional))
-        (shapes-make (shapes-optional (r TREE)))
-        (shapes-tag TREE (q . atom)) (shapes-make (f (r TREE)))
-        (list 4 (shapes-make (f TREE)) (shapes-make (r TREE)))))
-
 (defmac make (TREE)
     (list (q . shapes-make-expanded) (list (q . shapes-normalize) TREE)))
-(defmac shapes-make-expanded (TREE) (shapes-make (shapes-check TREE 0)))
+(defmac shapes-make-expanded (TREE)
+    (assign (_ PATTERN _) (shapes-parse (shapes-check TREE 0) 1 0)
+        (pack-build (q . shapes-li) PATTERN)))
 
 (defmac invoke (FUNCTION TREE)
     (list FUNCTION (q . &rest) (list (q . make) TREE)))
