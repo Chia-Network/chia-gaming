@@ -1,4 +1,4 @@
-# Shapes
+# Shapes and pack
 
 Import `(import std.shapes)` for `defun-shape`, `make`, `invoke`, `if-shape`, and `get-field`.
 Shapes describe pair structure once, for both constructing and reading values.
@@ -188,5 +188,9 @@ options and execute their exported programs. They cover every ordering of a
 four-way atom/pair matrix, eight-way dispatch requiring three checks, guarded
 nested paths, nil tests, and absent or malformed optional subtrees. Compile-time
 negative cases check overlapping alternatives and invalid declarations/calls.
+
+`src/tests/pack.rs` tests `std.pack` independently, including proper lists,
+dotted and balanced trees, and names that are reserved only by shapes. It also
+compares `pack` and `make` outputs and runtime costs with explicit constructors.
 
 Run `./ct-automation.sh` to include these tests in the full suite.

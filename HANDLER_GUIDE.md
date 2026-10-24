@@ -1,5 +1,9 @@
 # Game Handler and Validation System
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 This document explains the off-chain handler and on-chain validation system
 used by the game framework. It covers how game logic is structured, how
 handlers produce moves, how validators enforce rules, and how the two systems

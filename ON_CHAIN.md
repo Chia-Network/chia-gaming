@@ -1,5 +1,9 @@
 # On-Chain Resolution
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 For the conceptual overview (state channels, coin hierarchy, potato protocol),
 see `OVERVIEW.md`. For off-chain game proposals and flow, see
 `GAME_LIFECYCLE.md`. For CLVM denial-of-service analysis (execution cost caps,

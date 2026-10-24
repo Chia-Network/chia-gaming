@@ -1,5 +1,9 @@
 # Handler API
 
+Before reading the Chialisp code, read [Shapes and pack](std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 ## Scope
 This describes the calling convention and return shapes for off-chain
 "handler" functions used by the game framework. Handlers are chialisp

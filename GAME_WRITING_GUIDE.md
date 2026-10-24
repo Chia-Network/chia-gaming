@@ -1,5 +1,9 @@
 # How to Add a Game
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 This guide explains the pieces you need to add a game and how they fit
 together. Start with the package layout and the step-by-step checklist. The API
 reference near the end is useful when you are implementing each file.
