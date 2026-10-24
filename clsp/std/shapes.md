@@ -1,6 +1,6 @@
 # Shapes
 
-Import `(import std.shapes)` for `defun-shape`, `make`, `invoke`, and `if-shape`.
+Import `(import std.shapes)` for `defun-shape`, `make`, `invoke`, `if-shape`, and `get-field`.
 Shapes describe pair structure once, for both constructing and reading values.
 The macros expand at compile time; there is no runtime shape registry. Import
 the whole bundle without `exposing`: inward expansion also uses its helper macros.
@@ -102,6 +102,22 @@ The selected branch uses `assign` to destructure the value. Generated temporary
 names avoid names occurring in the input and branch bodies. Constraints are
 consumed by `make` and `if-shape`; an ordinary `defun` parameter pattern can use
 an unannotated named shape, as in `point` above.
+
+## Reading one field
+
+```
+(defun-shape record ((a . b) . c))
+(get-field (record) b VALUE)        ; expands to (r (f VALUE))
+(get-field ((a . b) . c) b VALUE)   ; same with an inline shape
+(get-field (record x y z) y VALUE) ; renamed fields work too
+```
+
+The shape macro expands first, just as in `if-shape`. `get-field` finds the
+requested field and emits its `f`/`r` path, or the value itself for a root field.
+Unknown, reserved, or ambiguous field names are compile-time errors. It assumes
+the value has the declared shape and emits no runtime validation. Fields under
+`optional` can be selected, but their paths must exist when accessed; unrelated
+optional fields are not read.
 
 ## Referee
 

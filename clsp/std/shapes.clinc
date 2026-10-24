@@ -152,6 +152,27 @@
     (if (= PATH 1) VALUE
         (list (if (logand PATH 1) 6 5) (shapes-access (/ PATH 2) VALUE))))
 
+; Find a declared field in the stripped pattern. Zero means absent.
+(defun shapes-field-path (TREE FIELD PATH)
+    (if (l TREE)
+        (assign LEFT (shapes-field-path (f TREE) FIELD (* PATH 2))
+            (if LEFT LEFT (shapes-field-path (r TREE) FIELD (+ (* PATH 2) 1))))
+        (if (= TREE FIELD) PATH 0)))
+
+(defmac get-field (TREE FIELD VALUE)
+    (list (q . shapes-get-field-expanded) (list (q . shapes-normalize) TREE) FIELD VALUE))
+
+(defmac shapes-get-field-expanded (TREE FIELD VALUE)
+    (if (if (l FIELD) 1 (shapes-reserved-name FIELD))
+        (x (q . "get-field needs a non-reserved field name"))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (assign PATH (shapes-field-path PATTERN FIELD 1)
+                    (if PATH (shapes-access PATH VALUE)
+                        (x (q . "unknown shape field") FIELD)))
+                (x (q . "shape field names must be unique"))))))
+
 (defun shapes-cases (CASES)
     (if CASES
         (assign

@@ -141,6 +141,26 @@ fn test_shapes_reject_ambiguous_or_incorrect_templates() {
             "(export VALUE (if-shape VALUE ((atom a) . 1)))",
             "branch needs a template and one body",
         ),
+        (
+            "(export VALUE (get-field (a . b) missing VALUE))",
+            "unknown shape field",
+        ),
+        (
+            "(export VALUE (get-field (a . a) a VALUE))",
+            "field names must be unique",
+        ),
+        (
+            "(export VALUE (get-field (a . nil) nil VALUE))",
+            "get-field needs a non-reserved field name",
+        ),
+        (
+            "(export VALUE (get-field (a . b) (a) VALUE))",
+            "get-field needs a non-reserved field name",
+        ),
+        (
+            "(export VALUE (get-field ((atom) . b) b VALUE))",
+            "atom takes exactly one",
+        ),
     ] {
         let source = format!("(include *standard-cl-26*)\n(import std.shapes)\n{body}");
         let opts = Rc::new(DefaultCompilerOpts::new("shape-errors.clsp"))
@@ -465,4 +485,41 @@ fn test_shapes_make_allows_annotation_names_as_values() {
                 (make (atom nil))))",
         &[("(11 22)".into(), 99)],
     );
+}
+
+#[test]
+fn test_shapes_get_field_named_inline_and_optional() {
+    for (template, field, input, expected) in [
+        ("(record)", "a", "((11 . 22) . 33)", 11),
+        ("(record)", "b", "((11 . 22) . 33)", 22),
+        ("(record)", "c", "((11 . 22) . 33)", 33),
+        ("(record x y z)", "y", "((11 . 22) . 33)", 22),
+        ("((a . b) . c)", "b", "((11 . 22) . 33)", 22),
+        ("#(a b c)", "b", "(11 . (22 . 33))", 22),
+        ("(a . (optional (b . c)))", "c", "(11 . (22 . 33))", 33),
+        ("((atom a) . (optional (b . c)))", "a", "(11 . ())", 11),
+        ("a", "a", "44", 44),
+    ] {
+        assert_shape_program(
+            &format!(
+                "(defun-shape record ((a . b) . c))
+                      (export VALUE (get-field {template} {field} VALUE))"
+            ),
+            &[(input.into(), expected)],
+        );
+    }
+}
+
+#[test]
+fn test_shapes_nil_before_deeper_alternatives_in_every_order() {
+    let branches = ["(nil 1)", "(((atom a) . b) 2)", "(((a . b) . c) 3)"].map(String::from);
+    let examples = [
+        ("()".into(), 1),
+        ("(11 . 22)".into(), 2),
+        ("(() . 22)".into(), 2),
+        ("((11 . 22) . 33)".into(), 3),
+    ];
+    for order in permutations(&branches) {
+        assert_dispatch(&order, &examples);
+    }
 }

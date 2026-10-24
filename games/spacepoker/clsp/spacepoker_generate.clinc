@@ -265,7 +265,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos (image_at CHAIN (- N 1)) move (- N 1))
-                    (c "call" (c new_half_pot (c N new_cards)))
+                    (make ("call" new_half_pot N . new_cards))
                 )
             )
             (if (= N 1)
@@ -348,7 +348,9 @@
         raise_amount (substr move 32 (strlen move))
         readable (if (= N 4)
             (list "open" raise_amount _half_pot)
-            (c "open" (c raise_amount (c _half_pot (community_cards_for_pos (image_at CHAIN N) mover_image_N N))))
+            (assign
+                new_cards (community_cards_for_pos (image_at CHAIN N) mover_image_N N)
+                (make ("open" raise_amount _half_pot . new_cards)))
         )
         (list
             readable
@@ -509,7 +511,9 @@
                         bob_boost (not (% (sha256 (logxor bob_pre mover_image_N)) 3))
                         (list "open" raise_amount _half_pot bh1 bh2 bob_boost)
                     )
-                    (c "open" (c raise_amount (c _half_pot (community_cards_for_pos (image_at CHAIN N) mover_image_N N))))
+                    (assign
+                        new_cards (community_cards_for_pos (image_at CHAIN N) mover_image_N N)
+                        (make ("open" raise_amount _half_pot . new_cards)))
                 )
                 (list
                     readable
@@ -601,7 +605,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos move (image_at CHAIN (- N 1)) (- N 1))
-                    (c "call" (c new_half_pot (c N new_cards)))
+                    (make ("call" new_half_pot N . new_cards))
                 )
             )
             (if (= N 1)

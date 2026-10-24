@@ -8,7 +8,7 @@
     krunk_reveal_move
     krunk_reveal_mover_share
 )
-(import games.krunk.clsp.krunk_dict_tree exposing dict_lookup)
+(import games.krunk.clsp.krunk_dict_tree)
 (import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)
 (import std.li)
 (import std.shatree)
@@ -96,8 +96,10 @@
         (if lookup_result
             (list 0
                 (li (li "s"
-                        (concat (f lookup_result) (f (r lookup_result)))
-                        (f (r (r lookup_result)))))
+                        (concat
+                            (get-field (krunk-dictionary-gap) left_bound lookup_result)
+                            (get-field (krunk-dictionary-gap) right_bound lookup_result))
+                        (get-field (krunk-dictionary-gap) signature lookup_result)))
                 0)
             (assign
                 clue (make_clue WORD move)
@@ -192,8 +194,10 @@
                 (list
                     (li word reveal_clue)
                     (li (li "s"
-                            (concat (f lookup_result) (f (r lookup_result)))
-                            (f (r (r lookup_result)))))
+                            (concat
+                                (get-field (krunk-dictionary-gap) left_bound lookup_result)
+                                (get-field (krunk-dictionary-gap) right_bound lookup_result))
+                            (get-field (krunk-dictionary-gap) signature lookup_result)))
                     0
                     0
                 )
