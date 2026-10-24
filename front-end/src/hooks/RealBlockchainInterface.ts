@@ -1072,11 +1072,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       };
     }
 
-    const { uri, approval } = await walletConnectState.startConnect();
+    const { uri, approval, skipQr } = await walletConnectState.startConnect();
     return {
       qrUri: uri,
+      skipQr,
       finalize: async () => {
-        await walletConnectState.connect(approval);
+        if (!skipQr) await walletConnectState.connect(approval);
         await this.startMonitoring();
       },
     };

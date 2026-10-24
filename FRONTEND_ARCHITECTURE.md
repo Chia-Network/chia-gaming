@@ -1592,10 +1592,20 @@ Relay replacement has its own 30-second deadline. A stuck SDK close or open
 fails recovery and leaves the wallet unavailable. The underlying operation
 continues to hold a shared lifecycle consumer until it actually settles, so a
 late close cannot damage a replacement session. Pairing creation, session
-installation, and disconnect work use this same consumer; queued operations
-whose wait expires never start. Active pairing creation retains its actual
-completion lifetime. If the SDK lifecycle never returns, reload the app to
-establish a new connection.
+installation, and disconnect work use this same consumer. Connection attempts
+whose queued wait expires never start; teardown remains queued even after its
+caller stops waiting. Active pairing creation retains its actual completion
+lifetime. Disconnect and retry invalidate older attempts: a late URI is
+cancelled, and a late approved session is removed instead of installed.
+Connection setup rechecks the session after recovery, reusing it without a new QR.
+
+`WalletState` records restoration authority separately from SDK session storage.
+Disconnect durably blocks restoration before changing local connection state;
+storage failure is reported instead of acknowledging a durable disconnect.
+Only the explicitly accepted session topic can subsequently restore, so a
+stalled teardown or abandoned approval in SDK storage cannot resurrect a session
+after reload. Accepting a new session replaces this authority. If the SDK
+lifecycle never returns, reload the app to establish a new connection.
 
 Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic

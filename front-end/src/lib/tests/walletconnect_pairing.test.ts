@@ -456,6 +456,192 @@ describe('WalletConnect pairing teardown', () => {
     }
   });
 
+  it('cancels a pairing whose creation completes after disconnect', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    let finish!: (value: unknown) => void;
+    try {
+      await walletConnectState.init();
+      mockClient.connect.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const creation = walletConnectState.startConnect().then(
+        (value) => ({ value }),
+        (error) => ({ error }),
+      );
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      const disconnect = walletConnectState.disconnect();
+      finish({
+        uri: 'wc:abc123@2?relay-protocol=irn&symKey=deadbeef',
+        approval: async () => connectedSession,
+      });
+      const outcome = await creation;
+      await disconnect;
+      expect(outcome).toHaveProperty('error');
+      expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'abc123' });
+      expect(walletConnectState.getSession()).toBeUndefined();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      expect(mockClient.disconnect).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: connectedSession.topic }),
+      );
+    } finally {
+      await walletConnectState.disconnect();
+      consoleError.mockRestore();
+    }
+  });
+
+  it('rejects and removes an old approval delivered after disconnect', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    let finishApproval!: (session: SessionTypes.Struct) => void;
+    try {
+      await walletConnectState.init();
+      mockClient.connect.mockResolvedValue({
+        uri: 'wc:abc123@2?relay-protocol=irn&symKey=deadbeef',
+        approval: () =>
+          new Promise<SessionTypes.Struct>((resolve) => {
+            finishApproval = resolve;
+          }),
+      });
+      const setup = await walletConnectState.startConnect();
+      const connecting = walletConnectState.connect(setup.approval);
+      const rejected = expect(connecting).rejects.toThrow('connection attempt was cancelled');
+      await walletConnectState.disconnect();
+      finishApproval({ ...connectedSession, topic: 'late-approved-topic' });
+      await rejected;
+      expect(walletConnectState.getSession()).toBeUndefined();
+      expect(mockClient.disconnect).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: 'late-approved-topic' }),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('reports a disconnect authority persistence failure before changing the live connection', async () => {
+    await establishSession();
+    const write = jest.spyOn(localStorage, 'setItem').mockImplementationOnce(() => {
+      throw new Error('storage unavailable');
+    });
+    try {
+      await expect(walletConnectState.disconnect()).rejects.toThrow('storage unavailable');
+      expect(walletConnectState.getSession()?.topic).toBe(connectedSession.topic);
+      expect(mockClient.disconnect).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it('restores only the explicitly accepted session when an abandoned session remains in SDK storage', async () => {
+    await establishSession();
+    const oldHandlers = new Map(mockSessionHandlers);
+    try {
+      mockClient.session.keys = [connectedSession.topic, 'abandoned-topic'];
+      mockClient.session.length = 2;
+      mockClient.session.get.mockImplementation((topic: string) => ({
+        ...connectedSession,
+        topic,
+      }));
+      let reloaded!: typeof walletConnectState;
+      jest.isolateModules(() => {
+        reloaded = jest.requireActual('../../hooks/useWalletConnect').walletConnectState;
+      });
+      await reloaded.init();
+      expect(reloaded.getSession()?.topic).toBe(connectedSession.topic);
+    } finally {
+      mockClient.session.length = 0;
+      mockSessionHandlers.clear();
+      for (const [event, handler] of oldHandlers) mockSessionHandlers.set(event, handler);
+    }
+  });
+
+  it('reuses the restored session when connection setup waits for recovery', async () => {
+    jest.useFakeTimers();
+    mockClient.request.mockImplementation(({ request }) =>
+      Promise.resolve(
+        request.method === ChiaMethod.GetNextAddress
+          ? encodePuzzleHashToBech32m('11'.repeat(32))
+          : [{ id: 2, type: 205 }],
+      ),
+    );
+    await establishSession();
+    let finishClose!: () => void;
+    mockClient.core.relayer.transportClose.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    mockClient.connect.mockResolvedValue({
+      uri: 'wc:abc123@2?relay-protocol=irn&symKey=deadbeef',
+      approval: async () => connectedSession,
+    });
+    const recovery = walletConnectState.recoverRelay(
+      walletConnectState.getClient()!,
+      connectedSession.topic,
+    );
+    const blockchain = new RealBlockchainInterface();
+    const setup = blockchain.beginConnect('wallet');
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    finishClose();
+    await recovery;
+    try {
+      await jest.advanceTimersByTimeAsync(1000);
+      expect((await setup).skipQr).toBe(true);
+      expect(mockClient.connect).not.toHaveBeenCalled();
+      await blockchain.startMonitoring();
+    } finally {
+      await blockchain.disconnect();
+      await jest.advanceTimersByTimeAsync(1000);
+      jest.useRealTimers();
+    }
+  });
+
+  it('retains expired disconnect teardown and prevents restoration after reload', async () => {
+    jest.useFakeTimers();
+    const oldHandlers = new Map(mockSessionHandlers);
+    let finishClose!: () => void;
+    try {
+      await establishSession();
+      mockClient.core.relayer.transportClose.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishClose = resolve;
+          }),
+      );
+      const recovery = walletConnectState
+        .recoverRelay(walletConnectState.getClient()!, connectedSession.topic)
+        .catch(() => {});
+      const disconnect = walletConnectState.disconnect();
+      const rejected = expect(disconnect).rejects.toThrow('timed out');
+      await jest.advanceTimersByTimeAsync(30000);
+      await rejected;
+      mockClient.session.keys = [connectedSession.topic];
+      mockClient.session.length = 1;
+      mockClient.session.get.mockReturnValue(connectedSession);
+      let reloaded!: typeof walletConnectState;
+      jest.isolateModules(() => {
+        reloaded = jest.requireActual('../../hooks/useWalletConnect').walletConnectState;
+      });
+      await reloaded.init();
+      expect(reloaded.getSession()).toBeUndefined();
+      finishClose();
+      await recovery;
+      await jest.advanceTimersByTimeAsync(0);
+      expect(mockClient.disconnect).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: connectedSession.topic }),
+      );
+    } finally {
+      finishClose?.();
+      await jest.advanceTimersByTimeAsync(0);
+      mockClient.session.length = 0;
+      mockSessionHandlers.clear();
+      for (const [event, handler] of oldHandlers) mockSessionHandlers.set(event, handler);
+      jest.useRealTimers();
+    }
+  });
+
   it('releases the RPC consumer after a hung relay lifecycle deadline while keeping the wallet unavailable', async () => {
     jest.useFakeTimers();
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
