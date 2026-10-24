@@ -277,57 +277,63 @@ describe('WalletConnect RPC adapter', () => {
     },
   );
 
-  it('holds the request slot through relay replacement and ignores the old read result', async () => {
-    jest.useFakeTimers();
-    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
-    let finishOld!: (value: unknown) => void;
-    let finishRecovery!: () => void;
-    const recovery = new Promise<void>((resolve) => {
-      finishRecovery = resolve;
-    });
-    const events: string[] = [];
-    mockRecoverRelay.mockImplementation(async () => {
-      mockEpoch++;
-      events.push('close');
-      await recovery;
-      events.push('open');
-    });
-    requestMock
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finishOld = resolve;
-          }),
-      )
-      .mockImplementation(() => {
-        events.push('send');
-        return Promise.resolve({ height: 8 });
+  it.each(['resolve', 'reject'] as const)(
+    'holds the request slot through relay replacement after a late read %s',
+    async (completion) => {
+      jest.useFakeTimers();
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+      let finishOld!: (value: unknown) => void;
+      let rejectOld!: (error: Error) => void;
+      let finishRecovery!: () => void;
+      const recovery = new Promise<void>((resolve) => {
+        finishRecovery = resolve;
       });
-    try {
-      const first = rpc.getHeightInfo({});
-      const firstRejected = expect(first).rejects.toThrow('Request timed out; relay restarted');
-      await jest.advanceTimersByTimeAsync(100);
-      const queued = rpc.getHeightInfo({});
-      const queuedRejected = expect(queued).rejects.toThrow('Wallet context changed');
-      await jest.advanceTimersByTimeAsync(30000);
-      expect(events).toEqual(['close']);
-      finishOld({ height: 999 });
-      await flushMicrotasks();
-      expect(requestMock).toHaveBeenCalledTimes(1);
-      finishRecovery();
-      await jest.advanceTimersByTimeAsync(100);
-      await firstRejected;
-      await queuedRejected;
-      const nextRead = rpc.getHeightInfo({});
-      await jest.advanceTimersByTimeAsync(100);
-      await expect(nextRead).resolves.toEqual({ height: 8n });
-      expect(events).toEqual(['close', 'open', 'send']);
-      expect(jest.getTimerCount()).toBe(0);
-    } finally {
-      consoleError.mockRestore();
-      jest.useRealTimers();
-    }
-  });
+      const events: string[] = [];
+      mockRecoverRelay.mockImplementation(async () => {
+        mockEpoch++;
+        events.push('close');
+        await recovery;
+        events.push('open');
+      });
+      requestMock
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              finishOld = resolve;
+              rejectOld = reject;
+            }),
+        )
+        .mockImplementation(() => {
+          events.push('send');
+          return Promise.resolve({ height: 8 });
+        });
+      try {
+        const first = rpc.getHeightInfo({});
+        const firstRejected = expect(first).rejects.toThrow('Request timed out; relay restarted');
+        await jest.advanceTimersByTimeAsync(100);
+        const queued = rpc.getHeightInfo({});
+        const queuedRejected = expect(queued).rejects.toThrow('Wallet context changed');
+        await jest.advanceTimersByTimeAsync(30000);
+        expect(events).toEqual(['close']);
+        if (completion === 'resolve') finishOld({ height: 999 });
+        else rejectOld(new Error('late SDK rejection'));
+        await flushMicrotasks();
+        expect(requestMock).toHaveBeenCalledTimes(1);
+        finishRecovery();
+        await jest.advanceTimersByTimeAsync(100);
+        await firstRejected;
+        await queuedRejected;
+        const nextRead = rpc.getHeightInfo({});
+        await jest.advanceTimersByTimeAsync(100);
+        await expect(nextRead).resolves.toEqual({ height: 8n });
+        expect(events).toEqual(['close', 'open', 'send']);
+        expect(jest.getTimerCount()).toBe(0);
+      } finally {
+        consoleError.mockRestore();
+        jest.useRealTimers();
+      }
+    },
+  );
 
   it('keeps waiting for reserved offer creation beyond the retryable request deadline', async () => {
     jest.useFakeTimers();

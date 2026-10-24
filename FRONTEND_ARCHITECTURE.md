@@ -1588,6 +1588,15 @@ host-side coordinator for chain observations. It separates three concerns:
    retain their SDK completion lifetime. The optional peer-count fallback uses
    this active-query deadline, excluding time spent queued behind wallet work.
 
+Relay replacement has its own 30-second deadline. A stuck SDK close or open
+fails recovery and leaves the wallet unavailable. The underlying operation
+continues to hold a shared lifecycle consumer until it actually settles, so a
+late close cannot damage a replacement session. Pairing creation, session
+installation, and disconnect work use this same consumer; queued operations
+whose wait expires never start. Active pairing creation retains its actual
+completion lifetime. If the SDK lifecycle never returns, reload the app to
+establish a new connection.
+
 Coin polling reports raw height and coin-state observations upward every
 successful sweep. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those

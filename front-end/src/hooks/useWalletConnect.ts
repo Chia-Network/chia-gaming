@@ -11,6 +11,9 @@ import {
 import { log } from '../services/log';
 import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
 import { startPendingWalletConnectWipe } from './saveHardReset';
+import { AsyncJobQueue } from '../lib/AsyncScheduler';
+
+const WC_RELAY_LIFECYCLE_TIMEOUT_MS = 30000;
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
@@ -56,6 +59,7 @@ class WalletState {
   private relayAvailable = true;
   private requestEpoch = 0;
   private relayRecovery: Promise<void> | null = null;
+  private relayLifecycle = new AsyncJobQueue();
 
   constructor() {
     this.isConnected = false;
@@ -78,6 +82,39 @@ class WalletState {
     return this.requestEpoch;
   }
 
+  private runRelayLifecycle<T>(
+    label: string,
+    run: () => Promise<T> | T,
+    boundActiveOperation = false,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      let expired = false;
+      const timer = setTimeout(() => {
+        expired = true;
+        reject(
+          new Error(`WalletConnect ${label} timed out; reload the app if the relay remains stuck`),
+        );
+      }, WC_RELAY_LIFECYCLE_TIMEOUT_MS);
+      this.relayLifecycle.enqueue({
+        label,
+        run: async () => {
+          if (expired) return;
+          // Pairing/session mutations retain their true completion lifetime.
+          // A timed-out relay operation still holds this consumer until settled.
+          if (!boundActiveOperation) clearTimeout(timer);
+          try {
+            const result = await run();
+            if (!expired) resolve(result);
+          } catch (error) {
+            reject(error);
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+      });
+    });
+  }
+
   recoverRelay(
     client: InstanceType<typeof Client>,
     topic: string,
@@ -98,18 +135,27 @@ class WalletState {
     });
     const isCurrent = () =>
       this.client === client && this.session?.topic === topic && this.requestEpoch === epoch;
-    const recovery = (async () => {
-      log('[WC session] restarting relay after stalled request');
-      await client.core.relayer.transportClose();
-      if (!isCurrent()) throw new Error('WalletConnect session changed during relay recovery');
-      await client.core.relayer.transportOpen();
-      if (!isCurrent()) throw new Error('WalletConnect session changed during relay recovery');
-      this.relayAvailable = true;
-      this.relayRecovery = null;
-      this.onSessionConnected(this.session!);
-    })().finally(() => {
-      if (this.relayRecovery === recovery) this.relayRecovery = null;
-    });
+    const recovery = this.runRelayLifecycle(
+      'relay recovery',
+      async () => {
+        if (!isCurrent()) throw new Error('WalletConnect session changed during relay recovery');
+        log('[WC session] restarting relay after stalled request');
+        await client.core.relayer.transportClose();
+        // Finish replacing the shared transport even if the user disconnected.
+        // New session establishment waits behind this entire physical operation.
+        await client.core.relayer.transportOpen();
+      },
+      true,
+    )
+      .then(() => {
+        if (!isCurrent()) throw new Error('WalletConnect session changed during relay recovery');
+        this.relayAvailable = true;
+        this.relayRecovery = null;
+        this.onSessionConnected(this.session!);
+      })
+      .finally(() => {
+        if (this.relayRecovery === recovery) this.relayRecovery = null;
+      });
     this.relayRecovery = recovery;
     return recovery;
   }
@@ -212,31 +258,36 @@ class WalletState {
    * attempt can outlive its turn as the current one: a late failure must tear
    * down its own pairing, not whichever attempt is pending by then.
    */
-  private async cancelPairing(topic: string | undefined) {
+  private async cancelPairing(topic: string | undefined, client = this.client) {
     if (!topic) return;
-    if (this.pendingPairingTopic === topic) this.pendingPairingTopic = undefined;
-    try {
-      await this.client?.core.pairing.disconnect({ topic });
-    } catch {
-      // Pairing disconnect can fail if the pairing is already gone.
-    }
+    await this.runRelayLifecycle('pairing cancellation', async () => {
+      if (this.pendingPairingTopic === topic) this.pendingPairingTopic = undefined;
+      try {
+        await client?.core.pairing.disconnect({ topic });
+      } catch {
+        // Pairing disconnect can fail if the pairing is already gone.
+      }
+    });
   }
 
   async forgetSessions() {
     const client = this.client;
-    if (client) {
-      for (const topic of client.session.keys) {
-        try {
-          await client.disconnect({
-            topic,
-            reason: { code: 6000, message: 'User disconnected' },
-          });
-        } catch {
-          // WC disconnect can fail if the session is already gone.
-        }
-      }
-    }
+    const topics = client?.session.keys ?? [];
     this.resetSession();
+    if (client) {
+      await this.runRelayLifecycle('session removal', async () => {
+        for (const topic of topics) {
+          try {
+            await client.disconnect({
+              topic,
+              reason: { code: 6000, message: 'User disconnected' },
+            });
+          } catch {
+            // WC disconnect can fail if the session is already gone.
+          }
+        }
+      });
+    }
   }
 
   init(): Promise<void> {
@@ -271,7 +322,7 @@ class WalletState {
         const updated = signClient.session.get(topic);
         const merged = { ...updated, namespaces: params.namespaces };
         log(`[WC session] update topic=${topic}`);
-        if (this.relayRecovery) {
+        if (!this.relayAvailable) {
           this.session = merged;
           return;
         }
@@ -280,12 +331,12 @@ class WalletState {
 
       signClient.on('session_delete', ({ topic }: { topic: string }) => {
         log(`[WC session] delete topic=${topic}`);
-        this.resetSession();
+        if (this.client === signClient && this.session?.topic === topic) this.resetSession();
       });
 
       signClient.on('session_expire', ({ topic }: { topic: string }) => {
         log(`[WC session] expire topic=${topic}`);
-        this.resetSession();
+        if (this.client === signClient && this.session?.topic === topic) this.resetSession();
       });
 
       log('WalletConnect initialized');
@@ -319,23 +370,33 @@ class WalletState {
     if (!client) return;
 
     const sessionTopic = this.session?.topic;
+    const pairingTopic = this.pendingPairingTopic;
     this.resetSession();
-    await this.cancelPairing(this.pendingPairingTopic);
-
-    if (sessionTopic) {
-      try {
-        await client.disconnect({
-          topic: sessionTopic,
-          reason: { code: 6000, message: 'User disconnected' },
-        });
-      } catch {
-        // WC disconnect can fail if session is already gone
+    await this.runRelayLifecycle('session disconnect', async () => {
+      if (pairingTopic) {
+        if (this.pendingPairingTopic === pairingTopic) this.pendingPairingTopic = undefined;
+        try {
+          await client.core.pairing.disconnect({ topic: pairingTopic });
+        } catch {
+          /* Already gone. */
+        }
       }
-    }
+      if (sessionTopic) {
+        try {
+          await client.disconnect({
+            topic: sessionTopic,
+            reason: { code: 6000, message: 'User disconnected' },
+          });
+        } catch {
+          // WC disconnect can fail if session is already gone
+        }
+      }
+    });
   }
 
   async startConnect(): Promise<StartConnectResult> {
-    if (!this.client) {
+    const client = this.client;
+    if (!client) {
       const msg = 'startConnect() called but client is undefined -- init() may have failed';
       console.error('[WC]', msg);
       throw new Error(msg);
@@ -349,11 +410,15 @@ class WalletState {
     // An attempt we never finished still holds a live pairing; cancel it before
     // creating another, since the new topic overwrites the one we would need to
     // tear it down with.
-    await this.cancelPairing(this.pendingPairingTopic);
+    await this.cancelPairing(this.pendingPairingTopic, client);
 
     try {
-      const { uri, approval } = await this.client.connect({
-        optionalNamespaces: getOptionalNamespaces(),
+      const { uri, approval } = await this.runRelayLifecycle('pairing creation', () => {
+        if (this.client !== client)
+          throw new Error('WalletConnect client changed before pairing creation');
+        return client.connect({
+          optionalNamespaces: getOptionalNamespaces(),
+        });
       });
 
       this.observable.next({
@@ -381,9 +446,14 @@ class WalletState {
     // it was abandoned (proposal expiry), by which time a retry may own the
     // pending topic, so teardown below uses this one rather than the current.
     const topic = this.pendingPairingTopic;
+    const client = this.client;
     try {
       const session = await approval();
-      this.onSessionConnected(session);
+      await this.runRelayLifecycle('session installation', () => {
+        if (this.client !== client)
+          throw new Error('WalletConnect client changed before session installation');
+        this.onSessionConnected(session);
+      });
     } catch (err) {
       console.error('[WC] connect() approval FAILED or rejected', err);
       // A retry or an explicit disconnect during the wait owns the connection
@@ -392,7 +462,7 @@ class WalletState {
       const superseded = this.pendingPairingTopic !== topic;
       // The proposal is dead once approval settles with an error, but its
       // pairing is not; the wallet declining must not leak it.
-      await this.cancelPairing(topic);
+      await this.cancelPairing(topic, client);
       if (!superseded) {
         this.observable.next({
           stateName: 'initialized',

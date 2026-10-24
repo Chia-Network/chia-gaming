@@ -327,11 +327,166 @@ describe('WalletConnect pairing teardown', () => {
       connectedSession.topic,
     );
     const rejected = expect(recovery).rejects.toThrow('session changed during relay recovery');
-    await walletConnectState.disconnect();
+    const disconnect = walletConnectState.disconnect();
     finishClose();
     await rejected;
-    expect(mockClient.core.relayer.transportOpen).not.toHaveBeenCalled();
+    await disconnect;
+    expect(mockClient.core.relayer.transportOpen).toHaveBeenCalledTimes(1);
     expect(walletConnectState.getSession()).toBeUndefined();
+  });
+
+  it('finishes old relay replacement before publishing a replacement session', async () => {
+    await establishSession();
+    let finishClose!: () => void;
+    mockClient.core.relayer.transportClose.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    const recovery = walletConnectState.recoverRelay(
+      walletConnectState.getClient()!,
+      connectedSession.topic,
+    );
+    const rejected = expect(recovery).rejects.toThrow('session changed during relay recovery');
+    await Promise.resolve();
+    const disconnect = walletConnectState.disconnect();
+    const replacementSession = { ...connectedSession, topic: 'replacement-topic' };
+    const replacement = walletConnectState.connect(async () => replacementSession);
+    try {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(walletConnectState.getSession()).toBeUndefined();
+      expect(mockClient.disconnect).not.toHaveBeenCalled();
+      finishClose();
+      await rejected;
+      await disconnect;
+      await replacement;
+      expect(mockClient.core.relayer.transportOpen).toHaveBeenCalledTimes(1);
+      expect(walletConnectState.getSession()?.topic).toBe('replacement-topic');
+      for (const event of ['session_delete', 'session_expire']) {
+        mockSessionHandlers.get(event)!({ topic: connectedSession.topic });
+        expect(walletConnectState.getSession()?.topic).toBe('replacement-topic');
+      }
+    } finally {
+      finishClose();
+      await Promise.allSettled([recovery, disconnect, replacement]);
+    }
+  });
+
+  it.each(['transportClose', 'transportOpen'] as const)(
+    'bounds a hung %s without allowing later work to race its eventual completion',
+    async (phase) => {
+      jest.useFakeTimers();
+      let finish!: () => void;
+      let recovery: Promise<void> | undefined;
+      try {
+        await establishSession();
+        mockClient.core.relayer[phase].mockImplementationOnce(
+          () =>
+            new Promise<void>((resolve) => {
+              finish = resolve;
+            }),
+        );
+        recovery = walletConnectState.recoverRelay(
+          walletConnectState.getClient()!,
+          connectedSession.topic,
+        );
+        let failed = false;
+        const outcome = recovery.catch((error) => {
+          failed = true;
+          return error;
+        });
+        await jest.advanceTimersByTimeAsync(30000);
+        expect(failed).toBe(true);
+        expect((await outcome).message).toContain('timed out');
+        expect(walletConnectState.getSession()).toBeUndefined();
+
+        mockClient.connect.mockResolvedValue({
+          uri: 'wc:abc123@2?relay-protocol=irn&symKey=deadbeef',
+          approval: async () => connectedSession,
+        });
+        expectConsoleError('startConnect() FAILED');
+        const attempt = walletConnectState.startConnect();
+        const attemptRejected = expect(attempt).rejects.toThrow('timed out');
+        await jest.advanceTimersByTimeAsync(30000);
+        await attemptRejected;
+        expect(mockClient.connect).not.toHaveBeenCalled();
+        finish();
+        await jest.advanceTimersByTimeAsync(0);
+        expect(mockClient.connect).not.toHaveBeenCalled();
+        expect(walletConnectState.getSession()).toBeUndefined();
+        await walletConnectState.startConnect();
+        expect(mockClient.connect).toHaveBeenCalledTimes(1);
+      } finally {
+        finish?.();
+        await recovery?.catch(() => {});
+        await jest.advanceTimersByTimeAsync(0);
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('retains ownership of an active pairing creation beyond the lifecycle wait deadline', async () => {
+    jest.useFakeTimers();
+    let finish!: (value: unknown) => void;
+    try {
+      await walletConnectState.init();
+      mockClient.connect.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      let completed = false;
+      const pairing = walletConnectState.startConnect().then((result) => {
+        completed = true;
+        return result;
+      });
+      await jest.advanceTimersByTimeAsync(60000);
+      expect(completed).toBe(false);
+      finish({
+        uri: 'wc:abc123@2?relay-protocol=irn&symKey=deadbeef',
+        approval: async () => connectedSession,
+      });
+      await pairing;
+      await walletConnectState.disconnect();
+      expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'abc123' });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('releases the RPC consumer after a hung relay lifecycle deadline while keeping the wallet unavailable', async () => {
+    jest.useFakeTimers();
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    let finishClose!: () => void;
+    try {
+      await establishSession();
+      mockClient.request.mockImplementationOnce(() => new Promise(() => {}));
+      mockClient.core.relayer.transportClose.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishClose = resolve;
+          }),
+      );
+      const request = rpc.getHeightInfo({});
+      const requestRejected = expect(request).rejects.toThrow('relay recovery failed');
+      const queued = rpc.getHeightInfo({});
+      const queuedRejected = expect(queued).rejects.toThrow('Wallet context changed');
+      await jest.advanceTimersByTimeAsync(60200);
+      await requestRejected;
+      await queuedRejected;
+      expect(mockClient.request).toHaveBeenCalledTimes(1);
+      await expect(rpc.getHeightInfo({})).rejects.toThrow('Session is not connected');
+      finishClose();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(walletConnectState.getSession()).toBeUndefined();
+    } finally {
+      finishClose?.();
+      await jest.advanceTimersByTimeAsync(0);
+      consoleError.mockRestore();
+      jest.useRealTimers();
+    }
   });
 
   it.each([
