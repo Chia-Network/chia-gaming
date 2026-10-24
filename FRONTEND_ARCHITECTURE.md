@@ -1598,6 +1598,9 @@ caller stops waiting. Active pairing creation retains its actual completion
 lifetime. Disconnect and retry invalidate older attempts: a late URI is
 cancelled, and a late approved session is removed instead of installed.
 Connection setup rechecks the session after recovery, reusing it without a new QR.
+If recovery failed, connection setup preserves the retained session and asks for
+a reload instead of starting a new pairing. Explicit disconnect or fresh setup
+can still revoke that session.
 
 `WalletState` records restoration authority separately from SDK session storage.
 Disconnect durably blocks restoration before changing local connection state;

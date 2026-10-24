@@ -76,6 +76,26 @@ async function establishSession(session = connectedSession): Promise<void> {
   await walletConnectState.connect(async () => session);
 }
 
+async function expectRestorableSession(): Promise<void> {
+  const oldHandlers = new Map(mockSessionHandlers);
+  try {
+    mockClient.session.keys = [connectedSession.topic];
+    mockClient.session.length = 1;
+    mockClient.session.get.mockReturnValue(connectedSession);
+    let reloaded!: typeof walletConnectState;
+    jest.isolateModules(() => {
+      reloaded = jest.requireActual('../../hooks/useWalletConnect').walletConnectState;
+    });
+    await reloaded.init();
+    expect(reloaded.getSession()?.topic).toBe(connectedSession.topic);
+  } finally {
+    mockClient.session.keys = [];
+    mockClient.session.length = 0;
+    mockSessionHandlers.clear();
+    for (const [event, handler] of oldHandlers) mockSessionHandlers.set(event, handler);
+  }
+}
+
 describe('WalletConnect pairing teardown', () => {
   beforeEach(async () => {
     mockClient.session.keys = [];
@@ -415,6 +435,11 @@ describe('WalletConnect pairing teardown', () => {
         await jest.advanceTimersByTimeAsync(0);
         expect(mockClient.connect).not.toHaveBeenCalled();
         expect(walletConnectState.getSession()).toBeUndefined();
+        expectConsoleError('startConnect() FAILED');
+        await expect(walletConnectState.startConnect()).rejects.toThrow('reload');
+        expect(mockClient.connect).not.toHaveBeenCalled();
+        await expectRestorableSession();
+        await walletConnectState.disconnect();
         await walletConnectState.startConnect();
         expect(mockClient.connect).toHaveBeenCalledTimes(1);
       } finally {
@@ -423,6 +448,26 @@ describe('WalletConnect pairing teardown', () => {
         await jest.advanceTimersByTimeAsync(0);
         jest.useRealTimers();
       }
+    },
+  );
+
+  it.each(['transportClose', 'transportOpen'] as const)(
+    'preserves the approved session across reconnect and reload after %s rejects',
+    async (phase) => {
+      await establishSession();
+      mockClient.core.relayer[phase].mockRejectedValueOnce(new Error('relay failed'));
+      await expect(
+        walletConnectState.recoverRelay(walletConnectState.getClient()!, connectedSession.topic),
+      ).rejects.toThrow('relay failed');
+      mockClient.connect.mockResolvedValue({
+        uri: 'wc:abc123@2?relay-protocol=irn&symKey=deadbeef',
+        approval: async () => connectedSession,
+      });
+      expectConsoleError('startConnect() FAILED');
+      await expect(walletConnectState.startConnect()).rejects.toThrow('reload');
+      expect(mockClient.connect).not.toHaveBeenCalled();
+      expect(walletConnectState.getSession()).toBeUndefined();
+      await expectRestorableSession();
     },
   );
 

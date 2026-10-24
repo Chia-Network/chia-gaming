@@ -448,6 +448,12 @@ class WalletState {
         // Recovery can have restored the approved session while this job waited.
         const session = this.getSession();
         if (session) return { uri: '', skipQr: true, approval: async () => session };
+        // A failed relay recovery hides the session without revoking approval.
+        // Keep its restoration authority so reload can recover the same pairing.
+        if (this.session)
+          throw new Error(
+            'WalletConnect relay is unavailable; reload to restore the approved session',
+          );
         localStorage.setItem(WC_SESSION_AUTHORITY_KEY, '');
         this.observable.next({ stateName: 'connecting', connecting: true });
         if (!isCurrent()) throw new Error('WalletConnect connection attempt was cancelled');
