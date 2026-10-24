@@ -30,6 +30,11 @@ At the start of each conversation, read `OVERVIEW.md` in full before diving
 into the task. It provides the conceptual foundation and links to detailed
 docs. Read the linked docs as they become relevant to the task at hand.
 
+Before reading, reviewing, or editing Chialisp (`.clsp` / `.clinc`), read
+[Shapes and pack](clsp/std/shapes.md). It explains the construction, invocation,
+dispatch, and field-access macros used throughout the referee and games,
+including their compile-time checks and runtime assumptions.
+
 **Build/test commands:** Use `./cb.sh` for builds, `./ct.sh` for targeted or
 interactive test runs, and `./ct-automation.sh` for automated/LLM full-suite
 runs. Never use `cargo test` directly.

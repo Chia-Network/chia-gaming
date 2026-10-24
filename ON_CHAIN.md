@@ -1,5 +1,9 @@
 # On-Chain Resolution
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 For the conceptual overview (state channels, coin hierarchy, potato protocol),
 see `OVERVIEW.md`. For off-chain game proposals and flow, see
 `GAME_LIFECYCLE.md`. For CLVM denial-of-service analysis (execution cost caps,
@@ -605,6 +609,21 @@ RefereePuzzleArgs {
 }
 ```
 
+The eleven CLVM fields are curried as one balanced tree, shared by the referee,
+its successor-coin hash calculation, and every validator:
+
+```clojure
+#(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+  MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)
+```
+
+Chialisp’s `#(...)` reader syntax selects the balanced layout automatically.
+Every field is at most four tree edges from the argument root.
+`RefereePuzzleArgs::to_clvm` encodes this shape; do not encode these fields as a proper list. Solution shapes are declared in
+`clsp/referee/onchain/shapes.clinc` and have no terminating list nils. This layout is
+part of the on-chain puzzle interface and changes the referee and validator
+hashes; an already-created coin must still be spent with its original puzzle.
+
 Players are identified by **public keys** (not puzzle hashes) in the referee
 args. After each move, the new game coin swaps `mover_pubkey` and
 `waiter_pubkey` — the previous mover becomes the waiter, and vice versa. This
@@ -654,7 +673,7 @@ validators relate to off-chain handlers, see `HANDLER_GUIDE.md`.
 
 The referee puzzle (`referee.clsp`) accepts three types of solutions:
 
-1. **Timeout** (`args = (mover_payout_ph, waiter_payout_ph)`):
+1. **Timeout** (`args = (mover_payout_ph . waiter_payout_ph)`):
   - Requires `ASSERT_HEIGHT_RELATIVE >= TIMEOUT`
   - Creates a coin of `MOVER_SHARE` to `mover_payout_ph` (if nonzero)
   - Creates a coin of `AMOUNT - MOVER_SHARE` to `waiter_payout_ph` (if nonzero)
@@ -663,13 +682,13 @@ The referee puzzle (`referee.clsp`) accepts three types of solutions:
   - Used when the current mover fails to act in time
   - **Both players' reward coins are created in a single transaction** —
   whichever player submits the timeout spend creates coins for both sides
-2. **Move** (`args = (new_move, infohash_c, new_mover_share, new_max_move_size)`):
+2. **Move** (`args = #(new_move infohash_c new_mover_share new_max_move_size)`):
   - Runs the mover's puzzle to authorize the spend
   - Creates a new game coin with swapped mover/waiter and updated state;
   `new_mover_share` becomes the opponent's (new mover's) share on timeout
   - Requires `ASSERT_BEFORE_HEIGHT_RELATIVE` (must move before timeout)
   - Requires `AGG_SIG_ME MOVER_PUBKEY (shatree args)` on the move args
-3. **Slash** (`args = (previous_state, previous_validation_program, evidence, mover_payout_ph)`):
+3. **Slash** (`args = ((previous_state previous_validation_program . evidence) . mover_payout_ph)`):
   - Proves a previous move was invalid by running the validation program
   - Slash succeeds (creates `CREATE_COIN mover_payout_ph AMOUNT`, slasher
   takes the full game amount) when the validator returns nil *or* returns

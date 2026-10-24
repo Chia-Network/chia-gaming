@@ -1,5 +1,5 @@
 use crate::common::load_clvm::read_hex_puzzle;
-use crate::common::types::{chia_dialect, AllocEncoder, Puzzle, Sha256Input, Sha256tree};
+use crate::common::types::{chia_dialect, AllocEncoder, Node, Puzzle, Sha256Input, Sha256tree};
 use crate::utils::proper_list;
 
 use clvm_traits::ToClvm;
@@ -109,18 +109,23 @@ fn build_curry_args(
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
-    let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(ms_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(mms_node, tail).unwrap();
-    let tail = a.new_pair(move_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(amount_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(waiter_ph, tail).unwrap();
-    a.new_pair(NodePtr::NIL, tail).unwrap()
+    crate::referee::types::encode_referee_args(
+        allocator,
+        [
+            NodePtr::NIL,
+            waiter_ph,
+            NodePtr::NIL,
+            amount_node,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            move_node,
+            mms_node,
+            NodePtr::NIL,
+            ms_node,
+            NodePtr::NIL,
+        ],
+    )
+    .unwrap()
 }
 
 fn build_validator_args(
@@ -144,10 +149,9 @@ fn build_validator_args(
     let curry_args = build_curry_args(allocator, on_chain, move_node, max_move_size, mover_share);
 
     let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(evidence_node, tail).unwrap();
-    let tail = a.new_pair(validator_program, tail).unwrap();
-    let tail = a.new_pair(previous_state, tail).unwrap();
+    let tail = a.new_pair(validator_program, evidence_node).unwrap();
+    let payload = a.new_pair(previous_state, tail).unwrap();
+    let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     a.new_pair(vh_node, tail).unwrap()
 }
@@ -160,7 +164,7 @@ struct MoveResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> MoveResult {
-    let items = proper_list(allocator.allocator(), result, true)
+    let items = crate::tests::validator_fields(allocator.allocator(), result)
         .expect("validator output should be a proper list");
     if items.is_empty() {
         MoveResult {
@@ -240,11 +244,6 @@ fn run_validator_step(
     }
 }
 
-fn list_from_nodes(allocator: &mut AllocEncoder, nodes: &[NodePtr]) -> NodePtr {
-    nodes.iter().rev().fold(NodePtr::NIL, |tail, node| {
-        allocator.allocator().new_pair(*node, tail).unwrap()
-    })
-}
 
 fn sha256_concat_bytes(parts: &[&[u8]]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
@@ -310,9 +309,9 @@ fn run_referee_slash(
         .unwrap_or(NodePtr::NIL);
     let payout_ph = allocator.allocator().new_atom(&[0x33; 32]).unwrap();
 
-    let curried_args = list_from_nodes(
+    let curried_args = crate::referee::types::encode_referee_args(
         allocator,
-        &[
+        [
             mover_pubkey,
             waiter_pubkey,
             timeout,
@@ -325,11 +324,9 @@ fn run_referee_slash(
             mover_share,
             infohash_a,
         ],
-    );
-    let slash_args = list_from_nodes(
-        allocator,
-        &[previous_state, validator_clvm, evidence, payout_ph],
-    );
+    )
+    .expect("referee argument tree");
+    let slash_args = ((Node(previous_state), (Node(validator_clvm), Node(evidence))), Node(payout_ph)).to_clvm(allocator).unwrap();
     let args = allocator
         .allocator()
         .new_pair(curried_args, slash_args)
@@ -538,8 +535,7 @@ fn make_end_state(
     let mover_image_node = allocator.allocator().new_atom(&mover_image).unwrap();
     let waiter_preimage_node = allocator.allocator().new_atom(waiter_preimage).unwrap();
     let a = allocator.allocator();
-    let tail = a.new_pair(waiter_preimage_node, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(mover_image_node, tail).unwrap();
+    let tail = a.new_pair(mover_image_node, waiter_preimage_node).unwrap();
     let state = a.new_pair(half_pot_node, tail).unwrap();
 
     MoveResult {
