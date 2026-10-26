@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Autocomplete } from '@base-ui/react/autocomplete';
 import { ChevronDownIcon } from 'lucide-react';
-import { Button } from './button';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 const DEV_HUB = 'http://localhost:3003';
@@ -99,7 +99,7 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
                   aria-label="Hub URL"
                   aria-invalid={error ? true : undefined}
                   placeholder="https://hub.example.com"
-                  className="h-10 pr-9"
+                  className="pr-9"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleConnect();
                   }}
@@ -129,7 +129,7 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
                 </Autocomplete.Positioner>
               </Autocomplete.Portal>
             </Autocomplete.Root>
-            <Button variant="solid" onClick={handleConnect} disabled={!hubUrl.trim()}>
+            <Button onClick={handleConnect} disabled={!hubUrl.trim()}>
               Connect
             </Button>
           </div>

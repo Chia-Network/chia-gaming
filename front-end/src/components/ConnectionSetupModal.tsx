@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from './button';
+import { Button } from './ui/button';
+import { Spinner } from './ui/spinner';
 import { Input } from './ui/input';
 import type { ConnectionField, ConnectionFieldValues } from '../types/ChiaGaming';
 
@@ -172,14 +173,15 @@ export function ConnectionSetupModal({
             Cancel
           </Button>
         ) : null}
-        <Button
-          variant="solid"
-          onClick={handleConnect}
-          disabled={connecting}
-          isLoading={connecting}
-          loadingText="Connecting&#x2026;"
-        >
-          Connect
+        <Button onClick={handleConnect} disabled={connecting}>
+          {connecting ? (
+            <>
+              <Spinner />
+              Connecting&#x2026;
+            </>
+          ) : (
+            'Connect'
+          )}
         </Button>
       </div>
     </div>
