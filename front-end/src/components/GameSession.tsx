@@ -42,7 +42,7 @@ import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
-import { Button } from './button';
+import { Button } from './ui/button';
 import {
   clientErrorText,
   markClientErrorReported,
@@ -107,7 +107,7 @@ export function RenderErrorDialog({
             </Button>
           )}
           {onReload && (
-            <Button variant="solid" size="sm" onClick={onReload}>
+            <Button size="sm" onClick={onReload}>
               Reload
             </Button>
           )}
@@ -392,7 +392,7 @@ function NotificationOverlay({
       className={`absolute ${zClass} left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2`}
       data-between-hand-focus-boundary={focusBoundaryPriority}
     >
-      <Card className="theme-inverted w-full max-w-md shadow-xl bg-canvas-bg-subtle border border-canvas-line">
+      <Card className="theme-inverted w-full max-w-md gap-0 shadow-xl bg-canvas-bg-subtle border border-canvas-line">
         <CardHeader
           className="text-center pb-2 cursor-grab active:cursor-grabbing"
           onPointerDown={(e) => dragControls.start(e)}
@@ -418,7 +418,6 @@ function NotificationOverlay({
           )}
           <Button
             ref={dismissButtonRef}
-            variant="solid"
             size="sm"
             onClick={onDismiss}
             className="self-center min-w-[96px]"
@@ -807,8 +806,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
               {session.betweenHandMode === 'decision' && (
                 <div className="relative flex w-full items-center justify-center py-2">
                   <Button
-                    variant="solid"
-                    color="primary"
                     size="sm"
                     onClick={session.chooseNewHandSameTerms}
                     disabled={session.newHandRequested}
@@ -817,12 +814,11 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
                   </Button>
                   <Button
                     variant="ghost"
-                    color="neutral"
                     size="sm"
                     className="absolute right-2"
                     onClick={session.chooseDoNotUseCurrentProposal}
-                    leadingIcon={<span className="text-base leading-none">&times;</span>}
                   >
+                    <span className="text-base leading-none">&times;</span>
                     Close
                   </Button>
                 </div>

@@ -12,7 +12,7 @@ import {
   MAX_GAME_TIMEOUT_BLOCKS,
   MIN_GAME_TIMEOUT_BLOCKS,
 } from '../lib/session/gameTimeout';
-import { Button } from './button';
+import { Button } from './ui/button';
 import { Input } from './ui/input';
 
 export function ComposeProposalDialog({
@@ -60,8 +60,7 @@ export function ComposeProposalDialog({
           {REGISTERED_GAMES.map(({ gameType, displayName }) => (
             <Button
               key={gameType}
-              variant={compose.selectedGame === gameType ? 'solid' : 'outline'}
-              color={compose.selectedGame === gameType ? 'primary' : 'neutral'}
+              variant={compose.selectedGame === gameType ? 'default' : 'outline'}
               size="sm"
               disabled={session.composeProposalSent}
               onClick={() => session.setComposeGameType(gameType)}
@@ -96,14 +95,7 @@ export function ComposeProposalDialog({
             }}
           />
         </div>
-        <Button
-          variant="solid"
-          color="primary"
-          size="sm"
-          className="self-center"
-          disabled={!canSubmit}
-          onClick={submit}
-        >
+        <Button size="sm" className="self-center" disabled={!canSubmit} onClick={submit}>
           {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
         </Button>
       </div>
@@ -130,20 +122,13 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
-            variant="solid"
-            color="primary"
             size="sm"
             disabled={accepting}
             onClick={() => session.acceptReviewedProposal(review.id)}
           >
             {accepting ? 'Accepting…' : 'Yes'}
           </Button>
-          <Button
-            variant="solid"
-            size="sm"
-            disabled={accepting}
-            onClick={session.rejectReviewedProposal}
-          >
+          <Button size="sm" disabled={accepting} onClick={session.rejectReviewedProposal}>
             No
           </Button>
         </div>

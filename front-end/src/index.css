@@ -325,6 +325,20 @@
   --color-primary: var(--primary-solid);
   --color-primary-foreground: var(--primary-on-primary);
   --color-destructive: var(--alert-solid);
+  --color-border: var(--canvas-line);
+  --color-card: var(--canvas-bg);
+  --color-card-foreground: var(--canvas-text-contrast);
+  --color-muted: var(--canvas-bg-hover);
+  --color-accent: var(--canvas-bg-active);
+  --color-accent-foreground: var(--canvas-text-contrast);
+  --color-background: var(--canvas-base);
+}
+
+/* shadcn components expect bare `border` to use the border token */
+@layer base {
+  * {
+    @apply border-border;
+  }
 }
 /* tailwind import removed (using directives above) */
 
