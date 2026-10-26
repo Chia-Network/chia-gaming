@@ -148,6 +148,7 @@ import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
 
 import { HubPicker } from './HubPicker';
+import { Input } from './ui/input';
 
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
 
@@ -549,12 +550,11 @@ function LogPanel({ lines }: { lines: string[] }) {
   return (
     <div className="flex flex-col h-full gap-2">
       <div className="flex items-center gap-2 shrink-0">
-        <input
-          type="text"
+        <Input
           placeholder="Filter"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="flex-1 px-3 py-1.5 text-xs font-mono rounded-md border border-canvas-border bg-canvas-bg text-canvas-text placeholder:text-canvas-solid focus:outline-none"
+          className="flex-1 h-8 text-xs md:text-xs font-mono"
         />
         {filter && (
           <span className="text-xs text-canvas-solid whitespace-nowrap">
@@ -3944,9 +3944,8 @@ const Shell = () => {
                   {feeEditing ? (
                     <>
                       <div className="flex gap-2">
-                        <input
+                        <Input
                           ref={feeInputRef}
-                          type="text"
                           inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
                           value={feeInput}
                           onChange={(e) => setFeeInput(e.target.value)}
@@ -3954,7 +3953,7 @@ const Shell = () => {
                             if (e.key === 'Enter' && feeInputValid) commitFee();
                             if (e.key === 'Escape') cancelEditFee();
                           }}
-                          className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                          className="flex-1"
                         />
                         <button
                           onClick={commitFee}
@@ -4042,9 +4041,8 @@ const Shell = () => {
                   {feeEditing ? (
                     <>
                       <div className="flex gap-2">
-                        <input
+                        <Input
                           ref={feeInputRef}
-                          type="text"
                           inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
                           value={feeInput}
                           onChange={(e) => setFeeInput(e.target.value)}
@@ -4052,7 +4050,7 @@ const Shell = () => {
                             if (e.key === 'Enter' && feeInputValid) commitFee();
                             if (e.key === 'Escape') cancelEditFee();
                           }}
-                          className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                          className="flex-1"
                         />
                         <button
                           onClick={commitFee}
@@ -4137,43 +4135,49 @@ const Shell = () => {
                   )}
                 </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
-                  {!isElectronDistribution() && (
-                    <>
-                      <Button
-                        variant="solid"
-                        fullWidth
-                        onClick={() => handleConnect('simulator', false, true)}
-                      >
-                        Continue with Simulator
-                      </Button>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 border-t border-canvas-border" />
-                        <span className="text-canvas-text font-medium text-sm">OR</span>
-                        <div className="flex-1 border-t border-canvas-border" />
-                      </div>
-                    </>
-                  )}
                   <Button
-                    variant="solid"
+                    color="neutral"
+                    variant="surface"
+                    size="lg"
+                    fullWidth
+                    leadingIcon={
+                      <img src="images/cloud-wallet.svg" alt="" className="block w-7 h-7" />
+                    }
+                    onClick={() => handleConnect('cloud', false, true)}
+                  >
+                    Continue with Cloud Wallet
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 border-t border-canvas-border" />
+                    <span className="text-canvas-text font-medium text-sm">OR</span>
+                    <div className="flex-1 border-t border-canvas-border" />
+                  </div>
+                  <Button
+                    color="neutral"
+                    variant="outline"
                     fullWidth
                     onClick={() => handleConnect('walletconnect', false, true)}
                   >
                     Link Wallet
                   </Button>
                   <Button
-                    variant="solid"
+                    color="neutral"
+                    variant="outline"
                     fullWidth
                     onClick={() => handleConnect('sage', false, true)}
                   >
                     Sage Wallet
                   </Button>
-                  <Button
-                    variant="solid"
-                    fullWidth
-                    onClick={() => handleConnect('cloud', false, true)}
-                  >
-                    Cloud Wallet
-                  </Button>
+                  {!isElectronDistribution() && (
+                    <Button
+                      color="neutral"
+                      variant="outline"
+                      fullWidth
+                      onClick={() => handleConnect('simulator', false, true)}
+                    >
+                      Continue with Simulator
+                    </Button>
+                  )}
                 </div>
                 {connectError ? (
                   <p className="w-full max-w-sm text-sm text-alert-text text-center break-words">

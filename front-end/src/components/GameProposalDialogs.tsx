@@ -13,6 +13,7 @@ import {
   MIN_GAME_TIMEOUT_BLOCKS,
 } from '../lib/session/gameTimeout';
 import { Button } from './button';
+import { Input } from './ui/input';
 
 export function ComposeProposalDialog({
   session,
@@ -79,11 +80,11 @@ export function ComposeProposalDialog({
         })}
         <div className="flex w-full flex-col items-center gap-1">
           <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
-          <input
+          <Input
             type="number"
             min={MIN_GAME_TIMEOUT_BLOCKS.toString()}
             max={MAX_GAME_TIMEOUT_BLOCKS.toString()}
-            className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
+            className="h-8 text-center"
             value={compose.gameTimeout.toString()}
             disabled={session.composeProposalSent}
             onChange={(event) => {
