@@ -25,7 +25,7 @@ import { installHubIframeAuthentication } from '../services/hubIframeAuthenticat
 import { CoinOfInterestEntry, HubLiveness } from '../types/ChiaGaming';
 import { formatMojos } from '../util';
 import { isElectronDistribution } from '../util/distribution';
-import { Button } from './button';
+import { Button } from './ui/button';
 import CloudWalletApprovalNotice from './CloudWalletApprovalNotice';
 import CloudWalletCancellationNotice from './CloudWalletCancellationNotice';
 import { ConnectionSetupModal } from './ConnectionSetupModal';
@@ -39,6 +39,8 @@ import WalletRecoveryNotice from './WalletRecoveryNotice';
 
 import { HubPicker } from './HubPicker';
 import { Input } from './ui/input';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
+import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group';
 
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
 
@@ -216,8 +218,6 @@ function GameDashboard({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="solid"
-              color="primary"
               size="sm"
               className="min-w-40"
               disabled={!view.actionEnabled}
@@ -802,83 +802,95 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             background: 'var(--color-canvas-bg-active)',
           }}
         >
-          {/* Tabs */}
-          {TAB_DEFS.map((tab) => {
-            const active = activeTab === tab.id;
-            const showDot =
-              !active &&
-              ((tab.id === 'game' && unreadGame) ||
-                (tab.id === 'wallet' && walletAlert) ||
-                (tab.id === 'hub' && hubAlert));
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => {
+              const tab = TAB_DEFS.find((def) => def.id === value);
+              if (tab) dispatch({ type: 'tab', tab: tab.id });
+            }}
+            className="contents"
+          >
+            <TabsList className="items-end gap-1 rounded-none bg-transparent p-0 text-inherit group-data-[orientation=horizontal]/tabs:h-auto">
+              {TAB_DEFS.map((tab) => {
+                const active = activeTab === tab.id;
+                const showDot =
+                  !active &&
+                  ((tab.id === 'game' && unreadGame) ||
+                    (tab.id === 'wallet' && walletAlert) ||
+                    (tab.id === 'hub' && hubAlert));
 
-            let pipeConnected: boolean | null = null;
-            switch (tab.id) {
-              case 'wallet':
-                pipeConnected = walletConnected || walletRecovering;
-                break;
-              case 'hub':
-                pipeConnected = hubLiveness === 'connected';
-                break;
-              case 'game':
-                pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
-                break;
-            }
-            const walletConnecting =
-              tab.id === 'wallet' && connecting && !walletConnected && !walletRecovering;
-            const walletDisconnected =
-              tab.id === 'wallet' && !walletConnected && !walletRecovering && !walletConnecting;
-            const pipeLabel =
-              pipeConnected === null
-                ? tab.label
-                : `${tab.label}, ${walletConnecting ? 'connecting' : pipeConnected ? 'connected' : 'disconnected'}`;
+                let pipeConnected: boolean | null = null;
+                switch (tab.id) {
+                  case 'wallet':
+                    pipeConnected = walletConnected || walletRecovering;
+                    break;
+                  case 'hub':
+                    pipeConnected = hubLiveness === 'connected';
+                    break;
+                  case 'game':
+                    pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
+                    break;
+                }
+                const walletConnecting =
+                  tab.id === 'wallet' && connecting && !walletConnected && !walletRecovering;
+                const walletDisconnected =
+                  tab.id === 'wallet' && !walletConnected && !walletRecovering && !walletConnecting;
+                const pipeLabel =
+                  pipeConnected === null
+                    ? tab.label
+                    : `${tab.label}, ${walletConnecting ? 'connecting' : pipeConnected ? 'connected' : 'disconnected'}`;
 
-            return (
-              <button
-                key={tab.id}
-                onClick={() => dispatch({ type: 'tab', tab: tab.id })}
-                aria-label={pipeLabel}
-                style={
-                  active
-                    ? {
-                        background: 'var(--canvas-bg-subtle)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                      }
-                    : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
-                }
-                className={
-                  'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
-                  (active
-                    ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
-                    : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
-                }
-              >
-                {pipeConnected !== null && (
-                  <span
-                    aria-hidden="true"
+                return (
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                    id={`tab-${tab.id}`}
+                    aria-controls={`panel-${tab.id}`}
+                    aria-label={pipeLabel}
+                    style={
+                      active
+                        ? {
+                            background: 'var(--canvas-bg-subtle)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.35rem',
+                          }
+                        : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
+                    }
                     className={
-                      walletConnecting
-                        ? 'w-4 h-4 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin'
-                        : 'text-base leading-none'
+                      'relative h-auto flex-none px-3 py-1.5 text-sm font-medium rounded-t-md rounded-b-none transition-colors group-data-[variant=default]/tabs-list:data-[state=active]:shadow-none ' +
+                      (active
+                        ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
+                        : 'text-canvas-text dark:text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
                     }
                   >
-                    {walletConnecting
-                      ? null
-                      : pipeConnected
-                        ? TAB_PIPE_CONNECTED
-                        : TAB_PIPE_DISCONNECTED}
-                  </span>
-                )}
-                <span className={walletDisconnected ? 'text-alert-text' : undefined}>
-                  {tab.label}
-                </span>
-                {showDot && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
-                )}
-              </button>
-            );
-          })}
+                    {pipeConnected !== null && (
+                      <span
+                        aria-hidden="true"
+                        className={
+                          walletConnecting
+                            ? 'w-4 h-4 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin'
+                            : 'text-base leading-none'
+                        }
+                      >
+                        {walletConnecting
+                          ? null
+                          : pipeConnected
+                            ? TAB_PIPE_CONNECTED
+                            : TAB_PIPE_DISCONNECTED}
+                      </span>
+                    )}
+                    <span className={walletDisconnected ? 'text-alert-text' : undefined}>
+                      {tab.label}
+                    </span>
+                    {showDot && (
+                      <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </Tabs>
 
           {/* Right side: Branding + Theme */}
           <div
@@ -915,6 +927,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
         >
           {/* Wallet tab */}
           <div
+            role="tabpanel"
+            id="panel-wallet"
+            aria-labelledby="tab-wallet"
             style={{
               position: 'absolute',
               inset: 0,
@@ -928,8 +943,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             <WalletRecoveryNotice notice={walletView.recoveryNotice} />
             {showTransactionPublishControl && (
               <Button
-                variant={transactionPublishNerfed ? 'solid' : 'outline'}
-                color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                variant={transactionPublishNerfed ? 'default' : 'outline'}
                 size="sm"
                 className="absolute right-4 top-4"
                 onClick={() => dispatch({ type: 'toggle-publish' })}
@@ -961,20 +975,23 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 <div className="w-full max-w-xs text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>
-                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                      <button
-                        onClick={() => handleFeeUnitChange('mojo')}
-                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      aria-label="Fee unit"
+                      value={feeUnit}
+                      onValueChange={(unit) => {
+                        if (unit === 'mojo' || unit === 'xch') handleFeeUnitChange(unit);
+                      }}
+                    >
+                      <ToggleGroupItem value="mojo" className="h-6 px-2 text-xs">
                         {currency.mojo}
-                      </button>
-                      <button
-                        onClick={() => handleFeeUnitChange('xch')}
-                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="xch" className="h-6 px-2 text-xs">
                         {currency.xch}
-                      </button>
-                    </div>
+                      </ToggleGroupItem>
+                    </ToggleGroup>
                   </div>
                   {feeEditing ? (
                     <>
@@ -1017,7 +1034,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     </button>
                   )}
                 </div>
-                <Button variant="solid" onClick={() => dispatch({ type: 'wallet-disconnect' })}>
+                <Button onClick={() => dispatch({ type: 'wallet-disconnect' })}>
                   Disconnect
                 </Button>
               </div>
@@ -1060,20 +1077,23 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 <div className="w-full max-w-sm text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>
-                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                      <button
-                        onClick={() => handleFeeUnitChange('mojo')}
-                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      aria-label="Fee unit"
+                      value={feeUnit}
+                      onValueChange={(unit) => {
+                        if (unit === 'mojo' || unit === 'xch') handleFeeUnitChange(unit);
+                      }}
+                    >
+                      <ToggleGroupItem value="mojo" className="h-6 px-2 text-xs">
                         {currency.mojo}
-                      </button>
-                      <button
-                        onClick={() => handleFeeUnitChange('xch')}
-                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="xch" className="h-6 px-2 text-xs">
                         {currency.xch}
-                      </button>
-                    </div>
+                      </ToggleGroupItem>
+                    </ToggleGroup>
                   </div>
                   {feeEditing ? (
                     <>
@@ -1119,7 +1139,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 <p className="text-sm text-canvas-text animate-pulse">
                   Waiting for approval in your wallet…
                 </p>
-                <Button variant="solid" onClick={() => dispatch({ type: 'wallet-cancel' })}>
+                <Button onClick={() => dispatch({ type: 'wallet-cancel' })}>
                   Cancel
                 </Button>
               </div>
@@ -1140,7 +1160,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     </p>
                   </>
                 )}
-                <Button variant="solid" onClick={() => dispatch({ type: 'wallet-cancel' })}>
+                <Button onClick={() => dispatch({ type: 'wallet-cancel' })}>
                   Cancel
                 </Button>
               </div>
@@ -1151,7 +1171,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   <span className="text-lg font-semibold text-alert-text">Disconnected</span>
                 </div>
                 <p className="text-sm text-canvas-text">Connection was lost</p>
-                <Button variant="solid" onClick={() => dispatch({ type: 'wallet-reconnect' })}>
+                <Button onClick={() => dispatch({ type: 'wallet-reconnect' })}>
                   Reconnect
                 </Button>
               </div>
@@ -1160,24 +1180,24 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
                 <div className="w-full max-w-sm flex flex-col items-center gap-1">
                   <span className="text-sm text-canvas-text">Network</span>
-                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                    <button
-                      type="button"
-                      disabled={networkLocked}
-                      onClick={() => dispatch({ type: 'network', network: 'mainnet' })}
-                      className={`px-3 py-1 transition-colors ${network === 'mainnet' ? 'bg-canvas-bg-active font-semibold' : networkLocked ? '' : 'hover:bg-canvas-bg-hover'} ${networkLocked ? 'opacity-40 cursor-default' : ''}`}
-                    >
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    aria-label="Network"
+                    disabled={networkLocked}
+                    value={network}
+                    onValueChange={(next) => {
+                      if (next === 'mainnet' || next === 'testnet') dispatch({ type: 'network', network: next });
+                    }}
+                  >
+                    <ToggleGroupItem value="mainnet" className="h-7 px-3 text-xs">
                       Mainnet
-                    </button>
-                    <button
-                      type="button"
-                      disabled={networkLocked}
-                      onClick={() => dispatch({ type: 'network', network: 'testnet' })}
-                      className={`px-3 py-1 transition-colors border-l border-canvas-border ${network === 'testnet' ? 'bg-canvas-bg-active font-semibold' : networkLocked ? '' : 'hover:bg-canvas-bg-hover'} ${networkLocked ? 'opacity-40 cursor-default' : ''}`}
-                    >
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="testnet" className="h-7 px-3 text-xs">
                       Testnet
-                    </button>
-                  </div>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                   {networkLocked && (
                     <p className="text-xs text-canvas-text text-center">
                       Network is locked for this session
@@ -1186,17 +1206,14 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
                   <Button
-                    color="neutral"
-                    variant="surface"
+                    variant="outline"
                     size="lg"
-                    fullWidth
-                    leadingIcon={
-                      <img src="images/cloud-wallet.svg" alt="" className="block w-7 h-7" />
-                    }
+                    className="w-full h-12 text-base"
                     onClick={() =>
                       dispatch({ type: 'wallet-connect', wallet: 'cloud', fresh: true })
                     }
                   >
+                    <img src="images/cloud-wallet.svg" alt="" className="block size-6" />
                     Continue with Cloud Wallet
                   </Button>
                   <div className="flex items-center gap-2">
@@ -1205,9 +1222,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     <div className="flex-1 border-t border-canvas-border" />
                   </div>
                   <Button
-                    color="neutral"
+                    className="w-full"
                     variant="outline"
-                    fullWidth
                     onClick={() =>
                       dispatch({ type: 'wallet-connect', wallet: 'walletconnect', fresh: true })
                     }
@@ -1215,9 +1231,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     Link Wallet
                   </Button>
                   <Button
-                    color="neutral"
+                    className="w-full"
                     variant="outline"
-                    fullWidth
                     onClick={() =>
                       dispatch({ type: 'wallet-connect', wallet: 'sage', fresh: true })
                     }
@@ -1226,9 +1241,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   </Button>
                   {!isElectronDistribution() && (
                     <Button
-                      color="neutral"
+                      className="w-full"
                       variant="outline"
-                      fullWidth
                       onClick={() =>
                         dispatch({ type: 'wallet-connect', wallet: 'simulator', fresh: true })
                       }
@@ -1248,6 +1262,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
 
           {/* Hub tab */}
           <div
+            role="tabpanel"
+            id="panel-hub"
+            aria-labelledby="tab-hub"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1297,6 +1314,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
 
           {/* Game Session tab */}
           <div
+            role="tabpanel"
+            id="panel-game"
+            aria-labelledby="tab-game"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1414,6 +1434,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
 
           {/* History tab */}
           <div
+            role="tabpanel"
+            id="panel-history"
+            aria-labelledby="tab-history"
             style={{
               position: 'absolute',
               inset: 0,
@@ -1426,6 +1449,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
 
           {/* Log tab */}
           <div
+            role="tabpanel"
+            id="panel-log"
+            aria-labelledby="tab-log"
             style={{
               position: 'absolute',
               inset: 0,

@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { cloudBlockchainInfo } from '../lib/wallet/CloudBlockchainInterface';
-import { Button } from './button';
+import { Button } from './ui/button';
 
 function subscribe(listener: () => void) {
   return cloudBlockchainInfo.onBlockedApprovalsChange(listener);
@@ -32,8 +32,6 @@ export default function CloudWalletApprovalNotice() {
             : `Your browser blocked the Cloud Wallet approval window for the ${next.source}. Allow pop-ups for this site, then open it to continue.`}
       </p>
       <Button
-        variant="solid"
-        color="primary"
         size="sm"
         onClick={() => setStillBlocked(!cloudBlockchainInfo.openBlockedApproval())}
       >
