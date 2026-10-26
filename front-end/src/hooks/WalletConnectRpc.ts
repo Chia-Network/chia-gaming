@@ -205,7 +205,12 @@ function isReadOnlyRpc(method: ChiaMethod): boolean {
 }
 
 function supportsTimeoutRecovery(method: ChiaMethod): boolean {
-  return isReadOnlyRpc(method) || method === ChiaMethod.PushTransactions;
+  // Registering the same coin IDs again is idempotent and reserves no funds.
+  return (
+    isReadOnlyRpc(method) ||
+    method === ChiaMethod.PushTransactions ||
+    method === ChiaMethod.RegisterRemoteCoins
+  );
 }
 
 class WalletConnectRpcClient {

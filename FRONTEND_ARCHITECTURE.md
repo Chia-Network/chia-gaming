@@ -1580,10 +1580,13 @@ host-side coordinator for chain observations. It separates three concerns:
    queues: a queued mutation runs before queued reads, without interrupting the
    active request. This serializes all actual WalletConnect calls, including
    direct setup and peer-readiness queries, and preserves 50ms between requests.
-   A read or exact-transaction post that takes 30 seconds replaces the relay
-   connection before the next request can run, retaining the approved session
-   and pairing. Relay recovery fences queued work and late results from the old
-   connection; a failed recovery leaves the wallet unavailable.
+   A read, coin registration, or exact-transaction post that takes 30 seconds
+   replaces the relay connection before the next request can run, retaining the
+   approved session and pairing. Relay recovery fences queued work and late
+   results from the old connection; a failed recovery leaves the wallet unavailable.
+   Coin registration is safe to repeat: the wallet ignores duplicate coin IDs.
+   Bounding it prevents a lost registration response from blocking channel
+   discovery.
    Reservation mutations such as offer creation
    retain their SDK completion lifetime. The optional peer-count fallback uses
    this active-query deadline, excluding time spent queued behind wallet work.

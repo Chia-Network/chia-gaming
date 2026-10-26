@@ -335,6 +335,49 @@ describe('WalletConnect RPC adapter', () => {
     },
   );
 
+  it('recovers a stalled coin registration and permits registration retry and chain reads', async () => {
+    jest.useFakeTimers();
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    let finishRegistration!: (value: unknown) => void;
+    requestMock
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRegistration = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ height: 4878844 });
+    const registration = { walletId: 2n, coinIds: ['50'.repeat(32)] };
+    try {
+      const first = rpc.registerRemoteCoins(registration);
+      // Attach the handler immediately so timeout rejection is observed.
+      const failed = first.catch((error: unknown) => error);
+      await jest.advanceTimersByTimeAsync(30100);
+      expect(mockRecoverRelay).toHaveBeenCalledWith(
+        mockClient,
+        'topic-1',
+        ChiaMethod.RegisterRemoteCoins,
+      );
+      expect(await failed).toBeInstanceOf(WalletConnectTransportError);
+      const retry = rpc.registerRemoteCoins(registration);
+      const height = rpc.getHeightInfo({});
+      await jest.advanceTimersByTimeAsync(200);
+      await expect(retry).resolves.toEqual({ success: true });
+      await expect(height).resolves.toEqual({ height: 4878844n });
+      expect(requestMock.mock.calls[1][0].request).toEqual(requestMock.mock.calls[0][0].request);
+      finishRegistration({ success: true });
+      await flushMicrotasks();
+      expect(mockRecoverRelay).toHaveBeenCalledTimes(1);
+    } finally {
+      // Let the old SDK operation settle even when the regression assertion fails.
+      finishRegistration?.({ success: true });
+      await jest.advanceTimersByTimeAsync(100);
+      consoleError.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
   it('keeps waiting for reserved offer creation beyond the retryable request deadline', async () => {
     jest.useFakeTimers();
     let finish!: (value: unknown) => void;
