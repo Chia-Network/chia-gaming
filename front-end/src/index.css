@@ -316,6 +316,15 @@
   --color-info-text: var(--info-text);
   --color-info-text-contrast: var(--info-text-contrast);
   --color-info-on-info: var(--info-on-info);
+
+  /* shadcn semantic tokens, mapped onto the palette above */
+  --color-foreground: var(--canvas-text-contrast);
+  --color-muted-foreground: var(--canvas-solid);
+  --color-input: var(--canvas-border);
+  --color-ring: var(--primary-solid);
+  --color-primary: var(--primary-solid);
+  --color-primary-foreground: var(--primary-on-primary);
+  --color-destructive: var(--alert-solid);
 }
 /* tailwind import removed (using directives above) */
 

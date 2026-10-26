@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from './button';
+import { Input } from './ui/input';
 import type { ConnectionField, ConnectionFieldValues } from '../types/ChiaGaming';
 
 interface ConnectionSetupModalProps {
@@ -152,13 +153,11 @@ export function ConnectionSetupModal({
           {fieldEntries.map(([key, field]) => (
             <label key={key} className="flex flex-col gap-1 text-sm text-canvas-text">
               <span>{field.label}</span>
-              <input
-                type="text"
+              <Input
                 inputMode={field.type === 'bigint' ? 'numeric' : 'text'}
                 value={inputs[key] ?? ''}
                 onChange={(e) => setInputs((prev) => ({ ...prev, [key]: e.target.value }))}
                 disabled={connecting}
-                className="px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
               />
             </label>
           ))}

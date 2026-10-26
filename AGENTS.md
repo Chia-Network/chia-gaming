@@ -48,6 +48,25 @@ This keeps the index in sync and avoids forgetting to stage changes.
 
 ---
 
+# shadcn components come from the CLI
+
+Never hand-write shadcn/ui components. Add or update them with the CLI from
+`front-end/`: `pnpm dlx shadcn@latest add <component>` (`--overwrite` to
+update). Keep the generated code as-is apart from Prettier formatting. Theme
+them by mapping shadcn tokens (`input`, `ring`, `primary`, ...) to the app
+palette in the `@theme` block of `front-end/src/index.css`, and adjust usage
+through `className` or `data-slot` selectors at the call site.
+
+Verify every icon, logo, and colored UI element against both light and dark
+themes before handing it off. Brand marks with light colors (like the lime Chia
+leaf) need a backing tile or a theme-specific variant to keep contrast.
+
+When a field takes free-form input but should also offer presets (hub URLs,
+amounts), use one editable field with suggestions (Base UI `Autocomplete`), not
+a select with a "Custom…" option that reveals a second input.
+
+---
+
 # Unreleased app formats and deployed compatibility
 
 No player app or hub persistence format has been released. Keep explicit
