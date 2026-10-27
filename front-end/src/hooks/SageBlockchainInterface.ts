@@ -178,7 +178,19 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
   private markDisconnected() {
     this.monitoringEpoch++;
     this.monitoringPromise = null;
+    this.blockchainAddressData = { puzzleHash: '' };
     this.fireConnectionChange(false);
+  }
+
+  /**
+   * Resolve the address for a connect. Monitoring returns quietly when a
+   * disconnect overtakes it, and that must not complete the connect.
+   */
+  private async finishConnect() {
+    await this.startMonitoring();
+    if (!this.lastConnectedState) {
+      throw new Error('Sage disconnected before its address resolved');
+    }
   }
 
   /**
@@ -506,7 +518,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
         finalize: async () => {
           this.monitoringEpoch++;
           this.monitoringPromise = null;
-          await this.startMonitoring();
+          await this.finishConnect();
         },
       };
     }
@@ -516,7 +528,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       qrUri: uri,
       finalize: async () => {
         await walletConnectState.connect(approval);
-        await this.startMonitoring();
+        await this.finishConnect();
       },
     };
   }
@@ -531,7 +543,9 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
   }
 
   isConnected(): boolean {
-    return walletConnectState.getSession() !== undefined;
+    return (
+      walletConnectState.getProfile() === 'sage' && walletConnectState.getSession() !== undefined
+    );
   }
 
   onConnectionChange(cb: (connected: boolean) => void): () => void {

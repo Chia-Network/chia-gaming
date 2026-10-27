@@ -21,6 +21,9 @@ const mockWalletConnectState = {
   getChainId: jest.fn(() => 'chia:mainnet'),
   getSession: jest.fn(() => ({ topic: 'sage-topic' })),
   getProfile: jest.fn(() => 'sage'),
+  init: jest.fn(async () => {}),
+  selectProfile: jest.fn(),
+  disconnect: jest.fn(async () => {}),
 };
 
 jest.mock('../../hooks/useWalletConnect', () => ({
@@ -513,6 +516,33 @@ describe('SageBlockchainInterface', () => {
         status: 'unavailable',
       });
     });
+  });
+
+  it('reports no connection while the Chia reference wallet holds the WalletConnect client', () => {
+    const sage = new SageBlockchainInterface();
+    expect(sage.isConnected()).toBe(true);
+    mockWalletConnectState.getProfile.mockReturnValueOnce('chia-wallet');
+    expect(sage.isConnected()).toBe(false);
+  });
+
+  it('fails a connect whose session ends before the address resolves', async () => {
+    jest.mocked(sageRpc.getAddress).mockImplementationOnce(async () => {
+      mockWalletConnectState.getSession.mockReturnValueOnce(undefined as never);
+      return { address: encodePuzzleHashToBech32m(CHANGE_PH) };
+    });
+    const sage = new SageBlockchainInterface();
+    const setup = await sage.beginConnect('player');
+    expect(setup.skipQr).toBe(true);
+    await expect(setup.finalize()).rejects.toThrow(/disconnected before its address resolved/);
+    expect(sage.isReadyForPlay()).toBe(false);
+    await expect(sage.getAddress()).resolves.toEqual({ puzzleHash: '' });
+  });
+
+  it('forgets the resolved address on disconnect', async () => {
+    const sage = await connectedSage();
+    await expect(sage.getAddress()).resolves.toMatchObject({ puzzleHash: CHANGE_PH });
+    await sage.disconnect();
+    await expect(sage.getAddress()).resolves.toEqual({ puzzleHash: '' });
   });
 
   it('reads chain state from coinset.org and treats unknown coins as absent', async () => {

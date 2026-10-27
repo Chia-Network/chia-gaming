@@ -1102,7 +1102,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   isConnected(): boolean {
-    return walletConnectState.getSession() !== undefined;
+    // Sage shares the WalletConnect client; its session is not this wallet's.
+    return (
+      walletConnectState.getProfile() === 'chia-wallet' &&
+      walletConnectState.getSession() !== undefined
+    );
   }
 
   onConnectionChange(cb: (connected: boolean) => void): () => void {
