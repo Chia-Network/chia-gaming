@@ -45,7 +45,7 @@
     "@types/ws": "8.18.1",
     "esbuild": "0.28.1",
     "fake-indexeddb": "^6.2.5",
-    "jest": "30.4.2",
+    "jest": "30.5.2",
     "react-test-renderer": "19.2.8",
     "tailwindcss": "4.3.3",
     "ts-jest": "29.4.12",
