@@ -32,7 +32,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "rxjs": "7.8.2",
-    "tailwind-merge": "3.4.0"
+    "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
     "@tailwindcss/cli": "4.3.3",
