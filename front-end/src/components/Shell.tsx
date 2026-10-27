@@ -2513,10 +2513,12 @@ const Shell = () => {
       if (!connectionSetup || !blockchainType) return;
       log(`[Shell] handleFinalize: bcType=${blockchainType}`);
       const { iface, pollMs } = getInterface(blockchainType);
+      wcAbortRef.current = false;
       setConnectError(null);
       setConnecting(true);
       try {
         await connectionSetup.finalize(values);
+        if (wcAbortRef.current) return;
         log(`[Shell] handleFinalize: finalize complete`);
         // A fee entered in the connect modal is persisted globally by finalize;
         // resync local state so the Wallet-tab editor reflects it.
@@ -2524,6 +2526,8 @@ const Shell = () => {
         setShowConnectionSetupModal(false);
         completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
       } catch (err) {
+        // Cancel already reset the modal; its aborted sign-in is not an error.
+        if (wcAbortRef.current) return;
         console.error(`[Shell] ${blockchainType} finalize failed`, err);
         setConnectError(err instanceof Error ? err.message : String(err));
       } finally {

@@ -18,12 +18,14 @@ import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
 import {
-  beginOAuthPopupLogin,
+  beginOAuthLogin,
+  CLOUD_WALLET_LOGIN_CANCELLED,
   canonicalSignatureRequestId,
   CloudWalletAuthError,
   CloudWalletResponseError,
   CloudWalletTransportError,
   createAuthTokenProvider,
+  desktopCloudWalletBridge,
   fetchFirstConsentedWalletId,
   graphqlRequest,
   normalizeHex,
@@ -189,10 +191,13 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   private auth: CloudWalletAuthState | null = null;
   private walletOfferProvider: WalletOfferProvider | null = null;
+  private readonly approvalsOpenedInBrowser = new Set<string>();
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private monitoringReady = false;
+  /** The sign-in in progress; `disconnect` (the modal's Cancel) aborts it. */
+  private loginAbort: AbortController | null = null;
   private tokenProvider: TokenProvider;
 
   constructor() {
@@ -332,7 +337,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     return this.blockchainAddressData;
   }
 
-  async startMonitoring(): Promise<void> {
+  /** `beforeReady` runs once the wallet is fetched and may throw to stop. */
+  async startMonitoring(beforeReady: () => void = () => {}): Promise<void> {
     const walletId = this.requireWalletId();
     const data = await this.gql<{
       wallet: {
@@ -355,6 +361,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (!ph || ph.length !== 64) {
       throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
+    beforeReady();
     this.blockchainAddressData = { puzzleHash: ph };
     this.monitoringReady = true;
     this.fireConnectionChange(true);
@@ -589,6 +596,24 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     source: string,
     poll: () => Promise<T>,
   ): Promise<T> {
+    const desktop = desktopCloudWalletBridge();
+    if (desktop) {
+      // Approval needs a passkey, so it runs in the system browser; polling
+      // observes the outcome, including rejection. Reconciliation retries this
+      // on every readiness epoch, so each request opens a browser tab once per
+      // run rather than on every retry.
+      const id = canonicalSignatureRequestId(signatureRequestId);
+      if (!this.approvalsOpenedInBrowser.has(id)) {
+        const opened = await desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId));
+        if (!opened) {
+          throw new SignatureRequestUnavailableError(
+            `Could not open the browser to approve Cloud Wallet ${source}`,
+          );
+        }
+        this.approvalsOpenedInBrowser.add(id);
+      }
+      return poll();
+    }
     const popup = this.openApprovePopup(signatureRequestId);
     if (!popup) {
       throw new SignatureRequestUnavailableError(
@@ -960,28 +985,46 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       qrUri: 'cloud-wallet://oauth',
       skipQr: true,
       title: 'Cloud Wallet',
-      description: 'Sign in to Cloud Wallet via the popup.',
+      description: desktopCloudWalletBridge()
+        ? 'Sign in to Cloud Wallet in your browser.'
+        : 'Sign in to Cloud Wallet via the popup.',
       // Empty but present: the modal's Connect click is the user gesture that
-      // lets the OAuth popup open, and it keeps silent resume from finalizing.
+      // lets the OAuth popup open (or the browser, on desktop), and it keeps
+      // silent resume from finalizing.
       fields: {},
       finalize: async () => {
-        const tokens = await beginOAuthPopupLogin();
-        this.auth = {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt,
-          walletId: tokens.walletId,
+        this.loginAbort?.abort();
+        const loginAbort = new AbortController();
+        this.loginAbort = loginAbort;
+        // Cancel can land during any await below; nothing may be stored after it.
+        const throwIfCancelled = () => {
+          if (loginAbort.signal.aborted) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
         };
-        // Persist the id that actually resolved: the consent screen's choice can
-        // differ from what the grant will read back, and monitoring uses this id.
-        const walletId = await this.resolveWalletId();
-        this.persistAuth({ ...tokens, walletId });
-        await this.startMonitoring();
+        try {
+          const tokens = await beginOAuthLogin(loginAbort.signal);
+          throwIfCancelled();
+          this.auth = {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+            walletId: tokens.walletId,
+          };
+          // Persist the id that actually resolved: the consent screen's choice can
+          // differ from what the grant will read back, and monitoring uses this id.
+          const walletId = await this.resolveWalletId();
+          throwIfCancelled();
+          this.persistAuth({ ...tokens, walletId });
+          await this.startMonitoring(throwIfCancelled);
+        } finally {
+          if (this.loginAbort === loginAbort) this.loginAbort = null;
+        }
       },
     };
   }
 
   async disconnect(): Promise<void> {
+    this.loginAbort?.abort();
+    this.loginAbort = null;
     clearCloudWalletAuth();
     this.auth = null;
     this.walletOfferProvider = null;

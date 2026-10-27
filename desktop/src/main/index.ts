@@ -11,6 +11,7 @@ import {
 
 import { showAboutWindow } from './aboutWindow';
 import { registerAppSchemeAsPrivileged, serveAppScheme } from './appProtocol';
+import { installCloudWalletBrowser } from './cloudWalletBrowser';
 import { loadDesktopConfig, type DesktopConfig } from './config';
 import { installHubTrustHandler } from './hubTrust';
 import { log } from './log';
@@ -18,6 +19,13 @@ import { createMainWindow } from './mainWindow';
 import { buildNetworkPolicy, type PolicyRef } from './networkPolicy';
 import { installSessionSecurity, installWebContentsSecurity } from './security';
 import { installProcessTransportSecurity } from './transportSecurity';
+
+// Dev-only Cloud Wallet endpoint overrides (desktop/src/preload/index.ts).
+if (app.isPackaged) {
+  delete process.env.CHIA_GAMING_CLOUD_WALLET_API_URL;
+  delete process.env.CHIA_GAMING_CLOUD_WALLET_UI_URL;
+  delete process.env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID;
+}
 
 // These have to happen before the 'ready' event.
 installProcessTransportSecurity(app.commandLine);
@@ -97,6 +105,7 @@ if (!app.requestSingleInstanceLock()) {
   };
 
   app.on('second-instance', focusMainWindow);
+  installCloudWalletBrowser(policy);
 
   // Closing the window quits on macOS too, unlike the platform convention: this
   // is a single-window app with no document model and no tray presence, so a
