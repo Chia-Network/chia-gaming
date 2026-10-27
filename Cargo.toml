@@ -30,7 +30,7 @@ chia-bls = "=0.38.2"
 chia-consensus = "=0.38.2"
 chia-protocol = "=0.38.2"
 chia-puzzles = "=0.20.2"
-clvm-traits = "=0.38.2"
+clvm-traits = "=0.52.0"
 clvm-utils = "=0.38.2"
 clvmr = { version = "=0.17.7", features = ["pre-eval"] }
 hex = "=0.4.3"
