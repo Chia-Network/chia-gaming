@@ -273,11 +273,13 @@ fn run_clvm_with_runtime_prints_and_capture(
         encoder.push_runtime_prints(dialect.take_prints());
         match result {
             Ok(reduction) => Ok(reduction),
-            Err(failure) => Err(clvm_error_from_failure(
-                encoder.allocator_ref(),
-                failure,
-                None,
-            )),
+            Err(failure) => {
+                let error = clvm_error_from_failure(encoder.allocator_ref(), failure, None);
+                if let Some(token) = error.diagnostic_token() {
+                    encoder.push_clvm_diagnostic(token);
+                }
+                Err(error)
+            }
         }
     } else {
         let result = run_program(
@@ -520,6 +522,13 @@ mod tests {
             vec!["[clvm-print] game.rue:4:5: \"before error\""]
         );
         assert!(encoder.drain_runtime_prints().is_empty());
+        assert_eq!(
+            encoder.drain_clvm_diagnostics().collect::<Vec<_>>(),
+            vec![token(&error)]
+        );
+        assert!(encoder.drain_clvm_diagnostics().next().is_none());
+        let mut other_session = AllocEncoder::new();
+        assert!(other_session.drain_clvm_diagnostics().next().is_none());
     }
 
     #[test]

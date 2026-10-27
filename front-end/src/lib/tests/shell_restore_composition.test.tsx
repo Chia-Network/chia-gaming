@@ -5,6 +5,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
 import * as blobSingleton from '../../hooks/blobSingleton';
+import { log } from '../../services/log';
 import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
 import { storageRepository } from '../session/storageRepository';
 import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
@@ -184,6 +185,39 @@ describe('Shell production restore composition', () => {
     Reflect.deleteProperty(globalThis, 'navigator');
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+  });
+
+  it('routes lazy CLVM diagnostics to the current controller after Shell mounts', async () => {
+    await storageRepository.claimApplicationState();
+    await act(async () => {
+      renderer = create(React.createElement(Shell));
+    });
+    expect(blobSingleton.sessionController).toBeNull();
+    const first = { recordClvmDiagnostic: jest.fn(() => true) };
+    const replacement = { recordClvmDiagnostic: jest.fn(() => true) };
+    const current = jest.replaceProperty(
+      blobSingleton,
+      'sessionController',
+      first as unknown as NonNullable<typeof blobSingleton.sessionController>,
+    );
+    try {
+      await act(async () => log('[clvm-diagnostic token=late-controller] stack'));
+      expect(first.recordClvmDiagnostic).toHaveBeenCalledWith(
+        expect.stringContaining('[clvm-diagnostic token=late-controller]'),
+      );
+
+      current.replaceValue(
+        replacement as unknown as NonNullable<typeof blobSingleton.sessionController>,
+      );
+      first.recordClvmDiagnostic.mockClear();
+      await act(async () => log('[clvm-diagnostic token=replacement-controller] stack'));
+      expect(first.recordClvmDiagnostic).not.toHaveBeenCalled();
+      expect(replacement.recordClvmDiagnostic).toHaveBeenCalledWith(
+        expect.stringContaining('[clvm-diagnostic token=replacement-controller]'),
+      );
+    } finally {
+      current.restore();
+    }
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {

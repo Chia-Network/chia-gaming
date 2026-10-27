@@ -1739,15 +1739,26 @@ mod sequencing_tests {
                 if line == "[ordinary-effect] after print"
         ));
 
-        allocator.push_runtime_prints(RuntimePrintOutput {
-            records: vec![RuntimePrintRecord {
-                kind: RuntimePrintKind::Rue,
-                source: Some("game.rue:4:5".to_string()),
-                value: "\"before error\"".to_string(),
-            }],
-            dropped: 0,
-        });
-        let _ = session.handle_peer_protocol_error(&mut allocator, Error::BasicErr);
+        let program = chialisp::classic::clvm_tools::binutils::assemble(
+            allocator.allocator(),
+            r#"(c
+                ("not_an_operator")
+                ("debug_print" (q . "game.rue:4:5") (q . "before error"))
+            )"#,
+        )
+        .expect("assemble failing print program");
+        let error = crate::clvm_execution::run_clvm_with_runtime_prints(
+            &mut allocator,
+            program,
+            clvmr::allocator::NodePtr::NIL,
+            1_000_000,
+        )
+        .expect_err("program should fail after printing");
+        let token = error
+            .diagnostic_token()
+            .expect("captured diagnostic")
+            .to_string();
+        let _ = session.handle_peer_protocol_error(&mut allocator, error);
 
         let events = session.state.events.iter().collect::<Vec<_>>();
         let print_index = events
@@ -1764,7 +1775,31 @@ mod sequencing_tests {
             .iter()
             .position(|event| matches!(event, GameSessionEvent::ReceiveError(_)))
             .expect("receive error event");
-        assert!(print_index < error_index);
+        let diagnostic_index = events
+            .iter()
+            .position(
+                |event| matches!(event, GameSessionEvent::ClvmDiagnostic(value) if value == &token),
+            )
+            .expect("CLVM diagnostic event survives conversion to a receive error string");
+        assert!(print_index < diagnostic_index);
+        assert!(diagnostic_index < error_index);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, GameSessionEvent::ClvmDiagnostic(_)))
+                .count(),
+            1
+        );
+        session.collect_runtime_prints(&mut allocator);
+        assert_eq!(
+            session
+                .state
+                .events
+                .iter()
+                .filter(|event| matches!(event, GameSessionEvent::ClvmDiagnostic(_)))
+                .count(),
+            1
+        );
     }
 
     #[test]
