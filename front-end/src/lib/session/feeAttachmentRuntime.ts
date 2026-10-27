@@ -22,7 +22,7 @@ import {
   coalesceProviderFlight,
   type ProviderFlight,
 } from './providerExecution';
-import { providerOwnerKey, providerScopeKey } from './providerKeys';
+import { providerScopeKey } from './providerKeys';
 import { storageRepository } from './storageRepository';
 import {
   walletProviderRegistry,
@@ -84,9 +84,14 @@ export class FeeAttachmentRuntime {
 
   private entries(): FeeAttachment[] {
     const owner = this.ports.getOwner();
-    const key = owner ? providerOwnerKey(owner) : null;
-    return key
-      ? storageRepository.feeAttachments().filter((entry) => providerOwnerKey(entry.owner) === key)
+    return owner
+      ? storageRepository
+          .feeAttachments()
+          .filter(
+            (entry) =>
+              entry.owner.installationPlayerId === owner.installationPlayerId &&
+              entry.owner.peerSessionId === owner.peerSessionId,
+          )
       : [];
   }
 
@@ -463,6 +468,7 @@ export class FeeAttachmentRuntime {
     return this.flight(`cancel:${id}`, async () => {
       const generation = storageRepository.lifecycleGeneration;
       let outcome;
+      let cancellationStage: FeeAttachment['stage'] = entry.stage;
       try {
         outcome = await advanceProviderCancellation(
           generation,
@@ -470,9 +476,15 @@ export class FeeAttachmentRuntime {
           id,
           entry.stage === 'cancelling' ? entry.recoveryId : undefined,
         );
+        if (
+          !storageRepository.isGenerationCurrent(generation) ||
+          identifiedFeeAttachment(this.entries(), id)?.stage !== cancellationStage
+        )
+          return;
         if (outcome.status === 'pending') {
           const current = identifiedFeeAttachment(this.entries(), id);
           if (!current) return;
+          cancellationStage = 'cancelling';
           this.replace(current, {
             ...current,
             stage: 'cancelling',
@@ -501,6 +513,7 @@ export class FeeAttachmentRuntime {
       }
       if (
         storageRepository.isGenerationCurrent(generation) &&
+        identifiedFeeAttachment(this.entries(), id)?.stage === cancellationStage &&
         (outcome.status === 'cancelled' ||
           outcome.status === 'already-terminal' ||
           outcome.status === 'rejected')

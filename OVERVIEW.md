@@ -921,12 +921,29 @@ cradle have hydrated, the saved shell, game, and dashboard are visible even
 when the hub, wallet, or blockchain is still unavailable. Actions requiring
 those services remain gated until their independent reconciliation succeeds.
 
+Hub connectivity is completely independent of wallet connectivity. Wallet
+connect, disconnect, switch, and failure events must leave the hub connection
+and reconnect lifecycle intact; hub changes must likewise leave the wallet
+connection intact. The app can use the hub lobby and relay without a wallet.
+Wallet readiness gates wallet-dependent actions and matchmaking availability,
+while hub connectivity remains unchanged.
+
+Session lifetime is independent of wallet connectivity. Disconnecting a wallet
+pauses wallet-dependent work without abandoning the handshake or live session.
+Attaching a wallet on the same blockchain resumes monitoring of the session's
+coins and pending chain work; new wallet operations use that provider, while
+existing reservations retain their original wallet ownership. Changing networks
+cannot preserve the channel and is locked during an unfinished session. See
+[Session lifetime and wallet connectivity](FRONTEND_ARCHITECTURE.md#session-lifetime-and-wallet-connectivity).
+
 Funding requests use one explicit canonical model: `amount`, `fee`, and
 optional `max_height` are canonical decimal `u64` strings; condition opcodes are
 bounded `bigint` `u32` values; absent `coin_id` and `max_height` options are
 omitted rather than stored as null. The aggregate stores one canonical
-wallet-provider scope with strict, purpose-specific
-`channelFundingOperations` and `feeAttachments` slices.
+wallet-provider scope for the current session with strict, purpose-specific
+`channelFundingOperations` and `feeAttachments` slices. Unresolved operations
+retain their original owner scopes across wallet changes, including within an
+ongoing session.
 `ChannelFundingRuntime` attaches one stable funding inbox to that session while
 Rust and the aggregate own durable protocol and recovery state.
 After restore, the same operation cannot launch another wallet offer until its
@@ -1007,12 +1024,14 @@ cancellation; the in-memory aggregate remains pending for a later checkpoint.
 the old owner is dead: Shell destroys its controller and suppresses its pending
 writes/effects. A new claimant independently rehydrates the latest flushed
 durable whole root; no controller snapshot or transient work crosses the
-authority generation. Failed cancellation retries only on restore or wallet
-reconnect/readiness—never by a timer or immediate loop. This is
-readiness-only, durable, nonblocking cleanup. Terminal finalization is blocked
+authority generation. Failed cancellation may leave an optional retry hint while the session remains
+active. Matching restore or wallet reconnect/readiness can retry it, without a
+timer, a reconnect requirement, or a persistent recovery banner. Cleanup is
+nonblocking and cancellation success is never required to switch wallets. Terminal finalization is blocked
 while reservation creation or identification is unresolved, or while funding
-material is still owed to Rust. Identified funding or fee cancellation residue
-remains durable and does not block terminal session capture.
+material is still owed to Rust. Terminal completion and explicit abandonment discard session-owned reservation
+residue. Original-provider cancellation is best effort and never gates that
+retirement; cold terminal or empty-session restore also forgets leftover cleanup.
 Going offline detaches the provider RPC without
 discarding cleanup; retirement records the required transitions, and matching
 restore/reconnect attachment drains them.

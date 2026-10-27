@@ -2,6 +2,8 @@ import 'fake-indexeddb/auto';
 
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { useGameSession } from '../../hooks/useGameSession';
 
 import type { SessionController } from '../../hooks/SessionController';
 import { initialKrunkGameState, KrunkHandler, restoreKrunkHand } from '@games/krunk/ui/serialize';
@@ -426,6 +428,74 @@ it('does not stage or tear down before controller terminal quiescence', async ()
 
   expect(persistTerminal).toHaveBeenCalledTimes(1);
   expect(teardown).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the blockchain attached until finalization finishes before terminal presentation', async () => {
+  const { controller, blockchain } = setup(jest.fn());
+  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+    controller,
+    iStarted: true,
+    restoring: false,
+    getRestoreStatus: () => 'idle',
+    getRestoreError: () => null,
+    onError: (error) => {
+      throw error;
+    },
+  });
+  runtime.activate();
+  await runtime.flush();
+  const attach = jest.spyOn(blockchain, 'attachGameSession');
+  const detach = jest.spyOn(blockchain, 'detachGameSession');
+  const params = {
+    iStarted: true,
+    myContribution: 100n,
+    theirContribution: 100n,
+    perGameAmount: 10n,
+  };
+  function Harness({ terminal }: { terminal?: { model: SessionModel; iStarted: boolean } }) {
+    useGameSession(params, controller, () => {}, undefined, blockchain, terminal);
+    return null;
+  }
+  let renderer!: ReactTestRenderer;
+  act(() => {
+    renderer = create(React.createElement(Harness));
+  });
+  expect(attach).toHaveBeenCalledTimes(1);
+  let releaseWrite!: () => void;
+  const writeGate = new Promise<void>((resolve) => {
+    releaseWrite = resolve;
+  });
+  let writeStarted!: () => void;
+  const enteredWrite = new Promise<void>((resolve) => {
+    writeStarted = resolve;
+  });
+  const finalization = finalizeTerminalSession(finalizationArgs(controller), {
+    persistTerminal: async () => {
+      writeStarted();
+      await writeGate;
+    },
+    updateMarker: () => {},
+    teardown: (finished) => finished.cleanupAfterTerminalFlush(),
+  });
+  try {
+    await enteredWrite;
+    expect(detach).not.toHaveBeenCalled();
+    releaseWrite();
+    const terminal = await finalization;
+    expect(detach).toHaveBeenCalledTimes(1);
+    act(() => {
+      renderer.update(
+        React.createElement(Harness, { terminal: { model: terminal.model, iStarted: true } }),
+      );
+    });
+    expect(detach).toHaveBeenCalledTimes(1);
+    expect(attach).toHaveBeenCalledTimes(1);
+  } finally {
+    releaseWrite();
+    await finalization;
+    act(() => renderer.unmount());
+    controller.cleanup();
+  }
 });
 
 it('seals the concrete runtime before a microtask queued during snapshot can mutate it', async () => {
