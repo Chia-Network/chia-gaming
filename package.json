@@ -23,6 +23,6 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.8.0",
     "prettier": "3.5.3",
-    "typescript-eslint": "8.65.0"
+    "typescript-eslint": "8.72.0"
   }
 }

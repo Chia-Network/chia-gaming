@@ -34,7 +34,7 @@ use crate::session_phases::types::{
 #[cfg(test)]
 use crate::session_phases::types::{FromLocalUI, OffChainPhaseInit};
 use crate::session_phases::OffChainPhase;
-use rand::Rng;
+use rand::RngExt;
 #[cfg(test)]
 use rand::SeedableRng;
 #[cfg(test)]

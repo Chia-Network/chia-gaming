@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use clvm_traits::{ClvmEncoder, ToClvm, ToClvmError};
 use clvmr::allocator::{NodePtr, SExp};
 use rand::distr::{Distribution, StandardUniform};
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use crate::common::types::{AllocEncoder, Error};
 

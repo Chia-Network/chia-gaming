@@ -54,7 +54,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -63,7 +63,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Install WASI SDK
         if: runner.os == 'macOS'
@@ -85,7 +85,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Setup pnpm
         shell: bash
@@ -329,7 +329,7 @@ jobs:
           ) > "desktop/release/$checksum_file"
 
       - name: Upload installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           if-no-files-found: error
@@ -352,7 +352,7 @@ jobs:
       contents: write
     steps:
       - name: Download installers
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: chia-gaming-electron-*
           path: release
