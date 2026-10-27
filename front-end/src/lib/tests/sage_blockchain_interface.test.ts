@@ -72,7 +72,7 @@ function spendFirstOfferedCoin(requestJson: string): string {
         coin: {
           parent_coin_info: `0x${coin.parent_coin_info}`,
           puzzle_hash: `0x${coin.puzzle_hash}`,
-          amount: BigInt(coin.amount),
+          amount: coin.amount,
         },
         puzzle_reveal: '0xff02ffff01',
         solution: '0xff80ff8080',
@@ -270,6 +270,58 @@ describe('SageBlockchainInterface', () => {
     });
     await provider.beginCreation(operation, feeRequest);
     expect(JSON.parse(mockBuildWalletSpend.mock.calls.at(-1)![0]).coins).toHaveLength(1);
+  });
+
+  it('does not let an overlapping spend list coins before the first reserves them', async () => {
+    let listFirst: (coins: never) => void = () => {};
+    jest
+      .mocked(sageRpc.getAssetCoins)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            listFirst = resolve;
+          }),
+      )
+      .mockResolvedValue([walletCoin('bb', 900n)] as never);
+    const sage = await connectedSage();
+    const provider = sage.getWalletOfferProvider()!;
+    const owner = { installationPlayerId: 'p', peerSessionId: 's', providerScope: provider.scope };
+    const operation = { owner, purpose: { kind: 'fee' as const, operationId: 'fee' } };
+
+    const first = provider.beginCreation(operation, feeRequest);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    mockBuildWalletSpend
+      .mockImplementationOnce(spendFirstOfferedCoin)
+      .mockImplementationOnce(() => {
+        throw new Error('no coins');
+      });
+    const second = provider.beginCreation(operation, feeRequest);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The second operation waits until the first has reserved its inputs.
+    expect(sageRpc.getAssetCoins).toHaveBeenCalledTimes(1);
+    listFirst([walletCoin('bb', 900n)] as never);
+
+    await expect(first).resolves.toMatchObject({ kind: 'created-reserved' });
+    await expect(second).resolves.toMatchObject({ kind: 'failure' });
+    expect(JSON.parse(mockBuildWalletSpend.mock.calls[1][0]).coins).toEqual([]);
+  });
+
+  it('returns Rust amounts above 2^53 exactly in the signed bundle', async () => {
+    const amount = 9007199254740993n;
+    jest.mocked(sageRpc.getAssetCoins).mockResolvedValue([walletCoin('bb', amount)] as never);
+    const sage = await connectedSage();
+    const provider = sage.getWalletOfferProvider()!;
+    const owner = { installationPlayerId: 'p', peerSessionId: 's', providerScope: provider.scope };
+    const operation = { owner, purpose: { kind: 'fee' as const, operationId: 'fee' } };
+
+    const result = await provider.beginCreation(operation, feeRequest);
+    if (result.kind !== 'created-reserved' || result.material.kind !== 'bundle') {
+      throw new Error(`unexpected ${result.kind}`);
+    }
+    expect(result.material.bundle.coin_spends[0].coin.amount).toBe(amount);
+    expect(jest.mocked(sageRpc.signCoinSpends).mock.calls[0][0][0].coin.amount).toBe(
+      amount.toString(),
+    );
   });
 
   it('keeps reserved coins out of later spends until the reservation is cancelled', async () => {

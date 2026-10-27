@@ -2029,8 +2029,17 @@ mod gaming_wasm {
             build_unsigned_wallet_spends(&mut allocator, candidates, &purpose, &change_puzzle_hash)
                 .into_js()?;
         let unsigned = spend_bundle_to_coinset_js(&SpendBundle { name: None, spends })?;
-        serde_json::to_string(&unsigned)
-            .map_err(|e| js_error(&format!("wallet spend serialization failed: {e}")))
+        let mut unsigned = serde_json::to_value(&unsigned)
+            .map_err(|e| js_error(&format!("wallet spend serialization failed: {e}")))?;
+        // Amounts go out as decimal strings, like the request's: JSON.parse
+        // rounds integers above 2^53 before any reviver sees them.
+        if let Some(coin_spends) = unsigned["coin_spends"].as_array_mut() {
+            for coin_spend in coin_spends {
+                let amount = coin_spend["coin"]["amount"].to_string();
+                coin_spend["coin"]["amount"] = serde_json::Value::String(amount);
+            }
+        }
+        Ok(unsigned.to_string())
     }
 
     #[wasm_bindgen]

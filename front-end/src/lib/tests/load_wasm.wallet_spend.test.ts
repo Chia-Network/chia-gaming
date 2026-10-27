@@ -8,6 +8,8 @@ function walletIdentity(): { puzzle: string; puzzle_hash: string } {
 }
 
 it('builds an unsigned Sage funding spend over a standard wallet coin in real WASM', () => {
+  // Above 2^53: the amount must come back as an exact decimal string.
+  const coinAmount = '9007199254740993';
   const identity = walletIdentity();
   const unsigned = JSON.parse(
     WholeWasmObject.build_wallet_spend(
@@ -17,7 +19,7 @@ it('builds an unsigned Sage funding spend over a standard wallet coin in real WA
             coin: {
               parent_coin_info: 'aa'.repeat(32),
               puzzle_hash: identity.puzzle_hash,
-              amount: '1000',
+              amount: coinAmount,
             },
             puzzle_reveal: identity.puzzle,
           },
@@ -38,7 +40,7 @@ it('builds an unsigned Sage funding spend over a standard wallet coin in real WA
   expect(spend.coin).toEqual({
     parent_coin_info: `0x${'aa'.repeat(32)}`,
     puzzle_hash: `0x${identity.puzzle_hash}`,
-    amount: 1000,
+    amount: coinAmount,
   });
   expect(spend.puzzle_reveal).toBe(`0x${identity.puzzle}`);
   expect(spend.solution).toContain(SETTLEMENT_PAYMENT_HASH);

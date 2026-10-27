@@ -20,7 +20,7 @@ import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
 import { normalizeHexString } from '../util';
 import { decodeBech32mPuzzleHash } from '../util/bech32m';
-import { jsonParse, jsonStringify } from '../util/jsonSafe';
+import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
 import { getChainId } from '../constants/wallet-connect';
 import { walletConnectState } from './useWalletConnect';
@@ -129,6 +129,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
   private wcSubscription: { unsubscribe: () => void } | null = null;
   private monitoringPromise: Promise<void> | null = null;
   private monitoringEpoch = 0;
+  private selection: Promise<unknown> = Promise.resolve();
 
   getWalletOfferProvider() {
     const fingerprint = walletConnectState.getAddress();
@@ -335,39 +336,12 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       return { kind: 'failure', reason: errorText(error) };
     }
 
-    let coins: SageSpendableCoin[];
-    try {
-      coins = await this.availableCoins(
-        request.kind === 'fee' ? request.fee : absAmountFromOffer(request.offer),
-        wasm,
-      );
-    } catch (error) {
-      return this.walletCallFailure('list coins', error);
-    }
-
-    let unsigned: UnsignedWalletSpend;
-    try {
-      unsigned = jsonParse(
-        wasm.build_wallet_spend(
-          jsonStringify({
-            coins: walletCoinCandidates(coins),
-            change_puzzle_hash: changePuzzleHash,
-            purpose: this.walletSpendPurpose(request),
-          }),
-        ),
-      );
-    } catch (error) {
-      const reason = errorText(error);
-      log(`[sage-blockchain] ${request.kind} spend construction failed: ${reason}`);
-      return { kind: 'failure', reason };
-    }
-
-    // Reserve before the signing prompt: another operation may list coins
-    // while the user is still approving this one in Sage.
-    const reservationId = this.ledger.reserve(
-      request.kind,
-      new Set(unsigned.coin_spends.map((cs) => coinKey(cs.coin))),
+    const selected = await this.serializeSelection(() =>
+      this.selectAndReserve(request, wasm, changePuzzleHash),
     );
+    if ('kind' in selected) return selected;
+    const { unsigned, reservationId } = selected;
+
     let signature: string;
     try {
       signature = await sageRpc.signCoinSpends(unsigned.coin_spends.map(toSageCoinSpend));
@@ -390,6 +364,68 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       },
       tradeId: reservationId,
     };
+  }
+
+  /**
+   * Runs coin selection through reservation one operation at a time: listing
+   * coins awaits Sage, and an overlapping operation must not list coins this
+   * one is about to reserve.
+   */
+  private serializeSelection<T>(select: () => Promise<T>): Promise<T> {
+    const run = this.selection.then(select, select);
+    this.selection = run.catch(() => undefined);
+    return run;
+  }
+
+  private async selectAndReserve(
+    request: WalletOfferRequest,
+    wasm: WasmConnection,
+    changePuzzleHash: string,
+  ): Promise<
+    | { unsigned: UnsignedWalletSpend; reservationId: string }
+    | Extract<WalletOfferCompletion, { kind: 'failure' | 'unavailable' }>
+  > {
+    let coins: SageSpendableCoin[];
+    try {
+      coins = await this.availableCoins(
+        request.kind === 'fee' ? request.fee : absAmountFromOffer(request.offer),
+        wasm,
+      );
+    } catch (error) {
+      return this.walletCallFailure('list coins', error);
+    }
+
+    let unsigned: UnsignedWalletSpend;
+    try {
+      const built: UnsignedWalletSpend = JSON.parse(
+        wasm.build_wallet_spend(
+          jsonStringify({
+            coins: walletCoinCandidates(coins),
+            change_puzzle_hash: changePuzzleHash,
+            purpose: this.walletSpendPurpose(request),
+          }),
+        ),
+      );
+      // Rust sends amounts as decimal strings so they survive JSON.parse.
+      unsigned = {
+        coin_spends: built.coin_spends.map((cs) => ({
+          ...cs,
+          coin: { ...cs.coin, amount: BigInt(cs.coin.amount) },
+        })),
+      };
+    } catch (error) {
+      const reason = errorText(error);
+      log(`[sage-blockchain] ${request.kind} spend construction failed: ${reason}`);
+      return { kind: 'failure', reason };
+    }
+
+    // Reserve before the signing prompt: another operation may list coins
+    // while the user is still approving this one in Sage.
+    const reservationId = this.ledger.reserve(
+      request.kind,
+      new Set(unsigned.coin_spends.map((cs) => coinKey(cs.coin))),
+    );
+    return { unsigned, reservationId };
   }
 
   private walletCallFailure(
