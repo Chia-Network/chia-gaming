@@ -17,9 +17,9 @@ updates:
       - dependencies
       - github_actions
       - "Changed"
-    reviewers: ["cameroncooper", "emlowe"]
     exclude-paths:
       - ".github/workflows/dependency-artifact-review.yml"
+      - ".github/workflows/dependency-review.yml"
   - package-ecosystem: "npm"
     directories: ["/"]
     schedule:
@@ -33,7 +33,6 @@ updates:
       - dependencies
       - javascript
       - "Changed"
-    reviewers: ["emlowe", "seeden"]
   - package-ecosystem: cargo
     directories: ["/"]
     schedule:
@@ -47,4 +46,3 @@ updates:
       - dependencies
       - rust
       - "Changed"
-    reviewers: ["cameroncooper", "emlowe"]
