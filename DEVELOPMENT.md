@@ -42,9 +42,9 @@ configured, with at least 1000 mojos in your wallet.
   ```bash
   cargo install wasm-pack --version 0.15.0
   ```
-- **Node 22+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
+- **Node 24** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash
-  brew install node@22        # or download from https://nodejs.org
+  brew install node@24        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
   ```
 - **macOS only** — Homebrew LLVM for WASM builds. If present, build scripts

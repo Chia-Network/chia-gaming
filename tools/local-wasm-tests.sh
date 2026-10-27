@@ -7,16 +7,16 @@ cd "$REPO_ROOT"
 
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
     . "$HOME/.nvm/nvm.sh"
-    if ! nvm use --lts >/dev/null 2>&1; then
-        nvm install --lts --no-progress
-        nvm use --lts >/dev/null
+    if ! nvm use 24 >/dev/null 2>&1; then
+        nvm install 24 --no-progress
+        nvm use 24 >/dev/null
     fi
 elif [ -s "$(brew --prefix nvm 2>/dev/null)/nvm.sh" ]; then
     export NVM_DIR="$HOME/.nvm"
     . "$(brew --prefix nvm)/nvm.sh"
-    if ! nvm use --lts >/dev/null 2>&1; then
-        nvm install --lts --no-progress
-        nvm use --lts >/dev/null
+    if ! nvm use 24 >/dev/null 2>&1; then
+        nvm install 24 --no-progress
+        nvm use 24 >/dev/null
     fi
 elif ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
     echo "node/pnpm not found and nvm is unavailable; install Node.js and pnpm" >&2
