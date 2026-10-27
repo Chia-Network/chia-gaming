@@ -295,9 +295,9 @@ dependencies = [
 
 [[package]]
 name = "chia-puzzles"
-version = "0.20.2"
+version = "0.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a14a89cf37b36585609bfb0a9cc45e4d4bdd32181ccc8f7c730591f20c73d66"
+checksum = "553363ce9550cfde0ae1306a0a79bf9afd36ea09e0222b874b6287b44ad9d178"
 dependencies = [
  "hex",
  "hex-literal",
