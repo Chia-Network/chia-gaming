@@ -24,6 +24,9 @@ echo "Build took: ${SECONDS} seconds"
 echo "=== Running rust tests ==="
 cargo test --lib --features sim-server -- --nocapture
 
+echo "=== Running native WASM binding tests ==="
+cargo test --manifest-path wasm/Cargo.toml --lib
+
 if [ "$RUN_AUX_TESTS" -eq 1 ]; then
     echo "=== Running JS/WASM tests ==="
     ./tools/local-wasm-tests.sh --skip-native

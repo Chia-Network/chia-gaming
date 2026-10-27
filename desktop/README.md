@@ -71,10 +71,19 @@ public internet, `front-end/src/util/walletConnectMetadata.ts` substitutes a
 public https identity when the page origin is not http(s) — the renderer origin
 here is `chiagaming://app`, which no wallet can open or fetch.
 
-Cloud Wallet OAuth uses that same custom-scheme origin as `redirect_uri`
-(`chiagaming://app/oauth/callback`). The protocol handler serves the player
-document at that path so the callback page can `postMessage` the authorization
-code to the opener. The Cloud Wallet OAuth client must allow that redirect URI.
+Cloud Wallet sign-in and signature approval run in the system browser, because
+Electron has no passkey support: WebAuthn requests in an Electron window stay
+pending with no UI. Sign-in returns through a one-time loopback listener on
+`127.0.0.1` (RFC 8252 §7.3). The Cloud Wallet OAuth client must register
+`http://127.0.0.1/oauth/callback`; the server accepts any loopback port for it.
+Approvals need no return path because the player polls the signature request.
+Token requests go through the main process, since the token endpoint answers
+CORS only for http(s) client origins and the player runs on `chiagaming://app`.
+No Cloud Wallet page renders inside the app.
+
+For a local Cloud Wallet, set `CHIA_GAMING_CLOUD_WALLET_API_URL`,
+`CHIA_GAMING_CLOUD_WALLET_UI_URL` and `CHIA_GAMING_CLOUD_WALLET_CLIENT_ID` on an
+unpackaged run, and list both origins in `cloudWalletOrigins` (below).
 
 ## Configuration
 
@@ -85,7 +94,7 @@ Optional JSON file at `<userData>/config.json`, where `<userData>` is
 | Key                  | Default                                                                                                | Meaning                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `hubOrigins`         | `["http://localhost:3003", "http://127.0.0.1:3003"]`                                                   | Hub origins the app may load and connect to                             |
-| `cloudWalletOrigins` | `["https://api.vault.chia.net", "https://vault.chia.net", "https://api.vault.chiatest.net", "https://vault.chiatest.net"]` | Cloud Wallet API and UI origins for OAuth, GraphQL, and approval popups |
+| `cloudWalletOrigins` | `["https://api.vault.chia.net", "https://vault.chia.net", "https://api.vault.chiatest.net", "https://vault.chiatest.net"]` | Cloud Wallet API and UI origins for GraphQL, browser sign-in and approval, and token requests |
 
 Anything invalid is reported in an error dialog and the app exits rather than
 starting with a half-applied policy.
@@ -95,17 +104,22 @@ is a starting point rather than a fixed set: a hub typed into the in-app picker
 is added to it at runtime and written back to the file. See
 [Hub trust](#hub-trust).
 
-`cloudWalletOrigins` feeds `connect-src` and the popup allowlist. They are not
-framed. A production Cloud Wallet is added here (and the OAuth client must
-allow `chiagaming://app/oauth/callback` as a redirect URI). A hub grant writes
-`hubOrigins` without dropping a `cloudWalletOrigins` key already in the file.
+`cloudWalletOrigins` feeds `connect-src` and decides which https Cloud Wallet
+pages the app opens in the system browser and which `/token` endpoints main
+relays to. They are never framed or opened in an app window. A production Cloud
+Wallet is added here (and its OAuth client must register
+`http://127.0.0.1/oauth/callback`). A hub grant writes `hubOrigins` without
+dropping a `cloudWalletOrigins` key already in the file.
 
 ## Security posture
 
 ### Process isolation
 
-The renderer has no Node.js reachable from it at all, and the IPC surface is a
-single channel described under [Hub trust](#hub-trust).
+The renderer has no Node.js reachable from it at all. The IPC surface is the hub
+trust request described under [Hub trust](#hub-trust) and the Cloud Wallet
+channels described under [Cloud Wallet in the browser](#cloud-wallet-in-the-browser).
+Every handler checks that the sender is the player document's top frame
+(`src/main/ipcSender.ts`).
 
 | Setting                       | Value                                                                     |
 | ----------------------------- | ------------------------------------------------------------------------- |
@@ -121,11 +135,13 @@ single channel described under [Hub trust](#hub-trust).
 | `navigateOnDragDrop`          | `false`                                                                   |
 | `devTools`                    | only in unpackaged builds                                                 |
 
-`src/preload/index.ts` exposes two things and nothing else: `__chiaDistribution`,
-a string the front end reads during the first render to drop web-only
-affordances, and `__chiaHub.requestTrust`, the app's single IPC channel. The
-string has to be a preload global rather than anything asynchronous because it is
-needed before the first render.
+`src/preload/index.ts` exposes `__chiaDistribution`, a string the front end
+reads during the first render to drop web-only affordances,
+`__chiaHub.requestTrust`, and `__chiaCloudWallet` (browser sign-in, opening an
+approval in the browser, and token requests). In unpackaged builds it can also
+expose the `CHIA_GAMING_CLOUD_WALLET_*` endpoint overrides; main deletes those
+variables in packaged builds. The distribution string has to be a preload global
+rather than anything asynchronous because it is needed before the first render.
 
 The exposure is guarded on `window === window.top`. Sub-frames here are remote
 content (the hub lobby UI, the WalletConnect Verify frame) and get nothing.
@@ -147,8 +163,7 @@ rather than `net.fetch(file://…)` because asar support is implemented as an `f
 shim; that is what lets the renderer stay sealed inside `app.asar`, where the
 integrity-validation fuse still covers it, instead of being unpacked beside it.
 Requests positively identified as cross-site by Chromium Fetch Metadata are
-rejected, with the Cloud Wallet's top-level `/oauth/callback` navigation as the
-sole exception. Electron omits all initiator metadata from both app-owned
+rejected. Electron omits all initiator metadata from both app-owned
 custom-scheme subresources and deliberately unlabelled remote requests, so an
 empty metadata set is not treated as proof of origin. Hub documents instead
 receive a CSP whose web-only `default-src` prevents them from requesting the
@@ -222,17 +237,30 @@ a hub can see, and a warning when it would be reached over plain http, are
 disclosed in `front-end/src/components/HubPicker.tsx` instead, where the player
 is actually choosing.
 
+### Cloud Wallet in the browser
+
+`src/main/cloudWalletBrowser.ts` handles the Cloud Wallet channels:
+
+- Sign-in binds a one-time listener on an ephemeral `127.0.0.1` port and opens
+  the authorize URL with `shell.openExternal`, only if it is an https URL on
+  `cloudWalletOrigins` whose `redirect_uri` is that listener. Only a callback
+  carrying the authorize request's `state` settles the sign-in, so a stray or
+  forged local request cannot consume it. Starting another sign-in cancels the
+  previous one, and an unanswered sign-in gives up after five minutes. The
+  callback refocuses the window that started it.
+- Approval pages open with `shell.openExternal`, again only on
+  `cloudWalletOrigins`. The player polls the signature request for the result.
+- Token requests (code exchange and refresh) are relayed with `net.fetch`, only
+  to `https://<cloud wallet origin>/token`.
+
 ### Navigation and permissions
 
-- `setWindowOpenHandler` allows a popup only when its origin is on
-  `cloudWalletOrigins` (Cloud Wallet OAuth and funding approval). Those windows
-  get an empty preload so they cannot see `__chiaHub`. Every other `window.open`
-  is denied. About-window links still use `shell.openExternal` for the project
-  URL only.
+- `setWindowOpenHandler` denies every `window.open`; no page opens in an app
+  window. About-window links still use `shell.openExternal` for the project URL
+  only.
 - `will-frame-navigate` keeps the player window's top frame on
-  `chiagaming://app/index.html`, allows Cloud Wallet popups to reach
-  `cloudWalletOrigins` and to return to the app for `/oauth/callback`, and
-  restricts sub-frames to the frame allowlist. It is used in preference to
+  `chiagaming://app/index.html`, keeps other top-level windows on app documents,
+  and restricts sub-frames to the frame allowlist. It is used in preference to
   `will-navigate`, which only sees the top frame.
 - `will-attach-webview` is blocked, on top of `webviewTag: false`.
 - Permission requests and checks are denied except `clipboard-sanitized-write`

@@ -118,11 +118,20 @@ function commitRuntime(controller: SessionController, runtime: ControlledRuntime
 
 function setup(getPuzzleAndSolution: jest.Mock, pendingRequests: string[] = []) {
   let readinessListener: ((ready: boolean) => void) | null = null;
+  let connectionListener: ((connected: boolean) => void) | null = null;
+  let connected = true;
   const blockchain = new BlockchainPoller(
     {
       ...mockRpc,
       getPuzzleAndSolution,
-      onConnectionChange: () => () => {},
+      getBalance: async () => 0n,
+      isConnected: () => connected,
+      onConnectionChange: (listener) => {
+        connectionListener = listener;
+        return () => {
+          connectionListener = null;
+        };
+      },
       onPlayReadinessChange: (listener) => {
         readinessListener = listener;
         return () => {
@@ -155,6 +164,10 @@ function setup(getPuzzleAndSolution: jest.Mock, pendingRequests: string[] = []) 
     cradle,
     request,
     signalReady: () => readinessListener?.(true),
+    signalConnection: (next: boolean) => {
+      connected = next;
+      connectionListener?.(next);
+    },
   };
 }
 
@@ -215,6 +228,55 @@ describe('coin puzzle/solution delivery', () => {
       expect(getPuzzleAndSolution).toHaveBeenCalledTimes(2);
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
     } finally {
+      controller.cleanup();
+    }
+  });
+
+  it('retries a disconnected lookup before its abandoned wallet response settles', async () => {
+    let resolveAbandonedLookup!: (value: string[]) => void;
+    let lookupStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      lookupStarted = resolve;
+    });
+    const abandonedLookup = new Promise<string[]>((resolve) => {
+      resolveAbandonedLookup = resolve;
+    });
+    const getPuzzleAndSolution = jest
+      .fn()
+      .mockImplementationOnce(() => {
+        lookupStarted();
+        return abandonedLookup;
+      })
+      .mockResolvedValueOnce(['aa', 'bb']);
+    const { blockchain, controller, cradle, request, signalConnection, signalReady } =
+      setup(getPuzzleAndSolution);
+    const runtime = new ControlledRuntime();
+    try {
+      commitRuntime(controller, runtime);
+      // Activate the actual poller's disconnect listener without starting chain polls.
+      blockchain.startBalanceInterest(60_000, { onBalance: () => {} });
+      request();
+      const launch = runtime.launch(effectKey);
+      await started;
+      expectConsoleError(/RPC request discarded during disconnect: getPuzzleAndSolution/);
+      signalConnection(false);
+      await launch;
+      expect(cradle.report_puzzle_and_solution).not.toHaveBeenCalled();
+
+      signalConnection(true);
+      signalReady();
+      expect(runtime.has(effectKey)).toBe(true);
+      await runtime.launch(effectKey);
+      expect(getPuzzleAndSolution).toHaveBeenCalledTimes(2);
+      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
+      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
+
+      resolveAbandonedLookup(['cc', 'dd']);
+      await abandonedLookup;
+      await controller.flushPendingWork();
+      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
+    } finally {
+      blockchain.stopBalanceInterest();
       controller.cleanup();
     }
   });

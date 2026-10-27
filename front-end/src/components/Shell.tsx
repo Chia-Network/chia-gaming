@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import { useAcceptLifecycle } from '../hooks/useAcceptLifecycle';
+import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { useShellSessionState } from '../hooks/useShellSessionState';
 import {
   PendingSessionProposal,
@@ -17,14 +18,14 @@ import {
 } from '../lib/session/acceptLifecycle';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { selectGamePaneKind } from '../lib/session/gamePane';
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
-import { recoveryReadiness } from '../lib/session/channelFundingSelectors';
+import WalletRecoveryNotice from './WalletRecoveryNotice';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 import { Setup2048Provider } from './Setup2048';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { ConnectionSetupModal } from './ConnectionSetupModal';
+import { CopyIcon, COPY_FAILED_TITLE } from './CopyIcon';
 import { useBootRecoveryBoundary } from './BootRecoveryBoundary';
 import QRCode from 'qrcode';
 import {
@@ -520,7 +521,7 @@ function LogPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const isNearBottom = useRef(true);
   const [filter, setFilter] = useState('');
-  const [copied, setCopied] = useState(false);
+  const { state: copyState, copy } = useCopyToClipboard();
 
   const filtered = useMemo(() => {
     if (!filter) return lines;
@@ -557,38 +558,11 @@ function LogPanel({ lines }: { lines: string[] }) {
           </span>
         )}
         <button
-          onClick={() => {
-            navigator.clipboard.writeText(filtered.join('\n'));
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
+          onClick={() => void copy(filtered.join('\n'))}
           className="p-1.5 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-          title="Copy to clipboard"
+          title={copyState === 'failed' ? COPY_FAILED_TITLE : 'Copy to clipboard'}
         >
-          {copied ? (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path
-                fillRule="evenodd"
-                d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                clipRule="evenodd"
-              />
-            </svg>
-          ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-              <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-            </svg>
-          )}
+          <CopyIcon state={copyState} className="w-4 h-4" />
         </button>
       </div>
       <textarea
@@ -819,8 +793,9 @@ const Shell = () => {
   // Read synchronously by
   // getPresence (called from the HubConnection constructor and on every
   // reconnect) and by isAvailableForNewSessionPrompt, so it lives in a ref
-  // rather than state — no UI depends on it, only the hub busy bit does.
+  // for synchronous callbacks; the state mirror below refreshes consent controls.
   const blockchainReadyRef = useRef(false);
+  const [blockchainReady, setBlockchainReady] = useState(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -1041,27 +1016,6 @@ const Shell = () => {
     storageRepository.updatePreference({ key: 'unreadGame', value: v });
   }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => storageRepository.query('walletAlert'));
-  const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
-    recoveryReadiness(
-      [...storageRepository.channelFundingOperations(), ...storageRepository.feeAttachments()],
-      channelFundingRuntime.providerScopeKeys(),
-    ),
-  );
-  useEffect(
-    () =>
-      channelFundingRuntime.subscribe(() =>
-        setWalletRecoveryReadiness(
-          recoveryReadiness(
-            [
-              ...storageRepository.channelFundingOperations(),
-              ...storageRepository.feeAttachments(),
-            ],
-            channelFundingRuntime.providerScopeKeys(),
-          ),
-        ),
-      ),
-    [],
-  );
   const setWalletAlert = useCallback((v: boolean) => {
     setWalletAlertRaw(v);
     storageRepository.updatePreference({ key: 'walletAlert', value: v });
@@ -1134,7 +1088,7 @@ const Shell = () => {
   const [feeEditing, setFeeEditing] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const feeInputRef = useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = useState(false);
+  const { state: copyState, copy } = useCopyToClipboard();
 
   const mojosToXchStr = (mojos: bigint): string => {
     const s = mojos.toString().padStart(13, '0');
@@ -1293,6 +1247,10 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
+    const current = storageRepository.loadState().session;
+    if (current?.phase === 'live' || current?.phase === 'pre-handshake') {
+      storageRepository.retireSessionWalletReservations(current.pairing.gameSessionId);
+    }
     const snapshot = storageRepository.patchApplicationState((state) =>
       clearGameSessionState(state, { humanHistory }),
     );
@@ -1519,6 +1477,8 @@ const Shell = () => {
       try {
         const conn = hubConnRef.current;
         if (!conn) throw new Error('hub connection unavailable during session start');
+        const walletProviderScope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
+        if (!walletProviderScope) throw new Error('Wallet provider scope is unavailable');
         epoch = sessionStartEpochRef.current;
         const myContribution = parseSessionAmount(request.myAmount);
         const theirContribution = parseSessionAmount(request.theirAmount);
@@ -1584,11 +1544,7 @@ const Shell = () => {
               epoch,
               getCurrentEpoch: () => sessionStartEpochRef.current,
               checkpoint: {
-                walletProviderScope: (() => {
-                  const scope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
-                  if (!scope) throw new Error('Wallet provider scope is unavailable');
-                  return scope;
-                })(),
+                walletProviderScope,
                 pairing: {
                   token,
                   peerId: request.peerId,
@@ -2090,8 +2046,10 @@ const Shell = () => {
               failed: (reason) => {
                 console.error('[Shell] invalid provisional reliable session', reason);
                 if (peerSessionRef.current === provisional) {
-                  provisional.destroy();
-                  peerSessionRef.current = null;
+                  if (abortAcceptIfActive({ error: true })) return;
+                  // No Accept owns rollback of this failed consent checkpoint.
+                  void storageRepository.clearSession();
+                  abandonFailedStartAttempt({ error: true });
                 }
               },
             });
@@ -2343,6 +2301,7 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
+      abandonFailedStartAttempt,
       hubPresenceNow,
       isAvailableForNewSessionPrompt,
       presenceBusy,
@@ -2557,10 +2516,12 @@ const Shell = () => {
       if (!connectionSetup || !blockchainType) return;
       log(`[Shell] handleFinalize: bcType=${blockchainType}`);
       const { iface, pollMs } = getInterface(blockchainType);
+      wcAbortRef.current = false;
       setConnectError(null);
       setConnecting(true);
       try {
         await connectionSetup.finalize(values);
+        if (wcAbortRef.current) return;
         log(`[Shell] handleFinalize: finalize complete`);
         // A fee entered in the connect modal is persisted globally by finalize;
         // resync local state so the Wallet-tab editor reflects it.
@@ -2568,6 +2529,8 @@ const Shell = () => {
         setShowConnectionSetupModal(false);
         completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
       } catch (err) {
+        // Cancel already reset the modal; its aborted sign-in is not an error.
+        if (wcAbortRef.current) return;
         console.error(`[Shell] ${blockchainType} finalize failed`, err);
         setConnectError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -2921,10 +2884,12 @@ const Shell = () => {
   useEffect(() => {
     if (!hubOrigin || !walletConnected || !activeBlockchainPoller) {
       blockchainReadyRef.current = false;
+      setBlockchainReady(false);
       return;
     }
     const applyReady = (ready: boolean) => {
       blockchainReadyRef.current = ready;
+      setBlockchainReady(ready);
       hubConnRef.current?.setBusy(hubPresenceNow());
     };
     applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
@@ -3232,7 +3197,7 @@ const Shell = () => {
   }, [closeBootBoundary, stopBalancePolling]);
 
   // Reject/cancel any pending consent prompt or pre-active matchmaking attempt.
-  // Shared by wallet and hub disconnect. Active off-chain sessions stay mounted
+  // Used by hub disconnect. Active off-chain sessions stay mounted
   // (only pre-Active attempts cancel); resolved finished sessions keep their
   // dashboard freeze + terminal save — a pending invite after a game is
   // consent-only and must not trigger cancelAttemptedSession. While restore is
@@ -3319,6 +3284,14 @@ const Shell = () => {
 
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
+    walletConnectedRef.current = false;
+    blockchainReadyRef.current = false;
+    setBlockchainReady(false);
+    setWalletConnected(false);
+    if (activeBlockchainPoller && sessionController) {
+      sessionController.detachBlockchain(activeBlockchainPoller);
+    }
+    setActiveBlockchainPoller(null);
     if (activeBlockchainRef.current) {
       try {
         await activeBlockchainRef.current.disconnect();
@@ -3336,6 +3309,7 @@ const Shell = () => {
     // readiness subscription effect re-runs so a reconnect cannot read a stale
     // ready state.
     blockchainReadyRef.current = false;
+    setBlockchainReady(false);
     setBalance(undefined);
     // Pre-game wallet disconnect: drop the boot marker so reload does not
     // force Resume just for a prior blockchainType. Mid-session / resumable
@@ -3350,20 +3324,17 @@ const Shell = () => {
     if (!hasResumableSession) {
       clearSavedSessionMarker();
     }
-    // Clear blockchainType before cancel so storageRepository.clearSession.bind(storageRepository)'s async tail does not
-    // re-mark Resume from a wallet preference this disconnect is dropping.
+    // Clear the wallet preference without retiring the independently owned session.
     storageRepository.updateCommon({ preferences: { blockchainType: undefined } });
-    // Wallet is orthogonal to the hub: stay connected and only cancel pending
-    // matchmaking (no hub teardown). Then advertise busy — without a wallet we
-    // cannot fund or resolve a channel, so the lobby must not offer matches.
-    cancelPendingMatchmaking({ preserveHub: true });
+    // A wallet connection does not own the session or its pending consent.
+    // Keep the handshake and peer transport; funding resumes when a wallet returns.
     hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current, false));
-  }, [stopBalancePolling, cancelPendingMatchmaking, presenceBusy]);
+  }, [stopBalancePolling, activeBlockchainPoller, presenceBusy]);
 
   const handleDisconnectWallet = useCallback(() => {
     // Wallet disconnect no longer cascades to the hub or peer: the session
     // stays mounted and we appear busy. Warn only that chain ops stall while a
-    // session is live (and any pending invite is cancelled).
+    // session is live.
     if (sessionPhase !== 'none') {
       setConfirmDialog({
         title: 'Disconnect wallet?',
@@ -3730,6 +3701,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
+            disabled={!walletConnected || !blockchainReady}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -3759,6 +3731,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
+            disabled={!walletConnected || !blockchainReady}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -3896,17 +3869,6 @@ const Shell = () => {
           </div>
         </div>
 
-        {walletRecoveryReadiness !== 'ready' && (
-          <div
-            role="alert"
-            className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
-          >
-            {walletRecoveryReadiness === 'scope-mismatch'
-              ? 'Reconnect the original wallet account to resume pending wallet recovery. The connected account will not be used.'
-              : 'Reconnect the original wallet account to resume pending wallet recovery.'}
-          </div>
-        )}
-
         {/* Tab content */}
         <div
           style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
@@ -3924,6 +3886,7 @@ const Shell = () => {
               overflow: 'auto',
             }}
           >
+            <WalletRecoveryNotice />
             {showTransactionPublishControl && (
               <Button
                 variant={transactionPublishNerfed ? 'solid' : 'outline'}
@@ -4047,38 +4010,11 @@ const Shell = () => {
                     className="flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none"
                   />
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(connectionSetup.qrUri);
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1500);
-                    }}
+                    onClick={() => void copy(connectionSetup.qrUri)}
                     className="self-center p-2 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                    title="Copy URI to clipboard"
+                    title={copyState === 'failed' ? COPY_FAILED_TITLE : 'Copy URI to clipboard'}
                   >
-                    {copied ? (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className="w-4 h-4"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    ) : (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className="w-4 h-4"
-                      >
-                        <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-                        <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-                      </svg>
-                    )}
+                    <CopyIcon state={copyState} className="w-4 h-4" />
                   </button>
                 </div>
                 <div className="w-full max-w-sm text-sm text-canvas-text">

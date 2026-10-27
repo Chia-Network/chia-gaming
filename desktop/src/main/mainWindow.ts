@@ -43,6 +43,7 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
+  let quitConfirmed = false;
   window.on('close', (event) => {
     const response = dialog.showMessageBoxSync(window, {
       type: 'question',
@@ -53,9 +54,16 @@ export function createMainWindow(): BrowserWindow {
       message: 'Are you sure you want to quit Chia Gaming?',
     });
 
-    if (response === 0) {
+    quitConfirmed = response === 1;
+    if (!quitConfirmed) {
       event.preventDefault();
     }
+  });
+
+  window.webContents.on('will-prevent-unload', (event) => {
+    // The native dialog already asked permission to quit. Electron otherwise
+    // silently lets the renderer's live-session beforeunload warning veto it.
+    if (quitConfirmed) event.preventDefault();
   });
 
   const webContentsId = window.webContents.id;

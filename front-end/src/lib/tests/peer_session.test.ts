@@ -295,6 +295,76 @@ describe('PeerSession', () => {
       ).toBe(false);
       expect(failureHandler).toHaveBeenCalledWith(expect.stringContaining('session mismatch'));
       expect(ps.liveness).toBe('dead');
+      ps.deliverRawPeerMessage(
+        'peer1',
+        reliableFrame(0x01, 1, new Uint8Array([0xaa]), new Uint8Array(16).fill(0xff)),
+      );
+      expect(failureHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['proposal', 'active'] as const)(
+      'notifies the current direct %s consumer when frame validation fails',
+      (disposition) => {
+        const conn = mockHubConnection();
+        const ps = new PeerSession('peer1', 'session1', conn);
+        const provisionalFailure = jest.fn();
+        const activeFailure = jest.fn();
+        ps.reliableState.disposition = 'proposal-received';
+        ps.reliableTransport.attachConsumer({
+          isReady: () => true,
+          canDeliver: (msgno) => msgno === 1n,
+          deliver: jest.fn(),
+          persist: () => Promise.resolve(),
+          failure: provisionalFailure,
+        });
+        // A handshake waits behind consent; rejection must retire this buffer.
+        ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 2, new Uint8Array([0xaa])));
+        if (disposition === 'active') {
+          ps.reliableState.disposition = 'active';
+          ps.reliableTransport.attachConsumer({
+            isReady: () => false,
+            deliver: jest.fn(),
+            persist: () => Promise.resolve(),
+            failure: activeFailure,
+          });
+        }
+
+        const mismatched = reliableFrame(
+          0x01,
+          1,
+          new Uint8Array([0xbb]),
+          new Uint8Array(16).fill(0xff),
+        );
+        expect(ps.deliverRawPeerMessage('peer1', mismatched)).toBe(false);
+        expect(ps.deliverRawPeerMessage('peer1', mismatched)).toBe(false);
+        const currentFailure = disposition === 'active' ? activeFailure : provisionalFailure;
+        expect(currentFailure).toHaveBeenCalledTimes(1);
+        expect(currentFailure).toHaveBeenCalledWith(expect.stringContaining('session mismatch'));
+        if (disposition === 'active') expect(provisionalFailure).not.toHaveBeenCalled();
+        expect(ps.reliableTransport.runtime.reorderQueue.size).toBe(0);
+        expect(ps.liveness).toBe('dead');
+      },
+    );
+
+    it('notifies a direct consumer of an oversized frame body', () => {
+      const ps = new PeerSession(
+        'peer1',
+        'session1',
+        mockHubConnection(),
+        sessionReceivePolicy({ maxPeerBodyBytes: 1 }),
+      );
+      const failure = jest.fn();
+      ps.reliableTransport.attachConsumer({
+        isReady: () => false,
+        deliver: jest.fn(),
+        persist: () => Promise.resolve(),
+        failure,
+      });
+      const oversized = reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]));
+      expect(ps.deliverRawPeerMessage('peer1', oversized)).toBe(false);
+      expect(ps.deliverRawPeerMessage('peer1', oversized)).toBe(false);
+      expect(failure).toHaveBeenCalledTimes(1);
+      expect(failure).toHaveBeenCalledWith(expect.stringContaining('message body'));
     });
 
     it('rejects short msg/ack frames without counting peer activity', () => {

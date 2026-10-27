@@ -9,6 +9,7 @@ import {
 import type { WalletOfferRequest } from '../../types/ChiaGaming';
 import type { CanonicalFundingRequest } from './fundingRequest';
 import { providerOwnerKey, providerScopeKey } from './providerKeys';
+import { type FeeAttachment } from './feeAttachmentStore';
 
 export function walletSessionKey(installationPlayerId: string, peerSessionId: string): string {
   return `${installationPlayerId.length}:${installationPlayerId}${peerSessionId.length}:${peerSessionId}`;
@@ -91,4 +92,36 @@ export function recoveryReadiness(
   return entries.some((entry) => !scopeKeys.has(providerScopeKey(entry.owner.providerScope)))
     ? 'scope-mismatch'
     : 'ready';
+}
+
+export interface WalletRecoveryNotice {
+  key: string;
+  message: string;
+}
+
+export function walletRecoveryNotice(
+  entries: readonly (ChannelFundingEntry | FeeAttachment)[],
+  scopeKeys: ReadonlySet<string>,
+): WalletRecoveryNotice | null {
+  const pending = entries.filter(
+    (entry) =>
+      (entry.stage === 'creating' || entry.stage === 'best-effort-uncertain') &&
+      entry.disposition === 'active' &&
+      !scopeKeys.has(providerScopeKey(entry.owner.providerScope)),
+  );
+  if (!pending.length) return null;
+  return {
+    key: JSON.stringify(
+      pending
+        .map(
+          (entry) =>
+            providerOwnerKey(entry.owner) +
+            ('submissionId' in entry
+              ? `:fee:${entry.submissionId}`
+              : `:funding:${entry.purpose.operationId}`),
+        )
+        .sort(),
+    ),
+    message: `There ${pending.length === 1 ? 'is' : 'are'} ${pending.length} unfinished wallet request${pending.length === 1 ? '' : 's'} from an earlier wallet account. Reconnect that account to retry ${pending.length === 1 ? 'it' : 'them'}.`,
+  };
 }
