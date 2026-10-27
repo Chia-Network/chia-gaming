@@ -30,7 +30,7 @@ jobs:
     name: cargo fmt
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - name: Install rust
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@master
@@ -70,7 +70,7 @@ jobs:
     name: Unit tests - build-test.yml
     needs: [fmt, clippy]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -102,7 +102,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -143,7 +143,7 @@ jobs:
           ) >> SHA256SUMS-web.txt
 
       - name: Upload player app artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chia-gaming-${{ github.event.release.tag_name }}
           path: |
@@ -151,7 +151,7 @@ jobs:
             deploy_player_app/chia-gaming-${{ github.event.release.tag_name }}.zip
 
       - name: Upload hub artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chia-gaming-hub-${{ github.event.release.tag_name }}
           path: |
@@ -176,7 +176,7 @@ jobs:
     needs: [fmt, clippy]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@master

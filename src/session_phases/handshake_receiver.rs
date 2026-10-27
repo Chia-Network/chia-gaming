@@ -1059,7 +1059,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
 mod queued_message_tests {
     use super::*;
     use crate::common::standard_coin::{private_to_public_key, sign_reward_payout};
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     fn finished_phase() -> HandshakeReceiverPhase {

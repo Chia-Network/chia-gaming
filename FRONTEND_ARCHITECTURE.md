@@ -836,11 +836,10 @@ salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
 
 This helper is an opaque persistence bridge, not a numeric conversion API.
 Game hand instances, reducers, refs, and hook-local state retain canonical
-`bigint` values, including through game-component props. React 19.2.8 or newer is
-required together with the checked-in `react-dom@19.2.8` pnpm patch. The patch
-applies React's upstream fix for development Performance Tracks incorrectly
-passing primitive BigInt arrays to native `JSON.stringify`, which crashed
-otherwise valid renders.
+`bigint` values, including through game-component props. React 19.3.1 includes
+the upstream fix for development Performance Tracks incorrectly passing
+primitive BigInt arrays to native `JSON.stringify`, which crashed otherwise
+valid renders. The previous React DOM pnpm patch is no longer needed.
 
 Synchronous local-action failures are emitted as scoped session errors and then
 rethrow unchanged, preserving fail-fast invariants. Asynchronous runtime
