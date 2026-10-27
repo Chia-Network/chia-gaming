@@ -22,7 +22,7 @@
     "@tailwindcss/cli": "4.3.3",
     "@types/react": "19.2.0",
     "@types/react-dom": "19.2.0",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3"
   }

@@ -43,7 +43,7 @@
     "@types/react-dom": "19.2.0",
     "@types/react-test-renderer": "19.1.0",
     "@types/ws": "8.18.1",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "fake-indexeddb": "^6.2.5",
     "jest": "30.4.2",
     "react-test-renderer": "19.2.8",
