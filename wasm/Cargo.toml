@@ -23,7 +23,7 @@ clvm-utils = "=0.52.0"
 clvmr = { version = "=0.21.0", features = ["pre-eval"] }
 hex = "=0.4.3"
 lol_alloc = "=0.4.1"
-rand = "=0.10.2"
+rand = "=0.10.3"
 rand_chacha = "=0.10.0"
 bencodex = { path = "../bencodex" }
 serde = "=1.0.228"
