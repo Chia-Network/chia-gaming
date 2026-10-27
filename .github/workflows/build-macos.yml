@@ -54,6 +54,6 @@ jobs:
         run: |
           export PATH=~/.cargo/bin:$PATH
           # Build without sim-tests to ensure that configuration compiles
-          cargo test --no-run
+          cargo test --locked --no-run
           # Run simulator tests (matches local ct.sh)
-          cargo test --lib --features sim-tests -- --nocapture
+          cargo test --locked --lib --features sim-tests -- --nocapture

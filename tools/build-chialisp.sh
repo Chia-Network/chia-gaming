@@ -92,7 +92,7 @@ find_chialisp -name '*.hex' -delete
 # CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
 # input, so this forces one Chialisp compile without deleting Cargo's package
 # cache. Ordinary cargo commands leave it unset and never compile Chialisp.
-CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --features sim-server
+CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --locked --features sim-server
 
 if ! { find_chialisp -type f -name '*.hex' -print | head -n 1 | grep -q .; }; then
     echo "Error: Chialisp build produced no .hex files" >&2

@@ -40,7 +40,7 @@ configured, with at least 1000 mojos in your wallet.
   ```
 - **wasm-pack** (0.15.0):
   ```bash
-  cargo install wasm-pack --version 0.15.0
+  cargo install wasm-pack --version 0.15.0 --locked
   ```
 - **Node 24** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash

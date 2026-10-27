@@ -62,8 +62,8 @@ jobs:
           set -x
           rustup component add --toolchain stable-x86_64-unknown-linux-gnu clippy rustfmt
           cargo clippy --version
-          cargo clippy --all --features=sim-tests,sim-server -- -D warnings
-          cargo check --features=sim-tests,sim-server --tests
+          cargo clippy --locked --all --features=sim-tests,sim-server -- -D warnings
+          cargo check --locked --features=sim-tests,sim-server --tests
 
   unit_tests:
     runs-on: ubuntu-22.04
@@ -90,9 +90,9 @@ jobs:
       - name: Run rust tests and simulator tests
         run: |
           # Build without sim-tests to ensure that configuration compiles
-          cargo test --no-run
+          cargo test --locked --no-run
           # Run simulator tests (matches local ct.sh)
-          cargo test --lib --features sim-tests,sim-server -- --nocapture
+          cargo test --locked --lib --features sim-tests,sim-server -- --nocapture
 
   release:
     runs-on: ubuntu-22.04
@@ -113,7 +113,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -188,11 +188,11 @@ jobs:
       - name: Run for coverage
         run: |
           rustup component add llvm-tools-preview
-          cargo install --version $GRCOV_VERSION grcov
+          cargo install --locked --version "$GRCOV_VERSION" grcov
           export RUSTFLAGS="-Cinstrument-coverage"
           export LLVM_PROFILE_FILE=$(pwd)/target/chialisp-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
-          cargo test --lib --features sim-tests,sim-server -- --nocapture
+          cargo test --locked --lib --features sim-tests,sim-server -- --nocapture
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info
           python3 -c 'with open("rust_cov.info") as f: lines = [l for l in f if not (l.startswith("DA:") and int(l.split(",")[1].strip()) >= 2**63)]; open("lcov.info", "w").writelines(lines)'
       - name: Upload to Coveralls
