@@ -26,8 +26,8 @@ try {
 const container = document.getElementById('root');
 const root = createRoot(container!);
 
-// Complete any WalletConnect IndexedDB wipe deferred from a prior hard reset,
-// before any WalletConnect client can reopen the database.
+// Complete any origin-wide wipe deferred from a prior hard reset before
+// application services can reopen local databases.
 void startPendingWalletConnectWipe();
 
 startWasmBootstrap();

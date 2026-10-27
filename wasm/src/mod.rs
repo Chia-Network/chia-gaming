@@ -79,7 +79,7 @@ mod gaming_wasm {
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
     /// shape, including incompatible shapes owned by nested Rust types.
-    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 23;
+    const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 24;
 
     #[cfg(test)]
     mod serialization_schema_tests {
@@ -87,7 +87,7 @@ mod gaming_wasm {
 
         #[test]
         fn exported_game_session_serialization_schema_is_current() {
-            assert_eq!(game_session_serialization_schema(), 23);
+            assert_eq!(game_session_serialization_schema(), 24);
         }
     }
 
@@ -557,6 +557,19 @@ mod gaming_wasm {
         GAME_SESSION_SERIALIZATION_SCHEMA
     }
 
+    /// Release this call's temporary CLVM on both success and error. Session
+    /// state and returned values must own program bytes, never allocator-local
+    /// NodePtrs: restore_session already rebuilds sessions with a fresh allocator.
+    fn call_releasing_allocator<F, T>(cradle: &mut JsGameSession, f: F) -> Result<T, types::Error>
+    where
+        F: FnOnce(&mut JsGameSession) -> Result<T, types::Error>,
+    {
+        let checkpoint = cradle.allocator.allocator_ref().checkpoint();
+        let result = f(cradle);
+        cradle.allocator.allocator().restore_checkpoint(&checkpoint);
+        result
+    }
+
     fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
     where
         F: FnOnce(&mut JsGameSession) -> Result<T, types::Error>,
@@ -576,11 +589,112 @@ mod gaming_wasm {
         // The registry contains only a Busy marker while the operation and all
         // Rust-to-JavaScript conversion run. No CRADLES borrow crosses either
         // boundary, so nested calls return the typed Busy error above.
-        let result = f(&mut cradle).into_js();
+        let result = call_releasing_allocator(&mut cradle, f).into_js();
         // `restore` only fills the original Busy marker. A re-entrant drop
         // leaves it absent, and an unexpected replacement is preserved.
         let _restore_outcome = CRADLES.with(|cell| cell.borrow_mut().restore(cid, cradle));
         result
+    }
+
+    #[cfg(test)]
+    mod session_allocator_tests {
+        use super::*;
+
+        fn session() -> JsGameSession {
+            let mut allocator = AllocEncoder::new();
+            let mut rng = ChaCha8Rng::from_seed([42; 32]);
+            let identity = ChiaIdentity::new(&mut allocator, rng.random()).unwrap();
+            let config = GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                reward_puzzle_hash: identity.puzzle_hash.clone(),
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                agg_sig_me_additional_data: Hash::from_bytes([0; 32]),
+            };
+            let cradle = TransactionManager::new(GameSession::new(&mut rng, config));
+            JsGameSession {
+                allocator,
+                rng: ChaCha8SerializationWrapper(rng),
+                cradle,
+            }
+        }
+
+        fn allocation_counts(cradle: &JsGameSession) -> (usize, usize, usize) {
+            let allocator = cradle.allocator.allocator_ref();
+            (
+                allocator.pair_count(),
+                allocator.atom_count(),
+                allocator.heap_size(),
+            )
+        }
+
+        fn allocate_program(cradle: &mut JsGameSession) -> Result<Program, types::Error> {
+            let node = vec!["temporary CLVM allocation"; 10_000]
+                .to_clvm(&mut cradle.allocator)
+                .unwrap();
+            Program::from_nodeptr(&mut cradle.allocator, node)
+        }
+
+        #[test]
+        fn repeated_session_calls_release_temporary_clvm() {
+            let cradle = session();
+            let baseline = allocation_counts(&cradle);
+            let cid = get_next_id();
+            insert_cradle(cid, cradle);
+            for _ in 0..100 {
+                let program = with_game(cid, allocate_program).unwrap();
+                with_game(cid, |cradle| {
+                    assert_eq!(allocation_counts(cradle), baseline);
+                    // Owned output remains usable after its producing call is released.
+                    let node = program.to_nodeptr(&mut cradle.allocator)?;
+                    assert_eq!(Program::from_nodeptr(&mut cradle.allocator, node)?, program);
+                    Ok(())
+                })
+                .unwrap();
+            }
+            drop_game_session(cid);
+        }
+
+        #[test]
+        fn session_calls_preserve_preexisting_clvm() {
+            let mut cradle = session();
+            let node = ("retained before call", 42)
+                .to_clvm(&mut cradle.allocator)
+                .unwrap();
+            let before = Program::from_nodeptr(&mut cradle.allocator, node).unwrap();
+            let baseline = allocation_counts(&cradle);
+            let cid = get_next_id();
+            insert_cradle(cid, cradle);
+            with_game(cid, allocate_program).unwrap();
+            with_game(cid, |cradle| {
+                assert_eq!(allocation_counts(cradle), baseline);
+                assert_eq!(Program::from_nodeptr(&mut cradle.allocator, node)?, before);
+                Ok(())
+            })
+            .unwrap();
+            drop_game_session(cid);
+        }
+
+        #[test]
+        fn failed_session_call_releases_clvm_and_preserves_error() {
+            let mut cradle = session();
+            let baseline = allocation_counts(&cradle);
+            // Test before JsValue conversion, which requires a WASM host.
+            let result: Result<(), types::Error> =
+                call_releasing_allocator(&mut cradle, |cradle| {
+                    allocate_program(cradle)?;
+                    Err(types::Error::StrErr(
+                        "call failed after allocating".to_string(),
+                    ))
+                });
+            assert!(matches!(result, Err(types::Error::StrErr(message))
+                if message == "call failed after allocating"));
+            assert_eq!(allocation_counts(&cradle), baseline);
+        }
     }
 
     #[wasm_bindgen]

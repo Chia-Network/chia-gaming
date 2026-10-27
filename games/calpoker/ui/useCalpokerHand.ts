@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { Program } from 'clvm-lib';
-import type { CalpokerOutcomeShape } from './outcome';
+import { projectCalpokerFinalDisplay, type CalpokerOutcomeShape } from './outcome';
 import type { GameMountView, SettlementOutcome } from '../../host';
 import { requireLiveGameMount } from '../../host';
 import {
@@ -52,6 +52,22 @@ export function shouldRestoreCalpokerSelection(
 // over for him and he must not fire a phantom sixth move, so he finishes here.
 export function calpokerResponderFinishesAtReveal(iStarted: boolean): boolean {
   return iStarted;
+}
+
+// A final snapshot is the restored presentation, so the live outcome stays
+// withheld and the swap does not replay. Saved header text can predate the
+// current hand names, so project it from the persisted outcome.
+function calpokerRestoredDisplaySnapshot(
+  snapshot: CalpokerDisplaySnapshot | undefined,
+  outcome: CalpokerOutcomeShape<bigint> | undefined,
+): CalpokerDisplaySnapshot | undefined {
+  if (snapshot?.gameState !== 'final' || outcome === undefined) return snapshot;
+  const display = projectCalpokerFinalDisplay(outcome);
+  return {
+    ...snapshot,
+    playerDisplayText: display.playerDisplayText,
+    opponentDisplayText: display.opponentDisplayText,
+  };
 }
 
 export function useCalpokerHand(
@@ -219,6 +235,9 @@ export function useCalpokerHand(
     terminalOutcome: handState.settlementOutcome,
     handleMakeMove,
     saveDisplaySnapshot,
-    initialDisplaySnapshot: handState.displaySnapshot,
+    initialDisplaySnapshot: calpokerRestoredDisplaySnapshot(
+      handState.displaySnapshot,
+      handState.outcome,
+    ),
   };
 }

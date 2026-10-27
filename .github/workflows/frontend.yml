@@ -75,6 +75,9 @@ jobs:
           wasm-pack build --out-dir=../front-end/dist --release --target=web
           wasm-pack build --out-dir=../front-end/node-pkg --release --target=nodejs
 
+      - name: Test WASM bindings natively
+        run: cargo test --manifest-path wasm/Cargo.toml --lib
+
       - name: Build gaming-fe
         run: pnpm --filter chia-gaming-fe run build
 

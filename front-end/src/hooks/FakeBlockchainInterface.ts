@@ -516,12 +516,22 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
     }
     if (conditions.length > 0) params.extraConditions = conditions;
     if (request.coinIds) params.coinIds = request.coinIds;
-    const raw = await this.sendRequest('create_offer_for_ids', params);
-    if (!raw) return { kind: 'failure', reason: 'simulator could not build a funding offer' };
-    return {
-      kind: 'created-ephemeral',
-      material: { kind: 'bundle', bundle: typeof raw === 'string' ? jsonParse(raw) : raw },
-    };
+    try {
+      const raw = await this.sendRequest('create_offer_for_ids', params);
+      if (!raw) return { kind: 'failure', reason: 'simulator could not build a funding offer' };
+      return {
+        kind: 'created-ephemeral',
+        material: { kind: 'bundle', bundle: typeof raw === 'string' ? jsonParse(raw) : raw },
+      };
+    } catch (error) {
+      if (error instanceof SimulatorTransportError) {
+        return { kind: 'unavailable', reason: error.message };
+      }
+      return {
+        kind: 'failure',
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
 
   private async beginFeeOffer(
@@ -633,7 +643,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         balance: {
           type: 'bigint',
           label: `Starting balance (${getCurrencyLabels().mojos})`,
-          default: 1_000_000n,
+          default: 1_000_000_000n,
         },
       },
       finalize: async (values?: Record<string, string | bigint>) => {

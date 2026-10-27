@@ -740,6 +740,68 @@ describe('duplicate detection', () => {
 });
 
 describe('keepalive activity', () => {
+  it.each(['live', 'restored'] as const)(
+    'stops %s shutdown keepalives after the signed close is ready while preserving reliable delivery',
+    async (mode) => {
+      // IndexedDB persistence needs its real task queue while keepalive timers advance.
+      jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+      const { blob, sentMessages, sentAcks } = createReadyBlob();
+      const send = jest.fn();
+      try {
+        const status = channelStatus({ state: 'ShutdownTransactionPending' });
+        blob.restoreChannelStatus(
+          mode === 'restored' ? status : channelStatus({ state: 'ShuttingDown' }),
+        );
+        blob.setPeerKeepalive(send);
+        jest.advanceTimersByTime(15_000);
+        blob.sendPeerKeepalive();
+        const expectedSends = mode === 'restored' ? 0 : 2;
+        expect(send).toHaveBeenCalledTimes(expectedSends);
+
+        if (mode === 'live') {
+          blob.processResult(wasmResult({ events: [{ Notification: { ChannelStatus: status } }] }));
+        }
+        const close = enc('signed close completion');
+        blob.messageNumber = 2n;
+        blob.unackedMessages = [{ msgno: 1n, msg: close }];
+        blob.resendUnacked();
+        expect(sentMessages).toContainEqual({ msgno: 1, msg: close });
+        blob.deliverMessage(1n, enc('pending shutdown traffic'));
+        await blob.flushPendingWork();
+        expect(sentAcks).toContain(1);
+        blob.receiveAck(1n);
+        expect(blob.unackedMessages).toEqual([]);
+
+        jest.advanceTimersByTime(45_000);
+        blob.sendPeerKeepalive();
+        expect(send).toHaveBeenCalledTimes(expectedSends);
+      } finally {
+        blob.cleanup();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('sends on a server heartbeat while browser timers are suspended, and stops on cleanup', () => {
+    jest.useFakeTimers();
+    const { blob } = createReadyBlob();
+    const send = jest.fn();
+    blob.setPeerKeepalive(send);
+    try {
+      // Move wall-clock time without executing the browser interval.
+      jest.setSystemTime(Date.now() + 60_000);
+      expect(send).not.toHaveBeenCalled();
+      blob.sendPeerKeepalive();
+      expect(send).toHaveBeenCalledTimes(1);
+      blob.cleanup();
+      blob.sendPeerKeepalive();
+      expect(send).toHaveBeenCalledTimes(1);
+    } finally {
+      blob.cleanup();
+      jest.useRealTimers();
+    }
+  });
+
   it('does not retransmit unacked outbound when a peer keepalive arrives', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);

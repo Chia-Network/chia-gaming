@@ -5,6 +5,7 @@ use clvm_traits::ToClvm;
 
 use crate::common::constants::{
     AGG_SIG_ME_ADDITIONAL_DATA, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
+    RESERVE_FEE_ATOM,
 };
 use crate::common::standard_coin::{sign_agg_sig_me, solution_for_conditions, ChiaIdentity};
 use crate::common::types::{
@@ -101,6 +102,46 @@ fn make_create_coin_tx(
     };
     let output = CoinString::from_parts(&coin.to_coin_id(), target_ph, &amount);
     (tx, output)
+}
+
+/// A fee coin leg returning change to its owner, with an explicit fee declaration.
+fn make_fee_tx(
+    allocator: &mut AllocEncoder,
+    identity: &ChiaIdentity,
+    coin: &CoinString,
+) -> CoinSpend {
+    let (_, _, amount) = coin.get_coin_string_parts().unwrap();
+    let conditions = (
+        (
+            CREATE_COIN,
+            (
+                identity.puzzle_hash.clone(),
+                (Amount::new(amount.to_u64() - 1), ()),
+            ),
+        ),
+        ((RESERVE_FEE_ATOM[0], (Amount::new(1), ())), ()),
+    )
+        .to_clvm(allocator)
+        .into_gen()
+        .unwrap();
+    let solution = solution_for_conditions(allocator, conditions).unwrap();
+    let qhash = conditions
+        .to_quoted_program(allocator)
+        .unwrap()
+        .sha256tree(allocator);
+    CoinSpend {
+        coin: coin.clone(),
+        bundle: Spend {
+            puzzle: identity.puzzle.clone(),
+            solution: Program::from_nodeptr(allocator, solution).unwrap().into(),
+            signature: sign_agg_sig_me(
+                &identity.synthetic_private_key,
+                qhash.bytes(),
+                &coin.to_coin_id(),
+                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
+            ),
+        },
+    }
 }
 
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
@@ -320,6 +361,73 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         let (_, _, new_amt) = id2_coins[0].get_coin_string_parts().unwrap();
         assert_eq!(new_amt, amt, "new coin should have the transferred amount");
     }));
+
+    res.push((
+        "test_simulator_equivalent_settlement_with_different_fee_coins",
+        &|| {
+            for strict in [false, true] {
+                let mut allocator = AllocEncoder::new();
+                let mut rng = ChaCha8Rng::from_seed([42; 32]);
+                let identity = ChiaIdentity::new(&mut allocator, rng.random()).unwrap();
+                let s = Simulator::new(strict);
+                s.farm_block(&identity.puzzle_hash);
+                s.farm_block(&identity.puzzle_hash);
+                let coins = s.get_my_coins(&identity.puzzle_hash).unwrap();
+                let (_, _, amount) = coins[0].get_coin_string_parts().unwrap();
+                let (settlement, output) = make_create_coin_tx(
+                    &mut allocator,
+                    &identity,
+                    &coins[0],
+                    &identity.puzzle_hash,
+                    amount,
+                );
+                let fee_a = make_fee_tx(&mut allocator, &identity, &coins[1]);
+                let fee_b = make_fee_tx(&mut allocator, &identity, &coins[2]);
+                assert_eq!(
+                    s.push_transactions(&mut allocator, &[settlement.clone(), fee_a])
+                        .unwrap()
+                        .code,
+                    1
+                );
+                if strict {
+                    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        s.push_transactions(&mut allocator, &[settlement.clone(), fee_b])
+                            .unwrap();
+                    }))
+                    .expect_err("unit-test simulator must still flag overlapping submissions");
+                    let message = panic.downcast_ref::<String>().unwrap();
+                    assert!(message.contains("conflicting transactions in mempool"));
+                } else {
+                    let result = s
+                        .push_transactions(&mut allocator, &[settlement.clone(), fee_b])
+                        .unwrap();
+                    assert_eq!(
+                        result.code, 1,
+                        "equivalent settlement should be acknowledged in demo mode"
+                    );
+                    // A different solution for the same coin must still be rejected.
+                    let (_, _, amount) = coins[0].get_coin_string_parts().unwrap();
+                    let (different, _) = make_create_coin_tx(
+                        &mut allocator,
+                        &identity,
+                        &coins[0],
+                        &PuzzleHash::from_bytes([7; 32]),
+                        amount,
+                    );
+                    let result = s.push_transactions(&mut allocator, &[different]).unwrap();
+                    assert_eq!((result.code, result.e), (3, Some(9)));
+                    s.farm_block(&identity.puzzle_hash);
+                    let remaining = s.get_my_coins(&identity.puzzle_hash).unwrap();
+                    assert!(remaining.contains(&output));
+                    assert!(!remaining.contains(&coins[1]), "first fee is paid");
+                    assert!(
+                        remaining.contains(&coins[2]),
+                        "second fee must not be spent"
+                    );
+                }
+            }
+        },
+    ));
 
     res.push(("test_simulator_double_spend_rejected", &|| {
         let seed: [u8; 32] = [4; 32];

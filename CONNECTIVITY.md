@@ -31,17 +31,22 @@ No connectivity decision affects the blockchain itself.
 
 ### Wallet
 
-The wallet is an interface to the blockchain. A durable session binds one
-canonical provider/account scope; reconnecting that scope resumes work, while a
-different connected scope is shown as a mismatch and performs no wallet RPC.
-This prevents funding and cleanup obligations from being applied to another
-account. Chain and peer protocols remain independent of wallet connectivity.
+The wallet is an interface to the blockchain. The connected provider supplies
+new wallet operations, while each existing funding or fee reservation retains
+its original provider/account ownership. Switching wallets does not transfer
+those reservations or their cancellation authority. Chain and peer protocols
+remain independent of wallet connectivity.
 
 The wallet is **orthogonal** to the other three axes. It can be connected or
 disconnected in any combination with hub, peer, and session state. No
 other connection depends on the wallet being up. The wallet affects only
 whether blockchain operations (signing transactions, reading balances) can
 make progress.
+
+The hub uses the app's routing identity. An existing peer session can continue
+communicating through the relay while wallet work is paused. Walletless presence
+is busy and Accept is disabled until a wallet is ready. These availability gates
+leave hub connectivity unchanged.
 
 WalletConnect is an external protocol. The player app can adapt around its
 quirks at the edges (for example BigInt serialization handling), but it does
@@ -56,6 +61,16 @@ A hub is a specific server. The hub is its matchmaking HTML UX (player list and 
 Hub A and Hub B are distinct entities — different lobbies, different
 pairings, different relay channels. The player connects to zero or one hub
 at a time.
+
+**Hub connectivity is completely independent of wallet connectivity.** Connecting,
+disconnecting, switching, or losing a wallet must leave the hub connection,
+lobby, relay, and reconnect lifecycle intact. The user can connect to a hub and
+remain connected without a wallet. Connecting, disconnecting, or switching hubs
+must likewise leave the wallet connection intact.
+
+Wallet readiness may change matchmaking availability and gate wallet-dependent
+actions. Reporting busy or disabling Accept must never disconnect the hub or
+prevent it from connecting or reconnecting.
 
 The hub connection auto-reconnects with backoff on transient failures. A
 hub is considered permanently dead only after the retry budget is
@@ -190,7 +205,9 @@ Specific rules:
   unchanged and stays mounted; blockchain operations just can't make progress
   until a wallet is reconnected. While walletless the app reports `busy` to the
   hub (it cannot fund or resolve a channel, so the lobby must not offer
-  matches), and any pending pre-Active matchmaking attempt is cancelled.
+  matches). Existing pending consent and handshakes remain intact; Accept stays
+  disabled until wallet readiness returns. Hub connection and reconnection remain
+  available throughout.
 
 ---
 
@@ -200,7 +217,7 @@ Specific rules:
 
 | Action                        | Allowed? | Warning                                                                                                                                     | Consequence                                                                                                                            |
 | ----------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Disconnect                    | Always   | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection kept. Pending pre-Active matchmaking cancelled. App reports `busy`. Session save preserved. |
+| Disconnect                    | Always   | "You are in a session. Blockchain operations will stall until you reconnect, and you will appear busy to the hub." (only if session exists) | Wallet interface torn down. Hub connection and reconnect lifecycle unchanged. Pending consent and handshakes retained; Accept disabled. App reports `busy`. Session save preserved. |
 | Reconnect (same or different) | Always   | None                                                                                                                                        | Stalled operations resume. `busy` recomputed from session phase and any in-progress non-terminal restore cradle. Session continues.    |
 
 ### Hub
@@ -342,19 +359,26 @@ session remains `on-chain` because a hand is still being settled.
 
 **Player app → Hub (game channel):**
 
-Logical bencodex dictionary: `{ type: "set_busy", busy: true }`. Identity comes
-from the `session_id` supplied earlier by `identify` on the same connection.
+Logical bencodex dictionary: `{ type: "set_busy", busy: true, busy_reasons:
+["in-session"] }`. Identity comes from the `session_id` supplied earlier by
+`identify` on the same connection. `busy` is the availability bit;
+`busy_reasons` is an optional, display-only list of every cause that applies
+(`in-session`, `restoring`, `starting`, `wallet-disconnected`,
+`blockchain-not-ready`). It is sent only with `busy: true`; a missing list means
+generic busy, which is how an older client appears.
 
 Sent when the user accepts a session start, when restore reconnection reports
 an unresolved session, and when the broader session phase ends or the user
 cancels.
-The same `busy` bit is also included in the initial `identify` message so the
+The same `busy` bit and reasons are also included in the initial `identify` message so the
 hub has correct status immediately after a game channel opens, reconnects,
 or restores. This avoids a brief `waiting` flicker for unresolved restored
 sessions.
 
-The hub updates the player's hub status to `'busy'` or `'playing'` while
-busy, or `'waiting'` when not busy, and broadcasts a hub update. When a player
+The hub updates the player's hub status to `'busy'` while busy, or `'waiting'`
+when not busy, and broadcasts a hub update. It drops unknown or duplicate
+reasons, sorts the rest into the order above, and stores them as
+`Player.busy_reasons` only while busy; `busy: false` clears them. When a player
 becomes busy, the hub cancels all pending challenges involving that player.
 Challenges to/from non-waiting players are rejected.
 
@@ -363,9 +387,11 @@ any pending hands having finished), the player app sends `set_busy` with
 `busy: false`. The hub sets the player back to `'waiting'` and broadcasts
 the update.
 
-The hub iframe receives the updated `Player.status` via the normal
-`hub_update` broadcast and renders busy players as unavailable. No
-iframe-side protocol changes are needed — it is read-only for this signal.
+The hub iframe receives the updated `Player.status` via the normal `hub_update`
+broadcast and renders busy players as unavailable. `busy_reasons` is included
+only in the busy player's own `hub_update` entry, so a player sees their own
+row labelled with their reasons ("In a session", "Wallet disconnected", and so
+on). Every other player sees plain "Busy". It is read-only for this signal.
 
 ### Proposal Handoff
 
@@ -426,12 +452,16 @@ The hub does not create a session. It can only advise and relay:
   WASM consumer to that same transport after consent without resetting its
   counters.
 - **Peer liveness**: 30-second degradation threshold (no dead-from-timeout)
-  with 5-second polling interval managed by `PeerSession`. Yellow when the hub
+  with 5-second polling interval managed by Shell. Yellow when the hub
   reports the peer disconnected (`delivery_failure` / `peer_unavailable`) or
   no matching peer frame has arrived for 30 seconds. Either is reversible on
   inbound traffic or `peer_available`. Dead state only from explicit go-on-chain
   or FOAD signals. On-chain / unroll banner tone beats yellow. Hub liveness
   with 45-second timeout.
+  Expected silence during initial consent/handshake does not show the yellow
+  warning: the recipient starts sending keepalives only after Accept. Once
+  `ShutdownTransactionPending` reports a fully signed close awaiting chain
+  confirmation, outgoing peer keepalives stop and the warning is suppressed.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
   challenge accepter; peers exchange consent messages before starting WASM.
 - **Application persistence**: `StorageRepository` atomically claims and reads
@@ -475,7 +505,7 @@ The hub does not create a session. It can only advise and relay:
   save is preserved across wallet disconnects; blockchain operations stall
   until a wallet is reconnected. While walletless the app reports `busy`
   (`shouldReportHubBusy(phase, false)` forces busy regardless of phase) and
-  cancels any pending pre-Active matchmaking attempt; wallet reconnect
+  retains pending consent and handshakes with Accept disabled; wallet reconnect
   recomputes presence from the session phase and any in-progress non-terminal
   restore cradle (phase alone is often still `none` mid-resume). The Choose
   Connection network toggle is locked while a session binds a genesis
@@ -543,12 +573,12 @@ The hub does not create a session. It can only advise and relay:
   messages to the WASM cradle, and `dispatchEvent()` suppresses outbound
   `OutboundMessage` events.
 
-- **Hub busy signaling**: `HubConnection.setBusy()`
-  sends a bencodex `{ type: "set_busy", busy }` dictionary over the game
-  WebSocket.
-  The `identify` message includes the current busy bit. Shell calls
-  `setBusy(!(sessionPhase === 'none' || sessionPhase === 'resolved'))` whenever
-  the broader session phase changes. Local game presentation depends only on
+- **Hub busy signaling**: `HubConnection.setBusy(presence)`
+  sends a bencodex `{ type: "set_busy", busy, busy_reasons? }` dictionary over
+  the game WebSocket, with reasons only when busy.
+  The `identify` message includes the current presence. Shell computes presence
+  with `computeHubPresence` (`lib/hubPresence.ts`) and reports it whenever the
+  broader session phase changes. Local game presentation depends only on
   the local restoring flag and WASM restore status; independent hub, wallet,
   and blockchain readiness continues to gate external actions and hub
   availability. A resolved session no longer has
@@ -557,7 +587,8 @@ The hub does not create a session. It can only advise and relay:
 
 - **Hub-side `set_busy` handler**: The hub server accepts bencodex
   `set_busy` messages on the game channel. It updates the player's hub
-  status to `'playing'`, `'busy'`, or `'waiting'` and broadcasts a hub update.
+  status to `'busy'` (with filtered, sorted `busy_reasons`) or `'waiting'`
+  and broadcasts a hub update.
   When busy becomes true, pending challenges involving that player are cancelled;
   challenges to/from non-waiting players are rejected. (`hub-service/src/index.ts`)
 
@@ -618,7 +649,7 @@ The session dashboard has a full-height left-edge color rail:
 | ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
 | `idle`      | Gray   | No session / never set up                                                                                               |
 | `playing`   | Green  | Setup, handshake, off-chain play, cooperative shutdown                                                                  |
-| `pings-bad` | Yellow | Same as playing, but `peerLiveness === 'degraded'` (hub says the peer is disconnected, or no peer frame for 30 seconds) |
+| `pings-bad` | Yellow | `peerLiveness === 'degraded'` while peer cooperation is required, after initial consent/handshake and before the signed close is pending on-chain |
 | `on-chain`  | Red    | Going on-chain, unrolling, or a resolved unroll that still has games                                                    |
 | `ended`     | Blue   | Terminal dashboard still showing (clean resolve, failed, abandoned)                                                     |
 
@@ -634,9 +665,12 @@ hint.
 1. `sessionPhase === 'none' || 'resolved'`, or
 2. `peerLiveness === 'dead'`
 
-Clean shutdown does **not** mark the peer dead on its own. Keepalives and the
-small allowlist of shutdown-related peer messages continue until local
-shutdown completes. Successful/terminal session exit does not send
+Clean shutdown does **not** mark the peer dead on its own. Keepalives continue
+while `ShuttingDown` still requires a peer signature, then stop at
+`ShutdownTransactionPending`. Reliable shutdown-related messages, replay, and
+acknowledgements continue until local shutdown completes; incoming keepalives
+are still processed so they can retry pending durable acknowledgements.
+Successful/terminal session exit does not send
 `session_reject` (that signal means decline/abort). If a `session_reject`
 does arrive during pre-active matchmaking, it is honored as an abort: cancel
 the attempt (including any in-flight async session start), surface

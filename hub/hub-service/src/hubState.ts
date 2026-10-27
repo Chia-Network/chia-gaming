@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { Player, PlayerStatus, Challenge } from './types/hub';
+import type { BusyReason } from './busyReasons';
 
 function randomHex(): string {
   return crypto.randomBytes(16).toString('hex');
@@ -27,11 +28,18 @@ export class Hub {
   }
 
   /** Returns false when the player is not in the hub (busy deferred until join). */
-  setPlayerStatus(playerId: string, status: PlayerStatus, opponentAlias?: string): boolean {
+  setPlayerStatus(
+    playerId: string,
+    status: PlayerStatus,
+    opponentAlias?: string,
+    busyReasons?: BusyReason[],
+  ): boolean {
     const player = this.players[playerId];
     if (!player) return false;
     player.status = status;
     player.opponent_alias = opponentAlias;
+    player.busy_reasons =
+      status === 'busy' && busyReasons && busyReasons.length > 0 ? busyReasons : undefined;
     return true;
   }
 
@@ -46,7 +54,6 @@ export class Hub {
     targetAmount: string,
     channel_timeout?: string,
     unroll_timeout?: string,
-    createdAt = Date.now(),
   ): Challenge {
     const pairKey = this.challengePairKey(fromId, targetId);
     if (this.challengeByPair.has(pairKey)) {
@@ -60,7 +67,6 @@ export class Hub {
       target_amount: targetAmount,
       channel_timeout,
       unroll_timeout,
-      created_at: createdAt,
     };
     this.challenges.set(challenge.id, challenge);
     this.challengeByPair.set(pairKey, challenge.id);
@@ -79,16 +85,6 @@ export class Hub {
 
   countChallengesFrom(playerId: string): number {
     return this.challengeCountBySender.get(playerId) ?? 0;
-  }
-
-  removeExpiredChallenges(now: number, ttlMs: number): Challenge[] {
-    const expired: Challenge[] = [];
-    for (const [id, challenge] of this.challenges) {
-      if (now - challenge.created_at < ttlMs) continue;
-      this.removeChallenge(id);
-      expired.push(challenge);
-    }
-    return expired;
   }
 
   removeChallenge(challengeId: string) {

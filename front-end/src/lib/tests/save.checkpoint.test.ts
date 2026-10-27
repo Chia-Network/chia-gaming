@@ -94,17 +94,14 @@ describe('aggregate checkpoints', () => {
     expect(stored?.channelFundingOperations).toEqual([]);
   });
 
-  it('semantic clear keeps unresolved obligations in the same aggregate', async () => {
+  it('semantic clear retires unresolved session reservations', async () => {
     const state = withWallet(activeSave());
     storageRepository._replaceApplicationStateForTests(state);
     await storageRepository.write(storageRepository.patchApplicationState(() => state));
     await storageRepository.clearSession();
     const stored = await readApplicationState();
     expect(stored?.session).toBeNull();
-    expect(stored?.channelFundingOperations).toHaveLength(1);
-    expect(stored?.channelFundingOperations[0]).toMatchObject({
-      providerReservationId: entry.providerReservationId,
-    });
+    expect(stored?.channelFundingOperations).toEqual([]);
   });
 
   it('preserves concurrent session, wallet, and rejection root transforms', async () => {

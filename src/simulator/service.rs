@@ -2444,6 +2444,46 @@ mod regression_tests {
     }
 
     #[tokio::test]
+    async fn regression_underfunded_offer_returns_explicit_rpc_error() {
+        let harness = ServiceHarness::start().await;
+        let url = format!("ws://{}/ws", harness.listen_addr);
+        let (mut client, _) = connect_async(&url).await.unwrap();
+
+        send_request(
+            &mut client,
+            serde_json::json!({
+                "id": 1,
+                "method": "register",
+                "params": {"name": "underfunded-wallet", "balance": 1_000_000u64}
+            }),
+        )
+        .await;
+        let register_response = receive_response(&mut client, 1).await;
+        assert!(register_response["error"].is_null(), "{register_response}");
+
+        send_request(
+            &mut client,
+            serde_json::json!({
+                "id": 2,
+                "method": "create_offer_for_ids",
+                "params": {
+                    "who": "underfunded-wallet",
+                    "offer": {"1": -100_000_100i64}
+                }
+            }),
+        )
+        .await;
+        let offer_response = receive_response(&mut client, 2).await;
+        assert_eq!(
+            offer_response["error"],
+            r#"StrErr("no spendable coin for requested amount")"#
+        );
+        assert!(offer_response["result"].is_null(), "{offer_response}");
+
+        harness.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn regression_actor_connect_and_request_waits_cancel_on_shutdown() {
         let (commands, receiver) = std_mpsc::channel();
         let actor = GameActor { commands };

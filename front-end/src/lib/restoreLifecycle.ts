@@ -1,9 +1,10 @@
 import type { SessionPhase } from '../types/ChiaGaming';
 import type { RestoreStatus } from '../hooks/SessionController';
 import type { DurableSessionPhase } from './session/saveEnvelope';
+import { computeHubPresence } from './hubPresence';
 import {
   createSessionModel,
-  isPreActiveChannelStatus,
+  isPreCommitmentChannelStatus,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
 } from './session/model';
@@ -70,8 +71,7 @@ export function shouldReportHubBusy(
   walletConnected = true,
   blockchainReady = true,
 ): boolean {
-  if (!walletConnected || !blockchainReady) return true;
-  return sessionPhase !== 'none' && sessionPhase !== 'resolved';
+  return computeHubPresence({ sessionPhase, walletConnected, blockchainReady }).busy;
 }
 
 /** Native leave-page warning: an off-chain or on-chain session is still live. */
@@ -108,21 +108,27 @@ export function sessionLocksNetwork(
  * pairing token) must keep us busy so the lobby does not offer matches
  * mid-resume. Terminal Failed/Resolved* cradles do not. A backend that is not
  * yet ready for play (`blockchainReady === false`) also stays busy.
+ *
+ * The restore obligation follows the presence of a non-terminal cradle, not a
+ * transient `restoring` flag, so a reconnect `identify` cannot clear busy that
+ * session registration just set.
  */
 export function shouldReportHubBusyPresence(
   sessionPhase: SessionPhase,
   walletConnected: boolean,
   opts: {
-    restoring: boolean;
     terminalSave: boolean;
     hasCradle: boolean;
     blockchainReady?: boolean;
   },
 ): boolean {
-  return (
-    shouldReportHubBusy(sessionPhase, walletConnected, opts.blockchainReady ?? true) ||
-    (opts.restoring && !opts.terminalSave && opts.hasCradle)
-  );
+  return computeHubPresence({
+    sessionPhase,
+    walletConnected,
+    blockchainReady: opts.blockchainReady ?? true,
+    hasCradle: opts.hasCradle,
+    terminalSave: opts.terminalSave,
+  }).busy;
 }
 
 export async function transitionToFreshSession(dependencies: {
@@ -184,15 +190,19 @@ export function isAvailableForNewSessionPrompt(
 
 /**
  * Whether a hard peer disconnect (session_reject / delivery_failure) should
- * abort the attempt. Pre-Active matchmaking/setup cancels; once the channel is
- * Active (or further), delivery_failure only degrades peer liveness — the peer
- * may be mid-reload. See CONNECTIVITY.md peer degradation.
+ * abort the attempt. The boundary is the funding commitment, not channel
+ * activation: cancel only before the local wallet has sent its signed offer
+ * (Handshaking / WaitingForHeight* / OurWalletMakingOffer(Acceptance)). Once
+ * `OfferSent` / `TransactionPending` is reached the funding aggregate may be
+ * broadcast and the channel coin will appear regardless of the peer link, so a
+ * delivery_failure there only degrades peer liveness — the peer may be
+ * mid-reload. See CONNECTIVITY.md peer degradation.
  *
  * Resolved finished sessions never cancel: invites are allowed afterward while
  * the dashboard freeze and terminal save must stay for Resume. A null/undefined
- * channel state is treated as pre-active; a known Active/post-active channel wins
- * over the 'none' phase so that a blocked restore is not mistaken for a pre-active
- * attempt.
+ * channel state is treated as pre-commitment; a known committed/active/post-active
+ * channel wins over the 'none' phase so that a blocked restore is not mistaken
+ * for a pre-commitment attempt.
  */
 export function shouldCancelOnPeerUnreachable(
   sessionPhase: SessionPhase,
@@ -201,7 +211,7 @@ export function shouldCancelOnPeerUnreachable(
 ): boolean {
   if (abandoning) return false;
   if (sessionPhase === 'resolved') return false;
-  return isPreActiveChannelStatus(channelState);
+  return isPreCommitmentChannelStatus(channelState);
 }
 
 export type HubPlayerIdRemapAction = 'none' | 'cancel-attempt' | 'go-on-chain' | 'ignore';

@@ -28,6 +28,11 @@ export type StartFailureDisposition = 'abandon-peer-only' | 'cancel-attempt';
 /** Single setup copy for Accept session-pane covers. */
 export const ACCEPT_SETTING_UP_COPY = 'Setting up channel…';
 
+export function showChannelSetupChallenge(state: ChannelStatus, transitionCover: boolean): boolean {
+  if (state === 'Active' || state === 'Failed') return false;
+  return transitionCover || PRE_ACTIVE_CHANNEL_STATES.has(state);
+}
+
 export function channelSetupCoverCopy(
   handEverStarted: boolean,
   status: Pick<SessionModel['channel']['status'], 'state' | 'advisory'>,

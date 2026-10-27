@@ -203,7 +203,7 @@ class WalletState {
   }
 
   private async doInit(): Promise<void> {
-    // Finish any wipe deferred from a hard reset before opening the WC database.
+    // Finish any origin-wide wipe deferred from a hard reset before opening storage.
     await startPendingWalletConnectWipe();
 
     const metadata = walletConnectDappMetadata();

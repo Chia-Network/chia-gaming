@@ -14,6 +14,7 @@ import {
   useSessionControllerAfterCommit,
   QueuedNotification,
 } from '../hooks/useGameSession';
+import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { formatMojos } from '../util';
 import { SessionPhase } from '../types/ChiaGaming';
 import { RestoreStatus, type SessionController } from '../hooks/SessionController';
@@ -28,7 +29,8 @@ import {
 } from '../lib/gameTabAttention';
 import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
-import { channelSetupCoverCopy } from '../lib/session/acceptLifecycle';
+import { CopyIcon, COPY_FAILED_TITLE } from './CopyIcon';
+import { channelSetupCoverCopy, showChannelSetupChallenge } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
@@ -241,44 +243,16 @@ class GameAreaErrorBoundary extends Component<GameAreaErrorBoundaryProps, ErrorB
 }
 
 function CoinId({ hex }: { hex: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(`0x${hex}`);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+  const { state, copy } = useCopyToClipboard();
   return (
     <span className="inline-flex items-center gap-1">
       <span className="font-mono text-[11px] select-all text-canvas-text-contrast">0x{hex}</span>
       <button
-        onClick={copy}
+        onClick={() => void copy(`0x${hex}`)}
         className="inline-flex items-center p-0.5 rounded hover:bg-canvas-bg-hover transition-colors text-canvas-solid hover:text-canvas-text-contrast"
-        title="Copy coin ID"
+        title={state === 'failed' ? COPY_FAILED_TITLE : 'Copy coin ID'}
       >
-        {copied ? (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className="w-3.5 h-3.5"
-          >
-            <path
-              fillRule="evenodd"
-              d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-              clipRule="evenodd"
-            />
-          </svg>
-        ) : (
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-            className="w-3.5 h-3.5"
-          >
-            <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-            <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-          </svg>
-        )}
+        <CopyIcon state={state} className="w-3.5 h-3.5" />
       </button>
     </span>
   );
@@ -858,13 +832,12 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       </div>
 
       {/*
-        Full-pane centered setup copy. SessionTransitionSurface covers Accept
-        cancel states; once that cover drops (OfferSent / TransactionPending)
-        keep the same absolute centering so the text does not jump to the top.
+        Keep the setup challenge through funding and confirmation. Its state
+        lives in Shell so mounting GameSession does not restart the board.
         z-20 stays under notification overlays (z-40 / z-50).
       */}
-      {showTransitionSurface ? (
-        <div className="absolute inset-0 z-20" aria-hidden>
+      {showChannelSetupChallenge(session.channelStatus.state, !!showTransitionSurface) ? (
+        <div className="absolute inset-0 z-20">
           <SessionTransitionSurface />
         </div>
       ) : (

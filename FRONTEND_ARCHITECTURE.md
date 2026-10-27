@@ -111,15 +111,29 @@ it (the backend can no longer vouch for readiness). The `HubConnection` uses a
 state at connect and reconnect time for the `identify` message; it reads
 `blockchainReadyRef` synchronously so a reconnect never reports a stale
 not-busy. Aliases originate on the hub's internal interface and reach the
-player app independently through `alias_updated`. Explicit
-`setBusy(true)` is called when the user accepts a session (not when a consent
-dialog is merely displayed). Idle / terminal clear paths must go through
-`presenceBusy(...)` rather than bare `setBusy(false)`, so the backend-readiness
-wait (and walletless busy) can still hold busy after a session ends. Showing a
-session-consent dialog does not set busy; local availability
-(`isAvailableForNewSessionPrompt`) still gates inbound advisories/proposals as
-above. When the app later reports that it is not busy, the hub sets the player
-back to `'waiting'`.
+player app independently through `alias_updated`.
+
+Presence is a `HubPresence` (`lib/hubPresence.ts`): `{ busy: false }` or
+`{ busy: true, reasons }`, where `reasons` is a non-empty canonical subset of
+`in-session`, `restoring`, `starting`, `wallet-disconnected`, and
+`blockchain-not-ready`. `computeHubPresence` is the single source for both the
+bit and the reasons; `shouldReportHubBusy` / `shouldReportHubBusyPresence`
+return its `busy`. The restore reason follows a non-terminal live or
+pre-handshake save, not the transient `restoring` flag, so a reconnect
+`identify` cannot clear busy that registration just set. Shell has two
+readers over it: `hubPresenceNow` (save, Accept transition, and persist
+flight included) for `getPresence`, wallet reconnect, play readiness,
+registration, and the busy report when a session starts; and `presenceBusy`
+(phase, wallet, backend only) for teardown and phase-change paths, where the
+just-dispatched transition ref is still stale. Idle / terminal clear paths must
+go through `presenceBusy(...)` rather than a bare `{ busy: false }`, so the
+backend-readiness wait (and walletless busy) can still hold busy after a
+session ends. Showing a session-consent dialog does not set busy; local
+availability (`isAvailableForNewSessionPrompt`) still gates inbound
+advisories/proposals as above. When the app later reports that it is not busy,
+the hub sets the player back to `'waiting'`. The hub lobby labels a player's own
+busy row with its reasons, or plain "Busy" when none were sent. Other players
+always see plain "Busy"; the hub never sends reasons to them.
 
 #### Game channel events
 
@@ -131,9 +145,9 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
 
 | Event      | Payload                             | Purpose                                                                                                                                               |
 | ---------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `identify` | `{ session_id: Bytes(16), busy }`   | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable.                             |
+| `identify` | `{ session_id: Bytes(16), busy, busy_reasons? }` | Links this channel to the player's hub session and reports whether the player app currently considers itself unavailable, optionally with why. |
 | `relay`    | `{ to: Bytes(16), payload: Bytes }` | Send opaque peer bytes to a specific public player ID.                                                                                                |
-| `set_busy` | `{ busy }`                          | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting`. |
+| `set_busy` | `{ busy, busy_reasons? }`           | Update hub availability for the identified connection. `busy: true` cancels pending challenges involving the player; `busy: false` maps to `waiting` and clears reasons. |
 
 **Hub → Player App:**
 
@@ -314,6 +328,39 @@ proceeding. This is intentional — silently resuming a stale or unwanted sessio
 could be worse than asking.
 
 This is always-on — not a feature the user opts into.
+
+#### Session lifetime and wallet connectivity
+
+An ongoing session, its peer connection, and its wallet connection have separate
+lifetimes. A session owns its protocol state, channel keys, peer identity, and
+watched coins. Disconnecting a wallet does not end or abandon that session,
+including during a handshake. Wallet-dependent work pauses until a ready backend
+is attached; losing connectivity is not a terminal protocol event.
+
+Hub connectivity is completely independent of wallet connectivity. Wallet
+connect, disconnect, switch, and failure events must leave the hub lobby,
+relay, and reconnect lifecycle intact. The app can connect or reconnect to a
+hub without a wallet; hub changes must also leave wallet connectivity intact.
+The hub uses the app routing identity. Walletless presence is busy and Accept
+stays disabled until wallet readiness returns, but those availability gates
+must never establish or tear down the hub connection.
+
+Connecting another wallet on the same blockchain resumes the existing session.
+The new backend registers the session's watched coins and resumes chain queries
+and submissions. New wallet operations use the connected provider. Reservations
+already created by another wallet keep their original owner: reconnecting does
+not transfer that wallet's accounts, offer identifiers, or coin-spending authority.
+An unmet funding request may be reoffered through the current wallet; old wallet
+flights become obsolete and their late replies cannot advance the session.
+Already accepted funding material and exact transaction replay remain session-owned.
+Cancellation of superseded or retired reservations is best effort and never blocks
+work through the current wallet.
+
+Changing blockchains cannot resume the same channel. The network selector stays
+locked while a session is unfinished. Any future flow that permits this change
+must prominently warn that it interrupts the pending session and require an
+explicit choice before changing networks. Ending or abandoning a session is an
+explicit session action, separate from disconnecting its wallet.
 
 #### WASM–JS trust model
 
@@ -544,8 +591,10 @@ orphan evidence and cannot synthesize a cancellation ID. An attached fee
 source remains retained while Rust may replay its current exact variant;
 wallet acknowledgement does not retire it, and Rust submission retirement
 moves its exact `providerReservationId` through typed cancellation before removal.
-Controller retirement promotes only `reserved` entries; replay-retained fee
-sources stay retained until Rust explicitly retires their stable submission.
+Ordinary controller replacement preserves replay-retained fee sources. Terminal
+completion and explicit abandonment discard replay ownership and forget the
+session's reservations. Cancellation through the original wallet is attempted
+where available, without awaiting success or retaining a recovery banner.
 Only reservation-creating offer, funding, or fee creation has this deliberate
 duplicate-reservation risk: before a provider returns an ID, a lost response
 can hide a successful external reservation, so one replacement is allowed on
@@ -556,19 +605,24 @@ no orphan-risk provenance.
 Wallet mutation starts only after the aggregate claim is installed. Malformation
 of any nested field rejects the whole root and remains visible on Resume /
 Start Over. A connected provider/account scope that differs from the durable
-owner is shown as a recovery mismatch rather than touching the wrong wallet.
+operation owner is shown as a recovery mismatch rather than touching the wrong wallet.
+`walletContext` identifies the current session's connected wallet; unresolved
+operations keep their own original provider scopes across wallet changes,
+while their session still owns unresolved protocol work or exact replay.
 
 The complete aggregate is written in one IndexedDB transaction. Strict
 validation rejects unknown or missing fields, duplicate identified
-`providerReservationId` values within or across both slices, provider scope
-mismatch, invalid discriminants, and non-current versions. Persistence failure does not gate
+`providerReservationId` values within or across both slices, malformed provider
+scopes, invalid discriminants, and non-current versions. Persistence failure does not gate
 offer use, transaction release, or cancellation; the latest in-memory root is
 captured again on later activity. Only the active-blockchain lifecycle attaches
-the cancellation RPC. A failed cancellation stays durable and retries only on
-restore or matching wallet reconnect/readiness. There is no timer, immediate
-retry loop, broad terminal sweep, or generic wallet-operation, settlement, or
-session cancellation path. Identified cleanup remains durable but does not
-block terminal capture; only funding material still owed to Rust blocks
+the cancellation RPC. While a session remains active, failed cancellation records may be retained as
+optional retry hints for restore or matching wallet reconnect/readiness. They
+never require reconnecting the old account, block the current wallet, or keep a
+recovery banner visible. There is no timer or immediate retry loop. Terminal completion or explicit
+abandonment retires both reservation slices with best-effort cancellation;
+cold terminal or empty-session restore forgets any leftover cleanup. Cancellation
+failure never prevents retirement or the use of another wallet; only funding material still owed to Rust blocks
 finalization. Going offline detaches the provider RPC without discarding
 cleanup; retirement records the required transitions, and the next matching
 lifecycle attachment drains them.
@@ -926,7 +980,7 @@ identities calculated by the package build. Handshake uses that already-loaded
 module for BLS identity only.
 
 On page load, Shell delegates storage/recovery ownership to
-`BootRecoveryBoundary`. It completes a pending owned-storage wipe and visible
+`BootRecoveryBoundary`. It completes a pending origin-wide storage wipe and visible
 read-only IndexedDB inspection before choosing recovery UI. Hub and wallet
 promises are not part of this local boundary. Resume/takeover use one atomic
 claim-and-read transaction over coordination plus `application-state/current`,
@@ -966,7 +1020,7 @@ is the escape hatch for garbled local state, so it must not deserialize saved
 state, reconnect to services, preserve preferences, or otherwise interpret the
 current session. The handler tears down live hub/wallet sockets (so IndexedDB
 deletes are not blocked), awaits `hardReset()`, and reloads only after every
-targeted deletion confirms success. A blocked or failed deletion leaves the
+origin-local deletion confirms success. A blocked or failed deletion leaves the
 shell on recovery UI with Retry Hard Reset guidance.
 
 All aggregate and reset mutations share one serialized same-tab coordinator.
@@ -986,11 +1040,10 @@ pre-reset work cannot recreate the database or cached state afterward.
    graceful cancellation.
 3. Clears `localStorage` / `sessionStorage` first (ordering only — the boot
    marker and prefs must not outlive a later IndexedDB hang).
-4. Deletes only the exact owned app / WalletConnect manifest:
-   `chia-gaming-session`, `WALLET_CONNECT_V2_INDEXED_DB`, `walletconnect`, and
-   `walletconnect-v2`. Foreign same-origin databases, including names that merely
-   resemble WalletConnect databases, are preserved. `onsuccess` confirms
-   deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
+4. Enumerates and deletes every IndexedDB database visible to the origin.
+   There is no preservation allowlist: Start Over also removes unknown keys,
+   foreign-looking database names, and stale data from older unreleased builds.
+   `onsuccess` confirms deletion; `onblocked` or `onerror` returns a typed unsuccessful result,
    keeps recovery UI open with **Retry Hard Reset**, and leaves a minimal
    generalized pending-wipe marker for retry or next boot. Reload occurs only
    after every deletion confirms success.
@@ -1015,8 +1068,8 @@ clear, rejection, and wallet-ledger mutations reject until authority exists.
 Semantic rejection and preserving-reset transactions remain repository-owned.
 Ordinary I/O failure is durability
 degradation; `StorageAuthorityLostError` retires the obsolete runtime and
-suppresses effects. Start over advances reset authority and wipes only the
-owned manifest.
+suppresses effects. Start over advances reset authority when one exists and
+wipes the entire origin-local storage surface.
 
 #### Restore path
 
@@ -1333,7 +1386,7 @@ the projected `ChannelStatus` leaves Cancel-only setup states. The core remains
 authoritative for that commitment boundary.
 
 `abortAccept` is the single Accept abort API (Cancel, `session_reject`,
-`delivery_failure`, remap, disconnect-during-Accept). It owns `session_reject`
+`delivery_failure`, peer remap). It owns `session_reject`
 when a peer id is supplied and chooses freeze-safe disposition:
 pre-`replaceSession` → peer-only abandon via atomic `acceptAborted` (finished
 freeze + terminal IndexedDB stay); after the write lands → full attempt
@@ -1618,8 +1671,8 @@ both errors mean the old owner dies. A new claimant rehydrates the latest
 flushed durable whole root and independently finalizes, with no snapshot or
 transient work transferred across generations. Unresolved reservation creation
 or identification, funding material still owed to Rust, and other unresolved
-protocol work remain capture blockers. Identified funding or fee cancellation
-residue remains durable and may survive terminal capture.
+protocol work remain capture blockers. Identified funding or fee cancellation residue is retired at terminal capture;
+original-provider cancellation is best effort and does not gate completion.
 Timer/effect cleanup that can finish after this atomic replacement uses
 `patchLiveSessionPresentation`; it updates only a still-live owner and becomes a
 no-op once terminal persistence owns the record. Ordinary presentation writes

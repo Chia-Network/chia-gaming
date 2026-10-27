@@ -27,6 +27,9 @@ export const makeDescription = (desc: OutcomeHandType) => {
   const kickers = values.slice(1);
 
   switch (name.toLowerCase()) {
+    case 'royal flush':
+      return name;
+
     case 'straight flush':
     case 'straight':
       return `${name}, ${main} High`;

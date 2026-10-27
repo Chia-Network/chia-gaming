@@ -2,6 +2,7 @@ import {
   ACCEPT_SETUP_CANCEL_CHANNEL_STATES,
   captureFreshStart,
   channelSetupCoverCopy,
+  showChannelSetupChallenge,
   shouldCompleteAcceptTransition,
   shouldSynthesizeSetupPending,
   startFailureDisposition,
@@ -37,6 +38,29 @@ function modelWithChannelState(state: ChannelStatus): SessionModel {
 }
 
 describe('acceptLifecycle', () => {
+  describe('setup challenge visibility', () => {
+    it.each([
+      'Handshaking',
+      'WaitingForHeightToOffer',
+      'WaitingForHeightToAccept',
+      'OurWalletMakingOffer',
+      'OurWalletMakingOfferAcceptance',
+      'OfferSent',
+      'TransactionPending',
+    ] as ChannelStatus[])(
+      'keeps the challenge visible during %s after the Accept cover drops',
+      (state) => {
+        expect(showChannelSetupChallenge(state, false)).toBe(true);
+      },
+    );
+    it.each(['Active', 'Failed'] as ChannelStatus[])(
+      'stops the challenge on %s even with a stale Accept cover',
+      (state) => {
+        expect(showChannelSetupChallenge(state, true)).toBe(false);
+        expect(showChannelSetupChallenge(state, false)).toBe(false);
+      },
+    );
+  });
   describe('channelSetupCoverCopy', () => {
     it('replaces setup progress with the failure advisory after channel expiry', () => {
       expect(

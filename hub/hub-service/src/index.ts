@@ -20,7 +20,8 @@ import { WebSocketServer, WebSocket, type RawData } from 'ws';
 
 import { Hub } from './hubState';
 import { deadlineReached, RetentionTimeline } from './retentionTimeline';
-import type { Challenge } from './types/hub';
+import { type BusyReason, normalizeBusyReasons } from './busyReasons';
+import type { Challenge, Player } from './types/hub';
 
 const hub = new Hub();
 const app = express();
@@ -59,9 +60,9 @@ type HubInboundMessage =
   | { type: 'keepalive' };
 
 type GameInboundMessage =
-  | { type: 'identify'; session_id: string; busy?: boolean }
+  | { type: 'identify'; session_id: string; busy?: boolean; reasons: BusyReason[] }
   | { type: 'close' }
-  | { type: 'set_busy'; busy: boolean }
+  | { type: 'set_busy'; busy: boolean; reasons: BusyReason[] }
   | { type: 'relay'; to: string; payload: Uint8Array }
   | { type: 'keepalive' };
 
@@ -86,6 +87,7 @@ interface GameConnMeta {
   sessionId: string;
   playerId: string;
   busy?: boolean;
+  reasons?: BusyReason[];
 }
 
 interface RateLimit {
@@ -123,7 +125,6 @@ const MAX_PENDING_CHALLENGES_PER_PLAYER = readPositiveIntegerEnv(
   8,
 );
 const MAX_CHALLENGES = readPositiveIntegerEnv('HUB_MAX_CHALLENGES', 4000);
-const CHALLENGE_TTL_MS = readPositiveIntegerEnv('HUB_CHALLENGE_TTL_MS', 5 * 60_000);
 const MAX_RETAINED_SESSIONS = readPositiveIntegerEnv('HUB_MAX_RETAINED_SESSIONS', 10_000);
 const RETAINED_SESSION_TTL_MS = readPositiveIntegerEnv(
   'HUB_RETAINED_SESSION_TTL_MS',
@@ -181,7 +182,6 @@ const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
 const queuedGameBytes = new WeakMap<WebSocket, number>();
 let totalQueuedGameBytes = 0;
-let nextChallengePruneAt = 0;
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -753,27 +753,7 @@ function unbindGameConnection(ws: WebSocket): void {
   markRetainedSessionInactive(meta.playerId);
 }
 
-function pruneExpiredChallenges(now: number): void {
-  nextChallengePruneAt = now + Math.min(CHALLENGE_TTL_MS, SWEEP_INTERVAL_MS);
-  for (const challenge of hub.removeExpiredChallenges(now, CHALLENGE_TTL_MS)) {
-    const payload = { challenge_id: challenge.id, accepted: false };
-    sendHubEvent(challenge.from_id, 'challenge_resolved', payload);
-    sendHubEvent(challenge.target_id, 'challenge_resolved', payload);
-    logHub('challenge_expired', {
-      challenge_id: challenge.id,
-      challenger_id: challenge.from_id,
-      target_id: challenge.target_id,
-    });
-  }
-}
-
-function pruneExpiredChallengesIfDue(now: number): void {
-  if (now < nextChallengePruneAt) return;
-  pruneExpiredChallenges(now);
-}
-
 function replayPendingChallengesToPlayer(playerId: string): void {
-  pruneExpiredChallenges(Date.now());
   for (const challenge of hub.challenges.values()) {
     if (challenge.target_id !== playerId) continue;
     const fromAlias = aliasForPlayer(challenge.from_id);
@@ -808,10 +788,27 @@ function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknow
   sendGameWs(ws, type, payload);
 }
 
+function withoutBusyReasons({ busy_reasons: _busyReasons, ...rest }: Player): Player {
+  return rest;
+}
+
+/**
+ * Busy reasons are visible only to the busy player. Every other recipient sees
+ * a plain `busy` status.
+ */
 function broadcastHubUpdate(): void {
   const players = hub.getPlayers();
-  const serialized = JSON.stringify({ type: 'hub_update', players });
+  const publicSerialized = JSON.stringify({
+    type: 'hub_update',
+    players: players.map(withoutBusyReasons),
+  });
   for (const [playerId, ws] of hubConnections) {
+    const serialized = hub.players[playerId]?.busy_reasons
+      ? JSON.stringify({
+          type: 'hub_update',
+          players: players.map((p) => (p.id === playerId ? p : withoutBusyReasons(p))),
+        })
+      : publicSerialized;
     logHubVerbose('send_hub_event', {
       player_id: playerId,
       ws_id: wsId(ws),
@@ -916,10 +913,10 @@ function retirePlayerArtifacts(playerId: string, retirement: PlayerRetirement): 
   return removedPlayer;
 }
 
-function applyPlayerBusy(playerId: string, busy: boolean): void {
+function applyPlayerBusy(playerId: string, busy: boolean, reasons: BusyReason[] = []): void {
   const status = busy ? 'busy' : 'waiting';
   // Not in hub yet: busy is held on game meta and applied on join.
-  if (!hub.setPlayerStatus(playerId, status)) {
+  if (!hub.setPlayerStatus(playerId, status, undefined, busy ? reasons : undefined)) {
     return;
   }
   if (busy) {
@@ -997,7 +994,7 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
     const meta = wsGameMeta.get(gameWs);
     if (meta) meta.playerId = playerId;
     if (meta?.busy !== undefined) {
-      applyPlayerBusy(playerId, meta.busy);
+      applyPlayerBusy(playerId, meta.busy, meta.reasons);
       broadcastHubUpdate();
     }
   }
@@ -1125,7 +1122,6 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     return;
   }
 
-  pruneExpiredChallengesIfDue(Date.now());
   if (hub.challenges.size >= MAX_CHALLENGES) {
     logHub('challenge_drop_global_limit', {
       sender_id: senderId,
@@ -1401,12 +1397,12 @@ function onIdentify(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'ide
       previousGameConn.close(4001, 'replaced_by_new_connection');
     } catch {}
   }
-  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy });
+  wsGameMeta.set(ws, { sessionId: msg.session_id, playerId, busy: msg.busy, reasons: msg.reasons });
   gameConnections.set(msg.session_id, ws);
 
   // Apply busy status if hub player exists
   if (msg.busy !== undefined && hub.players[playerId]) {
-    applyPlayerBusy(playerId, msg.busy);
+    applyPlayerBusy(playerId, msg.busy, msg.reasons);
     broadcastHubUpdate();
   }
 
@@ -1481,8 +1477,9 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
   }
   const playerId = meta.playerId;
   meta.busy = msg.busy;
-  logHub('set_busy', { player_id: playerId, busy: msg.busy });
-  applyPlayerBusy(playerId, msg.busy);
+  meta.reasons = msg.reasons;
+  logHub('set_busy', { player_id: playerId, busy: msg.busy, reasons: msg.reasons });
+  applyPlayerBusy(playerId, msg.busy, msg.reasons);
   broadcastHubUpdate();
 }
 
@@ -1516,6 +1513,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
           type: 'identify',
           session_id: sessionIdFromWire(requireFixedBytes(decoded, 'si', SESSION_ID_BYTES)),
           busy: getBoolean(decoded, 'b'),
+          reasons: normalizeBusyReasons(decoded.get('br')),
         };
       case 'SB': {
         const busy = getBoolean(decoded, 'b');
@@ -1523,6 +1521,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
         return {
           type: 'set_busy',
           busy,
+          reasons: normalizeBusyReasons(decoded.get('br')),
         };
       }
       case 'R':
@@ -1783,7 +1782,6 @@ const sweepTimer = setInterval(() => {
   const now = Date.now();
   const hubChanged = sweepHubConnections(now);
   sweepGameConnections(now);
-  pruneExpiredChallenges(now);
   pruneConnectionAttemptBudgets(now);
   pruneRecentCorrespondents(now);
   pruneRetainedSessions();

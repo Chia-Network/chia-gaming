@@ -627,6 +627,24 @@ pub fn test_peer_smoke() {
         .expect("should work");
     }
 
+    // The real app calls start_handshake for both roles (each peer activates its
+    // spend). The receiver now defers its funding offer until it is started, so
+    // start it here too.
+    {
+        let start_effect = {
+            let mut env = ChannelEnv::new(&mut allocator).expect("should work");
+            handlers[1]
+                .start_handshake(&mut env, Amount::default())
+                .expect("should work")
+        };
+        apply_effects(
+            start_effect.into_iter().collect(),
+            &mut allocator,
+            &mut pipe_sender[1],
+        )
+        .expect("should work");
+    }
+
     let mut peers = do_handshake(
         &mut allocator,
         Amount::new(200),
@@ -881,6 +899,21 @@ fn prepare_receiver_for_handshake_c(
         &mut pipes[0],
     )
     .expect("send handshake A");
+
+    // The receiver defers its funding offer until start_handshake supplies the
+    // opening fee, mirroring the real app where both roles activate their spend.
+    let receiver_start_effect = {
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+        handlers[1]
+            .start_handshake(&mut env, Amount::default())
+            .expect("start receiver handshake")
+    };
+    apply_effects(
+        receiver_start_effect.into_iter().collect(),
+        &mut allocator,
+        &mut pipes[1],
+    )
+    .expect("start receiver");
 
     let handshake_a = pipes[0]
         .message_pipe

@@ -9,6 +9,7 @@ import {
   type BencodexKey,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import type { BusyReason, HubPresence } from '../lib/hubPresence';
 
 export interface AdvisoryStartParams {
   peer_id: string;
@@ -32,7 +33,8 @@ export interface HubConnectionCallbacks {
   onHubDisconnected: () => void;
   onHubReconnected: () => void;
   onHubActivity: () => void;
-  getPresence: () => { busy: boolean };
+  onHubKeepalive?: () => void;
+  getPresence: () => HubPresence;
 }
 
 type HubEnvelope =
@@ -56,8 +58,8 @@ type HubEnvelope =
   | { type: 'keepalive' };
 
 type HubOutboundEnvelope =
-  | { type: 'identify'; session_id: Uint8Array; busy: boolean }
-  | { type: 'set_busy'; busy: boolean }
+  | { type: 'identify'; session_id: Uint8Array; busy: boolean; reasons?: readonly BusyReason[] }
+  | { type: 'set_busy'; busy: boolean; reasons?: readonly BusyReason[] }
   | { type: 'relay'; to: Uint8Array; payload: Uint8Array }
   | { type: 'close' }
   | { type: 'keepalive' };
@@ -128,12 +130,27 @@ function requireAlias(map: Map<BencodexKey, BencodexValue>, key: string): string
   return alias;
 }
 
+function busyReasonFields(message: {
+  busy: boolean;
+  reasons?: readonly BusyReason[];
+}): Record<string, BencodexValue> {
+  // `br` only ever accompanies a busy report. An older hub ignores it and the
+  // availability bit `b` still applies.
+  if (!message.busy || !message.reasons || message.reasons.length === 0) return {};
+  return { br: [...message.reasons] };
+}
+
 function encodeGameEnvelope(message: HubOutboundEnvelope): Uint8Array {
   switch (message.type) {
     case 'identify':
-      return encodeBencodex({ t: 'I', si: message.session_id, b: message.busy });
+      return encodeBencodex({
+        t: 'I',
+        si: message.session_id,
+        b: message.busy,
+        ...busyReasonFields(message),
+      });
     case 'set_busy':
-      return encodeBencodex({ t: 'SB', b: message.busy });
+      return encodeBencodex({ t: 'SB', b: message.busy, ...busyReasonFields(message) });
     case 'relay':
       return encodeBencodex({ t: 'R', to: message.to, p: message.payload });
     case 'close':
@@ -215,7 +232,7 @@ export class HubConnection {
   private static readonly CONNECT_TIMEOUT_MS = 30_000;
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
   private reconnectAttempt = 0;
-  private busy = false;
+  private presence: HubPresence = { busy: false };
   private closePending = false;
   private myPlayerId: string | null = null;
 
@@ -223,8 +240,7 @@ export class HubConnection {
     this.hubUrl = hubUrl;
     this.sessionId = sessionId;
     this.callbacks = callbacks;
-    const presence = callbacks.getPresence();
-    this.busy = presence.busy;
+    this.presence = callbacks.getPresence();
     this.connectWs();
   }
 
@@ -248,14 +264,17 @@ export class HubConnection {
   }
 
   private presencePayload(type: 'identify' | 'set_busy'): HubOutboundEnvelope {
+    const busy = this.presence.busy;
+    const reasons = this.presence.busy ? this.presence.reasons : undefined;
     if (type === 'identify') {
       return {
         type,
         session_id: sessionIdToWire(this.sessionId),
-        busy: this.busy,
+        busy,
+        reasons,
       };
     }
-    return { type, busy: this.busy };
+    return { type, busy, reasons };
   }
 
   private connectWs(): void {
@@ -286,8 +305,7 @@ export class HubConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      const presence = this.callbacks.getPresence();
-      this.busy = presence.busy;
+      this.presence = this.callbacks.getPresence();
       this.sendWs(this.presencePayload('identify'));
       if (this.closePending) {
         this.sendCloseRequest();
@@ -421,6 +439,7 @@ export class HubConnection {
         this.callbacks.onClosed();
         break;
       case 'keepalive':
+        this.callbacks.onHubKeepalive?.();
         break;
       default:
         break;
@@ -450,8 +469,8 @@ export class HubConnection {
     this.ws = null;
   }
 
-  setBusy(busy: boolean) {
-    this.busy = busy;
+  setBusy(presence: HubPresence) {
+    this.presence = presence;
     this.sendWs(this.presencePayload('set_busy'));
   }
 

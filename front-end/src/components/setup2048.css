@@ -1,0 +1,113 @@
+.setup-2048 {
+  width: min(100%, 28rem);
+}
+
+.setup-2048-board {
+  position: relative;
+  width: min(100%, 20rem);
+  padding: 0.6rem;
+  display: grid;
+  gap: 0.6rem;
+  border-radius: 0.75rem;
+  background: #bbada0;
+  touch-action: none;
+  user-select: none;
+}
+
+.setup-2048-board:focus-visible {
+  outline: none;
+}
+
+.setup-2048-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.setup-2048-cell {
+  aspect-ratio: 1;
+  border-radius: 0.4rem;
+  background: #cdc1b4;
+}
+
+.setup-2048-tiles {
+  position: absolute;
+  inset: 0.6rem;
+  pointer-events: none;
+}
+
+.setup-2048-tile-position {
+  position: absolute;
+  width: calc((100% - 1.2rem) / 3);
+  height: calc((100% - 0.6rem) / 2);
+  transition:
+    top 150ms ease-in-out,
+    left 150ms ease-in-out;
+}
+
+.setup-2048-tile {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4rem;
+  font-size: clamp(1.5rem, 5vw, 2.25rem);
+  font-weight: 700;
+  color: #3c332c;
+}
+
+.setup-2048-new {
+  animation: setup-2048-appear 100ms ease-out;
+}
+
+.setup-2048-merged {
+  animation: setup-2048-pop 100ms ease-out;
+}
+
+.setup-2048-tile-2 {
+  background: #eee4da;
+}
+.setup-2048-tile-4 {
+  background: #ede0c8;
+}
+.setup-2048-tile-8 {
+  background: #f2b179;
+}
+.setup-2048-tile-16 {
+  background: #f59563;
+}
+.setup-2048-tile-32 {
+  background: #f67c5f;
+}
+.setup-2048-tile-64 {
+  background: #f65e3b;
+  color: #fff;
+}
+.setup-2048-tile-128 {
+  background: #edcf72;
+}
+
+@keyframes setup-2048-appear {
+  from {
+    transform: scale(0.85);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes setup-2048-pop {
+  50% {
+    transform: scale(1.2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-2048-tile {
+    animation: none;
+  }
+  .setup-2048-tile-position {
+    transition: none;
+  }
+}

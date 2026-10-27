@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
 import { useAcceptLifecycle } from '../hooks/useAcceptLifecycle';
+import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { useShellSessionState } from '../hooks/useShellSessionState';
 import {
   PendingSessionProposal,
@@ -17,13 +18,14 @@ import {
 } from '../lib/session/acceptLifecycle';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { selectGamePaneKind } from '../lib/session/gamePane';
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
-import { recoveryReadiness } from '../lib/session/channelFundingSelectors';
+import WalletRecoveryNotice from './WalletRecoveryNotice';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
+import { Setup2048Provider } from './Setup2048';
 import FinishedSessionGameView from './FinishedSessionGameView';
 import { ConnectionSetupModal } from './ConnectionSetupModal';
+import { CopyIcon, COPY_FAILED_TITLE } from './CopyIcon';
 import { useBootRecoveryBoundary } from './BootRecoveryBoundary';
 import QRCode from 'qrcode';
 import {
@@ -95,14 +97,13 @@ import {
   shouldCancelAttemptOnDisconnect,
   shouldCancelOnPeerUnreachable,
   shouldMountGameSession,
-  shouldReportHubBusy,
-  shouldReportHubBusyPresence,
   shouldDeferHubRemapEscalation,
   shouldSuppressPhaseReporting,
   shouldSwitchToHubOnResolved,
   shouldWarnOnSessionUnload,
   transitionToFreshSession,
 } from '../lib/restoreLifecycle';
+import { computeHubPresence, type HubPresence } from '../lib/hubPresence';
 import {
   ABANDON_WAITING_STATES,
   isChannelAbandonable,
@@ -340,26 +341,6 @@ function savedOpponentAlias(save: DurableApplicationState | null | undefined): s
   return undefined;
 }
 
-/** Hub busy from phase, wallet, backend readiness, restore cradle, and in-flight Accept work. */
-function hubBusyFromSessionState(
-  phase: SessionPhase,
-  walletConnected: boolean,
-  restoring: boolean,
-  save: DurableApplicationState | null | undefined,
-  extras?: { pending?: boolean; persistInFlight?: boolean; blockchainReady?: boolean },
-): boolean {
-  return (
-    !!extras?.pending ||
-    !!extras?.persistInFlight ||
-    shouldReportHubBusyPresence(phase, walletConnected, {
-      restoring,
-      terminalSave: save?.session?.phase === 'terminal',
-      hasCradle: save?.session?.phase === 'live' || save?.session?.phase === 'pre-handshake',
-      blockchainReady: extras?.blockchainReady ?? true,
-    })
-  );
-}
-
 /** Tab to show before any resume hydrate — session restores always open on Game. */
 const TRACKER_LIVENESS_LABELS: Record<HubLiveness, string> = {
   connected: 'Connected',
@@ -540,7 +521,7 @@ function LogPanel({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const isNearBottom = useRef(true);
   const [filter, setFilter] = useState('');
-  const [copied, setCopied] = useState(false);
+  const { state: copyState, copy } = useCopyToClipboard();
 
   const filtered = useMemo(() => {
     if (!filter) return lines;
@@ -577,38 +558,11 @@ function LogPanel({ lines }: { lines: string[] }) {
           </span>
         )}
         <button
-          onClick={() => {
-            navigator.clipboard.writeText(filtered.join('\n'));
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }}
+          onClick={() => void copy(filtered.join('\n'))}
           className="p-1.5 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-          title="Copy to clipboard"
+          title={copyState === 'failed' ? COPY_FAILED_TITLE : 'Copy to clipboard'}
         >
-          {copied ? (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path
-                fillRule="evenodd"
-                d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                clipRule="evenodd"
-              />
-            </svg>
-          ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-              className="w-4 h-4"
-            >
-              <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-              <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-            </svg>
-          )}
+          <CopyIcon state={copyState} className="w-4 h-4" />
         </button>
       </div>
       <textarea
@@ -666,6 +620,7 @@ const Shell = () => {
   const sessionConfigRef = useRef<GameSessionParams | null>(null);
   sessionConfigRef.current = sessionConfig;
   const [transactionPublishNerfed, setTransactionPublishNerfed] = useState(false);
+  const [showTransactionPublishControl, setShowTransactionPublishControl] = useState(false);
   const peerConn = shellState.peerConn;
   const dashboardSessionModel = shellState.dashboardSessionModel;
   const dashboardSessionModelRef = useRef<SessionModel | null>(null);
@@ -837,8 +792,9 @@ const Shell = () => {
   // Read synchronously by
   // getPresence (called from the HubConnection constructor and on every
   // reconnect) and by isAvailableForNewSessionPrompt, so it lives in a ref
-  // rather than state — no UI depends on it, only the hub busy bit does.
+  // for synchronous callbacks; the state mirror below refreshes consent controls.
   const blockchainReadyRef = useRef(false);
+  const [blockchainReady, setBlockchainReady] = useState(false);
   const [hubLiveness, setHubLiveness] = useState<HubLiveness | null>(null);
   const [peerLiveness, setPeerLiveness] = useState<PeerLiveness>(null);
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -851,6 +807,34 @@ const Shell = () => {
     setTransactionPublishNerfed(isTransactionPublishNerfed());
     return subscribeTransactionPublishNerfed(setTransactionPublishNerfed);
   }, []);
+  useEffect(() => {
+    if (showTransactionPublishControl) return;
+    const sequence = 'nerf^';
+    let buffer = '';
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        target?.closest?.(
+          'input, textarea, select, [contenteditable]:not([contenteditable="false"])',
+        )
+      ) {
+        buffer = '';
+        return;
+      }
+      if (event.key.length !== 1) return;
+      const next = buffer + event.key;
+      if (next === sequence) {
+        setShowTransactionPublishControl(true);
+      } else {
+        buffer = sequence.startsWith(next) ? next : sequence.startsWith(event.key) ? event.key : '';
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showTransactionPublishControl]);
   const toggleTransactionPublishNerf = useCallback(() => {
     if (isTransactionPublishNerfed()) {
       setTransactionPublishNerf(false);
@@ -917,6 +901,11 @@ const Shell = () => {
       setActiveBlockchainPoller(null);
     },
     beforeHardReset: async () => {
+      peerSessionRef.current?.destroy();
+      peerSessionRef.current = null;
+      peerMessageHandlerRef.current = null;
+      setPeerLiveness(null);
+      destroySessionController();
       hubConnRef.current?.disconnect();
       hubConnRef.current = null;
       if (activeBlockchainRef.current) {
@@ -1026,27 +1015,6 @@ const Shell = () => {
     storageRepository.updatePreference({ key: 'unreadGame', value: v });
   }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => storageRepository.query('walletAlert'));
-  const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
-    recoveryReadiness(
-      [...storageRepository.channelFundingOperations(), ...storageRepository.feeAttachments()],
-      channelFundingRuntime.providerScopeKeys(),
-    ),
-  );
-  useEffect(
-    () =>
-      channelFundingRuntime.subscribe(() =>
-        setWalletRecoveryReadiness(
-          recoveryReadiness(
-            [
-              ...storageRepository.channelFundingOperations(),
-              ...storageRepository.feeAttachments(),
-            ],
-            channelFundingRuntime.providerScopeKeys(),
-          ),
-        ),
-      ),
-    [],
-  );
   const setWalletAlert = useCallback((v: boolean) => {
     setWalletAlertRaw(v);
     storageRepository.updatePreference({ key: 'walletAlert', value: v });
@@ -1067,9 +1035,35 @@ const Shell = () => {
   // backend not yet ready for play. All setBusy paths that might clear
   // availability must go through this (not bare false / phase-only busy).
   const presenceBusy = useCallback(
-    (phase: SessionPhase) =>
-      shouldReportHubBusy(phase, walletConnectedRef.current, blockchainReadyRef.current),
+    (phase: SessionPhase, walletConnected?: boolean): HubPresence =>
+      computeHubPresence({
+        sessionPhase: phase,
+        walletConnected: walletConnected ?? walletConnectedRef.current,
+        blockchainReady: blockchainReadyRef.current,
+      }),
     [],
+  );
+  // Full presence reader for event-handler sites (getPresence, wallet
+  // reconnect, play-readiness, hub registration): folds in the restore cradle
+  // and in-flight Accept work. Not for teardown sites, where a just-dispatched
+  // transition ref is still stale — those use presenceBusy.
+  const hubPresenceNow = useCallback(
+    (phase?: SessionPhase, walletConnected?: boolean): HubPresence => {
+      const save = storageRepository.loadState();
+      return computeHubPresence({
+        sessionPhase: phase ?? sessionPhaseRef.current,
+        walletConnected: walletConnected ?? walletConnectedRef.current,
+        blockchainReady: blockchainReadyRef.current,
+        terminalSave: save?.session?.phase === 'terminal',
+        // A peerless pre-handshake record no longer reserves the lobby.
+        hasCradle:
+          save?.session?.phase === 'live' ||
+          (save?.session?.phase === 'pre-handshake' && !!save.session.pairing.peerId),
+        pending: isAcceptSessionTransition(shellTransitionRef.current),
+        persistInFlight: freshStartPersistInFlightRef.current,
+      });
+    },
+    [freshStartPersistInFlightRef],
   );
   const activeBlockchainRef = useRef<InternalBlockchainInterface | null>(null);
   const [activeBlockchainPoller, setActiveBlockchainPoller] = useState<BlockchainPoller | null>(
@@ -1093,7 +1087,7 @@ const Shell = () => {
   const [feeEditing, setFeeEditing] = useState(false);
   const [feeInput, setFeeInput] = useState('');
   const feeInputRef = useRef<HTMLInputElement>(null);
-  const [copied, setCopied] = useState(false);
+  const { state: copyState, copy } = useCopyToClipboard();
 
   const mojosToXchStr = (mojos: bigint): string => {
     const s = mojos.toString().padStart(13, '0');
@@ -1252,6 +1246,10 @@ const Shell = () => {
 
   const clearSessionPreservingHistory = useCallback(() => {
     const humanHistory = historyRef.current;
+    const current = storageRepository.loadState().session;
+    if (current?.phase === 'live' || current?.phase === 'pre-handshake') {
+      storageRepository.retireSessionWalletReservations(current.pairing.gameSessionId);
+    }
     const snapshot = storageRepository.patchApplicationState((state) =>
       clearGameSessionState(state, { humanHistory }),
     );
@@ -1418,7 +1416,9 @@ const Shell = () => {
       // Stay busy while the aborted start may still be inside storageRepository.replaceSession.bind(storageRepository) /
       // restore — otherwise a new Accept can race checkpoint cleanup.
       hubConnRef.current?.setBusy(
-        freshStartPersistInFlightRef.current || presenceBusy(sessionPhaseRef.current),
+        freshStartPersistInFlightRef.current
+          ? { busy: true, reasons: ['starting'] as const }
+          : presenceBusy(sessionPhaseRef.current),
       );
     },
     [bumpStartEpoch, freshStartPersistInFlightRef, presenceBusy, resetPeerRelayState],
@@ -1476,6 +1476,8 @@ const Shell = () => {
       try {
         const conn = hubConnRef.current;
         if (!conn) throw new Error('hub connection unavailable during session start');
+        const walletProviderScope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
+        if (!walletProviderScope) throw new Error('Wallet provider scope is unavailable');
         epoch = sessionStartEpochRef.current;
         const myContribution = parseSessionAmount(request.myAmount);
         const theirContribution = parseSessionAmount(request.theirAmount);
@@ -1507,7 +1509,7 @@ const Shell = () => {
           storageRepository.loadState().history.wasmNotificationHistory;
 
         const outcome = await transitionToFreshSession({
-          reportBusy: () => conn.setBusy(true),
+          reportBusy: () => conn.setBusy(hubPresenceNow()),
           shouldAbort: () => epoch !== sessionStartEpochRef.current,
           retireTerminalDisplay: () => {
             sessionStartedRef.current = false;
@@ -1541,11 +1543,7 @@ const Shell = () => {
               epoch,
               getCurrentEpoch: () => sessionStartEpochRef.current,
               checkpoint: {
-                walletProviderScope: (() => {
-                  const scope = activeBlockchainRef.current?.getWalletOfferProvider()?.scope;
-                  if (!scope) throw new Error('Wallet provider scope is unavailable');
-                  return scope;
-                })(),
+                walletProviderScope,
                 pairing: {
                   token,
                   peerId: request.peerId,
@@ -1643,6 +1641,7 @@ const Shell = () => {
       cancelAttemptedSession,
       endPersistFlight,
       freshStartPersistCommittedRef,
+      hubPresenceNow,
       presenceBusy,
       markPersistCommitted,
       sendSessionReject,
@@ -1862,19 +1861,7 @@ const Shell = () => {
         // Wallet reconnected: recompute presence (phase + restore cradle) so the
         // walletless busy override is lifted once we can fund/resolve again —
         // but stay busy mid-resume while phase is still none.
-        hubConnRef.current?.setBusy(
-          hubBusyFromSessionState(
-            sessionPhaseRef.current,
-            true,
-            !!sessionConfigRef.current?.restoring,
-            storageRepository.loadState(),
-            {
-              pending: isAcceptSessionTransition(shellTransitionRef.current),
-              persistInFlight: freshStartPersistInFlightRef.current,
-              blockchainReady: blockchainReadyRef.current,
-            },
-          ),
-        );
+        hubConnRef.current?.setBusy(hubPresenceNow(sessionPhaseRef.current, true));
         const poller = activeBlockchainPoller;
         if (poller && sessionController) {
           sessionController.attachBlockchain(poller);
@@ -1887,13 +1874,15 @@ const Shell = () => {
         walletConnectedRef.current = false;
         // Wallet dropped mid-session (not a user disconnect): stay on the hub
         // but advertise busy so the lobby will not offer new matches.
-        hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
+        hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current, false));
       }
     });
   }, [
     activeBlockchainPoller,
     blockchainType,
     freshStartPersistInFlightRef,
+    hubPresenceNow,
+    presenceBusy,
     setWalletAlert,
     startBalancePolling,
   ]);
@@ -2060,8 +2049,10 @@ const Shell = () => {
               failed: (reason) => {
                 console.error('[Shell] invalid provisional reliable session', reason);
                 if (peerSessionRef.current === provisional) {
-                  provisional.destroy();
-                  peerSessionRef.current = null;
+                  if (abortAcceptIfActive({ error: true })) return;
+                  // No Accept owns rollback of this failed consent checkpoint.
+                  void storageRepository.clearSession();
+                  abandonFailedStartAttempt({ error: true });
                 }
               },
             });
@@ -2076,10 +2067,24 @@ const Shell = () => {
               return;
             }
             const channelState = dashboardSessionModelRef.current?.channel.status.state;
+            // A saved funding offer can be released before React projects its
+            // status. Preserve that commitment when delivery fails in that gap.
+            const savedSession = storageRepository.loadState().session;
+            const savedChannelState =
+              savedSession?.phase === 'live' &&
+              savedSession.pairing.peerId === ps.peerId &&
+              savedSession.pairing.gameSessionId === ps.sessionId
+                ? savedSession.presentation.channelStatus?.state
+                : undefined;
             if (
               shouldCancelOnPeerUnreachable(
                 sessionPhaseRef.current,
                 channelState,
+                abandonPendingRef.current,
+              ) &&
+              shouldCancelOnPeerUnreachable(
+                sessionPhaseRef.current,
+                savedChannelState,
                 abandonPendingRef.current,
               )
             ) {
@@ -2202,16 +2207,8 @@ const Shell = () => {
             storageRepository.updateCommon({
               identity: { myHubPlayerId: playerId },
             });
-            const terminalSave = save?.session?.phase === 'terminal';
-            // Match getPresence: session/restore obligation OR the full-node-peer wait.
-            // Broader than getPresence: also covers pairingToken-only / reserved peer
-            // before `restoring` is set on sessionConfig.
-            const restoreBusy =
-              presenceBusy(sessionPhaseRef.current) ||
-              (!terminalSave &&
-                (save?.session?.phase === 'live' ||
-                  save?.session?.phase === 'pre-handshake' ||
-                  !!pairing?.peerId));
+            // Registration uses the same presence calculation as reconnects.
+            const restoreBusy = hubPresenceNow();
             if (!peerSessionRef.current && pairing?.peerId && conn) {
               peerSessionRef.current = new PeerSession(
                 pairing.peerId,
@@ -2234,10 +2231,7 @@ const Shell = () => {
               } else {
                 bindPeerMessageHandler(peerSessionRef.current);
               }
-              // Restore never goes through startFreshSessionWithPeer, which is
-              // otherwise the only place that marks the hub busy. Use restoreBusy
-              // (session/wallet/peer-wait); terminal saves stay available unless
-              // walletless or the full-node-peer wait still requires busy.
+              // Restore does not pass through the fresh-session busy update.
               conn.setBusy(restoreBusy);
             } else if (
               save?.session?.phase === 'live' ||
@@ -2274,26 +2268,16 @@ const Shell = () => {
           onHubActivity: () => {
             lastHubActivityRef.current = Date.now();
           },
+          onHubKeepalive: () => {
+            sessionController?.sendPeerKeepalive();
+          },
           getPresence: () => {
-            const save = storageRepository.loadState();
             // A leftover cradle must not keep us busy after the session resolved
             // (wallet/handshake failures often leave Failed + persisted cradle).
             // Backend not ready for play also stays busy. Accept-pending + persist-drain
             // must also stay busy: identify/reconnect re-applies getPresence and would
             // otherwise undo explicit setBusy.
-            return {
-              busy: hubBusyFromSessionState(
-                sessionPhaseRef.current,
-                walletConnectedRef.current,
-                !!sessionConfigRef.current?.restoring,
-                save,
-                {
-                  pending: isAcceptSessionTransition(shellTransitionRef.current),
-                  persistInFlight: freshStartPersistInFlightRef.current,
-                  blockchainReady: blockchainReadyRef.current,
-                },
-              ),
-            };
+            return hubPresenceNow();
           },
         });
       } catch (err) {
@@ -2320,7 +2304,8 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
-      freshStartPersistInFlightRef,
+      abandonFailedStartAttempt,
+      hubPresenceNow,
       isAvailableForNewSessionPrompt,
       presenceBusy,
       setPendingAdvisoryState,
@@ -2450,23 +2435,11 @@ const Shell = () => {
       // often still `none` mid-resume). blockchainReadyRef was cleared on
       // disconnect, so we stay busy until the backend re-verifies readiness and
       // the readiness subscription pushes an update.
-      hubConnRef.current?.setBusy(
-        hubBusyFromSessionState(
-          sessionPhaseRef.current,
-          true,
-          !!sessionConfigRef.current?.restoring,
-          storageRepository.loadState(),
-          {
-            pending: isAcceptSessionTransition(shellTransitionRef.current),
-            persistInFlight: freshStartPersistInFlightRef.current,
-            blockchainReady: blockchainReadyRef.current,
-          },
-        ),
-      );
+      hubConnRef.current?.setBusy(hubPresenceNow(sessionPhaseRef.current, true));
       startBalancePolling(bcType);
       log(`${bcType} wallet connected`);
     },
-    [freshStartPersistInFlightRef, startBalancePolling, setConnecting, setActiveTab],
+    [hubPresenceNow, startBalancePolling, setConnecting, setActiveTab],
   );
 
   // --- Unified connection flow ---
@@ -2629,7 +2602,7 @@ const Shell = () => {
           : undefined);
       // Terminal/clean finish must not send session_reject — that signal means
       // decline/abort. Cooperative close already completed through the protocol;
-      // the peer should keep pinging until its own local shutdown finishes.
+      // the peer may still need acknowledgement of its final reliable close.
       const retainRejectTransport = !!peerId && !options?.retainFinishedGuard;
       const finishCancellation = () => {
         if (!retainRejectTransport) {
@@ -2909,28 +2882,24 @@ const Shell = () => {
   useEffect(() => {
     if (!hubOrigin || !walletConnected || !activeBlockchainPoller) {
       blockchainReadyRef.current = false;
+      setBlockchainReady(false);
       return;
     }
     const applyReady = (ready: boolean) => {
       blockchainReadyRef.current = ready;
-      hubConnRef.current?.setBusy(
-        hubBusyFromSessionState(
-          sessionPhaseRef.current,
-          walletConnectedRef.current,
-          !!sessionConfigRef.current?.restoring,
-          storageRepository.loadState(),
-          {
-            pending: isAcceptSessionTransition(shellTransitionRef.current),
-            persistInFlight: freshStartPersistInFlightRef.current,
-            blockchainReady: ready,
-          },
-        ),
-      );
+      setBlockchainReady(ready);
+      hubConnRef.current?.setBusy(hubPresenceNow());
     };
     applyReady(activeBlockchainPoller.rpc.isReadyForPlay());
     const unsubscribe = activeBlockchainPoller.rpc.onPlayReadinessChange(applyReady);
     return unsubscribe;
-  }, [activeBlockchainPoller, freshStartPersistInFlightRef, hubOrigin, walletConnected]);
+  }, [
+    activeBlockchainPoller,
+    freshStartPersistInFlightRef,
+    hubOrigin,
+    hubPresenceNow,
+    walletConnected,
+  ]);
 
   const handleTabChange = useCallback(
     (tabId: TabId) => {
@@ -3226,7 +3195,7 @@ const Shell = () => {
   }, [closeBootBoundary, stopBalancePolling]);
 
   // Reject/cancel any pending consent prompt or pre-active matchmaking attempt.
-  // Shared by wallet and hub disconnect. Active off-chain sessions stay mounted
+  // Used by hub disconnect. Active off-chain sessions stay mounted
   // (only pre-Active attempts cancel); resolved finished sessions keep their
   // dashboard freeze + terminal save — a pending invite after a game is
   // consent-only and must not trigger cancelAttemptedSession. While restore is
@@ -3313,6 +3282,14 @@ const Shell = () => {
 
   const doDisconnectWallet = useCallback(async () => {
     stopBalancePolling();
+    walletConnectedRef.current = false;
+    blockchainReadyRef.current = false;
+    setBlockchainReady(false);
+    setWalletConnected(false);
+    if (activeBlockchainPoller && sessionController) {
+      sessionController.detachBlockchain(activeBlockchainPoller);
+    }
+    setActiveBlockchainPoller(null);
     if (activeBlockchainRef.current) {
       try {
         await activeBlockchainRef.current.disconnect();
@@ -3329,6 +3306,7 @@ const Shell = () => {
     // readiness subscription effect re-runs so a reconnect cannot read a stale
     // ready state.
     blockchainReadyRef.current = false;
+    setBlockchainReady(false);
     setBalance(undefined);
     // Pre-game wallet disconnect: drop the boot marker so reload does not
     // force Resume just for a prior blockchainType. Mid-session / resumable
@@ -3343,20 +3321,17 @@ const Shell = () => {
     if (!hasResumableSession) {
       clearSavedSessionMarker();
     }
-    // Clear blockchainType before cancel so storageRepository.clearSession.bind(storageRepository)'s async tail does not
-    // re-mark Resume from a wallet preference this disconnect is dropping.
+    // Clear the wallet preference without retiring the independently owned session.
     storageRepository.updateCommon({ preferences: { blockchainType: undefined } });
-    // Wallet is orthogonal to the hub: stay connected and only cancel pending
-    // matchmaking (no hub teardown). Then advertise busy — without a wallet we
-    // cannot fund or resolve a channel, so the lobby must not offer matches.
-    cancelPendingMatchmaking({ preserveHub: true });
-    hubConnRef.current?.setBusy(shouldReportHubBusy(sessionPhaseRef.current, false));
-  }, [stopBalancePolling, cancelPendingMatchmaking]);
+    // A wallet connection does not own the session or its pending consent.
+    // Keep the handshake and peer transport; funding resumes when a wallet returns.
+    hubConnRef.current?.setBusy(presenceBusy(sessionPhaseRef.current, false));
+  }, [stopBalancePolling, activeBlockchainPoller, presenceBusy]);
 
   const handleDisconnectWallet = useCallback(() => {
     // Wallet disconnect no longer cascades to the hub or peer: the session
     // stays mounted and we appear busy. Warn only that chain ops stall while a
-    // session is live (and any pending invite is cancelled).
+    // session is live.
     if (sessionPhase !== 'none') {
       setConfirmDialog({
         title: 'Disconnect wallet?',
@@ -3723,6 +3698,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
+            disabled={!walletConnected || !blockchainReady}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -3752,6 +3728,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
+            disabled={!walletConnected || !blockchainReady}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -3869,11 +3846,14 @@ const Shell = () => {
             <span className="text-2xl font-black tracking-wide text-canvas-text-contrast">
               BETA
             </span>
-            <img
-              src="images/chia_logo.png"
-              alt="Chia Logo"
-              className="max-w-12 h-auto"
-              style={{ filter: isDark ? 'brightness(2.1) contrast(1.1)' : 'none' }}
+            <span
+              role="img"
+              aria-label="Chia Logo"
+              className="block w-12 shrink-0 aspect-[96/37] bg-current text-canvas-text-contrast"
+              style={{
+                mask: 'url(images/chia-wordmark.svg) center / contain no-repeat',
+                WebkitMask: 'url(images/chia-wordmark.svg) center / contain no-repeat',
+              }}
             />
             <button
               onClick={() => setIsDark((d) => !d)}
@@ -3885,17 +3865,6 @@ const Shell = () => {
             </button>
           </div>
         </div>
-
-        {walletRecoveryReadiness !== 'ready' && (
-          <div
-            role="alert"
-            className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
-          >
-            {walletRecoveryReadiness === 'scope-mismatch'
-              ? 'Reconnect the original wallet account to resume pending wallet recovery. The connected account will not be used.'
-              : 'Reconnect the original wallet account to resume pending wallet recovery.'}
-          </div>
-        )}
 
         {/* Tab content */}
         <div
@@ -3914,15 +3883,18 @@ const Shell = () => {
               overflow: 'auto',
             }}
           >
-            <Button
-              variant={transactionPublishNerfed ? 'solid' : 'outline'}
-              color={transactionPublishNerfed ? 'primary' : 'neutral'}
-              size="sm"
-              className="absolute right-4 top-4"
-              onClick={toggleTransactionPublishNerf}
-            >
-              Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
-            </Button>
+            <WalletRecoveryNotice />
+            {showTransactionPublishControl && (
+              <Button
+                variant={transactionPublishNerfed ? 'solid' : 'outline'}
+                color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                size="sm"
+                className="absolute right-4 top-4"
+                onClick={toggleTransactionPublishNerf}
+              >
+                Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+              </Button>
+            )}
             <ConnectionSetupModal
               open={showConnectionSetupModal && !!connectionSetup}
               title={connectionSetup?.title}
@@ -4035,38 +4007,11 @@ const Shell = () => {
                     className="flex-1 text-xs font-mono rounded-md p-2 border border-canvas-border bg-canvas-bg-subtle text-canvas-text resize-none"
                   />
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(connectionSetup.qrUri);
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1500);
-                    }}
+                    onClick={() => void copy(connectionSetup.qrUri)}
                     className="self-center p-2 rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                    title="Copy URI to clipboard"
+                    title={copyState === 'failed' ? COPY_FAILED_TITLE : 'Copy URI to clipboard'}
                   >
-                    {copied ? (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className="w-4 h-4"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    ) : (
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                        className="w-4 h-4"
-                      >
-                        <path d="M7 3.5A1.5 1.5 0 0 1 8.5 2h3.879a1.5 1.5 0 0 1 1.06.44l3.122 3.12A1.5 1.5 0 0 1 17 6.622V12.5a1.5 1.5 0 0 1-1.5 1.5h-1v-3.379a3 3 0 0 0-.879-2.121L10.5 5.379A3 3 0 0 0 8.379 4.5H7v-1Z" />
-                        <path d="M4.5 6A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18h7a1.5 1.5 0 0 0 1.5-1.5v-5.879a1.5 1.5 0 0 0-.44-1.06L9.44 6.439A1.5 1.5 0 0 0 8.378 6H4.5Z" />
-                      </svg>
-                    )}
+                    <CopyIcon state={copyState} className="w-4 h-4" />
                   </button>
                 </div>
                 <div className="w-full max-w-sm text-sm text-canvas-text">
@@ -4297,93 +4242,101 @@ const Shell = () => {
               coins={dashboardCoins}
             />
             <div style={{ flex: '1 1 0%', minHeight: 0, overflow: 'auto' }}>
-              {(() => {
-                const pane = selectGamePaneKind({
-                  sessionPaneTransition,
-                  keepSession,
-                  restoreStatus,
-                  restoreError,
-                  sessionPhase,
-                  hasDashboardModel: dashboardSessionModel !== null,
-                  sessionCanMount,
-                });
-                switch (pane.kind) {
-                  case 'transitionCover':
-                    return <SessionTransitionSurface />;
-                  case 'restoreFailed':
-                    return (
-                      <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
-                        <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
-                        <p className="max-w-lg text-sm text-center select-text cursor-text">
-                          {pane.error ?? 'The saved session could not be restored.'}
-                        </p>
-                        <button
-                          onClick={handleStartOver}
-                          disabled={startingOver}
-                          className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
-                        >
-                          {startingOver ? 'Starting over\u2026' : 'Start over'}
-                        </button>
-                      </div>
-                    );
-                  case 'gameSession':
-                    return (
-                      <div className="relative w-full h-full">
-                        <GameSessionErrorBoundary>
-                          <GameSession
-                            key={sessionConfig!.pairingToken}
-                            params={sessionConfig!}
-                            peerConn={peerConn!}
-                            registerMessageHandler={registerMessageHandler}
-                            appendGameLog={appendHistory}
-                            sessionSave={bootstrapSessionPropRef.current}
-                            blockchain={activeBlockchainPoller}
-                            onGameActivity={onGameActivity}
-                            onSessionPhaseChange={handleSessionPhaseChange}
-                            onRestoreStatusChange={handleRestoreStatusChange}
-                            onSessionModelChange={handleSessionModelChange}
-                            onCoinsChange={handleCoinsChange}
-                            suppressPhaseReporting={shouldSuppressPhaseReporting(
-                              restoreBlocked,
-                              terminalPresentation != null,
-                            )}
-                            terminalPresentation={terminalPresentation}
-                            showTransitionSurface={pane.showTransitionSurface}
-                          />
-                        </GameSessionErrorBoundary>
-                        {sessionConsentOverlay}
-                      </div>
-                    );
-                  case 'finishedFreeze':
-                    return (
-                      <div className="relative w-full h-full">
-                        <FinishedSessionGameView
-                          model={sessionModelForReactProps(dashboardSessionModel!)}
-                          myName={
-                            finishedSessionIdentity?.myName ?? storageRepository.query('alias')
-                          }
-                          opponentName={finishedSessionIdentity?.opponentName}
-                        />
-                        {sessionConsentOverlay}
-                      </div>
-                    );
-                  case 'restoringPlaceholder':
-                    return (
-                      <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                        Restoring session...
-                      </div>
-                    );
-                  case 'empty':
-                    return (
-                      <div className="relative w-full h-full">
-                        <div className="w-full h-full flex items-center justify-center text-canvas-solid">
-                          No active game session
-                        </div>
-                        {sessionConsentOverlay}
-                      </div>
-                    );
+              <Setup2048Provider
+                attemptKey={
+                  shellState.transition.kind === 'pending'
+                    ? shellState.transition.readyKey
+                    : (sessionConfig?.pairingToken ?? null)
                 }
-              })()}
+              >
+                {(() => {
+                  const pane = selectGamePaneKind({
+                    sessionPaneTransition,
+                    keepSession,
+                    restoreStatus,
+                    restoreError,
+                    sessionPhase,
+                    hasDashboardModel: dashboardSessionModel !== null,
+                    sessionCanMount,
+                  });
+                  switch (pane.kind) {
+                    case 'transitionCover':
+                      return <SessionTransitionSurface />;
+                    case 'restoreFailed':
+                      return (
+                        <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-canvas-text p-8">
+                          <h2 className="text-lg font-semibold text-alert-text">Restore failed</h2>
+                          <p className="max-w-lg text-sm text-center select-text cursor-text">
+                            {pane.error ?? 'The saved session could not be restored.'}
+                          </p>
+                          <button
+                            onClick={handleStartOver}
+                            disabled={startingOver}
+                            className="px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+                          >
+                            {startingOver ? 'Starting over\u2026' : 'Start over'}
+                          </button>
+                        </div>
+                      );
+                    case 'gameSession':
+                      return (
+                        <div className="relative w-full h-full">
+                          <GameSessionErrorBoundary>
+                            <GameSession
+                              key={sessionConfig!.pairingToken}
+                              params={sessionConfig!}
+                              peerConn={peerConn!}
+                              registerMessageHandler={registerMessageHandler}
+                              appendGameLog={appendHistory}
+                              sessionSave={bootstrapSessionPropRef.current}
+                              blockchain={activeBlockchainPoller}
+                              onGameActivity={onGameActivity}
+                              onSessionPhaseChange={handleSessionPhaseChange}
+                              onRestoreStatusChange={handleRestoreStatusChange}
+                              onSessionModelChange={handleSessionModelChange}
+                              onCoinsChange={handleCoinsChange}
+                              suppressPhaseReporting={shouldSuppressPhaseReporting(
+                                restoreBlocked,
+                                terminalPresentation != null,
+                              )}
+                              terminalPresentation={terminalPresentation}
+                              showTransitionSurface={pane.showTransitionSurface}
+                            />
+                          </GameSessionErrorBoundary>
+                          {sessionConsentOverlay}
+                        </div>
+                      );
+                    case 'finishedFreeze':
+                      return (
+                        <div className="relative w-full h-full">
+                          <FinishedSessionGameView
+                            model={sessionModelForReactProps(dashboardSessionModel!)}
+                            myName={
+                              finishedSessionIdentity?.myName ?? storageRepository.query('alias')
+                            }
+                            opponentName={finishedSessionIdentity?.opponentName}
+                          />
+                          {sessionConsentOverlay}
+                        </div>
+                      );
+                    case 'restoringPlaceholder':
+                      return (
+                        <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                          Restoring session...
+                        </div>
+                      );
+                    case 'empty':
+                      return (
+                        <div className="relative w-full h-full">
+                          <div className="w-full h-full flex items-center justify-center text-canvas-solid">
+                            No active game session
+                          </div>
+                          {sessionConsentOverlay}
+                        </div>
+                      );
+                  }
+                })()}
+              </Setup2048Provider>
             </div>
           </div>
 
