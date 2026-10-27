@@ -84,8 +84,8 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
       zod:
-        specifier: 4.4.3
-        version: 4.4.3
+        specifier: 4.6.7
+        version: 4.6.7
 
   front-end:
     dependencies:
@@ -106,7 +106,7 @@ importers:
         version: 1.2.16(@types/react-dom@19.2.0(@types/react@19.2.0))(@types/react@19.2.0)(react-dom@19.2.8(patch_hash=8a2f2252d945a4b8ac2bc50f5aeca0fb01bf16dbff6724c24781703cc3fed29c)(react@19.2.8))(react@19.2.8)
       '@walletconnect/sign-client':
         specifier: 2.23.10
-        version: 2.23.10(patch_hash=e9ccc5eabe8db2f718aa137e6a4b9d35a36d7986d18a21ccf056fc415acb242a)(typescript@5.9.3)(zod@4.4.3)
+        version: 2.23.10(patch_hash=e9ccc5eabe8db2f718aa137e6a4b9d35a36d7986d18a21ccf056fc415acb242a)(typescript@5.9.3)(zod@4.6.7)
       '@walletconnect/types':
         specifier: 2.23.10
         version: 2.23.10
@@ -1974,6 +1974,11 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
+  acorn@8.19.0:
+    resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
+    engines: {node: '>=0.4.0'}
+    hasBin: true
+
   agent-base@7.1.4:
     resolution: {integrity: sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==}
     engines: {node: '>= 14'}
@@ -2706,6 +2711,10 @@ packages:
 
   fs-extra@11.4.0:
     resolution: {integrity: sha512-EQsFzMUJkCKGr1ePqlYADkIUmHW1s3ZXr5Yqy6wbGrfUCphpl2maM/kyOIRA2HpP3AaFQTZXD4ldjek+nccddA==}
+    engines: {node: '>=14.14'}
+
+  fs-extra@11.4.1:
+    resolution: {integrity: sha512-KYAb4c9BJQI6QqGKthV68OHe0badztdXJWKo0WtBA9IuCFPTKvE5ZdUBglP833aMjhaSPNO4A5j/EkzZtGlKjA==}
     engines: {node: '>=14.14'}
 
   fs-extra@7.0.1:
@@ -3681,8 +3690,8 @@ packages:
   react-is@19.2.8:
     resolution: {integrity: sha512-s5un28nYxKJw5gvUHyW5PCC28CvBqLu9r3cWgzHT4Vo/5fqqkFcdRYsGcKf50WMPpjjFZS5d76fn3YCo2njKwQ==}
 
-  react-is@19.3.0:
-    resolution: {integrity: sha512-UpMYezM4v5/18F28aC66AEsjXIgE02kyEMH6yLdgLXu/UTfa1Ntwck/nNLrbqJsEXW7gPb0coNO9FQse9WTovA==}
+  react-is@19.3.1:
+    resolution: {integrity: sha512-RRieF6IyxQBkcK6pP8xOHprLTPW6QjRkbGdImtqNme+/hYVwCZkLQLdlZGOhUqXwkS9IEynaGvPJtv6XB/cz0Q==}
 
   react-remove-scroll-bar@2.3.8:
     resolution: {integrity: sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q==}
@@ -4373,8 +4382,8 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
@@ -4661,7 +4670,7 @@ snapshots:
     dependencies:
       cross-dirname: 0.1.0
       debug: 4.4.3
-      fs-extra: 11.4.0
+      fs-extra: 11.4.1
       minimist: 1.2.8
       postject: 1.0.0-alpha.6
     transitivePeerDependencies:
@@ -5923,7 +5932,7 @@ snapshots:
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
 
-  '@walletconnect/core@2.23.10(typescript@5.9.3)(zod@4.4.3)':
+  '@walletconnect/core@2.23.10(typescript@5.9.3)(zod@4.6.7)':
     dependencies:
       '@walletconnect/heartbeat': 1.2.2
       '@walletconnect/jsonrpc-provider': 1.0.14
@@ -5937,7 +5946,7 @@ snapshots:
       '@walletconnect/safe-json': 1.0.2(patch_hash=348b14548555216c875a28da7cb8ebbc2a5326549ab946cf85a0ec6b8221ef44)
       '@walletconnect/time': 1.0.2
       '@walletconnect/types': 2.23.10
-      '@walletconnect/utils': 2.23.10(typescript@5.9.3)(zod@4.4.3)
+      '@walletconnect/utils': 2.23.10(typescript@5.9.3)(zod@4.6.7)
       '@walletconnect/window-getters': 1.0.1
       es-toolkit: 1.45.1
       events: 3.3.0
@@ -6055,14 +6064,14 @@ snapshots:
     dependencies:
       tslib: 1.14.1
 
-  '@walletconnect/sign-client@2.23.10(patch_hash=e9ccc5eabe8db2f718aa137e6a4b9d35a36d7986d18a21ccf056fc415acb242a)(typescript@5.9.3)(zod@4.4.3)':
+  '@walletconnect/sign-client@2.23.10(patch_hash=e9ccc5eabe8db2f718aa137e6a4b9d35a36d7986d18a21ccf056fc415acb242a)(typescript@5.9.3)(zod@4.6.7)':
     dependencies:
-      '@walletconnect/core': 2.23.10(typescript@5.9.3)(zod@4.4.3)
+      '@walletconnect/core': 2.23.10(typescript@5.9.3)(zod@4.6.7)
       '@walletconnect/jsonrpc-utils': 1.0.8
       '@walletconnect/logger': 3.0.2
       '@walletconnect/time': 1.0.2
       '@walletconnect/types': 2.23.10
-      '@walletconnect/utils': 2.23.10(typescript@5.9.3)(zod@4.4.3)
+      '@walletconnect/utils': 2.23.10(typescript@5.9.3)(zod@4.6.7)
       events: 3.3.0
     transitivePeerDependencies:
       - '@azure/app-configuration'
@@ -6122,7 +6131,7 @@ snapshots:
       - ioredis
       - uploadthing
 
-  '@walletconnect/utils@2.23.10(typescript@5.9.3)(zod@4.4.3)':
+  '@walletconnect/utils@2.23.10(typescript@5.9.3)(zod@4.6.7)':
     dependencies:
       '@msgpack/msgpack': 3.1.3
       '@noble/ciphers': 1.3.0
@@ -6141,7 +6150,7 @@ snapshots:
       '@walletconnect/window-metadata': 1.0.1
       blakejs: 1.2.1
       detect-browser: 5.3.0
-      ox: 0.9.3(typescript@5.9.3)(zod@4.4.3)
+      ox: 0.9.3(typescript@5.9.3)(zod@4.6.7)
       uint8arrays: 3.1.1
     transitivePeerDependencies:
       - '@azure/app-configuration'
@@ -6179,10 +6188,10 @@ snapshots:
 
   abbrev@4.0.0: {}
 
-  abitype@1.3.0(typescript@5.9.3)(zod@4.4.3):
+  abitype@1.3.0(typescript@5.9.3)(zod@4.6.7):
     optionalDependencies:
       typescript: 5.9.3
-      zod: 4.4.3
+      zod: 4.6.7
 
   accepts@2.0.0:
     dependencies:
@@ -6195,10 +6204,13 @@ snapshots:
 
   acorn-walk@8.3.5:
     dependencies:
-      acorn: 8.18.0
+      acorn: 8.19.0
     optional: true
 
   acorn@8.18.0: {}
+
+  acorn@8.19.0:
+    optional: true
 
   agent-base@7.1.4: {}
 
@@ -6884,8 +6896,8 @@ snapshots:
       '@babel/parser': 7.29.8
       eslint: 10.8.0(jiti@2.7.0)
       hermes-parser: 0.25.1
-      zod: 4.4.3
-      zod-validation-error: 4.0.2(zod@4.4.3)
+      zod: 4.6.7
+      zod-validation-error: 4.0.2(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
 
@@ -7113,6 +7125,13 @@ snapshots:
       graceful-fs: 4.2.11
       jsonfile: 6.2.1
       universalify: 2.0.1
+
+  fs-extra@11.4.1:
+    dependencies:
+      graceful-fs: 4.2.11
+      jsonfile: 6.2.1
+      universalify: 2.0.1
+    optional: true
 
   fs-extra@7.0.1:
     dependencies:
@@ -8009,7 +8028,7 @@ snapshots:
       type-check: 0.4.0
       word-wrap: 1.2.5
 
-  ox@0.9.3(typescript@5.9.3)(zod@4.4.3):
+  ox@0.9.3(typescript@5.9.3)(zod@4.6.7):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -8017,7 +8036,7 @@ snapshots:
       '@noble/hashes': 1.8.0
       '@scure/bip32': 1.7.0
       '@scure/bip39': 1.6.0
-      abitype: 1.3.0(typescript@5.9.3)(zod@4.4.3)
+      abitype: 1.3.0(typescript@5.9.3)(zod@4.6.7)
       eventemitter3: 5.0.1
     optionalDependencies:
       typescript: 5.9.3
@@ -8131,7 +8150,7 @@ snapshots:
       '@jest/schemas': 30.4.1
       ansi-styles: 5.2.0
       react-is-18: react-is@18.3.1
-      react-is-19: react-is@19.3.0
+      react-is-19: react-is@19.3.1
 
   proc-log@6.1.0: {}
 
@@ -8211,7 +8230,7 @@ snapshots:
 
   react-is@19.2.8: {}
 
-  react-is@19.3.0: {}
+  react-is@19.3.1: {}
 
   react-remove-scroll-bar@2.3.8(@types/react@19.2.0)(react@19.2.8):
     dependencies:
@@ -8575,7 +8594,7 @@ snapshots:
       '@tsconfig/node14': 1.0.3
       '@tsconfig/node16': 1.0.4
       '@types/node': 24.6.2
-      acorn: 8.18.0
+      acorn: 8.19.0
       acorn-walk: 8.3.5
       arg: 4.1.3
       create-require: 1.1.1
@@ -8843,8 +8862,8 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-validation-error@4.0.2(zod@4.4.3):
+  zod-validation-error@4.0.2(zod@4.6.7):
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.7
 
-  zod@4.4.3: {}
+  zod@4.6.7: {}
