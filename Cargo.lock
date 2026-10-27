@@ -242,7 +242,7 @@ dependencies = [
  "chia_streamable_macro",
  "clvm-traits",
  "clvm-utils",
- "clvmr",
+ "clvmr 0.17.7",
  "hex",
  "hex-literal",
  "thiserror 1.0.69",
@@ -272,7 +272,7 @@ dependencies = [
  "chia_streamable_macro",
  "clvm-traits",
  "clvm-utils",
- "clvmr",
+ "clvmr 0.17.7",
  "hex",
 ]
 
@@ -288,7 +288,7 @@ dependencies = [
  "chia-sha2",
  "clvm-traits",
  "clvm-utils",
- "clvmr",
+ "clvmr 0.17.7",
  "hex-literal",
  "num-bigint",
 ]
@@ -337,7 +337,7 @@ dependencies = [
  "chialisp",
  "clvm-traits",
  "clvm-utils",
- "clvmr",
+ "clvmr 0.21.0",
  "futures-util",
  "hex",
  "lazy_static",
@@ -374,7 +374,7 @@ checksum = "ab59d41e9ed519178c28104ed119db6521a8883393a695e44b5dac954af74871"
 dependencies = [
  "binascii",
  "chia-bls",
- "clvmr",
+ "clvmr 0.17.7",
  "do-notation",
  "getrandom 0.3.4",
  "hashlink",
@@ -415,7 +415,7 @@ checksum = "58153aa0d651ad8c28957b92bb27f54951e1f535bc43ffd4b5cdaeec53ff537b"
 dependencies = [
  "chia-bls",
  "clvm-derive",
- "clvmr",
+ "clvmr 0.17.7",
  "num-bigint",
  "thiserror 1.0.69",
 ]
@@ -428,7 +428,7 @@ checksum = "c6403cf6aa37f4f09697c7a5df5747b0f11a1d0dffd3cf2e1ffd298bc224b666"
 dependencies = [
  "chia-sha2",
  "clvm-traits",
- "clvmr",
+ "clvmr 0.17.7",
  "hex",
  "hex-literal",
 ]
@@ -438,6 +438,32 @@ name = "clvmr"
 version = "0.17.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3060bcd64cb8cf2b32fe6ee3a82698835c03361c8e1da446d2e9d058fbfffd5f"
+dependencies = [
+ "bitflags",
+ "bitvec",
+ "bumpalo",
+ "chia-bls",
+ "chia-sha2",
+ "hex",
+ "hex-literal",
+ "k256",
+ "lazy_static",
+ "malachite-bigint",
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "rand 0.9.3",
+ "sha1 0.10.6",
+ "sha3",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "clvmr"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e13f0990d3f7f4e88d8f8a49a0082ecdd42de4f2e5206d571c02fac9519c649"
 dependencies = [
  "bitflags",
  "bitvec",
