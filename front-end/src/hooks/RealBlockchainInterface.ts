@@ -360,9 +360,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private remoteWalletId: bigint | undefined;
   private walletOfferProvider: WalletOfferProvider | null = null;
   private remoteWalletEnsurePromise: Promise<void> | null = null;
-  private connectionListeners = new Set<(connected: boolean) => void>();
+  private connectionListeners = new Set<(connected: boolean, recovering?: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
+  private lastRecoveringState = false;
   private coinRecordCache = new Map<string, CoinRecord>();
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
@@ -407,10 +408,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       return this.monitoringPromise;
     }
     const epoch = this.monitoringEpoch;
-    this.monitoringPromise = this.doStartMonitoring(epoch).finally(() => {
-      this.monitoringPromise = null;
+    const pending = this.doStartMonitoring(epoch).finally(() => {
+      if (this.monitoringPromise === pending) this.monitoringPromise = null;
     });
-    return this.monitoringPromise;
+    this.monitoringPromise = pending;
+    return pending;
   }
 
   private async doStartMonitoring(epoch: number) {
@@ -446,14 +448,14 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  private markDisconnected() {
+  private markDisconnected(recovering = false) {
     this.monitoringEpoch++;
     this.monitoringReady = false;
     this.monitoringPromise = null;
     this.remoteWalletId = undefined;
     // Leave remoteWalletEnsurePromise running if any; its completion is
     // harmless and clearing it would allow duplicate getWallets stamps.
-    this.fireConnectionChange(false);
+    this.fireConnectionChange(false, recovering);
   }
 
   private spendSeq = 0;
@@ -936,12 +938,13 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     // getWallets and starting another is what flooded the wallet on reconnect.
   }
 
-  private fireConnectionChange(connected: boolean) {
-    if (connected === this.lastConnectedState) return;
+  private fireConnectionChange(connected: boolean, recovering = false) {
+    if (connected === this.lastConnectedState && recovering === this.lastRecoveringState) return;
     this.lastConnectedState = connected;
+    this.lastRecoveringState = recovering;
     for (const cb of this.connectionListeners) {
       try {
-        cb(connected);
+        cb(connected, recovering);
       } catch {
         /* ignore */
       }
@@ -1030,7 +1033,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           );
         }
         if (evt.stateName === 'connected') {
+          const epoch = this.monitoringEpoch;
           void this.startMonitoring().catch((err) => {
+            if (epoch !== this.monitoringEpoch) return;
             console.warn('[wc-blockchain] monitoring setup after WalletConnect event failed', err);
             log(
               `[wc-blockchain] monitoring setup after WalletConnect event failed: ${String(err)}`,
@@ -1041,7 +1046,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           evt.connected === false ||
           (evt.stateName === 'initialized' && evt.sessions === 0)
         ) {
-          this.markDisconnected();
+          this.markDisconnected(evt.stateName === 'reconnecting');
         }
       },
     });
@@ -1096,7 +1101,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return walletConnectState.getSession() !== undefined;
   }
 
-  onConnectionChange(cb: (connected: boolean) => void): () => void {
+  onConnectionChange(cb: (connected: boolean, recovering?: boolean) => void): () => void {
     this.connectionListeners.add(cb);
     this.subscribeToWcEvents();
     return () => {

@@ -802,6 +802,7 @@ const Shell = () => {
   );
 
   const [walletConnected, setWalletConnected] = useState(false);
+  const [walletRecovering, setWalletRecovering] = useState(false);
   const [terminalFinalizationBlocker, setTerminalFinalizationBlocker] = useState<string | null>(
     null,
   );
@@ -1889,8 +1890,9 @@ const Shell = () => {
   useEffect(() => {
     const iface = activeBlockchainRef.current;
     if (!iface) return;
-    return iface.onConnectionChange((connected) => {
-      if (!connected && activeTabRef.current !== 'wallet') {
+    return iface.onConnectionChange((connected, recovering = false) => {
+      setWalletRecovering(recovering);
+      if (!connected && !recovering && activeTabRef.current !== 'wallet') {
         setWalletAlert(true);
       }
       if (connected) {
@@ -2460,6 +2462,7 @@ const Shell = () => {
       setBlockchainType(bcType);
       blockchainTypeRef.current = bcType;
       setWalletConnected(true);
+      setWalletRecovering(false);
       walletConnectedRef.current = true;
       setConnecting(false);
       setConnectionSetup(null);
@@ -3325,6 +3328,7 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setActiveBlockchainPoller(null);
     setWalletConnected(false);
+    setWalletRecovering(false);
     walletConnectedRef.current = false;
     setBlockchainType(undefined);
     blockchainTypeRef.current = undefined;
@@ -3812,7 +3816,7 @@ const Shell = () => {
             let pipeConnected: boolean | null = null;
             switch (tab.id) {
               case 'wallet':
-                pipeConnected = walletConnected;
+                pipeConnected = walletConnected || walletRecovering;
                 break;
               case 'hub':
                 pipeConnected = hubLiveness === 'connected';
@@ -3821,7 +3825,7 @@ const Shell = () => {
                 pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
                 break;
             }
-            const walletDisconnected = tab.id === 'wallet' && !walletConnected;
+            const walletDisconnected = tab.id === 'wallet' && !walletConnected && !walletRecovering;
             const pipeLabel =
               pipeConnected === null
                 ? tab.label
@@ -3941,7 +3945,7 @@ const Shell = () => {
               connecting={connecting}
               error={connectError}
             />
-            {walletConnected ? (
+            {walletConnected || walletRecovering ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />

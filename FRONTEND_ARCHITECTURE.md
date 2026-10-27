@@ -1613,8 +1613,12 @@ stalled teardown or abandoned approval in SDK storage cannot resurrect a session
 after reload. Accepting a new session replaces this authority. If the SDK
 lifecycle never returns, reload the app to establish a new connection.
 
-Coin polling reports raw height and coin-state observations upward every
-successful sweep. The transaction manager computes ordered semantic
+Coin polling reports coin-state observations at the latest height obtained by
+the regular height poll. Each sweep uses that opening height as its boundary:
+creations and spends above it wait for the next sweep. Individual wallet reads
+can therefore span new blocks without restarting the sweep or requiring another
+height request. No coin snapshot is reported before a height has been obtained
+for the current connection. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
 Inside Rust, each height or coin-state observation is transactional over a deep

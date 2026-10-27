@@ -322,10 +322,16 @@ describe('WalletConnect pairing teardown', () => {
 
   it('leaves the wallet unavailable when relay replacement fails', async () => {
     await establishSession();
+    const states: string[] = [];
+    const subscription = walletConnectState
+      .getObservable()
+      .subscribe((state) => states.push(state.stateName));
     mockClient.core.relayer.transportOpen.mockRejectedValueOnce(new Error('relay unavailable'));
     await expect(
       walletConnectState.recoverRelay(walletConnectState.getClient()!, connectedSession.topic),
     ).rejects.toThrow('relay unavailable');
+    subscription.unsubscribe();
+    expect(states).toEqual(['reconnecting', 'disconnected']);
     expect(walletConnectState.getSession()).toBeUndefined();
     expect(walletConnectState.isConnected).toBe(false);
     expect(mockClient.disconnect).not.toHaveBeenCalled();

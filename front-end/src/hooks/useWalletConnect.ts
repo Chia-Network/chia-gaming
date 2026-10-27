@@ -165,6 +165,12 @@ class WalletState {
         this.relayRecovery = null;
         this.onSessionConnected(this.session!);
       })
+      .catch((error) => {
+        if (isCurrent()) {
+          this.observable.next({ stateName: 'disconnected', connected: false, sessions: 1 });
+        }
+        throw error;
+      })
       .finally(() => {
         if (this.relayRecovery === recovery) this.relayRecovery = null;
       });
