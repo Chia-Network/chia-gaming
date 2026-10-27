@@ -2063,8 +2063,10 @@ const Shell = () => {
               failed: (reason) => {
                 console.error('[Shell] invalid provisional reliable session', reason);
                 if (peerSessionRef.current === provisional) {
-                  provisional.destroy();
-                  peerSessionRef.current = null;
+                  if (abortAcceptIfActive({ error: true })) return;
+                  // No Accept owns rollback of this failed consent checkpoint.
+                  void storageRepository.clearSession();
+                  abandonFailedStartAttempt({ error: true });
                 }
               },
             });
@@ -2316,6 +2318,7 @@ const Shell = () => {
       restoreHubPeerConnected,
       cancelAttemptedSession,
       abortAcceptIfActive,
+      abandonFailedStartAttempt,
       hubPresenceNow,
       isAvailableForNewSessionPrompt,
       presenceBusy,
