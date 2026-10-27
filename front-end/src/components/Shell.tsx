@@ -18,8 +18,7 @@ import {
 } from '../lib/session/acceptLifecycle';
 import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
 import { selectGamePaneKind } from '../lib/session/gamePane';
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
-import { recoveryReadiness } from '../lib/session/channelFundingSelectors';
+import WalletRecoveryNotice from './WalletRecoveryNotice';
 import GameSession from './GameSession';
 import { GameSessionErrorBoundary, UncaughtClientErrorReporter } from './GameSession';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
@@ -1015,27 +1014,6 @@ const Shell = () => {
     storageRepository.updatePreference({ key: 'unreadGame', value: v });
   }, []);
   const [walletAlert, setWalletAlertRaw] = useState(() => storageRepository.query('walletAlert'));
-  const [walletRecoveryReadiness, setWalletRecoveryReadiness] = useState(() =>
-    recoveryReadiness(
-      [...storageRepository.channelFundingOperations(), ...storageRepository.feeAttachments()],
-      channelFundingRuntime.providerScopeKeys(),
-    ),
-  );
-  useEffect(
-    () =>
-      channelFundingRuntime.subscribe(() =>
-        setWalletRecoveryReadiness(
-          recoveryReadiness(
-            [
-              ...storageRepository.channelFundingOperations(),
-              ...storageRepository.feeAttachments(),
-            ],
-            channelFundingRuntime.providerScopeKeys(),
-          ),
-        ),
-      ),
-    [],
-  );
   const setWalletAlert = useCallback((v: boolean) => {
     setWalletAlertRaw(v);
     storageRepository.updatePreference({ key: 'walletAlert', value: v });
@@ -3870,17 +3848,6 @@ const Shell = () => {
           </div>
         </div>
 
-        {walletRecoveryReadiness !== 'ready' && (
-          <div
-            role="alert"
-            className="border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-900 dark:text-amber-200"
-          >
-            {walletRecoveryReadiness === 'scope-mismatch'
-              ? 'Reconnect the original wallet account to resume pending wallet recovery. The connected account will not be used.'
-              : 'Reconnect the original wallet account to resume pending wallet recovery.'}
-          </div>
-        )}
-
         {/* Tab content */}
         <div
           style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, zIndex: 0 }}
@@ -3898,6 +3865,7 @@ const Shell = () => {
               overflow: 'auto',
             }}
           >
+            <WalletRecoveryNotice />
             {showTransactionPublishControl && (
               <Button
                 variant={transactionPublishNerfed ? 'solid' : 'outline'}
