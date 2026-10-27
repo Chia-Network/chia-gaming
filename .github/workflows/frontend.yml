@@ -263,13 +263,13 @@ jobs:
           cp hub/hub-service/dist/index-rollup.cjs "${HUB}/service.js"
 
       - name: Archive chia-gaming-frontend
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chia-gaming-frontend
           path: ${{ github.workspace }}/chia-gaming-deploy/g
 
       - name: Archive chia-gaming-hub
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chia-gaming-hub
           path: ${{ github.workspace }}/chia-gaming-deploy/l
