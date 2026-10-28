@@ -59,6 +59,39 @@ test('retiring an accepted session invalidates its owned channel handle', async 
   expect(() => cradle.serialize()).toThrow();
 });
 
+test('a terminal Rust notification automatically checkpoints the cleared peer journal', async () => {
+  const { blob, cradle } = await createAcceptedBlob(true);
+  expect(blob.unackedMessages).toHaveLength(1);
+  const before = cradle.serialize();
+  let saved!: () => void;
+  const checkpointed = new Promise<void>((resolve) => {
+    saved = resolve;
+  });
+  const save = jest.fn(() => {
+    expect(blob.unackedMessages).toEqual([]);
+    expect(cradle.serialize()).not.toEqual(before);
+    expect(blob.getWasmFields()?.channelStatus?.session_disposition).toBe('Abandoned');
+    saved();
+  });
+  setTestPersistence(blob, save);
+
+  const terminal = cradle.abandon();
+  expect(terminal.disposition.kind).toBe('terminal');
+  expect(terminal.events).toEqual([
+    expect.objectContaining({
+      Notification: expect.objectContaining({
+        ChannelStatus: expect.objectContaining({ session_disposition: 'Abandoned' }),
+      }),
+    }),
+  ]);
+  blob.processResult(terminal);
+
+  // No explicit flush or later stimulus: draining the terminal notification
+  // must itself schedule the checkpoint after Rust clears the peer journal.
+  await checkpointed;
+  expect(save).toHaveBeenCalledTimes(1);
+});
+
 test('a failed checkpoint preserves the accepted channel state and releases its inbound ACK once', async () => {
   const { blob, cradle, sentAcks } = await createAcceptedBlob();
   const body = await handshakeA();
