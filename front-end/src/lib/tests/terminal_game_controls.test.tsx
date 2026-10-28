@@ -28,7 +28,8 @@ import SpacePoker from '@games/spacepoker/ui/SpacePoker';
 import { restoreSpacepokerHand } from '@games/spacepoker/ui/serialize';
 import { krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import { UncaughtClientErrorReporter } from '../../components/GameSession';
-import { markClientErrorReported } from '../clientError';
+import { browserErrorReport, markClientErrorReported } from '../clientError';
+import { log, recentLogText } from '../../services/log';
 
 describe('terminal game controls', () => {
   let renderer: ReactTestRenderer | null = null;
@@ -120,6 +121,67 @@ describe('terminal game controls', () => {
     expect(renderer!.root.findByType('pre').children.join('')).toContain(
       'uncaught browser failure',
     );
+  });
+
+  it('shows context for a null rejection and records it in the app log', async () => {
+    const listeners = new Map<string, EventListenerOrEventListenerObject>();
+    (window.addEventListener as jest.Mock).mockImplementation(
+      (type: string, listener: EventListenerOrEventListenerObject) => {
+        listeners.set(type, listener);
+      },
+    );
+    act(() => {
+      renderer = create(createElement(UncaughtClientErrorReporter));
+    });
+    log('[WC session] restarting relay after stalled request');
+    const listener = listeners.get('unhandledrejection');
+    if (typeof listener !== 'function') throw new Error('rejection listener was not installed');
+    await act(async () => {
+      listener({ type: 'unhandledrejection', reason: null } as unknown as Event);
+      await Promise.resolve();
+    });
+    const detail = renderer!.root.findByType('pre').children.join('');
+    expect(detail).toContain('Event: Unhandled promise rejection');
+    expect(detail).toContain('\nnull\n');
+    expect(detail).toContain('No originating stack was supplied by the browser.');
+    expect(detail).toContain('[WC session] restarting relay after stalled request');
+    expect(recentLogText()).toContain('[client-error] Event: Unhandled promise rejection');
+    expect(
+      renderer!.root
+        .findAllByType('button')
+        .some((button) => button.children.includes('Copy details')),
+    ).toBe(true);
+  });
+
+  it('preserves the original stack and browser source location', () => {
+    const error = new Error('original failure');
+    error.stack = 'Error: original failure\n    at originalCaller (app.js:42:7)';
+    const detail = browserErrorReport(
+      {
+        type: 'error',
+        error,
+        message: error.message,
+        filename: 'app.js',
+        lineno: 42,
+        colno: 7,
+      } as ErrorEvent,
+      '',
+    );
+    expect(detail).toContain(error.stack);
+    expect(detail).toContain('Source: app.js:42:7');
+    expect(detail).not.toContain('No originating stack');
+  });
+
+  it('includes structured rejection details instead of Object object', () => {
+    const detail = browserErrorReport(
+      {
+        type: 'unhandledrejection',
+        reason: { code: 123, message: 'wallet failed' },
+      } as PromiseRejectionEvent,
+      '',
+    );
+    expect(detail).toContain('"code": 123');
+    expect(detail).toContain('"message": "wallet failed"');
   });
 
   it('disables Cal Poker selection, reorder, and submit controls', () => {
