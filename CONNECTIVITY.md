@@ -97,7 +97,7 @@ connects (`peer_available`) or actually disconnects (`peer_unavailable`).
 
 Shell holds the selected browser peer adapter (`front-end/src/services/PeerSession.ts`),
 which owns routing, framing, and liveness presentation. Its Rust delivery owner
-(`src/peer_session.rs` and its `driver.rs`) owns counters, queue draining,
+(`src/peer_session.rs` and `src/peer_session/session.rs`) owns counters, queue draining,
 acknowledgements, and replay. TypeScript reports hub/peer connection events;
 Rust decides what to send, calls the carrier, and processes its result.
 Accepting a proposal starts Rust session setup and attaches channel processing

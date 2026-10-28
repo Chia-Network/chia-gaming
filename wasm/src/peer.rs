@@ -1,8 +1,7 @@
 use super::gaming_wasm::Channel;
 use chia_gaming::common::types::Sha256Input;
 use chia_gaming::peer_session::coordination::{HostStatus, ReceiveMode, TerminalHandoff};
-use chia_gaming::peer_session::driver::{PeerDriver, PeerEvent, PeerHost, PeerInput, SendFrame};
-use chia_gaming::peer_session::session::Session;
+use chia_gaming::peer_session::session::{PeerEvent, PeerHost, PeerInput, SendFrame, Session};
 use chia_gaming::peer_session::{PeerSession, PreparedCommit, ReceivePolicy, SetupState};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -100,13 +99,6 @@ pub fn create_peer_protocol(
 }
 
 impl PeerProtocol {
-    fn driver(&self, host: JsPeerHost) -> PeerDriver<'_, JsPeerHost, Channel> {
-        PeerDriver {
-            session: &self.inner,
-            host,
-        }
-    }
-
     fn attach_channel(&self, channel: Channel) -> Result<(), JsValue> {
         if self.inner.channel.borrow().is_some() {
             return Err(error("peer session already owns a channel"));
@@ -147,8 +139,11 @@ impl PeerProtocol {
             .map_err(error)
     }
     pub fn receive(&self, input: JsValue, host: JsPeerHost) -> Result<bool, JsValue> {
-        self.driver(host)
-            .receive(serde_wasm_bindgen::from_value::<PeerInput>(input).map_err(error)?)
+        self.inner
+            .receive(
+                serde_wasm_bindgen::from_value::<PeerInput>(input).map_err(error)?,
+                &host,
+            )
             .map_err(error)
     }
     pub fn consumer_ready(&self, mode: JsValue, host: JsPeerHost) -> Result<(), JsValue> {
@@ -160,7 +155,7 @@ impl PeerProtocol {
         } else {
             serde_wasm_bindgen::from_value::<ReceiveMode>(mode).map_err(error)?
         };
-        self.driver(host).consumer_ready(mode).map_err(error)
+        self.inner.consumer_ready(mode, &host).map_err(error)
     }
     pub fn connectivity(
         &self,
@@ -169,8 +164,8 @@ impl PeerProtocol {
         force: bool,
         host: JsPeerHost,
     ) -> Result<bool, JsValue> {
-        self.driver(host)
-            .connectivity(event, now, force)
+        self.inner
+            .connectivity(event, now, force, &host)
             .map_err(error)
     }
     pub fn dirty(&self) -> bool {
@@ -186,8 +181,8 @@ impl PeerProtocol {
         host: JsPeerHost,
     ) -> Result<(), JsValue> {
         let commit: PreparedCommit = serde_wasm_bindgen::from_value(commit).map_err(error)?;
-        self.driver(host)
-            .complete_commit(commit, persisted)
+        self.inner
+            .complete_commit(commit, persisted, &host)
             .map_err(error)
     }
     /// Retire the channel consumer, optionally preserving its reliable rejection
@@ -212,10 +207,10 @@ impl PeerProtocol {
             .borrow_mut()
             .reject_session()
             .map_err(error)?;
-        self.driver(host).request_commit().map_err(error)
+        self.inner.request_commit(&host).map_err(error)
     }
     pub fn failure(&self, reason: String, host: JsPeerHost) -> Result<(), JsValue> {
-        self.driver(host).failure(reason).map_err(error)
+        self.inner.failure(reason, &host).map_err(error)
     }
     pub fn accept_session(&self, terms: JsValue, initiator: bool) -> Result<(), JsValue> {
         self.inner

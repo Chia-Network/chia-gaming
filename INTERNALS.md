@@ -35,9 +35,9 @@ outbound messages before projecting UI/wallet effects. Pending incoming proposal
 records use reliability without implying an accepted session.
 
 The same Rust delivery owner allocates message numbers, buffers out-of-order
-input, retires acknowledged messages, and chooses reconnect replay. Its driver
-in `src/peer_session/driver.rs` runs the entire delivery turn and calls host
-carrier/application callbacks itself. It calls the owned channel directly for
+input, retires acknowledged messages, and chooses reconnect replay. Its methods
+in `src/peer_session/session.rs` run the entire delivery turn with a host passed
+per call. It calls the owned channel directly for
 accepted messages and terminal acknowledgements; no internal host notification,
 JavaScript conversion, registry lookup or back-reference connects the two.
 Only the resulting UI/wallet effects are converted at the JavaScript boundary.

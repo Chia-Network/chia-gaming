@@ -107,9 +107,11 @@ outgoing proposal and requests the wallet reward address through the host;
 the returned address lets Rust create the channel engine in the same session.
 Rust also owns reliable peer numbering, acknowledgements, ordering, and replay,
 including consent/rejection delivery policy, terminal-message tracking, queue
-draining and send attempts (`src/peer_session.rs` and its driver). The accepted
+draining and send attempts (`src/peer_session.rs` and `src/peer_session/session.rs`). The accepted
 Rust session directly contains the reliability state and channel; native calls
 and results connect them without internal JavaScript conversions or callbacks.
+Delivery operations are methods on that owning session, with the host passed per
+call. State and channel borrows end before any host callback.
 TypeScript invokes gameplay, chain observations and serialization as methods
 on that same exported object, with no numeric channel lookup or forwarding wrapper.
 Retirement releases the channel; a carrier replacement preserves the same owner.

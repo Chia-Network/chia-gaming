@@ -29,7 +29,7 @@ import {
 import { pollOnce } from './blockchain_poller.driver';
 
 describe('terminal protocol cleanup', () => {
-  // Reliable terminal handoff permutations are covered by peer_session::driver::tests.
+  // Reliable terminal handoff permutations are covered by peer_session::session::tests.
   it('replaces queued presentation work with terminal notifications', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];

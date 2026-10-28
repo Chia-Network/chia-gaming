@@ -11,6 +11,8 @@ registry, handle or callback. Rust handles numbering, ACKs,
 ordering, replay, proposal/rejection policy, and terminal-message tracking.
 `peer_session::session::Session` directly contains reliability state and the
 optional channel, including its allocator, RNG and transaction manager.
+Delivery, replay and checkpoint release are methods on this owner; each call
+receives the host directly, without a separate driver object.
 Incoming channel messages, outgoing message allocation, and terminal
 acknowledgements use native Rust calls and results. There is no internal
 JavaScript conversion, host-notification routing or channel back-reference.
