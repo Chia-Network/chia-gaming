@@ -4,6 +4,7 @@ import type { ReadonlySessionReceivePolicy } from '../lib/session/receivePolicy'
 export type PeerProtocolFactory = (
   state: PeerProtocolState,
   policy: ReadonlySessionReceivePolicy,
+  seed: string,
 ) => PeerProtocolApi;
 
 let factory: PeerProtocolFactory | undefined;
@@ -23,7 +24,12 @@ export function installPeerProtocol(create: PeerProtocolFactory): void {
 export function createPeerProtocol(
   state: PeerProtocolState,
   policy: ReadonlySessionReceivePolicy,
+  seed?: string,
 ): PeerProtocolApi {
   if (!factory) throw new Error('Peer protocol requires initialized WASM');
-  return factory(state, policy);
+  if (seed === undefined) {
+    const entropy = crypto.getRandomValues(new Uint8Array(32));
+    seed = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+  return factory(state, policy, seed);
 }

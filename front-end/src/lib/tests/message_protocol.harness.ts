@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import type { WalletFeeSource } from '../../../../wasm/contract';
 import { SessionController } from '../../hooks/SessionController';
 import type {
   ChiaGame,
@@ -172,15 +173,17 @@ export function submissionDrain(
 }
 
 export function makeMockCradle(): ChiaGame {
-  const finalizeSubmissionAttempt = jest.fn((_attemptToken: string, feeSourceJson?: string) => ({
-    protocol_bundle: testSpendBundle('00'),
-    bundle: {},
-    applied_fee: '0',
-    warning: null,
-    fee_source_disposition: feeSourceJson === undefined ? 'not-requested' : 'attached',
-    variant_fingerprint: 'bb'.repeat(32),
-    should_broadcast: true,
-  }));
+  const finalizeSubmissionAttempt = jest.fn(
+    (_attemptToken: string, feeSource?: WalletFeeSource) => ({
+      protocol_bundle: testSpendBundle('00'),
+      bundle: {},
+      applied_fee: '0',
+      warning: null,
+      fee_source_disposition: feeSource === undefined ? 'not-requested' : 'attached',
+      variant_fingerprint: 'bb'.repeat(32),
+      should_broadcast: true,
+    }),
+  );
   const acknowledgeSubmissionAttempt = jest.fn();
   const rejectSubmissionAttempt = jest.fn();
   const cradle = {

@@ -1,5 +1,5 @@
 import type { PeerProtocolApi } from '../../../wasm/contract';
-import { WasmConnection, WasmInitFn, ChiaGame, RngId } from '../types/ChiaGaming';
+import { WasmConnection, WasmInitFn, ChiaGame } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../lib/gameIdentities';
@@ -174,19 +174,8 @@ export class WasmStateInit {
     });
   }
 
-  createRng(seed: string): RngId | undefined {
-    const rng_handle = this.wasmConnection?.create_rng(seed);
-    if (rng_handle) {
-      return new RngId(rng_handle);
-    }
-    return undefined;
-  }
-
   deserializeGame(serializedGame: Uint8Array, peer: PeerProtocolApi): ChiaGame {
-    const entropy = new Uint8Array(32);
-    crypto.getRandomValues(entropy);
-    const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
-    peer.restore_channel(serializedGame, seedHex);
+    peer.restore_channel(serializedGame);
     return peer;
   }
 }

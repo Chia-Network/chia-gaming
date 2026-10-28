@@ -113,6 +113,9 @@ and results connect them without internal JavaScript conversions or callbacks.
 TypeScript invokes gameplay, chain observations and serialization as methods
 on that same exported object, with no numeric channel lookup or forwarding wrapper.
 Retirement releases the channel; a carrier replacement preserves the same owner.
+The constructor receives fresh seed material directly. The channel owns its RNG;
+seed and RNG are excluded from persistence. Wallet bundles and fee-source results
+cross as structured values with exact `BigInt` amounts.
 TypeScript owns the connections, provides the socket-send callback and wallet
 requests, and performs the aggregate checkpoint. It reports connection events
 and checkpoint outcomes without inspecting or manipulating protocol queues. Pending proposal and

@@ -63,9 +63,9 @@ export interface PeerProtocolApi extends GameSessionApi {
   retire(retainRejection: boolean): boolean;
   reject_session(host: PeerHost): void;
   failure(reason: string, host: PeerHost): void;
-  restore_channel(data: Uint8Array, seed: string): void;
+  restore_channel(data: Uint8Array): void;
   accept_session(terms: PeerSessionTerms, initiator: boolean): void;
-  open_channel(terms: PeerSessionTerms, initiator: boolean, rngId: number, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
+  open_channel(terms: PeerSessionTerms, initiator: boolean, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
   free(): void;
 }
 
@@ -84,6 +84,11 @@ export interface SpendBundle {
   name?: string;
   spends: CoinSpend[];
 }
+
+export type WalletFeeSource =
+  | { kind: 'offer'; offer: string }
+  | { kind: 'bundle'; bundle: unknown }
+  | { kind: 'failure'; reason: string };
 
 export interface TransactionSubmission {
   id: string;
@@ -117,15 +122,6 @@ export interface SubmissionDrain {
   submissions: TransactionSubmission[];
   retired_submission_ids: string[];
   failures: SubmissionDrainFailure[];
-}
-
-export interface IChiaIdentity {
-  private_key: string;
-  synthetic_private_key: string;
-  public_key: string;
-  synthetic_public_key: string;
-  puzzle: string;
-  puzzle_hash: string;
 }
 
 export interface NeedCoinSpendRequest {
@@ -415,7 +411,7 @@ export interface GameSessionApi {
   ): WasmResult;
   cheat(game_id: string, mover_share: bigint): WasmResult;
   start_handshake(opening_fee: string): WasmResult;
-  provide_coin_spend_bundle(bundle_json: string): WasmResult;
+  provide_coin_spend_bundle(bundle: unknown): WasmResult;
   provide_offer_bech32(offer_bech32: string): WasmResult;
   wallet_callback_failed(reason: string): WasmResult;
   get_channel_puzzle_hash(): string | null;
@@ -426,7 +422,7 @@ export interface GameSessionApi {
   configure_submission_fee(amount: string): void;
   finalize_submission_attempt(
     attemptToken: string,
-    feeSourceJson?: string,
+    feeSource?: WalletFeeSource,
   ): SubmissionFinalizationResult;
   acknowledge_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
   reject_submission_attempt(attemptToken: string): SubmissionAttemptStatus;

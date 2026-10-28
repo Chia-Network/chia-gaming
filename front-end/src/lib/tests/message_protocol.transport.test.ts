@@ -1,3 +1,4 @@
+import type { WalletFeeSource } from '../../../../wasm/contract';
 import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
 import { restorePeerState } from './peer_protocol.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
@@ -35,7 +36,6 @@ import {
   createCoordinatorOnlySessionMachineRuntime,
   reduceSessionMachineForTest,
 } from './session_machine.harness';
-import { jsonStringify } from '../../util/jsonSafe';
 
 async function waitForCall(mock: jest.Mock, count: number): Promise<void> {
   for (let attempt = 0; attempt < 30 && mock.mock.calls.length < count; attempt += 1) {
@@ -933,9 +933,7 @@ describe('WASM wallet funding requests', () => {
         openingFee: 10n,
       },
     );
-    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledWith(
-      JSON.stringify(testSpendBundle('coin-spend')),
-    );
+    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledWith(testSpendBundle('coin-spend'));
   });
 
   it('attempts persistence before funding and continues after storage failure', async () => {
@@ -1399,15 +1397,18 @@ describe('wallet fee attachment on submission', () => {
   const feeTarget = 'dd'.repeat(32);
 
   function setFinalizer(blob: SessionController, finalize: jest.Mock) {
-    const wrapped = (attemptToken: string, feeSourceJson?: string) => ({
-      ...(finalize(attemptToken, feeSourceJson) as object),
+    const wrapped = (attemptToken: string, feeSource?: WalletFeeSource) => ({
+      ...(finalize(attemptToken, feeSource) as object),
       variant_fingerprint: 'bb'.repeat(32),
       should_broadcast: true,
     });
     const cradle = (
       blob as unknown as {
         cradle: {
-          finalize_submission_attempt: (attemptToken: string, feeSourceJson?: string) => unknown;
+          finalize_submission_attempt: (
+            attemptToken: string,
+            feeSource?: WalletFeeSource,
+          ) => unknown;
         };
       }
     ).cradle;
@@ -1485,10 +1486,10 @@ describe('wallet fee attachment on submission', () => {
         concurrentSpendCoinId: feeTarget,
       },
     );
-    expect(finalize).toHaveBeenCalledWith(
-      expect.any(String),
-      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
-    );
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       aggregated,
@@ -1744,10 +1745,7 @@ describe('wallet fee attachment on submission', () => {
     submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
 
-    expect(finalize).toHaveBeenCalledWith(
-      expect.any(String),
-      jsonStringify({ kind: 'bundle', bundle: feeSpend }),
-    );
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), { kind: 'bundle', bundle: feeSpend });
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       aggregated,
@@ -1797,8 +1795,8 @@ describe('wallet fee attachment on submission', () => {
         ]),
       );
     (cradle.finalize_submission_attempt as jest.Mock)
-      .mockImplementationOnce((_attemptToken: string, feeSourceJson: string) => {
-        expect(JSON.parse(feeSourceJson)).toEqual({
+      .mockImplementationOnce((_attemptToken: string, feeSource: WalletFeeSource) => {
+        expect(feeSource).toEqual({
           kind: 'failure',
           reason: 'wallet transport disconnected',
         });
@@ -1812,7 +1810,7 @@ describe('wallet fee attachment on submission', () => {
           should_broadcast: true,
         };
       })
-      .mockImplementationOnce((_attemptToken: string, _feeSourceJson: string) => ({
+      .mockImplementationOnce((_attemptToken: string, _feeSource: WalletFeeSource) => ({
         protocol_bundle: testSpendBundle('coin'),
         bundle: protocolBundle,
         applied_fee: '10',
@@ -1856,10 +1854,10 @@ describe('wallet fee attachment on submission', () => {
 
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
     expect(beginWalletOffer).toHaveBeenCalledTimes(2);
-    expect(cradle.finalize_submission_attempt).toHaveBeenLastCalledWith(
-      'fee-upgrade-attempt',
-      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
-    );
+    expect(cradle.finalize_submission_attempt).toHaveBeenLastCalledWith('fee-upgrade-attempt', {
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(spend).toHaveBeenLastCalledWith(
       expect.any(String),
       protocolBundle,
@@ -2061,8 +2059,8 @@ describe('wallet fee attachment on submission', () => {
       reason: 'the wallet could not build a signed fee source',
     });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const finalize = jest.fn().mockImplementation((_id: string, feeSource: string) => {
-      expect(JSON.parse(feeSource)).toEqual({
+    const finalize = jest.fn().mockImplementation((_id: string, feeSource: WalletFeeSource) => {
+      expect(feeSource).toEqual({
         kind: 'failure',
         reason: 'the wallet could not build a signed fee source',
       });
@@ -2140,10 +2138,10 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(finalize).toHaveBeenCalledWith(
-      expect.any(String),
-      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
-    );
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       protocolBundle,
@@ -2209,13 +2207,13 @@ describe('wallet fee attachment on submission', () => {
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {
     const beginWalletOffer = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const finalize = jest.fn().mockImplementation((_id: string, feeSource: string) => {
-      const source = JSON.parse(feeSource);
+    const finalize = jest.fn().mockImplementation((_id: string, feeSource: WalletFeeSource) => {
+      if (feeSource.kind !== 'failure') throw new Error('expected wallet failure');
       return {
         protocol_bundle: testSpendBundle('coin'),
         bundle: protocolBundle,
         applied_fee: '0',
-        warning: `Configured fee was not applied: ${source.reason}. The transaction will be attempted without a fee.`,
+        warning: `Configured fee was not applied: ${feeSource.reason}. The transaction will be attempted without a fee.`,
         fee_source_disposition: 'unused',
       };
     });

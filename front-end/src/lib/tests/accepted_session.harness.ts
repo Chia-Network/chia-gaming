@@ -42,12 +42,8 @@ export async function installAcceptedChannel(
   blob.blockchain = null;
   const protocol = blob.getPeerProtocol();
   if (!alreadyAccepted) protocol.accept_session(acceptedTerms, initiator);
-  const channel = await protocol.open_channel(
-    acceptedTerms,
-    initiator,
-    wasm.create_rng((initiator ? '01' : '02').repeat(32)),
-    '03'.repeat(32),
-    async () => (initiator ? '04' : '05').repeat(32),
+  const channel = await protocol.open_channel(acceptedTerms, initiator, '03'.repeat(32), async () =>
+    (initiator ? '04' : '05').repeat(32),
   );
   if (!channel) throw new Error('accepted fixture was retired');
   const cradle = protocol;
@@ -97,14 +93,11 @@ export async function handshakeA(terms = acceptedTerms): Promise<Uint8Array> {
       disposition: 'active',
     },
     DEFAULT_SESSION_RECEIVE_POLICY,
+    '01'.repeat(32),
   );
   peer.accept_session(terms, true);
-  const channel = await peer.open_channel(
-    terms,
-    true,
-    wasm.create_rng('01'.repeat(32)),
-    '03'.repeat(32),
-    async () => '04'.repeat(32),
+  const channel = await peer.open_channel(terms, true, '03'.repeat(32), async () =>
+    '04'.repeat(32),
   );
   if (!channel) throw new Error('initiator fixture was retired');
   peer.start_handshake('0');

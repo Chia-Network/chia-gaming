@@ -4,12 +4,10 @@ mod gaming_wasm {
     use chia_gaming::peer_session::coordination::TerminalCommand;
     use chia_gaming::peer_session::session::ChannelOutput;
 
-    use std::cell::RefCell;
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::BTreeMap;
     use std::convert::TryFrom;
     #[cfg(target_family = "wasm")]
-    use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::{AtomicI32, Ordering};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use hex::FromHexError;
 
@@ -143,16 +141,6 @@ mod gaming_wasm {
         status: &'static str,
     }
 
-    thread_local! {
-        static NEXT_ID: AtomicI32 = const {
-            AtomicI32::new(0)
-        };
-        static RNGS: RefCell<HashMap<i32, ChaCha8Rng>> = {
-        return RefCell::new(HashMap::new());
-    };
-
-    }
-
     #[cfg(target_family = "wasm")]
     unsafe extern "C" {
         fn __wasm_call_ctors();
@@ -180,19 +168,7 @@ mod gaming_wasm {
         wasm_cache_file(name, data);
     }
 
-    pub(super) fn get_next_id() -> i32 {
-        NEXT_ID.with(|n| n.fetch_add(1, Ordering::SeqCst))
-    }
-
-    fn insert_rng(id: i32, rng: ChaCha8Rng) {
-        RNGS.with(|cell| {
-            let mut mut_ref = cell.borrow_mut();
-            mut_ref.insert(id, rng);
-        });
-    }
-
     pub(super) struct ChannelConfig {
-        pub(super) rng_id: i32,
         pub(super) is_initiator: bool,
         pub(super) my_contribution: Amount,
         pub(super) their_contribution: Amount,
@@ -211,7 +187,6 @@ mod gaming_wasm {
         their_contribution: Amount,
         reward_puzzle_hash: PuzzleHash,
         agg_sig_me_additional_data: Hash,
-        rng_id: i32,
     }
 
     fn parse_game_config(jsconfig: ChannelConfig) -> Result<GameConfigPartial, types::Error> {
@@ -241,7 +216,6 @@ mod gaming_wasm {
             their_contribution: jsconfig.their_contribution,
             reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)?),
             agg_sig_me_additional_data: Hash::from_slice(&genesis_challenge_bytes)?,
-            rng_id: jsconfig.rng_id,
         })
     }
 
@@ -282,31 +256,6 @@ mod gaming_wasm {
         }
     }
 
-    #[wasm_bindgen]
-    pub fn create_rng(seed: String) -> Result<i32, JsValue> {
-        let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
-        let rng = ChaCha8Rng::from_seed(*hashed.bytes());
-        let id = get_next_id();
-        insert_rng(id, rng);
-        Ok(id)
-    }
-
-    pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, types::Error>
-    where
-        F: FnOnce(&mut ChaCha8Rng) -> Result<T, types::Error>,
-    {
-        RNGS.with(|cell| {
-            let mut mut_ref = cell.borrow_mut();
-            if let Some(cradle) = mut_ref.get_mut(&cid) {
-                return f(cradle);
-            }
-
-            Err(types::Error::StrErr(format!(
-                "could not find RNG instance {cid}"
-            )))
-        })
-    }
-
     #[derive(Serialize)]
     pub(super) struct ChannelCreated {
         pub puzzle_hash: String,
@@ -314,41 +263,42 @@ mod gaming_wasm {
         pub reward_puzzle_hash: Option<String>,
     }
 
-    pub(super) fn create_channel(config: ChannelConfig) -> Result<(Channel, String), types::Error> {
+    pub(super) fn create_channel(
+        config: ChannelConfig,
+        seed: [u8; 32],
+    ) -> Result<(Channel, String), types::Error> {
         let partial = parse_game_config(config)?;
-        with_rng(partial.rng_id, move |rng: &mut ChaCha8Rng| {
-            let mut allocator = AllocEncoder::new();
-            let private_key: PrivateKey = rng.random();
-            let identity = ChiaIdentity::new(&mut allocator, private_key)?;
-            let puzzle_hash_hex = hex::encode(identity.puzzle_hash.bytes());
+        let mut rng = ChaCha8Rng::from_seed(seed);
+        let mut allocator = AllocEncoder::new();
+        let private_key: PrivateKey = rng.random();
+        let identity = ChiaIdentity::new(&mut allocator, private_key)?;
+        let puzzle_hash_hex = hex::encode(identity.puzzle_hash.bytes());
 
-            let config = GameSessionConfig {
-                game_types: partial.game_types,
-                is_initiator: partial.is_initiator,
-                identity,
-                channel_timeout: partial.channel_timeout,
-                unroll_timeout: partial.unroll_timeout,
-                my_contribution: partial.my_contribution,
-                their_contribution: partial.their_contribution,
-                reward_puzzle_hash: partial.reward_puzzle_hash,
-                agg_sig_me_additional_data: partial.agg_sig_me_additional_data,
-            };
+        let config = GameSessionConfig {
+            game_types: partial.game_types,
+            is_initiator: partial.is_initiator,
+            identity,
+            channel_timeout: partial.channel_timeout,
+            unroll_timeout: partial.unroll_timeout,
+            my_contribution: partial.my_contribution,
+            their_contribution: partial.their_contribution,
+            reward_puzzle_hash: partial.reward_puzzle_hash,
+            agg_sig_me_additional_data: partial.agg_sig_me_additional_data,
+        };
 
-            let game_cradle = GameSession::new(rng, config);
-            let cradle = Channel {
-                allocator,
-                rng: ChaCha8SerializationWrapper(rng.clone()),
-                cradle: TransactionManager::new(game_cradle),
-            };
-            Ok((cradle, puzzle_hash_hex))
-        })
+        let game_cradle = GameSession::new(&mut rng, config);
+        let cradle = Channel {
+            allocator,
+            rng: ChaCha8SerializationWrapper(rng),
+            cradle: TransactionManager::new(game_cradle),
+        };
+        Ok((cradle, puzzle_hash_hex))
     }
 
-    pub(super) fn restore_channel(data: &[u8], seed: &str) -> Result<Channel, types::Error> {
+    pub(super) fn restore_channel(data: &[u8], seed: [u8; 32]) -> Result<Channel, types::Error> {
         let mut channel: Channel =
             bencodex::from_slice(data).map_err(|e| types::Error::StrErr(e.to_string()))?;
-        let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
-        channel.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
+        channel.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(seed));
         channel.cradle.restore_runtime();
         Ok(channel)
     }
@@ -1155,29 +1105,6 @@ mod gaming_wasm {
         Ok(obj.into())
     }
 
-    #[derive(Serialize, Deserialize)]
-    struct JsChiaIdentity {
-        pub private_key: String,
-        pub synthetic_private_key: String,
-        pub public_key: String,
-        pub synthetic_public_key: String,
-        pub puzzle: String,
-        pub puzzle_hash: String,
-    }
-
-    impl From<ChiaIdentity> for JsChiaIdentity {
-        fn from(value: ChiaIdentity) -> JsChiaIdentity {
-            JsChiaIdentity {
-                private_key: hex::encode(value.private_key.bytes()),
-                synthetic_private_key: hex::encode(value.synthetic_private_key.bytes()),
-                public_key: hex::encode(value.public_key.bytes()),
-                synthetic_public_key: hex::encode(value.synthetic_public_key.bytes()),
-                puzzle: value.puzzle.to_hex(),
-                puzzle_hash: hex::encode(value.puzzle_hash.bytes()),
-            }
-        }
-    }
-
     fn check_for_hex(hex_with_prefix: &str) -> Result<Vec<u8>, JsValue> {
         if let Some(stripped) = hex_with_prefix.strip_prefix("0x") {
             return hex::decode(stripped).into_js();
@@ -1226,19 +1153,6 @@ mod gaming_wasm {
         let pubkey = PublicKey::from_slice(&public_key_bytes).into_js()?;
         let puzzle_hash = puzzle_hash_for_pk(&mut allocator, &pubkey).into_js()?;
         Ok(hex::encode(puzzle_hash.bytes()))
-    }
-
-    #[wasm_bindgen(unchecked_return_type = "IChiaIdentity")]
-    pub fn chia_identity(rng_id: i32) -> Result<JsValue, JsValue> {
-        with_rng(rng_id, move |rng: &mut ChaCha8Rng| {
-            let mut allocator = AllocEncoder::new();
-            let private_key = rng.random();
-            let identity = ChiaIdentity::new(&mut allocator, private_key)?;
-            let js_identity: JsChiaIdentity = identity.into();
-            serde_wasm_bindgen::to_value(&js_identity)
-                .map_err(|x| types::Error::StrErr(format!("{x:?}")))
-        })
-        .into_js()
     }
 
     #[wasm_bindgen]
@@ -1558,9 +1472,9 @@ mod gaming_wasm {
             })
         }
 
-        pub fn provide_coin_spend_bundle(&self, bundle_json: &str) -> Result<JsValue, JsValue> {
-            let bundle = serde_json::from_str::<CoinsetSpendBundle>(bundle_json)
-                .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
+        pub fn provide_coin_spend_bundle(&self, bundle: JsValue) -> Result<JsValue, JsValue> {
+            let bundle = serde_wasm_bindgen::from_value::<CoinsetSpendBundle>(bundle)
+                .map_err(|e| JsValue::from_str(&format!("bad spend bundle: {e}")))?;
             let spend_bundle = coinset_spend_bundle_to_spend_bundle(&bundle).into_js()?;
             self.with_game_drain(move |cradle: &mut Channel| {
                 cradle
@@ -1591,7 +1505,7 @@ mod gaming_wasm {
         pub fn finalize_submission_attempt(
             &self,
             attempt_token: &str,
-            fee_source_json: Option<String>,
+            fee_source: JsValue,
         ) -> Result<JsValue, JsValue> {
             let token = attempt_token
                 .parse::<u64>()
@@ -1603,12 +1517,14 @@ mod gaming_wasm {
                 return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt { status: "stale" })
                     .map_err(|error| JsValue::from_str(&error.to_string()));
             };
+            let fee_source =
+                (!fee_source.is_undefined() && !fee_source.is_null()).then_some(fee_source);
             let fee_source = match fee_intent {
-                SubmissionFeeIntent::Attach { target, amount, .. } => fee_source_json
+                SubmissionFeeIntent::Attach { target, amount, .. } => fee_source
                     .ok_or_else(|| "the wallet did not provide a fee source".to_string())
-                    .and_then(|json| {
-                        serde_json::from_str::<JsWalletFeeSource>(&json)
-                            .map_err(|e| format!("bad wallet fee source json: {e}"))
+                    .and_then(|value| {
+                        serde_wasm_bindgen::from_value::<JsWalletFeeSource>(value)
+                            .map_err(|e| format!("bad wallet fee source: {e}"))
                     })
                     .and_then(|source| match source {
                         JsWalletFeeSource::Offer { offer } => decode_offer_to_spend_bundle(&offer)
@@ -1626,7 +1542,7 @@ mod gaming_wasm {
                     .map(SubmissionFeeSource::Available)
                     .unwrap_or_else(SubmissionFeeSource::Failed),
                 SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
-                    if fee_source_json.is_some() {
+                    if fee_source.is_some() {
                         return Err(JsValue::from_str(
                             "fee source supplied for a submission that did not request one",
                         ));
@@ -1810,13 +1726,6 @@ mod gaming_wasm {
                 })
                 .collect();
             serde_wasm_bindgen::to_value(&entries).into_js()
-        }
-
-        pub fn get_identity(&self) -> Result<JsValue, JsValue> {
-            serde_wasm_bindgen::to_value(&self.with_game(move |cradle: &mut Channel| {
-                Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
-            })?)
-            .into_js()
         }
 
         #[wasm_bindgen(js_name = acceptSettlement)]

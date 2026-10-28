@@ -87,10 +87,6 @@ export async function configSessionController(
 ): Promise<SessionController> {
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
-  const entropy = new Uint8Array(32);
-  crypto.getRandomValues(entropy);
-  const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
-  const rngId = wasmConnection.create_rng(seedHex);
   const peer = sc.getPeerProtocol();
   const result = await peer.open_channel(
     {
@@ -100,7 +96,6 @@ export async function configSessionController(
       unroll_timeout: unrollTimeout?.toString(),
     },
     iStarted,
-    rngId,
     getGenesisChallenge(),
     async () => rewardPuzzleHashOverride ?? (await blockchain.rpc.getAddress()).puzzleHash,
   );

@@ -289,10 +289,10 @@ export function restoreTestSession(
   seed: string,
 ) {
   const snapshot = controller.getPeerProtocol().snapshot();
-  const restored = createPeerProtocol(snapshot, DEFAULT_SESSION_RECEIVE_POLICY);
+  const restored = createPeerProtocol(snapshot, DEFAULT_SESSION_RECEIVE_POLICY, seed);
   try {
     restored.restore(snapshot, snapshot.terminalHandoff);
-    restored.restore_channel(serialized, seed);
+    restored.restore_channel(serialized);
     return restored;
   } catch (error) {
     restored.free();

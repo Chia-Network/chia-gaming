@@ -273,7 +273,6 @@ export type WalletOfferBeginOutcome =
 export interface WasmConnection {
   create_peer_protocol: import('../services/peerProtocol').PeerProtocolFactory;
   init: () => void;
-  create_rng: (seed: string) => number;
   game_session_serialization_schema: () => number;
   cache_file: (name: string, data: Uint8Array) => void;
   registered_game_packages: () => Array<{ key: string; id: string }>;
@@ -289,16 +288,6 @@ export interface WasmConnection {
 }
 
 export type ChiaGame = WasmContract.GameSessionApi;
-
-export class RngId {
-  rngId: number;
-  constructor(rngId: number) {
-    this.rngId = rngId;
-  }
-  getId() {
-    return this.rngId;
-  }
-}
 
 export interface WatchReport {
   created_watched: string[];

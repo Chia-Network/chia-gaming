@@ -1,4 +1,5 @@
 use super::gaming_wasm::Channel;
+use chia_gaming::common::types::Sha256Input;
 use chia_gaming::peer_session::coordination::{HostStatus, ReceiveMode, TerminalHandoff};
 use chia_gaming::peer_session::driver::{PeerDriver, PeerEvent, PeerHost, PeerInput, SendFrame};
 use chia_gaming::peer_session::session::Session;
@@ -79,15 +80,23 @@ impl PeerHost for JsPeerHost {
 #[wasm_bindgen]
 pub struct PeerProtocol {
     pub(super) inner: Session<Channel>,
+    seed: [u8; 32],
 }
 
 #[wasm_bindgen]
-pub fn create_peer_protocol(state: JsValue, policy: JsValue) -> Result<PeerProtocol, JsValue> {
+pub fn create_peer_protocol(
+    state: JsValue,
+    policy: JsValue,
+    seed: &str,
+) -> Result<PeerProtocol, JsValue> {
     let inner = Session::new(PeerSession::new(
         serde_wasm_bindgen::from_value(state).map_err(error)?,
         serde_wasm_bindgen::from_value::<ReceivePolicy>(policy).map_err(error)?,
     ));
-    Ok(PeerProtocol { inner })
+    Ok(PeerProtocol {
+        inner,
+        seed: *Sha256Input::Bytes(seed.as_bytes()).hash().bytes(),
+    })
 }
 
 impl PeerProtocol {
@@ -219,8 +228,8 @@ impl PeerProtocol {
             .map_err(error)
     }
 
-    pub fn restore_channel(&self, data: &[u8], seed: &str) -> Result<(), JsValue> {
-        let channel = super::gaming_wasm::restore_channel(data, seed).map_err(error)?;
+    pub fn restore_channel(&self, data: &[u8]) -> Result<(), JsValue> {
+        let channel = super::gaming_wasm::restore_channel(data, self.seed).map_err(error)?;
         self.attach_channel(channel)
     }
 
@@ -230,7 +239,6 @@ impl PeerProtocol {
         &self,
         terms: JsValue,
         initiator: bool,
-        rng_id: i32,
         genesis_challenge: String,
         address_provider: js_sys::Function,
     ) -> Result<JsValue, JsValue> {
@@ -253,7 +261,7 @@ impl PeerProtocol {
         let address = address
             .as_string()
             .ok_or_else(|| error("wallet address must be a string"))?;
-        self.provide_wallet_address(rng_id, &address, &genesis_challenge)
+        self.provide_wallet_address(&address, &genesis_challenge)
     }
 }
 
@@ -262,7 +270,6 @@ impl PeerProtocol {
     /// accepted peer session. The host never supplies a placeholder address.
     fn provide_wallet_address(
         &self,
-        rng_id: i32,
         address: &str,
         genesis_challenge: &str,
     ) -> Result<JsValue, JsValue> {
@@ -283,7 +290,6 @@ impl PeerProtocol {
             (&terms.responder_amount, &terms.proposer_amount)
         };
         let config = super::gaming_wasm::ChannelConfig {
-            rng_id,
             is_initiator: *initiator,
             my_contribution: chia_gaming::common::types::Amount::new(amount(mine)?),
             their_contribution: chia_gaming::common::types::Amount::new(amount(theirs)?),
@@ -292,7 +298,8 @@ impl PeerProtocol {
             reward_puzzle_hash: address.into(),
             genesis_challenge: genesis_challenge.into(),
         };
-        let (channel, puzzle_hash) = super::gaming_wasm::create_channel(config).map_err(error)?;
+        let (channel, puzzle_hash) =
+            super::gaming_wasm::create_channel(config, self.seed).map_err(error)?;
         self.attach_channel(channel)?;
         js(&super::gaming_wasm::ChannelCreated {
             puzzle_hash,

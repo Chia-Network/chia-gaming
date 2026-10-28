@@ -3,8 +3,11 @@ Wasm bindings for the chia-gaming frontend.
 This crate packages the Rust state-channel implementation for browser and
 Node.js tests via wasm-pack.
 
-`create_peer_protocol` constructs the Rust peer-session owner used by the
-browser's `ReliablePeerTransport` adapter. Rust handles numbering, ACKs,
+`create_peer_protocol(state, policy, seed)` constructs the Rust peer-session
+owner used by the browser's `ReliablePeerTransport` adapter. JavaScript supplies
+fresh entropy directly; Rust hashes it and initializes the channel-owned RNG
+on creation or restore. Neither seed nor RNG is persisted. There is no RNG
+registry, handle or callback. Rust handles numbering, ACKs,
 ordering, replay, proposal/rejection policy, and terminal-message tracking.
 `peer_session::session::Session` directly contains reliability state and the
 optional channel, including its allocator, RNG and transaction manager.
@@ -36,5 +39,8 @@ request. Gameplay, chain observations and channel serialization are methods on
 that same exported object (`GameSessionApi` / `ChiaGame` in TypeScript). There is
 no numeric channel handle, registry or TypeScript forwarding wrapper.
 `restore_channel` attaches saved channel state to the existing owner after its
-reliability checkpoint is restored. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
+reliability checkpoint is restored; it uses the new owner's seed. Wallet funding
+bundles and fee-source results cross as JavaScript objects with `BigInt` coin
+amounts, without a JSON encoding step. Peer frames, wallet effects and UI events
+retain their separate destinations. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
 [peer protocol](../PEER_PROTOCOL.md) for lifetime and ordering contracts.

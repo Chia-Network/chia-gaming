@@ -661,7 +661,7 @@ export class SessionController implements PollingGameSession {
           result =
             outcome.material.kind === 'offer'
               ? this.cradle.provide_offer_bech32(outcome.material.offer)
-              : this.cradle.provide_coin_spend_bundle(jsonStringify(outcome.material.bundle));
+              : this.cradle.provide_coin_spend_bundle(outcome.material.bundle);
         } catch (error) {
           const message = extractErrorMessage(error);
           diagStack('handleNeedCoinSpend error', error);

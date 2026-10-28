@@ -409,10 +409,11 @@ The actual security boundaries are:
 The game cradle's `ChaCha8Rng` (used for move entropy and identity
 generation) is **not** serialized. The `ChaCha8SerializationWrapper`
 emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
-zeroed placeholder via `Default`. On restore, `restore_channel`
-always takes a fresh `seed` parameter from JavaScript, hashes it, and
-creates a brand new `ChaCha8Rng` — the deserialized placeholder is
-immediately overwritten. This avoids persisting seed material and
+zeroed placeholder via `Default`. JavaScript passes fresh entropy directly to
+`create_peer_protocol(state, policy, seed)` when constructing each owner; Rust
+hashes it once. Channel creation initializes its owned RNG from that seed,
+and `restore_channel(data)` replaces the deserialized placeholder from the
+new owner's seed. There is no RNG handle, global registry or seed callback. This avoids persisting seed material and
 guarantees fresh entropy after every save/restore cycle. The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).

@@ -20,7 +20,7 @@ const ack = (peer: PeerProtocolApi, host: PeerHost, msgno: bigint) =>
 const commit = (peer: PeerProtocolApi, host: PeerHost) =>
   peer.complete_commit(peer.prepare_commit(), true, host);
 
-function pendingPeer() {
+function pendingPeer(seed = '01'.repeat(32)) {
   const peer = createPeerProtocol(
     {
       sessionId: '000102030405060708090a0b0c0d0e0f',
@@ -30,6 +30,7 @@ function pendingPeer() {
       disposition: 'active',
     },
     DEFAULT_SESSION_RECEIVE_POLICY,
+    seed,
   );
   const sent: Array<{ msgno: bigint; body: Uint8Array }> = [];
   const delivered: bigint[] = [];
@@ -52,8 +53,7 @@ function pendingPeer() {
 }
 
 async function openChannel(peer: PeerProtocolApi, address: () => Promise<string>) {
-  const rng = wasm.create_rng('01'.repeat(32));
-  return peer.open_channel(terms, true, rng, '03'.repeat(32), address);
+  return peer.open_channel(terms, true, '03'.repeat(32), address);
 }
 
 test('session objects isolate channel operations and retirement even with the same protocol ID', async () => {
@@ -63,7 +63,11 @@ test('session objects isolate channel operations and retirement even with the sa
   try {
     for (const peer of [first, second]) {
       peer.accept_session(terms, true);
-      await openChannel(peer, async () => '02'.repeat(32));
+      const channel = await openChannel(peer, async () => '02'.repeat(32));
+      // Preserve the identity and RNG draw order from the previous handle-based API.
+      expect(channel?.puzzle_hash).toBe(
+        '26fc9890d5250d0212af7931d9cc277cf72a8c3eb50355df2fbab38fb2079c4c',
+      );
     }
     const before = second.serialize();
     first.abandon();
@@ -146,7 +150,7 @@ test.each([false, true])(
 );
 
 test('inbound acceptance retains buffered channel traffic until the wallet address arrives, then delivers inside Rust', async () => {
-  const { peer, host, delivered, sent, events } = pendingPeer();
+  const { peer, host, delivered, sent, events } = pendingPeer('02'.repeat(32));
   peer.consumer_ready('proposal', host);
   data(peer, host, 1n, proposal());
   data(peer, host, 2n, await handshakeA(terms));
@@ -154,13 +158,7 @@ test('inbound acceptance retains buffered channel traffic until the wallet addre
   peer.consumer_ready('channel', host);
   expect(delivered).toEqual([1n]);
   expect(peer.snapshot().remoteNumber).toBe(1n);
-  await peer.open_channel(
-    terms,
-    false,
-    wasm.create_rng('02'.repeat(32)),
-    '03'.repeat(32),
-    async () => '05'.repeat(32),
-  );
+  await peer.open_channel(terms, false, '03'.repeat(32), async () => '05'.repeat(32));
   peer.consumer_ready('channel', host);
   commit(peer, host);
   expect(peer.snapshot().remoteNumber).toBe(2n);
