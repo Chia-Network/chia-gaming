@@ -1,3 +1,5 @@
+import { createPeerProtocol } from '../../services/peerProtocol';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
 import { Program } from 'clvm-lib';
 import { Subscription } from 'rxjs';
 import {
@@ -281,6 +283,23 @@ export async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>
   );
 }
 
+export function restoreTestSession(
+  controller: SessionController,
+  serialized: Uint8Array,
+  seed: string,
+) {
+  const snapshot = controller.getPeerProtocol().snapshot();
+  const restored = createPeerProtocol(snapshot, DEFAULT_SESSION_RECEIVE_POLICY);
+  try {
+    restored.restore(snapshot, snapshot.terminalHandoff);
+    restored.restore_channel(serialized, seed);
+    return restored;
+  } catch (error) {
+    restored.free();
+    throw error;
+  }
+}
+
 export function assertCradleRoundTrip(stage: string, controller: SessionController): Uint8Array {
   const wasmFields = controller.getWasmFields();
   const serialized = wasmFields?.serializedGameSession;
@@ -291,13 +310,12 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
     `${stage}: expected current cradle schema`,
   );
   assert.ok(serialized.byteLength > 0, `${stage}: expected non-empty serialized cradle`);
-  // Fingerprint immediately: if serialize_game_session returned a WASM-memory view,
+  // Fingerprint immediately: if serialize returned a WASM-memory view,
   // later WASM activity would mutate these bytes in place.
   const ownedFingerprint = Uint8Array.from(serialized);
+  const restored = restoreTestSession(controller, serialized, `reload-regression-${stage}`);
   try {
-    const restoredId = WholeWasmObject.restore_session(serialized, `reload-regression-${stage}`);
-    assert.equal(typeof restoredId, 'number');
-    const reserialized = WholeWasmObject.serialize_game_session(restoredId);
+    const reserialized = restored.serialize();
     assert.deepEqual(
       serialized,
       ownedFingerprint,
@@ -314,6 +332,8 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
       `${stage}: ${serialized.byteLength} byte cradle failed immediate restore\n${String(e)}`,
       { cause: e },
     );
+  } finally {
+    restored.free();
   }
   return serialized;
 }

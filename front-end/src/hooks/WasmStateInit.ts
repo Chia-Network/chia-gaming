@@ -182,15 +182,11 @@ export class WasmStateInit {
     return undefined;
   }
 
-  deserializeGame(
-    wasm: WasmConnection,
-    serializedGame: Uint8Array,
-    peer: PeerProtocolApi,
-  ): ChiaGame {
+  deserializeGame(serializedGame: Uint8Array, peer: PeerProtocolApi): ChiaGame {
     const entropy = new Uint8Array(32);
     crypto.getRandomValues(entropy);
     const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
-    const chiaGameId = peer.restore_channel(serializedGame, seedHex);
-    return new ChiaGame(wasm, chiaGameId);
+    peer.restore_channel(serializedGame, seedHex);
+    return peer;
   }
 }

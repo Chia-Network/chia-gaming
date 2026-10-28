@@ -409,8 +409,8 @@ The actual security boundaries are:
 The game cradle's `ChaCha8Rng` (used for move entropy and identity
 generation) is **not** serialized. The `ChaCha8SerializationWrapper`
 emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
-zeroed placeholder via `Default`. On restore, `restore_session`
-always takes a fresh `new_seed` parameter from JavaScript, hashes it, and
+zeroed placeholder via `Default`. On restore, `restore_channel`
+always takes a fresh `seed` parameter from JavaScript, hashes it, and
 creates a brand new `ChaCha8Rng` — the deserialized placeholder is
 immediately overwritten. This avoids persisting seed material and
 guarantees fresh entropy after every save/restore cycle. The RNG is used
@@ -797,7 +797,9 @@ and checkpoint completion; it has no queue accessors or delivery-confirmation
 steps. Rust also owns the pre-consent delivery rules, incoming rejection
 recognition, repeated-proposal rejection handling, and terminal-message
 reconciliation and sent/ACK state. One Rust session directly contains the
-reliability state and channel; gameplay handles resolve to that owner. Native
+reliability state and channel. Gameplay and chain-observation calls are methods
+on that same exported object; `ChiaGame` is a TypeScript interface, with no
+forwarding wrapper or numeric channel registry. Native
 calls and results deliver inbound messages, journal channel output, and complete
 terminal acknowledgements without internal JavaScript conversions or callback
 routing. TypeScript receives the resulting UI/wallet effects

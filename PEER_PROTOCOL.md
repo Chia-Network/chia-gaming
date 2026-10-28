@@ -30,7 +30,9 @@ acceptance starts the session; Rust constructs the proposal and requests the
 wallet address through the TypeScript host. The host owns hub connectivity,
 storage writes, and carrier execution. One accepted Rust session directly owns
 reliability state and channel; message delivery, outgoing journal allocation,
-and terminal acknowledgement completion use native calls and results. Carrier replacement
+and terminal acknowledgement completion use native calls and results. Gameplay
+and chain observations also target that object directly, without a channel-handle
+registry. Carrier replacement
 preserves this owner, and retirement releases its channel. Registration and peer-availability
 observations tell Rust when to replay. This ownership does not change any wire
 format, message numbering, consent requirement, or checkpoint-release rule

@@ -56,6 +56,29 @@ async function openChannel(peer: PeerProtocolApi, address: () => Promise<string>
   return peer.open_channel(terms, true, rng, '03'.repeat(32), address);
 }
 
+test('session objects isolate channel operations and retirement even with the same protocol ID', async () => {
+  wasm.init();
+  const first = pendingPeer().peer;
+  const second = pendingPeer().peer;
+  try {
+    for (const peer of [first, second]) {
+      peer.accept_session(terms, true);
+      await openChannel(peer, async () => '02'.repeat(32));
+    }
+    const before = second.serialize();
+    first.abandon();
+    expect(first.serialize()).not.toEqual(before);
+    expect(second.serialize()).toEqual(before);
+    first.retire(false);
+    expect(() => first.serialize()).toThrow();
+    expect(second.serialize()).toEqual(before);
+    expect(second.snapshot().unackedMessages).toHaveLength(1);
+  } finally {
+    first.free();
+    second.free();
+  }
+});
+
 test('Rust releases the proposal after checkpointing while waiting for the wallet address', async () => {
   wasm.init();
   const { peer, host, sent } = pendingPeer();
@@ -78,7 +101,7 @@ test('Rust releases the proposal after checkpointing while waiting for the walle
   expect(decodePeerAppMessage(sent[0].body)).toEqual({ type: 'session_proposal', ...terms });
   resolveAddress('02'.repeat(32));
   const channel = (await opening)!;
-  expect(wasm.serialize_game_session(channel.id).length).toBeGreaterThan(0);
+  expect(peer.serialize().length).toBeGreaterThan(0);
   expect(channel.rewardPuzzleHash).toBe('02'.repeat(32));
   expect(peer.snapshot().messageNumber).toBe(2n);
   await expect(openChannel(peer, address)).rejects.toThrow('already started');
@@ -90,8 +113,8 @@ test('restoring accepted setup requests an address and replays the original prop
   const { peer: original, host, sent } = pendingPeer();
   original.accept_session(terms, true);
   const restored = createPeerProtocol(original.snapshot(), DEFAULT_SESSION_RECEIVE_POLICY);
-  const channel = (await openChannel(restored, async () => '02'.repeat(32)))!;
-  expect(wasm.serialize_game_session(channel.id).length).toBeGreaterThan(0);
+  await openChannel(restored, async () => '02'.repeat(32));
+  expect(restored.serialize().length).toBeGreaterThan(0);
   restored.connectivity('registered', 10000, false, host);
   expect(sent).toHaveLength(1);
   expect(sent[0].msgno).toBe(1n);
@@ -131,13 +154,13 @@ test('inbound acceptance retains buffered channel traffic until the wallet addre
   peer.consumer_ready('channel', host);
   expect(delivered).toEqual([1n]);
   expect(peer.snapshot().remoteNumber).toBe(1n);
-  const channel = (await peer.open_channel(
+  await peer.open_channel(
     terms,
     false,
     wasm.create_rng('02'.repeat(32)),
     '03'.repeat(32),
     async () => '05'.repeat(32),
-  ))!;
+  );
   peer.consumer_ready('channel', host);
   commit(peer, host);
   expect(peer.snapshot().remoteNumber).toBe(2n);
@@ -145,7 +168,7 @@ test('inbound acceptance retains buffered channel traffic until the wallet addre
   expect(events.filter(({ type }) => type === 'channel-result')).toHaveLength(1);
   expect(sent).toEqual([]);
   peer.free();
-  expect(() => wasm.serialize_game_session(channel.id)).toThrow();
+  expect(() => peer.serialize()).toThrow();
 });
 
 test('Rust handles rejected-session traffic without an application decoder', () => {

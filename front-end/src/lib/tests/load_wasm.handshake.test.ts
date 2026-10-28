@@ -11,6 +11,7 @@ import {
   action_with_messages,
   addActiveCradle,
   assertCradleRoundTrip,
+  restoreTestSession,
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
@@ -184,16 +185,16 @@ it(
         reloaded.history.diagnosticLog?.includes('boot-before-resume'),
         'preference patch during marker-only boot must be retained',
       );
-      const restoredId = WholeWasmObject.restore_session(
+      const restored = restoreTestSession(
+        wasm_blob2,
         reloaded.session.live.serializedGameSession,
         'reload-regression-seed',
       );
-      assert.equal(typeof restoredId, 'number');
-      const restoredWatches = WholeWasmObject.snapshot_watched_coins(restoredId) as Array<{
+      const restoredWatches = restored.snapshot_watched_coins() as Array<{
         coin_name: string;
         coin_string: string;
       }>;
-      const restoredCoins = WholeWasmObject.coins_of_interest(restoredId) as Array<{
+      const restoredCoins = restored.coins_of_interest() as Array<{
         label: string;
         id: string;
       }>;
@@ -214,6 +215,8 @@ it(
         1,
         'reload before channel creation must preserve the channel watch',
       );
+
+      restored.free();
 
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('receiver-finished-four-message-handshake', wasm_blob2);

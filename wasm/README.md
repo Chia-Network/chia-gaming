@@ -32,7 +32,9 @@ policy callbacks or sent/ACK confirmation sequence.
 
 Synchronous host callbacks run without a Rust session borrow. They are passed
 per call; the address-provider callback is retained only for its asynchronous
-request. Existing gameplay and on-chain handles resolve to the same session
-owner at the WASM boundary; standalone engine bindings remain available for
-callers that do not use peer reliability. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
+request. Gameplay, chain observations and channel serialization are methods on
+that same exported object (`GameSessionApi` / `ChiaGame` in TypeScript). There is
+no numeric channel handle, registry or TypeScript forwarding wrapper.
+`restore_channel` attaches saved channel state to the existing owner after its
+reliability checkpoint is restored. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
 [peer protocol](../PEER_PROTOCOL.md) for lifetime and ordering contracts.

@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use super::gaming_wasm::Channel;
 use chia_gaming::peer_session::coordination::{HostStatus, ReceiveMode, TerminalHandoff};
 use chia_gaming::peer_session::driver::{PeerDriver, PeerEvent, PeerHost, PeerInput, SendFrame};
@@ -80,26 +78,16 @@ impl PeerHost for JsPeerHost {
 
 #[wasm_bindgen]
 pub struct PeerProtocol {
-    inner: Rc<Session<Channel>>,
-    // External gameplay calls resolve this handle to the same owned session.
-    id: i32,
-}
-
-impl Drop for PeerProtocol {
-    fn drop(&mut self) {
-        super::gaming_wasm::drop_game_session(self.id);
-    }
+    pub(super) inner: Session<Channel>,
 }
 
 #[wasm_bindgen]
 pub fn create_peer_protocol(state: JsValue, policy: JsValue) -> Result<PeerProtocol, JsValue> {
-    let inner = Rc::new(Session::new(PeerSession::new(
+    let inner = Session::new(PeerSession::new(
         serde_wasm_bindgen::from_value(state).map_err(error)?,
         serde_wasm_bindgen::from_value::<ReceivePolicy>(policy).map_err(error)?,
-    )));
-    let id = super::gaming_wasm::get_next_id();
-    super::gaming_wasm::register_peer(id, inner.clone());
-    Ok(PeerProtocol { inner, id })
+    ));
+    Ok(PeerProtocol { inner })
 }
 
 impl PeerProtocol {
@@ -231,10 +219,9 @@ impl PeerProtocol {
             .map_err(error)
     }
 
-    pub fn restore_channel(&self, data: &[u8], seed: &str) -> Result<i32, JsValue> {
+    pub fn restore_channel(&self, data: &[u8], seed: &str) -> Result<(), JsValue> {
         let channel = super::gaming_wasm::restore_channel(data, seed).map_err(error)?;
-        self.attach_channel(channel)?;
-        Ok(self.id)
+        self.attach_channel(channel)
     }
 
     /// The host implements only the address RPC. Rust owns setup resumption,
@@ -295,15 +282,11 @@ impl PeerProtocol {
         } else {
             (&terms.responder_amount, &terms.proposer_amount)
         };
-        let config = super::gaming_wasm::JsGameSessionConfig {
+        let config = super::gaming_wasm::ChannelConfig {
             rng_id,
             is_initiator: *initiator,
-            my_contribution: super::gaming_wasm::JsAmount {
-                amt: chia_gaming::common::types::Amount::new(amount(mine)?),
-            },
-            their_contribution: super::gaming_wasm::JsAmount {
-                amt: chia_gaming::common::types::Amount::new(amount(theirs)?),
-            },
+            my_contribution: chia_gaming::common::types::Amount::new(amount(mine)?),
+            their_contribution: chia_gaming::common::types::Amount::new(amount(theirs)?),
             channel_timeout: timeout(&terms.channel_timeout)?,
             unroll_timeout: timeout(&terms.unroll_timeout)?,
             reward_puzzle_hash: address.into(),
@@ -312,7 +295,6 @@ impl PeerProtocol {
         let (channel, puzzle_hash) = super::gaming_wasm::create_channel(config).map_err(error)?;
         self.attach_channel(channel)?;
         js(&super::gaming_wasm::ChannelCreated {
-            id: self.id,
             puzzle_hash,
             reward_puzzle_hash: Some(address.into()),
         })

@@ -110,6 +110,8 @@ including consent/rejection delivery policy, terminal-message tracking, queue
 draining and send attempts (`src/peer_session.rs` and its driver). The accepted
 Rust session directly contains the reliability state and channel; native calls
 and results connect them without internal JavaScript conversions or callbacks.
+TypeScript invokes gameplay, chain observations and serialization as methods
+on that same exported object, with no numeric channel lookup or forwarding wrapper.
 Retirement releases the channel; a carrier replacement preserves the same owner.
 TypeScript owns the connections, provides the socket-send callback and wallet
 requests, and performs the aggregate checkpoint. It reports connection events

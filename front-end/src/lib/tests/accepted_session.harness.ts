@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { resolve } from 'path';
 import { PRESET_FILES } from '../../generated/gamePresets';
 import * as wasm from '../../../node-pkg/chia_gaming_wasm';
-import { ChiaGame, type WasmConnection } from '../../types/ChiaGaming';
+import { type WasmConnection } from '../../types/ChiaGaming';
 import { SessionController } from '../../hooks/SessionController';
 import { createPeerProtocol } from '../../services/peerProtocol';
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
@@ -50,7 +50,7 @@ export async function installAcceptedChannel(
     async () => (initiator ? '04' : '05').repeat(32),
   );
   if (!channel) throw new Error('accepted fixture was retired');
-  const cradle = new ChiaGame(realWasm, channel.id);
+  const cradle = protocol;
   blob.iStarted = initiator;
   blob.rewardPuzzleHash = channel.rewardPuzzleHash;
   blob.loadWasm(realWasm);
@@ -107,7 +107,7 @@ export async function handshakeA(terms = acceptedTerms): Promise<Uint8Array> {
     async () => '04'.repeat(32),
   );
   if (!channel) throw new Error('initiator fixture was retired');
-  wasm.start_handshake(channel.id, '0');
+  peer.start_handshake('0');
   const body = peer.snapshot().unackedMessages.at(-1)?.msg;
   if (!body) throw new Error('initiator did not produce HandshakeA');
   peer.free();

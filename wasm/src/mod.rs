@@ -1,8 +1,8 @@
 mod peer;
 mod gaming_wasm {
+    use super::peer::PeerProtocol;
     use chia_gaming::peer_session::coordination::TerminalCommand;
-    use chia_gaming::peer_session::session::{ChannelOutput, Session};
-    use std::rc::Rc;
+    use chia_gaming::peer_session::session::ChannelOutput;
 
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
@@ -63,11 +63,6 @@ mod gaming_wasm {
 
     #[wasm_bindgen(typescript_custom_section)]
     const TS_APPEND_CONTENT: &'static str = include_str!("../contract.d.ts");
-
-    #[derive(Serialize, Deserialize, Default, Debug)]
-    pub(super) struct JsAmount {
-        pub(super) amt: Amount,
-    }
 
     #[derive(Serialize, Deserialize)]
     pub(super) struct Channel {
@@ -152,9 +147,6 @@ mod gaming_wasm {
         static NEXT_ID: AtomicI32 = const {
             AtomicI32::new(0)
         };
-        static CRADLES: RefCell<HashMap<i32, RegisteredSession>> = {
-            return RefCell::new(HashMap::new());
-        };
         static RNGS: RefCell<HashMap<i32, ChaCha8Rng>> = {
         return RefCell::new(HashMap::new());
     };
@@ -192,25 +184,6 @@ mod gaming_wasm {
         NEXT_ID.with(|n| n.fetch_add(1, Ordering::SeqCst))
     }
 
-    fn insert_cradle(this_id: i32, runner: Channel) {
-        CRADLES.with(|cell| {
-            let mut mut_ref = cell.borrow_mut();
-            mut_ref.insert(
-                this_id,
-                RegisteredSession::Standalone(Rc::new(RefCell::new(runner))),
-            );
-        });
-    }
-
-    /// Release a session the host is done with. `shut_down` is an on-chain
-    /// protocol action and does not drop the WASM object.
-    #[wasm_bindgen]
-    pub fn drop_game_session(cid: i32) {
-        CRADLES.with(|cell| {
-            cell.borrow_mut().remove(&cid);
-        });
-    }
-
     fn insert_rng(id: i32, rng: ChaCha8Rng) {
         RNGS.with(|cell| {
             let mut mut_ref = cell.borrow_mut();
@@ -218,12 +191,11 @@ mod gaming_wasm {
         });
     }
 
-    #[derive(Serialize, Deserialize, Default, Debug)]
-    pub(super) struct JsGameSessionConfig {
+    pub(super) struct ChannelConfig {
         pub(super) rng_id: i32,
         pub(super) is_initiator: bool,
-        pub(super) my_contribution: JsAmount,
-        pub(super) their_contribution: JsAmount,
+        pub(super) my_contribution: Amount,
+        pub(super) their_contribution: Amount,
         pub(super) channel_timeout: i32,
         pub(super) unroll_timeout: i32,
         pub(super) reward_puzzle_hash: String,
@@ -242,7 +214,7 @@ mod gaming_wasm {
         rng_id: i32,
     }
 
-    fn parse_game_config(jsconfig: JsGameSessionConfig) -> Result<GameConfigPartial, types::Error> {
+    fn parse_game_config(jsconfig: ChannelConfig) -> Result<GameConfigPartial, types::Error> {
         // Handshake does not need factories. Page load warms them in the
         // background; OffChainPhase installs the cached collection when the
         // channel becomes live.
@@ -265,8 +237,8 @@ mod gaming_wasm {
             is_initiator: jsconfig.is_initiator,
             channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
             unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
-            my_contribution: jsconfig.my_contribution.amt.clone(),
-            their_contribution: jsconfig.their_contribution.amt.clone(),
+            my_contribution: jsconfig.my_contribution,
+            their_contribution: jsconfig.their_contribution,
             reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)?),
             agg_sig_me_additional_data: Hash::from_slice(&genesis_challenge_bytes)?,
             rng_id: jsconfig.rng_id,
@@ -337,31 +309,12 @@ mod gaming_wasm {
 
     #[derive(Serialize)]
     pub(super) struct ChannelCreated {
-        pub id: i32,
         pub puzzle_hash: String,
         #[serde(rename = "rewardPuzzleHash", skip_serializing_if = "Option::is_none")]
         pub reward_puzzle_hash: Option<String>,
     }
 
-    #[wasm_bindgen(unchecked_return_type = "GameSessionCreateResult")]
-    pub fn create_game_session(
-        #[wasm_bindgen(unchecked_param_type = "GameSessionConfig")] js_config: JsValue,
-    ) -> Result<JsValue, JsValue> {
-        let config = serde_wasm_bindgen::from_value(js_config).into_js()?;
-        let (channel, puzzle_hash) = create_channel(config).into_js()?;
-        let id = get_next_id();
-        insert_cradle(id, channel);
-        serde_wasm_bindgen::to_value(&ChannelCreated {
-            id,
-            puzzle_hash,
-            reward_puzzle_hash: None,
-        })
-        .into_js()
-    }
-
-    pub(super) fn create_channel(
-        config: JsGameSessionConfig,
-    ) -> Result<(Channel, String), types::Error> {
+    pub(super) fn create_channel(config: ChannelConfig) -> Result<(Channel, String), types::Error> {
         let partial = parse_game_config(config)?;
         with_rng(partial.rng_id, move |rng: &mut ChaCha8Rng| {
             let mut allocator = AllocEncoder::new();
@@ -401,21 +354,13 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn restore_session(data: &[u8], seed: &str) -> Result<i32, JsValue> {
-        let channel = restore_channel(data, seed).into_js()?;
-        let id = get_next_id();
-        insert_cradle(id, channel);
-        Ok(id)
-    }
-
-    #[wasm_bindgen]
     pub fn game_session_serialization_schema() -> u32 {
         GAME_SESSION_SERIALIZATION_SCHEMA
     }
 
     /// Release this call's temporary CLVM on both success and error. Session
     /// state and returned values must own program bytes, never allocator-local
-    /// NodePtrs: restore_session already rebuilds sessions with a fresh allocator.
+    /// NodePtrs: channel restoration already rebuilds sessions with a fresh allocator.
     fn call_releasing_allocator<F, T>(cradle: &mut Channel, f: F) -> Result<T, types::Error>
     where
         F: FnOnce(&mut Channel) -> Result<T, types::Error>,
@@ -426,66 +371,28 @@ mod gaming_wasm {
         result
     }
 
-    // Handles are only an external WASM entry point. The accepted session owns
-    // its channel directly; channel operations never look up their peer owner.
-    #[derive(Clone)]
-    enum RegisteredSession {
-        Standalone(Rc<RefCell<Channel>>),
-        Accepted(Rc<Session<Channel>>),
-    }
-
-    impl RegisteredSession {
-        fn with_channel<T>(
+    impl PeerProtocol {
+        fn with_game<T>(
             &self,
             f: impl FnOnce(&mut Channel) -> Result<T, types::Error>,
-        ) -> Result<T, types::Error> {
-            match self {
-                Self::Standalone(channel) => call_releasing_allocator(&mut channel.borrow_mut(), f),
-                Self::Accepted(session) => {
-                    let mut channel = session.channel.borrow_mut();
-                    call_releasing_allocator(
-                        channel.as_mut().ok_or_else(|| {
-                            types::Error::StrErr("accepted session has no channel".into())
-                        })?,
-                        f,
-                    )
-                }
-            }
+        ) -> Result<T, JsValue> {
+            let mut channel = self.inner.channel.borrow_mut();
+            let channel = channel
+                .as_mut()
+                .ok_or_else(|| js_error("session has no channel"))?;
+            call_releasing_allocator(channel, f).into_js()
         }
-    }
 
-    pub(super) fn register_peer(id: i32, session: Rc<Session<Channel>>) {
-        CRADLES.with(|cell| {
-            cell.borrow_mut()
-                .insert(id, RegisteredSession::Accepted(session))
-        });
-    }
-
-    fn registered_session(id: i32) -> Result<RegisteredSession, JsValue> {
-        CRADLES
-            .with(|cell| cell.borrow().get(&id).cloned())
-            .ok_or_else(|| js_error(&format!("could not find game instance {id}")))
-    }
-
-    fn with_game<F, T>(id: i32, f: F) -> Result<T, JsValue>
-    where
-        F: FnOnce(&mut Channel) -> Result<T, types::Error>,
-    {
-        registered_session(id)?.with_channel(f).into_js()
-    }
-
-    fn with_game_output(
-        id: i32,
-        f: impl FnOnce(&mut Channel) -> Result<ChannelOutput, types::Error>,
-    ) -> Result<JsValue, JsValue> {
-        let session = registered_session(id)?;
-        let mut output = session.with_channel(f).into_js()?;
-        if let RegisteredSession::Accepted(session) = session {
-            session
+        fn with_game_output(
+            &self,
+            f: impl FnOnce(&mut Channel) -> Result<ChannelOutput, types::Error>,
+        ) -> Result<JsValue, JsValue> {
+            let mut output = self.with_game(f)?;
+            self.inner
                 .collect_output(&mut output)
                 .map_err(|reason| js_error(&reason))?;
+            channel_output_to_js(&output).into_js()
         }
-        channel_output_to_js(&output).into_js()
     }
 
     impl Channel {
@@ -597,13 +504,11 @@ mod gaming_wasm {
 
         #[test]
         fn repeated_session_calls_release_temporary_clvm() {
-            let cradle = session();
+            let mut cradle = session();
             let baseline = allocation_counts(&cradle);
-            let cid = get_next_id();
-            insert_cradle(cid, cradle);
             for _ in 0..100 {
-                let program = with_game(cid, allocate_program).unwrap();
-                with_game(cid, |cradle| {
+                let program = call_releasing_allocator(&mut cradle, allocate_program).unwrap();
+                call_releasing_allocator(&mut cradle, |cradle| {
                     assert_eq!(allocation_counts(cradle), baseline);
                     // Owned output remains usable after its producing call is released.
                     let node = program.to_nodeptr(&mut cradle.allocator)?;
@@ -612,7 +517,6 @@ mod gaming_wasm {
                 })
                 .unwrap();
             }
-            drop_game_session(cid);
         }
 
         #[test]
@@ -623,16 +527,13 @@ mod gaming_wasm {
                 .unwrap();
             let before = Program::from_nodeptr(&cradle.allocator, node).unwrap();
             let baseline = allocation_counts(&cradle);
-            let cid = get_next_id();
-            insert_cradle(cid, cradle);
-            with_game(cid, allocate_program).unwrap();
-            with_game(cid, |cradle| {
+            call_releasing_allocator(&mut cradle, allocate_program).unwrap();
+            call_releasing_allocator(&mut cradle, |cradle| {
                 assert_eq!(allocation_counts(cradle), baseline);
                 assert_eq!(Program::from_nodeptr(&cradle.allocator, node)?, before);
                 Ok(())
             })
             .unwrap();
-            drop_game_session(cid);
         }
 
         #[test]
@@ -653,15 +554,6 @@ mod gaming_wasm {
         }
     }
 
-    #[wasm_bindgen]
-    pub fn serialize_game_session(cid: i32) -> Result<js_sys::Uint8Array, JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            let bytes =
-                bencodex::to_vec(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))?;
-            Ok(js_sys::Uint8Array::from(bytes.as_slice()))
-        })
-    }
-
     fn watch_coin_entries(cradle: &Channel) -> Vec<JsWatchCoinEntry> {
         watch_coin_entries_from_coins(&cradle.cradle.snapshot_watched_coins())
     }
@@ -676,188 +568,6 @@ mod gaming_wasm {
             .collect()
     }
 
-    /// Durable watched-coin snapshot for seeding host polling after attach or
-    /// restore.
-    #[wasm_bindgen]
-    pub fn snapshot_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut Channel| {
-            Ok(watch_coin_entries(cradle))
-        })?;
-        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    /// Durable outstanding puzzle/solution requests. The browser uses this
-    /// snapshot to rebuild nonpersistent delivery after live lease replacement
-    /// and provider reconnection without inventing a second request journal.
-    #[wasm_bindgen]
-    pub fn snapshot_pending_coin_solution_requests(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut Channel| {
-            Ok(cradle
-                .cradle
-                .snapshot_pending_coin_solution_requests()
-                .iter()
-                .map(coin_string_to_hex)
-                .collect::<Vec<_>>())
-        })?;
-        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
-    /// Typed submissions captured by the manager. The bundle remains opaque to
-    /// the host; Rust supplies the complete provider request when a fee source
-    /// is needed.
-    #[wasm_bindgen]
-    pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.apply_working_copy_transaction(
-                &mut cradle.allocator,
-                |working, _allocator| {
-                    let drained = working.drain_submissions()?;
-                    let submissions = drained
-                        .submissions
-                        .iter()
-                        .map(|submission| JsTransactionSubmission {
-                            id: submission.id.to_string(),
-                            attempt_token: submission.attempt_token.to_string(),
-                            predecessor_attempt_token: submission
-                                .predecessor_attempt_token
-                                .map(|token| token.to_string()),
-                            relationship: match submission.relationship {
-                                SubmissionAttemptRelationship::Initial => "initial",
-                                SubmissionAttemptRelationship::Exact => "exact",
-                                SubmissionAttemptRelationship::NewerFeeBearing => {
-                                    "newer-fee-bearing"
-                                }
-                                SubmissionAttemptRelationship::Other => "other",
-                            },
-                            bundle: spend_bundle_to_js(&submission.bundle),
-                            fee_request: match &submission.fee_intent {
-                                SubmissionFeeIntent::Attach { target, amount, .. } => {
-                                    Some(JsFeeRequest {
-                                        target: hex::encode(target.bytes()),
-                                        amount: amount.to_u64().to_string(),
-                                    })
-                                }
-                                SubmissionFeeIntent::AlreadyPaid
-                                | SubmissionFeeIntent::NoFeeConfigured => None,
-                            },
-                        })
-                        .collect::<Vec<_>>();
-                    let retired_submission_ids = working
-                        .drain_retired_submission_ids()
-                        .into_iter()
-                        .map(|id| id.to_string())
-                        .collect();
-                    let failures = drained
-                        .failures
-                        .into_iter()
-                        .map(|failure| JsSubmissionDrainFailure {
-                            candidate_index: failure.candidate_index.to_string(),
-                            retained_submission_id: failure
-                                .retained_submission_id
-                                .map(|id| id.to_string()),
-                            candidate_submission_id: failure
-                                .candidate_submission_id
-                                .map(|id| id.to_string()),
-                            intent_fingerprint: failure
-                                .intent_fingerprint
-                                .map(|fingerprint| hex::encode(fingerprint.bytes())),
-                            stage: match failure.stage {
-                                SubmissionDrainFailureStage::Fingerprint => "fingerprint",
-                                SubmissionDrainFailureStage::RetainedState => "retained-state",
-                                SubmissionDrainFailureStage::ExpectedOutputs => "expected-outputs",
-                                SubmissionDrainFailureStage::SubmissionId => "submission-id",
-                            },
-                            message: failure.message,
-                            rust_context: failure.rust_context,
-                        })
-                        .collect();
-                    serde_wasm_bindgen::to_value(&JsSubmissionDrain {
-                        submissions,
-                        retired_submission_ids,
-                        failures,
-                    })
-                    .map_err(|error| {
-                        types::Error::StrErr(format!(
-                            "failed to convert transaction submission drain: {error}"
-                        ))
-                    })
-                },
-            )
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn configure_submission_fee(cid: i32, amount: &str) -> Result<(), JsValue> {
-        let amount = amount
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid submission fee: {e}")))?;
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.configure_fee(FeeConfiguration {
-                amount: Amount::new(amount),
-                attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
-            });
-            Ok(())
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn acknowledge_submission_attempt(
-        cid: i32,
-        attempt_token: &str,
-    ) -> Result<String, JsValue> {
-        let token = attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .acknowledge_submission_attempt(token)
-                .map(attempt_status_to_js)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn reject_submission_attempt(cid: i32, attempt_token: &str) -> Result<String, JsValue> {
-        let token = attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .stop_submission_attempt(token)
-                .map(attempt_status_to_js)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn submission_attempt_unavailable(
-        cid: i32,
-        attempt_token: &str,
-    ) -> Result<String, JsValue> {
-        let token = attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .stop_submission_attempt(token)
-                .map(attempt_status_to_js)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn relinquish_submission_attempt(cid: i32, attempt_token: &str) -> Result<String, JsValue> {
-        let token = attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .relinquish_submission_attempt(token)
-                .map(attempt_status_to_js)
-        })
-    }
-
     fn attempt_status_to_js(status: SubmissionAttemptStatus) -> String {
         match status {
             SubmissionAttemptStatus::Applied => "applied",
@@ -866,67 +576,12 @@ mod gaming_wasm {
         .to_string()
     }
 
-    /// Signal that raw height and every required watched-coin observation form
-    /// one coherent fresh snapshot. Rust chooses exact replay versus fee upgrade.
-    #[wasm_bindgen]
-    pub fn chain_snapshot_ready(cid: i32) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.chain_snapshot_ready();
-            Ok(())
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn request_fee_upgrades(cid: i32) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.request_fee_upgrades();
-            Ok(())
-        })
-    }
-
     #[derive(Deserialize)]
     struct JsCoinStateRecord {
         /// Full coin string, hex-encoded.
         coin: String,
         created_height: Option<u64>,
         spent_height: Option<u64>,
-    }
-
-    /// Report the latest confirmed height and raw per-coin chain state to the
-    /// manager, which computes the created/deleted diff internally and feeds the
-    /// inner cradle.
-    #[wasm_bindgen]
-    pub fn report_coin_states(
-        cid: i32,
-        height: u64,
-        records_json: &str,
-    ) -> Result<JsValue, JsValue> {
-        let js_records: Vec<JsCoinStateRecord> = serde_json::from_str(records_json)
-            .map_err(|e| JsValue::from_str(&format!("bad coin state records json: {e}")))?;
-        let mut records = Vec::with_capacity(js_records.len());
-        for r in &js_records {
-            records.push(CoinStateRecord {
-                coin: hex_to_coinstring(&r.coin).into_js()?,
-                created_height: r.created_height,
-                spent_height: r.spent_height,
-            });
-        }
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .report_coin_states(&mut cradle.allocator, height, &records)
-        })?;
-        with_game_drain(cid, |_| Ok(()))
-    }
-
-    /// Advance protocol clocks from a confirmed peak without claiming that an
-    /// empty coin list is an authoritative watched-coin snapshot.
-    #[wasm_bindgen]
-    pub fn report_height(cid: i32, height: u64) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.report_height(&mut cradle.allocator, height)
-        })?;
-        with_game_drain(cid, |_| Ok(()))
     }
 
     fn hex_to_coinstring(hex: &str) -> Result<CoinString, types::Error> {
@@ -938,17 +593,6 @@ mod gaming_wasm {
             ))
         })?;
         Ok(CoinString::from_bytes(&coinstring_bytes))
-    }
-
-    #[wasm_bindgen]
-    pub fn start_handshake(cid: i32, opening_fee: &str) -> Result<JsValue, JsValue> {
-        let fee = opening_fee
-            .parse::<u64>()
-            .map(Amount::new)
-            .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle.cradle.start_handshake(&mut cradle.allocator, fee)
-        })
     }
 
     fn coinset_spend_bundle_to_spend_bundle(
@@ -973,18 +617,6 @@ mod gaming_wasm {
         }
 
         Ok(SpendBundle { name: None, spends })
-    }
-
-    #[wasm_bindgen]
-    pub fn provide_coin_spend_bundle(cid: i32, bundle_json: &str) -> Result<JsValue, JsValue> {
-        let bundle = serde_json::from_str::<CoinsetSpendBundle>(bundle_json)
-            .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
-        let spend_bundle = coinset_spend_bundle_to_spend_bundle(&bundle).into_js()?;
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .provide_coin_spend_bundle(&mut cradle.allocator, spend_bundle)
-        })
     }
 
     // Deprecated puzzles not in chia-puzzles crate (kept for zlib dictionary compat)
@@ -1153,27 +785,6 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn provide_offer_bech32(cid: i32, offer_bech32: &str) -> Result<JsValue, JsValue> {
-        let bundle = decode_offer_to_spend_bundle(offer_bech32)
-            .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .provide_coin_spend_bundle(&mut cradle.allocator, bundle)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn wallet_callback_failed(cid: i32, reason: &str) -> Result<JsValue, JsValue> {
-        let reason = reason.to_string();
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .wallet_callback_failed(&mut cradle.allocator, reason)
-        })
-    }
-
-    #[wasm_bindgen]
     pub fn convert_offer_to_coinset_org(offer_bech32: &str) -> Result<JsValue, JsValue> {
         let bundle = decode_offer_to_spend_bundle(offer_bech32)
             .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
@@ -1186,114 +797,6 @@ mod gaming_wasm {
         Offer { offer: String },
         Bundle { bundle: CoinsetSpendBundle },
         Failure { reason: String },
-    }
-
-    #[wasm_bindgen]
-    pub fn finalize_submission_attempt(
-        cid: i32,
-        attempt_token: &str,
-        fee_source_json: Option<String>,
-    ) -> Result<JsValue, JsValue> {
-        let token = attempt_token
-            .parse::<u64>()
-            .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        let fee_intent = with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.submission_fee_intent_for_attempt(token)
-        })?;
-        let Some(fee_intent) = fee_intent else {
-            return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt { status: "stale" })
-                .map_err(|error| JsValue::from_str(&error.to_string()));
-        };
-        let fee_source = match fee_intent {
-            SubmissionFeeIntent::Attach { target, amount, .. } => fee_source_json
-                .ok_or_else(|| "the wallet did not provide a fee source".to_string())
-                .and_then(|json| {
-                    serde_json::from_str::<JsWalletFeeSource>(&json)
-                        .map_err(|e| format!("bad wallet fee source json: {e}"))
-                })
-                .and_then(|source| match source {
-                    JsWalletFeeSource::Offer { offer } => decode_offer_to_spend_bundle(&offer)
-                        .map_err(|e| format!("fee offer decode error: {e}"))
-                        .and_then(|maker_bundle| {
-                            normalize_fee_offer_bundle(maker_bundle, amount.to_u64(), &target)
-                                .map_err(|e| format!("fee offer completion error: {e:?}"))
-                        }),
-                    JsWalletFeeSource::Bundle { bundle } => {
-                        coinset_spend_bundle_to_spend_bundle(&bundle)
-                            .map_err(|e| format!("fee bundle decode error: {e:?}"))
-                    }
-                    JsWalletFeeSource::Failure { reason } => Err(reason),
-                })
-                .map(SubmissionFeeSource::Available)
-                .unwrap_or_else(SubmissionFeeSource::Failed),
-            SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
-                if fee_source_json.is_some() {
-                    return Err(JsValue::from_str(
-                        "fee source supplied for a submission that did not request one",
-                    ));
-                }
-                SubmissionFeeSource::NotRequested
-            }
-        };
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle.cradle.apply_working_copy_transaction(
-                &mut cradle.allocator,
-                move |working, _allocator| {
-                    let additional_data = working.cradle().agg_sig_me_additional_data().clone();
-                    let Some(finalized) = working.finalize_submission_attempt(
-                        token,
-                        fee_source,
-                        &additional_data,
-                        working.last_height(),
-                    )?
-                    else {
-                        return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt {
-                            status: "stale",
-                        })
-                        .map_err(|error| {
-                            types::Error::StrErr(format!(
-                                "failed to convert stale submission result: {error}"
-                            ))
-                        });
-                    };
-                    let bundle =
-                        spend_bundle_to_coinset_js(&finalized.bundle).map_err(|error| {
-                            types::Error::StrErr(format!(
-                                "failed to convert finalized transaction bundle: {error:?}"
-                            ))
-                        })?;
-                    let result = JsFinalizedSubmission {
-                        protocol_bundle: spend_bundle_to_js(&finalized.bundle),
-                        bundle,
-                        applied_fee: finalized.applied_fee.to_string(),
-                        warning: finalized.warning,
-                        fee_source_disposition: match finalized.fee_source_disposition {
-                            FeeSourceDisposition::Attached => "attached",
-                            FeeSourceDisposition::Unused => "unused",
-                            FeeSourceDisposition::NotRequested => "not-requested",
-                        },
-                        variant_fingerprint: hex::encode(finalized.variant_fingerprint.bytes()),
-                        should_broadcast: finalized.should_broadcast,
-                    };
-                    serde_wasm_bindgen::to_value(&result).map_err(|error| {
-                        types::Error::StrErr(format!(
-                            "failed to convert finalized transaction result: {error}"
-                        ))
-                    })
-                },
-            )
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn get_channel_puzzle_hash(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            let ph = cradle.cradle.channel_puzzle_hash();
-            match ph {
-                Some(p) => Ok(JsValue::from_str(&hex::encode(p.bytes()))),
-                None => Ok(JsValue::NULL),
-            }
-        })
     }
 
     fn coin_string_to_hex(cs: &CoinString) -> String {
@@ -1383,127 +886,6 @@ mod gaming_wasm {
         serde_wasm_bindgen::to_value(&list).map_err(|e| JsValue::from_str(&format!("{e}")))
     }
 
-    #[wasm_bindgen]
-    pub fn propose(cid: i32, proposal: JsValue) -> Result<JsValue, JsValue> {
-        let proposal: JsGameProposal = serde_wasm_bindgen::from_value(proposal).into_js()?;
-        let mut proposal_id = None;
-        let result = with_game_output(cid, |cradle: &mut Channel| {
-            let game_type = parse_game_type_hex(&proposal.game_type)
-                .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
-            let start = GameProposal {
-                sender_is_player_a: proposal.sender_is_player_a,
-                game_type,
-                timeout: Timeout::new(proposal.timeout),
-                parameters: proposal.parameters,
-            };
-            let id = cradle.cradle.propose(&mut cradle.allocator, &start)?;
-            proposal_id = Some(id);
-            cradle.collect(true)
-        })?;
-        js_sys::Reflect::set(
-            &result,
-            &"id".into(),
-            &proposal_id.unwrap().to_string().into(),
-        )?;
-        Ok(result)
-    }
-
-    #[wasm_bindgen]
-    pub fn accept_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
-        let proposal_id = string_to_local_proposal_id(game_id)?;
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .accept_proposal(&mut cradle.allocator, &proposal_id)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
-        let proposal_id = string_to_local_proposal_id(game_id)?;
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .cancel_proposal(&mut cradle.allocator, &proposal_id)
-        })
-    }
-
-    pub fn make_move_inner(
-        cid: i32,
-        id: &str,
-        readable: &[u8],
-        entropy: Option<&str>,
-    ) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(id)?;
-        let readable_move =
-            ReadableMove::from_program(std::rc::Rc::new(Program::from_bytes(readable).into_js()?));
-        let new_entropy = if let Some(e) = entropy {
-            Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
-        } else {
-            None
-        };
-        with_game_output(cid, move |channel| {
-            let entropy = new_entropy.unwrap_or_else(|| channel.rng.0.random());
-            channel.action(Some((game_id, FailedGameAction::MakeMove)), |channel| {
-                channel
-                    .cradle
-                    .make_move(&mut channel.allocator, &game_id, readable_move, entropy)
-            })
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn make_move_with_entropy_for_testing(
-        cid: i32,
-        id: &str,
-        readable: &[u8],
-        new_entropy: &str,
-    ) -> Result<JsValue, JsValue> {
-        make_move_inner(cid, id, readable, Some(new_entropy))
-    }
-
-    #[wasm_bindgen]
-    pub fn make_move(cid: i32, id: &str, readable: &[u8]) -> Result<JsValue, JsValue> {
-        make_move_inner(cid, id, readable, None)
-    }
-
-    /// Submit a cheating move for testing and demonstration purposes.
-    /// The mover_share is the amount the victim receives on timeout.
-    #[wasm_bindgen]
-    pub fn cheat(cid: i32, id: &str, mover_share: &str) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(id)?;
-        let share = Amount::new(
-            mover_share
-                .parse::<u64>()
-                .map_err(|e| JsValue::from_str(&e.to_string()))?,
-        );
-        with_game_action_drain(
-            cid,
-            game_id,
-            FailedGameAction::Cheat,
-            move |cradle: &mut Channel| cradle.cradle.cheat(&mut cradle.allocator, &game_id, share),
-        )
-    }
-
-    /// Pull the protocol-level peer state, rendered as indented text for the
-    /// dashboard. This reads directly out of Rust (borrow-safe) rather than
-    /// being pushed through notifications.
-    #[wasm_bindgen]
-    pub fn historical_unroll_count(cid: i32) -> Result<Option<u32>, JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .historical_unroll_count()
-                .map(u32::try_from)
-                .transpose()
-                .map_err(|_| {
-                    types::Error::StrErr(
-                        "historical unroll count exceeds WASM metric range".to_string(),
-                    )
-                })
-        })
-    }
-
     #[derive(Serialize)]
     struct JsCoinOfInterest {
         label: String,
@@ -1512,77 +894,6 @@ mod gaming_wasm {
         game_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         game_coin_kind: Option<&'static str>,
-    }
-
-    /// Labeled coin ids (hex) to show above the protocol state.
-    #[wasm_bindgen]
-    pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
-        let coins = with_game(cid, move |cradle: &mut Channel| {
-            Ok(cradle.cradle.coins_of_interest())
-        })?;
-        let entries: Vec<JsCoinOfInterest> = coins
-            .into_iter()
-            .map(|(kind, id)| {
-                let (game_id, game_coin_kind) = match kind {
-                    CoinOfInterest::CurrentGame(game_id) => {
-                        (Some(game_id.to_string()), Some("current"))
-                    }
-                    CoinOfInterest::GameReward(game_id) => {
-                        (Some(game_id.to_string()), Some("reward"))
-                    }
-                    _ => (None, None),
-                };
-                JsCoinOfInterest {
-                    label: kind.label(),
-                    id,
-                    game_id,
-                    game_coin_kind,
-                }
-            })
-            .collect();
-        serde_wasm_bindgen::to_value(&entries).into_js()
-    }
-
-    #[wasm_bindgen]
-    pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut Channel| {
-            Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
-        })?)
-        .into_js()
-    }
-
-    #[wasm_bindgen]
-    pub fn accept_settlement(cid: i32, id: &str) -> Result<JsValue, JsValue> {
-        let game_id = string_to_game_id(id)?;
-        with_game_action_drain(
-            cid,
-            game_id,
-            FailedGameAction::AcceptSettlement,
-            move |cradle: &mut Channel| {
-                cradle
-                    .cradle
-                    .accept_settlement(&mut cradle.allocator, &game_id)
-            },
-        )
-    }
-
-    #[wasm_bindgen]
-    pub fn shut_down(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle.cradle.shut_down(&mut cradle.allocator)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn abandon(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut Channel| cradle.cradle.abandon())
-    }
-
-    #[wasm_bindgen]
-    pub fn complete_outbound_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle.cradle.complete_outbound_terminal_handoff()
-        })
     }
 
     fn terminal_handoff_command_to_js(command: &TerminalHandoffCommand) -> JsValue {
@@ -1595,67 +906,6 @@ mod gaming_wasm {
         let bytes = js_sys::Uint8Array::from(command.message.as_slice());
         let _ = js_sys::Reflect::set(&obj, &"message".into(), &bytes);
         obj.into()
-    }
-
-    #[wasm_bindgen]
-    pub fn pending_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut Channel| {
-            Ok(cradle
-                .cradle
-                .pending_terminal_handoff()
-                .as_ref()
-                .map(terminal_handoff_command_to_js)
-                .unwrap_or(JsValue::NULL))
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .go_on_chain(&mut cradle.allocator, false)
-                .map(|_| ())
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn report_puzzle_and_solution(
-        cid: i32,
-        coin_hex: &str,
-        puzzle_hex: Option<String>,
-        solution_hex: Option<String>,
-    ) -> Result<JsValue, JsValue> {
-        let coin_bytes = hex::decode(coin_hex).into_js()?;
-        let coin = CoinString::from_bytes(&coin_bytes);
-
-        let puzzle_program = puzzle_hex
-            .map(|h| Program::from_hex(&h))
-            .transpose()
-            .into_js()?;
-        let solution_program = solution_hex
-            .map(|h| Program::from_hex(&h))
-            .transpose()
-            .into_js()?;
-
-        let ps_pair = match (&puzzle_program, &solution_program) {
-            (Some(p), Some(s)) => Some((p, s)),
-            _ => None,
-        };
-
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle
-                .cradle
-                .report_puzzle_and_solution(&mut cradle.allocator, &coin, ps_pair)
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn deliver_message(cid: i32, inbound_message: &[u8]) -> Result<JsValue, JsValue> {
-        let message_data = inbound_message.to_vec();
-        with_game_drain(cid, move |cradle: &mut Channel| {
-            cradle.cradle.deliver_message(&message_data)
-        })
     }
 
     #[derive(Serialize)]
@@ -1905,36 +1155,6 @@ mod gaming_wasm {
         Ok(obj.into())
     }
 
-    fn with_game_drain<F>(cid: i32, f: F) -> Result<JsValue, JsValue>
-    where
-        F: FnOnce(&mut Channel) -> Result<(), types::Error>,
-    {
-        with_game_drain_context(cid, None, f)
-    }
-
-    fn with_game_action_drain<F>(
-        cid: i32,
-        game_id: GameID,
-        action: FailedGameAction,
-        f: F,
-    ) -> Result<JsValue, JsValue>
-    where
-        F: FnOnce(&mut Channel) -> Result<(), types::Error>,
-    {
-        with_game_drain_context(cid, Some((game_id, action)), f)
-    }
-
-    fn with_game_drain_context<F>(
-        cid: i32,
-        action_context: Option<(GameID, FailedGameAction)>,
-        f: F,
-    ) -> Result<JsValue, JsValue>
-    where
-        F: FnOnce(&mut Channel) -> Result<(), types::Error>,
-    {
-        with_game_output(cid, move |channel| channel.action(action_context, f))
-    }
-
     #[derive(Serialize, Deserialize)]
     struct JsChiaIdentity {
         pub private_key: String,
@@ -2088,5 +1308,638 @@ mod gaming_wasm {
             1,
         )
         .into_js()
+    }
+    #[wasm_bindgen]
+    impl PeerProtocol {
+        pub fn serialize(&self) -> Result<js_sys::Uint8Array, JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                let bytes =
+                    bencodex::to_vec(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))?;
+                Ok(js_sys::Uint8Array::from(bytes.as_slice()))
+            })
+        }
+
+        /// Durable watched-coin snapshot for seeding host polling after attach or
+        /// restore.
+        pub fn snapshot_watched_coins(&self) -> Result<JsValue, JsValue> {
+            let result =
+                self.with_game(move |cradle: &mut Channel| Ok(watch_coin_entries(cradle)))?;
+            serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+
+        /// Durable outstanding puzzle/solution requests. The browser uses this
+        /// snapshot to rebuild nonpersistent delivery after live lease replacement
+        /// and provider reconnection without inventing a second request journal.
+        pub fn snapshot_pending_coin_solution_requests(&self) -> Result<JsValue, JsValue> {
+            let result = self.with_game(move |cradle: &mut Channel| {
+                Ok(cradle
+                    .cradle
+                    .snapshot_pending_coin_solution_requests()
+                    .iter()
+                    .map(coin_string_to_hex)
+                    .collect::<Vec<_>>())
+            })?;
+            serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+
+        /// Typed submissions captured by the manager. The bundle remains opaque to
+        /// the host; Rust supplies the complete provider request when a fee source
+        /// is needed.
+        pub fn drain_submissions(&self) -> Result<JsValue, JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.apply_working_copy_transaction(
+                    &mut cradle.allocator,
+                    |working, _allocator| {
+                        let drained = working.drain_submissions()?;
+                        let submissions = drained
+                            .submissions
+                            .iter()
+                            .map(|submission| JsTransactionSubmission {
+                                id: submission.id.to_string(),
+                                attempt_token: submission.attempt_token.to_string(),
+                                predecessor_attempt_token: submission
+                                    .predecessor_attempt_token
+                                    .map(|token| token.to_string()),
+                                relationship: match submission.relationship {
+                                    SubmissionAttemptRelationship::Initial => "initial",
+                                    SubmissionAttemptRelationship::Exact => "exact",
+                                    SubmissionAttemptRelationship::NewerFeeBearing => {
+                                        "newer-fee-bearing"
+                                    }
+                                    SubmissionAttemptRelationship::Other => "other",
+                                },
+                                bundle: spend_bundle_to_js(&submission.bundle),
+                                fee_request: match &submission.fee_intent {
+                                    SubmissionFeeIntent::Attach { target, amount, .. } => {
+                                        Some(JsFeeRequest {
+                                            target: hex::encode(target.bytes()),
+                                            amount: amount.to_u64().to_string(),
+                                        })
+                                    }
+                                    SubmissionFeeIntent::AlreadyPaid
+                                    | SubmissionFeeIntent::NoFeeConfigured => None,
+                                },
+                            })
+                            .collect::<Vec<_>>();
+                        let retired_submission_ids = working
+                            .drain_retired_submission_ids()
+                            .into_iter()
+                            .map(|id| id.to_string())
+                            .collect();
+                        let failures = drained
+                            .failures
+                            .into_iter()
+                            .map(|failure| JsSubmissionDrainFailure {
+                                candidate_index: failure.candidate_index.to_string(),
+                                retained_submission_id: failure
+                                    .retained_submission_id
+                                    .map(|id| id.to_string()),
+                                candidate_submission_id: failure
+                                    .candidate_submission_id
+                                    .map(|id| id.to_string()),
+                                intent_fingerprint: failure
+                                    .intent_fingerprint
+                                    .map(|fingerprint| hex::encode(fingerprint.bytes())),
+                                stage: match failure.stage {
+                                    SubmissionDrainFailureStage::Fingerprint => "fingerprint",
+                                    SubmissionDrainFailureStage::RetainedState => "retained-state",
+                                    SubmissionDrainFailureStage::ExpectedOutputs => {
+                                        "expected-outputs"
+                                    }
+                                    SubmissionDrainFailureStage::SubmissionId => "submission-id",
+                                },
+                                message: failure.message,
+                                rust_context: failure.rust_context,
+                            })
+                            .collect();
+                        serde_wasm_bindgen::to_value(&JsSubmissionDrain {
+                            submissions,
+                            retired_submission_ids,
+                            failures,
+                        })
+                        .map_err(|error| {
+                            types::Error::StrErr(format!(
+                                "failed to convert transaction submission drain: {error}"
+                            ))
+                        })
+                    },
+                )
+            })
+        }
+
+        pub fn configure_submission_fee(&self, amount: &str) -> Result<(), JsValue> {
+            let amount = amount
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid submission fee: {e}")))?;
+            self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.configure_fee(FeeConfiguration {
+                    amount: Amount::new(amount),
+                    attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+                });
+                Ok(())
+            })
+        }
+
+        pub fn acknowledge_submission_attempt(
+            &self,
+            attempt_token: &str,
+        ) -> Result<String, JsValue> {
+            let token = attempt_token
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .acknowledge_submission_attempt(token)
+                    .map(attempt_status_to_js)
+            })
+        }
+
+        pub fn reject_submission_attempt(&self, attempt_token: &str) -> Result<String, JsValue> {
+            let token = attempt_token
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .stop_submission_attempt(token)
+                    .map(attempt_status_to_js)
+            })
+        }
+
+        pub fn submission_attempt_unavailable(
+            &self,
+            attempt_token: &str,
+        ) -> Result<String, JsValue> {
+            let token = attempt_token
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .stop_submission_attempt(token)
+                    .map(attempt_status_to_js)
+            })
+        }
+
+        pub fn relinquish_submission_attempt(
+            &self,
+            attempt_token: &str,
+        ) -> Result<String, JsValue> {
+            let token = attempt_token
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .relinquish_submission_attempt(token)
+                    .map(attempt_status_to_js)
+            })
+        }
+
+        /// Signal that raw height and every required watched-coin observation form
+        /// one coherent fresh snapshot. Rust chooses exact replay versus fee upgrade.
+        pub fn chain_snapshot_ready(&self) -> Result<(), JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.chain_snapshot_ready();
+                Ok(())
+            })
+        }
+
+        pub fn request_fee_upgrades(&self) -> Result<(), JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.request_fee_upgrades();
+                Ok(())
+            })
+        }
+
+        /// Report the latest confirmed height and raw per-coin chain state to the
+        /// manager, which computes the created/deleted diff internally and feeds the
+        /// inner cradle.
+        pub fn report_coin_states(
+            &self,
+            height: u64,
+            records: JsValue,
+        ) -> Result<JsValue, JsValue> {
+            let js_records: Vec<JsCoinStateRecord> =
+                serde_wasm_bindgen::from_value(records).into_js()?;
+            let mut records = Vec::with_capacity(js_records.len());
+            for r in &js_records {
+                records.push(CoinStateRecord {
+                    coin: hex_to_coinstring(&r.coin).into_js()?,
+                    created_height: r.created_height,
+                    spent_height: r.spent_height,
+                });
+            }
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .report_coin_states(&mut cradle.allocator, height, &records)
+            })?;
+            self.with_game_drain(|_| Ok(()))
+        }
+
+        /// Advance protocol clocks from a confirmed peak without claiming that an
+        /// empty coin list is an authoritative watched-coin snapshot.
+        pub fn report_height(&self, height: u64) -> Result<JsValue, JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.report_height(&mut cradle.allocator, height)
+            })?;
+            self.with_game_drain(|_| Ok(()))
+        }
+
+        pub fn start_handshake(&self, opening_fee: &str) -> Result<JsValue, JsValue> {
+            let fee = opening_fee
+                .parse::<u64>()
+                .map(Amount::new)
+                .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle.cradle.start_handshake(&mut cradle.allocator, fee)
+            })
+        }
+
+        pub fn provide_coin_spend_bundle(&self, bundle_json: &str) -> Result<JsValue, JsValue> {
+            let bundle = serde_json::from_str::<CoinsetSpendBundle>(bundle_json)
+                .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
+            let spend_bundle = coinset_spend_bundle_to_spend_bundle(&bundle).into_js()?;
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .provide_coin_spend_bundle(&mut cradle.allocator, spend_bundle)
+            })
+        }
+
+        pub fn provide_offer_bech32(&self, offer_bech32: &str) -> Result<JsValue, JsValue> {
+            let bundle = decode_offer_to_spend_bundle(offer_bech32)
+                .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .provide_coin_spend_bundle(&mut cradle.allocator, bundle)
+            })
+        }
+
+        pub fn wallet_callback_failed(&self, reason: &str) -> Result<JsValue, JsValue> {
+            let reason = reason.to_string();
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .wallet_callback_failed(&mut cradle.allocator, reason)
+            })
+        }
+
+        pub fn finalize_submission_attempt(
+            &self,
+            attempt_token: &str,
+            fee_source_json: Option<String>,
+        ) -> Result<JsValue, JsValue> {
+            let token = attempt_token
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+            let fee_intent = self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.submission_fee_intent_for_attempt(token)
+            })?;
+            let Some(fee_intent) = fee_intent else {
+                return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt { status: "stale" })
+                    .map_err(|error| JsValue::from_str(&error.to_string()));
+            };
+            let fee_source = match fee_intent {
+                SubmissionFeeIntent::Attach { target, amount, .. } => fee_source_json
+                    .ok_or_else(|| "the wallet did not provide a fee source".to_string())
+                    .and_then(|json| {
+                        serde_json::from_str::<JsWalletFeeSource>(&json)
+                            .map_err(|e| format!("bad wallet fee source json: {e}"))
+                    })
+                    .and_then(|source| match source {
+                        JsWalletFeeSource::Offer { offer } => decode_offer_to_spend_bundle(&offer)
+                            .map_err(|e| format!("fee offer decode error: {e}"))
+                            .and_then(|maker_bundle| {
+                                normalize_fee_offer_bundle(maker_bundle, amount.to_u64(), &target)
+                                    .map_err(|e| format!("fee offer completion error: {e:?}"))
+                            }),
+                        JsWalletFeeSource::Bundle { bundle } => {
+                            coinset_spend_bundle_to_spend_bundle(&bundle)
+                                .map_err(|e| format!("fee bundle decode error: {e:?}"))
+                        }
+                        JsWalletFeeSource::Failure { reason } => Err(reason),
+                    })
+                    .map(SubmissionFeeSource::Available)
+                    .unwrap_or_else(SubmissionFeeSource::Failed),
+                SubmissionFeeIntent::AlreadyPaid | SubmissionFeeIntent::NoFeeConfigured => {
+                    if fee_source_json.is_some() {
+                        return Err(JsValue::from_str(
+                            "fee source supplied for a submission that did not request one",
+                        ));
+                    }
+                    SubmissionFeeSource::NotRequested
+                }
+            };
+            self.with_game(move |cradle: &mut Channel| {
+                cradle.cradle.apply_working_copy_transaction(
+                    &mut cradle.allocator,
+                    move |working, _allocator| {
+                        let additional_data = working.cradle().agg_sig_me_additional_data().clone();
+                        let Some(finalized) = working.finalize_submission_attempt(
+                            token,
+                            fee_source,
+                            &additional_data,
+                            working.last_height(),
+                        )?
+                        else {
+                            return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt {
+                                status: "stale",
+                            })
+                            .map_err(|error| {
+                                types::Error::StrErr(format!(
+                                    "failed to convert stale submission result: {error}"
+                                ))
+                            });
+                        };
+                        let bundle =
+                            spend_bundle_to_coinset_js(&finalized.bundle).map_err(|error| {
+                                types::Error::StrErr(format!(
+                                    "failed to convert finalized transaction bundle: {error:?}"
+                                ))
+                            })?;
+                        let result = JsFinalizedSubmission {
+                            protocol_bundle: spend_bundle_to_js(&finalized.bundle),
+                            bundle,
+                            applied_fee: finalized.applied_fee.to_string(),
+                            warning: finalized.warning,
+                            fee_source_disposition: match finalized.fee_source_disposition {
+                                FeeSourceDisposition::Attached => "attached",
+                                FeeSourceDisposition::Unused => "unused",
+                                FeeSourceDisposition::NotRequested => "not-requested",
+                            },
+                            variant_fingerprint: hex::encode(finalized.variant_fingerprint.bytes()),
+                            should_broadcast: finalized.should_broadcast,
+                        };
+                        serde_wasm_bindgen::to_value(&result).map_err(|error| {
+                            types::Error::StrErr(format!(
+                                "failed to convert finalized transaction result: {error}"
+                            ))
+                        })
+                    },
+                )
+            })
+        }
+
+        pub fn get_channel_puzzle_hash(&self) -> Result<JsValue, JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                let ph = cradle.cradle.channel_puzzle_hash();
+                match ph {
+                    Some(p) => Ok(JsValue::from_str(&hex::encode(p.bytes()))),
+                    None => Ok(JsValue::NULL),
+                }
+            })
+        }
+
+        pub fn propose(&self, proposal: JsValue) -> Result<JsValue, JsValue> {
+            let proposal: JsGameProposal = serde_wasm_bindgen::from_value(proposal).into_js()?;
+            let mut proposal_id = None;
+            let result = self.with_game_output(|cradle: &mut Channel| {
+                let game_type = parse_game_type_hex(&proposal.game_type)
+                    .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
+                let start = GameProposal {
+                    sender_is_player_a: proposal.sender_is_player_a,
+                    game_type,
+                    timeout: Timeout::new(proposal.timeout),
+                    parameters: proposal.parameters,
+                };
+                let id = cradle.cradle.propose(&mut cradle.allocator, &start)?;
+                proposal_id = Some(id);
+                cradle.collect(true)
+            })?;
+            js_sys::Reflect::set(
+                &result,
+                &"id".into(),
+                &proposal_id.unwrap().to_string().into(),
+            )?;
+            Ok(result)
+        }
+
+        pub fn accept_proposal(&self, game_id: &str) -> Result<JsValue, JsValue> {
+            let proposal_id = string_to_local_proposal_id(game_id)?;
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .accept_proposal(&mut cradle.allocator, &proposal_id)
+            })
+        }
+
+        pub fn cancel_proposal(&self, game_id: &str) -> Result<JsValue, JsValue> {
+            let proposal_id = string_to_local_proposal_id(game_id)?;
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .cancel_proposal(&mut cradle.allocator, &proposal_id)
+            })
+        }
+
+        pub fn make_move_with_entropy_for_testing(
+            &self,
+            id: &str,
+            readable: &[u8],
+            new_entropy: &str,
+        ) -> Result<JsValue, JsValue> {
+            self.make_move_inner(id, readable, Some(new_entropy))
+        }
+
+        pub fn make_move(&self, id: &str, readable: &[u8]) -> Result<JsValue, JsValue> {
+            self.make_move_inner(id, readable, None)
+        }
+
+        /// Submit a cheating move for testing and demonstration purposes.
+        /// The mover_share is the amount the victim receives on timeout.
+        pub fn cheat(&self, id: &str, mover_share: js_sys::BigInt) -> Result<JsValue, JsValue> {
+            let game_id = string_to_game_id(id)?;
+            let share = Amount::new(
+                String::from(mover_share.to_string(10)?)
+                    .parse::<u64>()
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?,
+            );
+            self.with_game_action_drain(
+                game_id,
+                FailedGameAction::Cheat,
+                move |cradle: &mut Channel| {
+                    cradle.cradle.cheat(&mut cradle.allocator, &game_id, share)
+                },
+            )
+        }
+
+        /// Pull the protocol-level peer state, rendered as indented text for the
+        /// dashboard. This reads directly out of Rust (borrow-safe) rather than
+        /// being pushed through notifications.
+        pub fn historical_unroll_count(&self) -> Result<Option<u64>, JsValue> {
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .historical_unroll_count()
+                    .map(|count| u32::try_from(count).map(u64::from))
+                    .transpose()
+                    .map_err(|_| {
+                        types::Error::StrErr(
+                            "historical unroll count exceeds WASM metric range".to_string(),
+                        )
+                    })
+            })
+        }
+
+        /// Labeled coin ids (hex) to show above the protocol state.
+        pub fn coins_of_interest(&self) -> Result<JsValue, JsValue> {
+            let coins =
+                self.with_game(move |cradle: &mut Channel| Ok(cradle.cradle.coins_of_interest()))?;
+            let entries: Vec<JsCoinOfInterest> = coins
+                .into_iter()
+                .map(|(kind, id)| {
+                    let (game_id, game_coin_kind) = match kind {
+                        CoinOfInterest::CurrentGame(game_id) => {
+                            (Some(game_id.to_string()), Some("current"))
+                        }
+                        CoinOfInterest::GameReward(game_id) => {
+                            (Some(game_id.to_string()), Some("reward"))
+                        }
+                        _ => (None, None),
+                    };
+                    JsCoinOfInterest {
+                        label: kind.label(),
+                        id,
+                        game_id,
+                        game_coin_kind,
+                    }
+                })
+                .collect();
+            serde_wasm_bindgen::to_value(&entries).into_js()
+        }
+
+        pub fn get_identity(&self) -> Result<JsValue, JsValue> {
+            serde_wasm_bindgen::to_value(&self.with_game(move |cradle: &mut Channel| {
+                Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
+            })?)
+            .into_js()
+        }
+
+        #[wasm_bindgen(js_name = acceptSettlement)]
+        pub fn accept_settlement(&self, id: &str) -> Result<JsValue, JsValue> {
+            let game_id = string_to_game_id(id)?;
+            self.with_game_action_drain(
+                game_id,
+                FailedGameAction::AcceptSettlement,
+                move |cradle: &mut Channel| {
+                    cradle
+                        .cradle
+                        .accept_settlement(&mut cradle.allocator, &game_id)
+                },
+            )
+        }
+
+        pub fn shut_down(&self) -> Result<JsValue, JsValue> {
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle.cradle.shut_down(&mut cradle.allocator)
+            })
+        }
+
+        pub fn abandon(&self) -> Result<JsValue, JsValue> {
+            self.with_game_drain(move |cradle: &mut Channel| cradle.cradle.abandon())
+        }
+
+        pub fn go_on_chain(&self) -> Result<JsValue, JsValue> {
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .go_on_chain(&mut cradle.allocator, false)
+                    .map(|_| ())
+            })
+        }
+
+        pub fn report_puzzle_and_solution(
+            &self,
+            coin_hex: &str,
+            puzzle_hex: Option<String>,
+            solution_hex: Option<String>,
+        ) -> Result<JsValue, JsValue> {
+            let coin_bytes = hex::decode(coin_hex).into_js()?;
+            let coin = CoinString::from_bytes(&coin_bytes);
+
+            let puzzle_program = puzzle_hex
+                .map(|h| Program::from_hex(&h))
+                .transpose()
+                .into_js()?;
+            let solution_program = solution_hex
+                .map(|h| Program::from_hex(&h))
+                .transpose()
+                .into_js()?;
+
+            let ps_pair = match (&puzzle_program, &solution_program) {
+                (Some(p), Some(s)) => Some((p, s)),
+                _ => None,
+            };
+
+            self.with_game_drain(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .report_puzzle_and_solution(&mut cradle.allocator, &coin, ps_pair)
+            })
+        }
+    }
+
+    impl PeerProtocol {
+        fn make_move_inner(
+            &self,
+            id: &str,
+            readable: &[u8],
+            entropy: Option<&str>,
+        ) -> Result<JsValue, JsValue> {
+            let game_id = string_to_game_id(id)?;
+            let readable_move = ReadableMove::from_program(std::rc::Rc::new(
+                Program::from_bytes(readable).into_js()?,
+            ));
+            let new_entropy = if let Some(e) = entropy {
+                Some(Hash::from_slice(&hex::decode(e).into_js()?).into_js()?)
+            } else {
+                None
+            };
+            self.with_game_output(move |channel| {
+                let entropy = new_entropy.unwrap_or_else(|| channel.rng.0.random());
+                channel.action(Some((game_id, FailedGameAction::MakeMove)), |channel| {
+                    channel.cradle.make_move(
+                        &mut channel.allocator,
+                        &game_id,
+                        readable_move,
+                        entropy,
+                    )
+                })
+            })
+        }
+
+        fn with_game_drain<F>(&self, f: F) -> Result<JsValue, JsValue>
+        where
+            F: FnOnce(&mut Channel) -> Result<(), types::Error>,
+        {
+            self.with_game_drain_context(None, f)
+        }
+
+        fn with_game_action_drain<F>(
+            &self,
+            game_id: GameID,
+            action: FailedGameAction,
+            f: F,
+        ) -> Result<JsValue, JsValue>
+        where
+            F: FnOnce(&mut Channel) -> Result<(), types::Error>,
+        {
+            self.with_game_drain_context(Some((game_id, action)), f)
+        }
+
+        fn with_game_drain_context<F>(
+            &self,
+            action_context: Option<(GameID, FailedGameAction)>,
+            f: F,
+        ) -> Result<JsValue, JsValue>
+        where
+            F: FnOnce(&mut Channel) -> Result<(), types::Error>,
+        {
+            self.with_game_output(move |channel| channel.action(action_context, f))
+        }
     }
 }

@@ -125,6 +125,8 @@ and terminal-message send/ACK tracking. One accepted Rust session directly owns
 both reliability state and channel. It delivers messages and terminal
 acknowledgements through native calls and results, without internal JavaScript
 conversions or callback routing.
+Gameplay and chain observations are methods on that same exported session;
+TypeScript holds the object directly rather than a numeric channel handle.
 A replacement carrier retains that owner; retirement releases its channel.
 The host reports consumer availability and performs persistence and application
 effects requested by Rust. WalletConnect normalization remains in the TypeScript adapter.

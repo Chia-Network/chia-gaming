@@ -49,8 +49,10 @@ connection events and checkpoint outcomes. `coordination.rs` also owns consent
 delivery gates, rejection recognition and the terminal handoff binding. Its
 three host capabilities are frame sending, consumer availability,
 and notifications; TypeScript supplies no per-message delivery policy.
-Existing gameplay handles resolve to this same owner at the WASM boundary.
-Standalone channel bindings remain available for engine callers and tests.
+Gameplay, chain observations and channel serialization are methods on that
+same exported Rust session object. There is no channel ID registry or second
+TypeScript wrapper; `ChiaGame` is its gameplay interface. Channel restore attaches
+to the existing owner after restoring its reliability checkpoint.
 Checkpoint capture freezes a generation and frame/ACK counts: release sends
 only that boundary, once. An ordinary failed write leaves it dirty while still
 releasing once; authority loss is fenced by the host before release. A failed

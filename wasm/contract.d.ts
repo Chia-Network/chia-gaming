@@ -51,7 +51,7 @@ export interface PeerHost {
   notify(event: PeerEvent): void;
 }
 
-export interface PeerProtocolApi {
+export interface PeerProtocolApi extends GameSessionApi {
   snapshot(): PeerProtocolSnapshot;
   restore(state: PeerProtocolState, terminal: PeerTerminalHandoff | null): void;
   receive(input: PeerInput, host: PeerHost): boolean;
@@ -63,9 +63,9 @@ export interface PeerProtocolApi {
   retire(retainRejection: boolean): boolean;
   reject_session(host: PeerHost): void;
   failure(reason: string, host: PeerHost): void;
-  restore_channel(data: Uint8Array, seed: string): number;
+  restore_channel(data: Uint8Array, seed: string): void;
   accept_session(terms: PeerSessionTerms, initiator: boolean): void;
-  open_channel(terms: PeerSessionTerms, initiator: boolean, rngId: number, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ id: number; puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
+  open_channel(terms: PeerSessionTerms, initiator: boolean, rngId: number, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
   free(): void;
 }
 
@@ -241,7 +241,7 @@ export type ProposalParameterValue =
   | bigint
   | string
   | Uint8Array
-  | ProposalParameterValue[];
+  | readonly ProposalParameterValue[];
 
 export interface ProposalMadePayload {
   id: bigint;
@@ -349,19 +349,89 @@ export interface WasmResult {
   disposition: WasmDisposition;
   id?: string;
 }
-
-export interface GameSessionConfig {
-  rng_id: number;
-  is_initiator: boolean;
-  my_contribution: Amount;
-  their_contribution: Amount;
-  channel_timeout: number;
-  unroll_timeout: number;
-  reward_puzzle_hash: string;
-  genesis_challenge: string;
+export interface CoinStateRecord {
+  /** Full coin string, hex-encoded. */
+  coin: string;
+  created_height: bigint | null;
+  spent_height: bigint | null;
 }
 
-export interface GameSessionCreateResult {
-  id: number;
-  puzzle_hash: string;
+export interface ProposeGameParams {
+  /** First generated member's initial validation puzzle hash (32-byte hex). */
+  game_type: ProtocolGameId;
+  timeout: bigint;
+  sender_is_player_a: boolean;
+  parameters: ProposalParameterValue;
+}
+
+export interface CoinOfInterestEntry {
+  label: string;
+  id: string;
+  game_id?: string;
+  game_coin_kind?: 'current' | 'reward';
+}
+
+export interface FinalizedSubmission {
+  protocol_bundle: SpendBundle;
+  bundle: unknown;
+  applied_fee: string;
+  warning?: string | null;
+  fee_source_disposition: 'attached' | 'unused' | 'not-requested';
+  variant_fingerprint: string;
+  should_broadcast: boolean;
+}
+
+export type SubmissionAttemptStatus = 'applied' | 'stale';
+
+export type SubmissionFinalizationResult = FinalizedSubmission | { status: 'stale' };
+
+declare const protocolGameIdBrand: unique symbol;
+/** First generated member's initial validation puzzle hash. */
+export type ProtocolGameId = string & { readonly [protocolGameIdBrand]: void };
+
+/** Gameplay operations on the same Rust object that owns peer reliability. */
+export interface GameSessionApi {
+  propose(proposal: ProposeGameParams): WasmResult;
+  accept_proposal(game_id: string): WasmResult;
+  cancel_proposal(game_id: string): WasmResult;
+  historical_unroll_count(): bigint | undefined;
+  coins_of_interest(): CoinOfInterestEntry[];
+  snapshot_pending_coin_solution_requests(): string[];
+  serialize(): Uint8Array;
+  acceptSettlement(id: string): WasmResult;
+  shut_down(): WasmResult;
+  abandon(): WasmResult;
+  go_on_chain(): WasmResult;
+  report_puzzle_and_solution(
+    coin_hex: string,
+    puzzle_hex: string | undefined,
+    solution_hex: string | undefined,
+  ): WasmResult;
+  make_move(id: string, readable: Uint8Array): WasmResult;
+  make_move_with_entropy_for_testing(
+    id: string,
+    readable: Uint8Array,
+    new_entropy: string,
+  ): WasmResult;
+  cheat(game_id: string, mover_share: bigint): WasmResult;
+  start_handshake(opening_fee: string): WasmResult;
+  provide_coin_spend_bundle(bundle_json: string): WasmResult;
+  provide_offer_bech32(offer_bech32: string): WasmResult;
+  wallet_callback_failed(reason: string): WasmResult;
+  get_channel_puzzle_hash(): string | null;
+  report_coin_states(height: bigint, records: CoinStateRecord[]): WasmResult;
+  report_height(height: bigint): WasmResult;
+  snapshot_watched_coins(): Array<{ coin_name: string; coin_string: string }>;
+  drain_submissions(): SubmissionDrain;
+  configure_submission_fee(amount: string): void;
+  finalize_submission_attempt(
+    attemptToken: string,
+    feeSourceJson?: string,
+  ): SubmissionFinalizationResult;
+  acknowledge_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
+  reject_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
+  submission_attempt_unavailable(attemptToken: string): SubmissionAttemptStatus;
+  relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
+  chain_snapshot_ready(): void;
+  request_fee_upgrades(): void;
 }

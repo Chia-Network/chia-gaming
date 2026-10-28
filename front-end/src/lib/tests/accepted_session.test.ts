@@ -5,6 +5,7 @@ import { setTestPersistence } from './message_protocol.harness';
 
 test('the accepted Rust owner delivers a handshake and checkpoints its ACK without calling the TypeScript channel wrapper', async () => {
   const { blob, cradle, sentAcks } = await createAcceptedBlob();
+  expect(cradle).toBe(blob.getPeerProtocol());
   const projection = jest.spyOn(blob, 'processResult');
   const before = cradle.serialize();
   const save = jest.fn(() => {
@@ -52,7 +53,7 @@ test('replacing the carrier keeps the existing accepted Rust owner and its chann
   expect(cradle.serialize()).not.toEqual(before);
 });
 
-test('retiring an accepted session invalidates its owned channel handle', async () => {
+test('retiring an accepted session releases its owned channel', async () => {
   const { blob, cradle } = await createAcceptedBlob();
   expect(cradle.serialize().length).toBeGreaterThan(0);
   blob.cleanup();
