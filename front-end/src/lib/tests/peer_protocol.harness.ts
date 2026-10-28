@@ -10,6 +10,7 @@ export function restorePeerState(
   state: Partial<PeerProtocolState>,
 ): void {
   const protocol = target.getPeerProtocol?.() ?? target.reliableTransport?.protocol;
-  if (protocol) protocol.restore({ ...protocol.snapshot(), ...state });
+  if (protocol)
+    protocol.restore({ ...protocol.snapshot(), ...state }, protocol.snapshot().terminalHandoff);
   else Object.assign(target.reliableState!, state);
 }

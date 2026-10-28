@@ -22,47 +22,52 @@ export interface PeerSessionTerms {
 /** Captured by Rust and returned unchanged after the host's checkpoint write. */
 export type PeerPreparedCommit = unknown;
 
+export interface PeerTerminalHandoff {
+  id: string;
+  message: Uint8Array;
+  msgno: bigint;
+  sent: boolean;
+  acknowledged: boolean;
+}
+export interface PeerProtocolSnapshot extends PeerProtocolState {
+  terminalHandoff: PeerTerminalHandoff | null;
+  rejectionComplete: boolean;
+}
+export type PeerReceiveMode = 'raw' | 'proposal' | 'channel' | 'rejection' | 'retiring';
+export type PeerInput =
+  | { type: 'data'; msgno: bigint; body: Uint8Array }
+  | { type: 'ack'; msgno: bigint }
+  | { type: 'keepalive' };
 export type PeerEvent =
-  | { type: 'commit-requested' | 'keepalive' | 'committed' }
-  | { type: 'sent' | 'acknowledged'; msgno: bigint }
+  | { type: 'commit-requested' | 'keepalive' | 'committed' | 'rejection-acknowledged' | 'terminal-acknowledged' }
+  | { type: 'message'; msgno: bigint; body: Uint8Array }
+  | { type: 'acknowledged'; msgno: bigint }
   | { type: 'failure'; reason: string };
 
 export interface PeerHost {
-  sendData(msgno: bigint, body: Uint8Array): boolean;
-  sendAck(msgno: bigint): boolean;
-  ready(): boolean;
-  canDeliver(msgno: bigint, body: Uint8Array): boolean;
-  canTerminate(msgno: bigint, body: Uint8Array): boolean;
-  deliver(msgno: bigint, body: Uint8Array): void;
-  notify(event: PeerEvent): void;
+  send(frame: Exclude<PeerInput, { type: 'keepalive' }>): boolean;
+  status(): { available: boolean; established: boolean; discarding: boolean };
+  /** Only terminal-acknowledged returns whether the channel completed. */
+  notify(event: PeerEvent): boolean | void;
 }
 
 export interface PeerProtocolApi {
-  snapshot(): PeerProtocolState;
-  restore(state: PeerProtocolState): void;
-  send_message(body: Uint8Array, disposition: string | undefined, host: PeerHost): bigint;
-  receive_data(msgno: bigint, body: Uint8Array, host: PeerHost): boolean;
-  receive_ack(msgno: bigint, host: PeerHost): boolean;
-  consumer_ready(host: PeerHost): void;
-  keepalive(host: PeerHost): void;
+  snapshot(): PeerProtocolSnapshot;
+  restore(state: PeerProtocolState, terminal: PeerTerminalHandoff | null): void;
+  send_message(body: Uint8Array, host: PeerHost): bigint;
+  receive(input: PeerInput, host: PeerHost): boolean;
+  consumer_ready(mode: PeerReceiveMode, host: PeerHost): void;
   connectivity(event: string, now: number, force: boolean, host: PeerHost): boolean;
   dirty(): boolean;
   prepare_commit(): PeerPreparedCommit;
   complete_commit(commit: PeerPreparedCommit, persisted: boolean, host: PeerHost): void;
-  retire(): void;
-  stop_receiving(): void;
+  retire(retainRejection: boolean): boolean;
   stop_protocol(): void;
-  proposal_received(host: PeerHost): void;
   reject_session(host: PeerHost): void;
-  rejection_complete(): boolean;
-  reject_inbound(host: PeerHost): void;
   failure(reason: string, host: PeerHost): void;
-  validate_terminal_handoff(msgno: bigint, body: Uint8Array, sent: boolean, acknowledged: boolean): void;
+  channel_command(command: { id: string; message: Uint8Array } | null, restoring: boolean, host: PeerHost): void;
   accept_session(terms: PeerSessionTerms, initiator: boolean): void;
-  restore_setup(terms: PeerSessionTerms, initiator: boolean): void;
-  wallet_address_requested(): boolean;
-  restore_channel(): void;
-  provide_wallet_address(rngId: number, address: string, genesisChallenge: string): { id: number; puzzle_hash: string };
+  open_channel(terms: PeerSessionTerms, initiator: boolean, rngId: number, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ id: number; puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
   free(): void;
 }
 

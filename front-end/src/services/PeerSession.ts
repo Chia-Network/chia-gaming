@@ -7,6 +7,9 @@ import type {
   PeerSessionTerms,
   PeerHost,
   PeerPreparedCommit,
+  PeerProtocolSnapshot,
+  PeerReceiveMode,
+  PeerTerminalHandoff,
 } from '../../../wasm/contract';
 import {
   DEFAULT_SESSION_RECEIVE_POLICY,
@@ -62,13 +65,15 @@ export type MessageHandler = {
 
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
-  canDeliver?: (msgno: bigint, body: Uint8Array) => boolean;
-  canTerminateAt?: (msgno: bigint, body: Uint8Array) => boolean;
+  mode?: PeerReceiveMode;
+  isEstablished?: () => boolean;
+  isDiscarding?: () => boolean;
   deliver: (msgno: bigint, body: Uint8Array) => void;
   persist: () => Promise<void>;
   failure: (reason: string) => void;
   acknowledged?: (ack: bigint) => void;
-  sent?: (msgno: bigint) => void;
+  rejectionAcknowledged?: () => void;
+  terminalAcknowledged?: () => boolean;
   keepalive?: () => void;
   committed?: () => void;
 }
@@ -94,22 +99,28 @@ export class ReliablePeerTransport {
   ) {
     this.protocol = createPeerProtocol(state, receivePolicy);
     this.host = {
-      sendData: (msgno, body) => sendData(msgno, Uint8Array.from(body)),
-      sendAck,
-      ready: () => !!this.consumer?.isReady(),
-      canDeliver: (msgno, body) =>
-        this.consumer?.canDeliver?.(msgno, Uint8Array.from(body)) ?? true,
-      canTerminate: (msgno, body) =>
-        this.consumer?.canTerminateAt?.(msgno, Uint8Array.from(body)) ?? false,
-      deliver: (msgno, body) => this.consumer!.deliver(msgno, Uint8Array.from(body)),
+      send: (frame) =>
+        frame.type === 'data'
+          ? sendData(frame.msgno, Uint8Array.from(frame.body))
+          : sendAck(frame.msgno),
+      status: () => ({
+        available: !!this.consumer?.isReady(),
+        established: this.consumer?.isEstablished?.() ?? false,
+        discarding: this.consumer?.isDiscarding?.() ?? false,
+      }),
       notify: (event) => {
         switch (event.type) {
           case 'commit-requested':
             this.scheduleFlush();
             break;
-          case 'sent':
-            this.consumer?.sent?.(event.msgno);
+          case 'message':
+            this.consumer!.deliver(event.msgno, Uint8Array.from(event.body));
             break;
+          case 'rejection-acknowledged':
+            this.consumer?.rejectionAcknowledged?.();
+            break;
+          case 'terminal-acknowledged':
+            return this.consumer?.terminalAcknowledged?.() ?? false;
           case 'acknowledged':
             this.consumer?.acknowledged?.(event.msgno);
             break;
@@ -127,10 +138,13 @@ export class ReliablePeerTransport {
     };
   }
 
-  get state(): ReliableTransportState {
+  get state(): PeerProtocolSnapshot {
     const state = this.protocol.snapshot();
     return {
       ...state,
+      terminalHandoff: state.terminalHandoff
+        ? { ...state.terminalHandoff, message: Uint8Array.from(state.terminalHandoff.message) }
+        : null,
       unackedMessages: state.unackedMessages.map(({ msgno, msg }) => ({
         msgno,
         msg: Uint8Array.from(msg),
@@ -138,8 +152,8 @@ export class ReliablePeerTransport {
     };
   }
 
-  restore(state: ReliableTransportState): void {
-    this.protocol.restore(state);
+  restore(state: ReliableTransportState, terminal: PeerTerminalHandoff | null = null): void {
+    this.protocol.restore(state, terminal);
   }
 
   acceptSession(terms: PeerSessionTerms, initiator: boolean): void {
@@ -162,21 +176,21 @@ export class ReliablePeerTransport {
   }
 
   consumerReady(): void {
-    this.protocol.consumer_ready(this.host);
+    this.protocol.consumer_ready(this.consumer?.mode ?? 'raw', this.host);
   }
 
   detachConsumer(consumer?: ReliableMessageConsumer): void {
     if (!consumer || this.consumer === consumer) this.consumer = null;
   }
 
-  sendMessage(body: Uint8Array, disposition?: ReliableTransportState['disposition']): bigint {
-    return this.protocol.send_message(body, disposition, this.host);
+  sendMessage(body: Uint8Array): bigint {
+    return this.protocol.send_message(body, this.host);
   }
 
   receiveData(msgno: bigint, body: Uint8Array): boolean {
     let accepted = true;
     const receive = () => {
-      accepted = this.protocol.receive_data(msgno, body, this.host);
+      accepted = this.protocol.receive({ type: 'data', msgno, body }, this.host);
     };
     if (this.commitCoordinator) this.commitCoordinator.enqueue(receive);
     else receive();
@@ -186,7 +200,7 @@ export class ReliablePeerTransport {
   receiveAck(msgno: bigint): boolean {
     let accepted = true;
     const receive = () => {
-      accepted = this.protocol.receive_ack(msgno, this.host);
+      accepted = this.protocol.receive({ type: 'ack', msgno }, this.host);
     };
     if (this.commitCoordinator) this.commitCoordinator.enqueue(receive);
     else receive();
@@ -194,7 +208,7 @@ export class ReliablePeerTransport {
   }
 
   receiveKeepalive(): void {
-    this.protocol.keepalive(this.host);
+    this.protocol.receive({ type: 'keepalive' }, this.host);
   }
 
   connectivity(
@@ -218,27 +232,18 @@ export class ReliablePeerTransport {
   hasPendingDurability(): boolean {
     return this.protocol.dirty();
   }
-  stopReceiving(): void {
-    this.protocol.stop_receiving();
-  }
   stopProtocol(): void {
     this.protocol.stop_protocol();
-  }
-  proposalReceived(): void {
-    this.protocol.proposal_received(this.host);
   }
   rejectSession(): void {
     this.protocol.reject_session(this.host);
   }
-  rejectionComplete(): boolean {
-    return this.protocol.rejection_complete();
-  }
-  rejectInbound(): void {
-    this.protocol.reject_inbound(this.host);
+  channelCommand(command: { id: string; message: Uint8Array } | null, restoring = false): void {
+    this.protocol.channel_command(command, restoring, this.host);
   }
 
-  clearRuntime(): void {
-    this.protocol.retire();
+  clearRuntime(retainRejection = false): void {
+    if (this.protocol.retire(retainRejection)) return;
     this.flushScheduled = false;
     this.consumer = null;
     this.commitCoordinator = null;

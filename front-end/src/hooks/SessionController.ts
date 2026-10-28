@@ -44,7 +44,6 @@ import {
   type ReadonlySessionReceivePolicy,
 } from '../lib/session/receivePolicy';
 import {
-  decodePeerAppMessage,
   ReliablePeerTransport,
   type PreparedReliableCommit,
   type ReliableMessageConsumer,
@@ -220,7 +219,6 @@ export class SessionController implements PollingGameSession {
   }
   private reliableTransport: ReliablePeerTransport;
   private readonly reliableConsumer: ReliableMessageConsumer;
-  private inboundSessionRejected = false;
   private inboundSessionRejectCommitted = false;
   private persistInboundSessionReject:
     | ((sessionId: string, remoteNumber: bigint) => Promise<void>)
@@ -279,7 +277,6 @@ export class SessionController implements PollingGameSession {
   private walletProviderScope: WalletProviderScope | null = null;
   private protocolStopped = false;
   private retired = false;
-  private terminalHandoff: SessionTerminalHandoffSave | null = null;
   private transportCheckpointRestored = false;
   lastChannelStatus: ChannelStatusPayload | null = null;
   myAlias: string | undefined = undefined;
@@ -330,13 +327,15 @@ export class SessionController implements PollingGameSession {
     this.persistInboundSessionReject = peer_conn.persistInboundSessionReject ?? null;
     this.inboundSessionRejectHandler = peer_conn.onSessionReject ?? null;
     this.reliableConsumer = {
+      mode: 'channel',
+      isEstablished: () => this.channelReady,
+      isDiscarding: () => this.protocolStopped || this.onChain,
       isReady: () =>
         !!this.wc &&
         !!this.cradle &&
         this.qualifyingEvents === 7 &&
         !this.reloading &&
         !this.pendingPeerFailure &&
-        !this.inboundSessionRejected &&
         !this.retired,
       deliver: (msgno, body) => this.deliverOrderedMessage(msgno, body),
       persist: () =>
@@ -344,8 +343,7 @@ export class SessionController implements PollingGameSession {
           new Error('Active-session persistence requires SessionMachineRuntime coordination'),
         ),
       failure: (reason) => this.failPeerProcessing(reason),
-      acknowledged: (ack) => this.handleReliableAcknowledgement(ack),
-      sent: (msgno) => this.noteTerminalHandoffSent(msgno),
+      terminalAcknowledged: () => this.completeOutboundTerminalHandoffAfterAck(),
       keepalive: () => this.notePeerActivity(),
       committed: () => this.notifyInboundSessionRejectCommitted(),
     };
@@ -409,6 +407,9 @@ export class SessionController implements PollingGameSession {
 
   attachReliableTransport(transport: ReliablePeerTransport): void {
     if (this.reliableTransport === transport) return;
+    // The channel's existing checkpoint survives a carrier replacement.
+    const terminalHandoff = this.reliableTransport.state.terminalHandoff;
+    if (terminalHandoff) transport.restore(transport.state, terminalHandoff);
     this.reliableTransport.detachConsumer(this.reliableConsumer);
     this.reliableTransport = transport;
     this.reliableTransport.attachConsumer(this.reliableConsumer);
@@ -801,7 +802,6 @@ export class SessionController implements PollingGameSession {
 
   private cleanupInternal() {
     if (this.retired) return;
-    const retainRejectedTransport = this.reliableState.disposition === 'outbound-reject';
     this.pendingFunding = null;
     this.retired = true;
     this.channelFundingUnsubscribe?.();
@@ -824,10 +824,8 @@ export class SessionController implements PollingGameSession {
     // without stopping a shared poller, but make any in-flight active drain
     // inert immediately.
     this.protocolStopped = true;
-    this.terminalHandoff = null;
     this.eventQueue = [];
-    this.reliableTransport.stopReceiving();
-    if (!retainRejectedTransport) this.reliableTransport.clearRuntime();
+    this.reliableTransport.clearRuntime(true);
     this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
@@ -1023,7 +1021,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
     const command = cradle.pendingTerminalHandoff();
-    this.reconcileTerminalHandoff(command);
+    this.reliableTransport.channelCommand(command, true);
     this.blockchain?.snapshotGameSessionCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
@@ -1304,7 +1302,7 @@ export class SessionController implements PollingGameSession {
       }
     }
     if (disposition.kind === 'await-outbound-terminal') {
-      this.queueTerminalHandoff(disposition.command);
+      this.reliableTransport.channelCommand(disposition.command);
     }
 
     // A terminal manager drain can still contain already-queued on-chain
@@ -1316,16 +1314,6 @@ export class SessionController implements PollingGameSession {
       return;
     }
     if (this.eventQueue.length > 0) this.requestCommit();
-  }
-
-  queueHostMessage(
-    message: Uint8Array,
-    disposition: 'active' | 'outbound-reject' = 'active',
-  ): bigint {
-    if (this.retired || this.protocolStopped) {
-      throw new Error('Cannot queue a host message on a stopped reliable transport');
-    }
-    return this.reliableTransport.sendMessage(message, disposition);
   }
 
   private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
@@ -1403,7 +1391,6 @@ export class SessionController implements PollingGameSession {
     this.protocolStopped = true;
     this.blockchain?.stop();
     this.stopKeepaliveTimer();
-    this.terminalHandoff = null;
     // A terminal drain is a replacement boundary, not an append-only update:
     // stale status/protocol work must not render after it. Per-game terminal
     // facts from an earlier manager drain remain authoritative, however, and
@@ -1525,21 +1512,7 @@ export class SessionController implements PollingGameSession {
     if (this.cradle) {
       throw new Error('terminal handoff restoration must precede WASM cradle installation');
     }
-    if (this.terminalHandoff) {
-      if (
-        binding &&
-        this.terminalHandoff.id === binding.id &&
-        this.terminalHandoff.msgno === binding.msgno &&
-        this.terminalHandoff.sent === binding.sent &&
-        this.terminalHandoff.acknowledged === binding.acknowledged &&
-        this.terminalHandoff.message.length === binding.message.length &&
-        this.terminalHandoff.message.every((byte, index) => byte === binding.message[index])
-      ) {
-        return;
-      }
-      throw new Error('terminal handoff was already restored with different state');
-    }
-    this.terminalHandoff = binding === null ? null : structuredClone(binding);
+    this.reliableTransport.restore(this.reliableState, binding);
   }
 
   restoreTransportCheckpoint(transport: SessionTransportSave): void {
@@ -1553,49 +1526,6 @@ export class SessionController implements PollingGameSession {
     });
     this.restoreTerminalHandoff(transport.terminalHandoff);
     this.transportCheckpointRestored = true;
-  }
-
-  private reconcileTerminalHandoff(command: { id: string; message: Uint8Array } | null): void {
-    const binding = this.terminalHandoff;
-    if (!command) {
-      if (binding) {
-        throw new Error('persisted terminal handoff has no matching Rust command');
-      }
-      return;
-    }
-    if (!binding) {
-      this.queueTerminalHandoff(command);
-      return;
-    }
-    if (
-      binding.id !== command.id ||
-      binding.message.length !== command.message.length ||
-      !binding.message.every((byte, index) => byte === command.message[index])
-    ) {
-      throw new Error('persisted terminal handoff does not match Rust pending command');
-    }
-    this.getPeerProtocol().validate_terminal_handoff(
-      binding.msgno,
-      binding.message,
-      binding.sent,
-      binding.acknowledged,
-    );
-    if (binding.acknowledged) this.completeOutboundTerminalHandoffAfterAck(binding.id);
-  }
-
-  private queueTerminalHandoff(command: { id: string; message: Uint8Array }): void {
-    if (this.terminalHandoff) {
-      throw new Error('cannot replace a pending terminal handoff command');
-    }
-    const message = Uint8Array.from(command.message);
-    const msgno = this.reliableTransport.sendMessage(message);
-    this.terminalHandoff = {
-      id: command.id,
-      message,
-      msgno,
-      sent: false,
-      acknowledged: false,
-    };
   }
 
   private dispatchEvent(event: GameSessionEvent): void {
@@ -1833,7 +1763,7 @@ export class SessionController implements PollingGameSession {
   failPeerProcessing(reason: string): void {
     if (this.retired || this.pendingPeerFailure) return;
     this.pendingPeerFailure = reason;
-    this.reliableTransport.stopReceiving();
+    this.reliableTransport.reportFailure(reason);
     log(`[peer-policy] ${reason}`);
     this.rxjsEmitter?.next({ type: 'error', error: reason });
     this.escalatePeerFailure();
@@ -1845,20 +1775,6 @@ export class SessionController implements PollingGameSession {
   }
 
   private deliverOrderedMessage(_msgno: bigint, msg: Uint8Array): void {
-    if (this.protocolStopped || this.onChain) return;
-    let semantic = null;
-    try {
-      semantic = decodePeerAppMessage(msg);
-    } catch {}
-    if (semantic?.type === 'session_reject') {
-      if (this.channelReady) {
-        this.failPeerProcessing('session_reject received after channel establishment');
-        return;
-      }
-      this.inboundSessionRejected = true;
-      this.reliableTransport.rejectInbound();
-      return;
-    }
     const result = this.cradle!.deliver_message(msg);
     this.processResult(result);
   }
@@ -1875,16 +1791,6 @@ export class SessionController implements PollingGameSession {
     if (this.retired) return;
     this.notePeerActivity();
     this.reliableTransport.receiveAck(ackMsgno);
-  }
-
-  private handleReliableAcknowledgement(ackMsgno: bigint): void {
-    const terminalCommand = this.terminalHandoff;
-    const terminalAcknowledged =
-      terminalCommand && terminalCommand.sent && ackMsgno >= terminalCommand.msgno;
-    if (terminalAcknowledged) {
-      this.terminalHandoff = { ...terminalCommand, acknowledged: true };
-      this.completeOutboundTerminalHandoffAfterAck(terminalCommand.id);
-    }
   }
 
   reportPeerConnectivity(event: 'registered' | 'peer-available'): boolean {
@@ -2041,7 +1947,7 @@ export class SessionController implements PollingGameSession {
   }
 
   persistInboundSessionRejectIfNeeded(): Promise<void> | null {
-    if (!this.inboundSessionRejected) return null;
+    if (this.reliableState.disposition !== 'inbound-reject') return null;
     const persist = this.persistInboundSessionReject;
     const sessionId = this.reliableState.sessionId;
     const remoteNumber = this.reliableState.remoteNumber;
@@ -2055,11 +1961,10 @@ export class SessionController implements PollingGameSession {
     })();
   }
 
-  private completeOutboundTerminalHandoffAfterAck(commandId: string): void {
-    if (this.terminalHandoff?.id !== commandId) return;
+  private completeOutboundTerminalHandoffAfterAck(): boolean {
     if (!this.cradle) {
       this.requestCommit();
-      return;
+      return false;
     }
     try {
       const result = this.cradle.completeOutboundTerminalHandoff();
@@ -2067,19 +1972,13 @@ export class SessionController implements PollingGameSession {
         throw new Error('cooperative terminal handoff did not produce a terminal result');
       }
       this.processResult(result);
-      this.terminalHandoff = null;
+      return true;
     } catch (error) {
       const message = extractErrorMessage(error);
       diagStack('complete terminal handoff failed', error);
       this.rxjsEmitter?.next({ type: 'error', error: message });
       this.requestCommit();
-    }
-  }
-
-  private noteTerminalHandoffSent(msgno: bigint): void {
-    if (this.terminalHandoff?.msgno === msgno) {
-      this.terminalHandoff = { ...this.terminalHandoff, sent: true };
-      this.requestCommit();
+      return false;
     }
   }
 
@@ -2103,7 +2002,7 @@ export class SessionController implements PollingGameSession {
       perGameAmount: this.perGameAmount.toString(),
       rewardPuzzleHash: this.rewardPuzzleHash,
       unackedMessages: [...transport.unackedMessages],
-      terminalHandoff: this.terminalHandoff === null ? null : structuredClone(this.terminalHandoff),
+      terminalHandoff: transport.terminalHandoff,
       wasmNotificationHistory: recentEntries(
         this.wasmNotificationHistory,
         WASM_NOTIFICATION_HISTORY_LIMIT,

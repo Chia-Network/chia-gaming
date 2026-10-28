@@ -96,6 +96,12 @@ protocol does not define rollover; a sender must not wrap the counter within a
 session. Counters, acknowledgements, ordering, and replay are scoped to
 `session_id` independently in each direction.
 
+The Rust peer owner also enforces delivery eligibility before local consent,
+recognizes session rejection, and tracks the final cooperative handoff through
+send, acknowledgement and restore. The host supplies availability observations,
+carrier operations, persistence and application effects. These ownership
+boundaries do not change the wire format or ordering rules above.
+
 ## 3. Bencodex wire encoding
 
 The body of every data frame is exactly one Bencodex semantic message. There is

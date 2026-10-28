@@ -6,7 +6,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+pub mod coordination;
 pub mod driver;
+
+use coordination::{ReceiveMode, TerminalHandoff};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +72,7 @@ pub enum SetupState {
         initiator: bool,
     },
     ChannelStarted,
+    Retired,
 }
 
 /// Receive classification. Delivery is confirmed only after the body consumer
@@ -82,6 +86,9 @@ pub enum ReceiveAction {
 pub struct PeerSession {
     pub state: ReliableState,
     pub setup: Option<SetupState>,
+    pub receive_mode: ReceiveMode,
+    pub terminal_handoff: Option<TerminalHandoff>,
+    pub failed: bool,
     policy: ReceivePolicy,
     pub reorder_queue: BTreeMap<u64, Vec<u8>>,
     pending_outbound: Vec<Message>,
@@ -101,6 +108,9 @@ impl PeerSession {
             released_remote_number: state.remote_number,
             state,
             setup: None,
+            receive_mode: ReceiveMode::Raw,
+            terminal_handoff: None,
+            failed: false,
             policy,
             reorder_queue: BTreeMap::new(),
             pending_outbound: Vec::new(),

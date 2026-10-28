@@ -106,7 +106,8 @@ Local acceptance starts the Rust peer session. Its setup state constructs the
 outgoing proposal and requests the wallet reward address through the host;
 the returned address lets Rust create the channel engine in the same session.
 Rust also owns reliable peer numbering, acknowledgements, ordering, and replay,
-including queue draining and send attempts (`src/peer_session.rs` and its driver).
+including consent/rejection delivery policy, terminal-message tracking, queue
+draining and send attempts (`src/peer_session.rs` and its driver).
 TypeScript owns the connections, provides the socket-send callback and wallet
 requests, and performs the aggregate checkpoint. It reports connection events
 and checkpoint outcomes without inspecting or manipulating protocol queues. Pending proposal and

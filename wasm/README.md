@@ -3,23 +3,27 @@ Wasm bindings for the chia-gaming frontend.
 This crate packages the Rust state-channel implementation for browser and
 Node.js tests via wasm-pack.
 
-`create_peer_protocol` constructs the Rust reliable-delivery owner used by the
-browser's `ReliablePeerTransport` adapter. Its methods handle numbering, ACKs,
-ordering, checkpoint generations, send results, and hub/peer connectivity.
-`accept_session` begins local session setup and constructs the initiator's
-proposal. `wallet_address_requested` exposes the pending host request;
-`provide_wallet_address` consumes the result and creates the channel engine in
-the accepted session. `restore_setup` resumes an accepted pre-handshake save
-without generating another proposal; `restore_channel` attaches the live phase
-after the existing channel snapshot is restored.
+`create_peer_protocol` constructs the Rust peer-session owner used by the
+browser's `ReliablePeerTransport` adapter. Rust handles numbering, ACKs,
+ordering, replay, proposal/rejection policy, and terminal-message tracking.
+`accept_session` starts local acceptance and constructs the initiator's proposal.
+`open_channel` resumes the accepted setup, calls the supplied address provider,
+awaits its result, and creates the channel. Retiring setup cancels construction
+even when its address request is still in flight. TypeScript's WalletConnect
+adapter continues to own RPC normalization, retries and connection recovery.
 
-TypeScript executes wallet calls and IndexedDB writes, reports connectivity,
-and supplies carrier/application callbacks through `PeerHost`. Rust invokes the
-callbacks and consumes their results while it drives delivery, ACKs, failed-send
-retention and replay. The API has no queue iterators, queue mutation methods,
-per-message delivery confirmations or writable counters. Snapshot/restore is
-the persistence boundary; the checkpoint token is opaque to TypeScript. Host
-callbacks are supplied for each call, so Rust does not retain JavaScript
-closures that would keep the adapter alive across garbage collection. The existing channel bindings remain the API for gameplay
-and on-chain work. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
+The host has three capabilities: send a frame, report consumer availability and
+channel facts, and handle notifications. Rust owns delivery eligibility, rejection
+recognition, and terminal-frame reconciliation, send/ACK bookkeeping and retry
+eligibility. The terminal-acknowledged notification returns whether the channel
+completed; a failed completion retains the acknowledged binding for retry.
+TypeScript supplies application effects and IndexedDB writes, and reports
+connection events and checkpoint outcomes. Snapshot/restore carries saved data;
+the checkpoint token is opaque. The API has no queue accessors, per-message
+policy callbacks or sent/ACK confirmation sequence.
+
+Synchronous host callbacks run without a Rust session borrow. They are passed
+per call; the address-provider callback is retained only for its asynchronous
+request. The existing channel bindings remain the API for gameplay and on-chain
+work. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
 [peer protocol](../PEER_PROTOCOL.md) for lifetime and ordering contracts.

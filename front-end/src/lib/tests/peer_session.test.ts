@@ -1,7 +1,6 @@
 import { restorePeerState } from './peer_protocol.harness';
 import {
   PeerSession as BrowserPeerSession,
-  decodePeerAppMessage,
   encodePeerAppMessage,
   generateSessionId,
 } from '../../services/PeerSession';
@@ -313,7 +312,7 @@ describe('PeerSession', () => {
         restorePeerState(ps, { disposition: 'proposal-received' });
         ps.reliableTransport.attachConsumer({
           isReady: () => true,
-          canDeliver: (msgno) => msgno === 1n,
+          mode: 'proposal',
           deliver: jest.fn(),
           persist: () => Promise.resolve(),
           failure: provisionalFailure,
@@ -489,14 +488,7 @@ describe('PeerSession', () => {
       const handshakeA = new Uint8Array([0xaa, 0xbb]);
       ps.reliableTransport.attachConsumer({
         isReady: () => true,
-        canDeliver: (msgno, body) => {
-          if (msgno === 1n) return true;
-          try {
-            return decodePeerAppMessage(body)?.type === 'session_reject';
-          } catch {
-            return false;
-          }
-        },
+        mode: 'proposal',
         deliver: (msgno) => {
           expect(msgno).toBe(1n);
           prompt();
@@ -537,20 +529,7 @@ describe('PeerSession', () => {
       restorePeerState(ps, { remoteNumber: 1n });
       ps.reliableTransport.attachConsumer({
         isReady: () => true,
-        canDeliver: (_msgno, body) => {
-          try {
-            return decodePeerAppMessage(body)?.type === 'session_reject';
-          } catch {
-            return false;
-          }
-        },
-        canTerminateAt: (_msgno, body) => {
-          try {
-            return decodePeerAppMessage(body)?.type === 'session_reject';
-          } catch {
-            return false;
-          }
-        },
+        mode: 'proposal',
         deliver: delivered,
         persist: () => Promise.resolve(),
         failure: (reason) => fail(reason),
@@ -560,8 +539,8 @@ describe('PeerSession', () => {
       expect(ps.reliableTransport.receiveData(3n, rejectBody)).toBe(true);
       await ps.reliableTransport.flushPending();
 
-      expect(delivered).toHaveBeenCalledTimes(1);
-      expect(delivered).toHaveBeenCalledWith(3n, rejectBody);
+      expect(delivered).not.toHaveBeenCalled();
+      expect(ps.reliableState.disposition).toBe('inbound-reject');
       expect(ps.reliableState.remoteNumber).toBe(3n);
     });
 

@@ -120,7 +120,10 @@ connections, executes requested host work, and reports results and connectivity
 observations to Rust. Pending incoming proposal records and retained rejection
 records sit outside that session lifetime. Rust reliable delivery preserves
 their counters when an incoming proposal is accepted; reconnecting never
-creates another session.
+creates another session. Rust owns pre-consent delivery, rejection handling,
+and terminal-message send/ACK tracking. The host reports consumer availability
+and channel facts; it performs the persistence and application effects requested
+by Rust. WalletConnect normalization remains in the TypeScript adapter.
 
 A session is an **obligation**, not a connection. Once started, it runs to
 completion. Funds are locked in the channel coin and must be distributed

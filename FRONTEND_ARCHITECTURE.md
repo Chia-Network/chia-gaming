@@ -794,7 +794,15 @@ snapshot is a read-only copy for persistence. Rust's driver invokes the carrier
 and application callbacks, drains its queues, processes callback results, and
 prepares and releases each captured generation. TypeScript reports connectivity
 and checkpoint completion; it has no queue accessors or delivery-confirmation
-steps. IndexedDB and commit scheduling remain host work.
+steps. Rust also owns the pre-consent delivery rules, incoming rejection
+recognition, repeated-proposal rejection handling, and terminal-message
+reconciliation and sent/ACK state. Host notifications request rejection retirement
+or channel completion; TypeScript does not compare message numbers to make those
+decisions. Its three callbacks send frames, report consumer availability and
+channel facts, and handle notifications. IndexedDB and commit scheduling remain
+host work. Rust's `open_channel` awaits the existing TypeScript address provider
+and suppresses construction if setup retires during that request. WalletConnect
+RPC normalization and recovery stay in the TypeScript adapter.
 
 At quiescence `SessionMachineRuntime` drains machine, controller, and generated
 work to a fixed point, then:

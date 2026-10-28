@@ -1,34 +1,77 @@
-//! Own the entire reliable-delivery turn, including attempts to use the carrier.
-//! Host callbacks never run with a session borrow held: delivering a channel
-//! message can synchronously produce another outbound message on this session.
+//! Execute complete peer-session turns. No session borrow spans a host call:
+//! an application notification may synchronously generate an outbound message.
 
 use std::cell::RefCell;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+use super::coordination::{application_message, HostStatus, ReceiveMode, TerminalCommand};
 use super::{PeerSession, PreparedCommit, ReceiveAction};
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum PeerInput {
+    Data {
+        msgno: u64,
+        #[serde(deserialize_with = "receive_bytes")]
+        body: Vec<u8>,
+    },
+    Ack {
+        msgno: u64,
+    },
+    Keepalive,
+}
+
+// Internally tagged enum decoding buffers a JS Uint8Array as Serde bytes.
+// Vec's sequence-only visitor does not accept that buffered representation.
+fn receive_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+    struct Bytes;
+    impl<'de> serde::de::Visitor<'de> for Bytes {
+        type Value = Vec<u8>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("peer message bytes")
+        }
+        fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Vec<u8>, E> {
+            Ok(bytes.to_vec())
+        }
+        fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Vec<u8>, E> {
+            Ok(bytes)
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<u8>, A::Error> {
+            let mut bytes = Vec::new();
+            while let Some(byte) = seq.next_element()? {
+                bytes.push(byte);
+            }
+            Ok(bytes)
+        }
+    }
+    d.deserialize_bytes(Bytes)
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum SendFrame<'a> {
+    Data { msgno: u64, body: &'a [u8] },
+    Ack { msgno: u64 },
+}
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum PeerEvent {
     CommitRequested,
-    Sent { msgno: u64 },
+    Message { msgno: u64, body: Vec<u8> },
     Acknowledged { msgno: u64 },
+    RejectionAcknowledged,
+    TerminalAcknowledged,
     Keepalive,
     Committed,
     Failure { reason: String },
 }
 
-/// Carrier operations and the existing application-message consumer. Queue
-/// selection, ordering, ACKs, replay and send-result bookkeeping stay in Rust.
 pub trait PeerHost {
-    fn send_data(&self, msgno: u64, body: &[u8]) -> Result<bool, String>;
-    fn send_ack(&self, msgno: u64) -> Result<bool, String>;
-    fn ready(&self) -> Result<bool, String>;
-    fn can_deliver(&self, msgno: u64, body: &[u8]) -> Result<bool, String>;
-    fn can_terminate(&self, msgno: u64, body: &[u8]) -> Result<bool, String>;
-    fn deliver(&self, msgno: u64, body: &[u8]) -> Result<(), String>;
-    fn notify(&self, event: PeerEvent) -> Result<(), String>;
+    fn send(&self, frame: SendFrame<'_>) -> Result<bool, String>;
+    fn status(&self) -> Result<HostStatus, String>;
+    fn notify(&self, event: PeerEvent) -> Result<bool, String>;
 }
 
 pub struct PeerDriver<'a, H> {
@@ -44,18 +87,40 @@ impl<H: PeerHost> PeerDriver<'_, H> {
         Ok(())
     }
 
-    pub fn send_message(&self, body: Vec<u8>, disposition: String) -> Result<u64, String> {
+    pub fn send_message(&self, body: Vec<u8>) -> Result<u64, String> {
+        let disposition = self.session.borrow().state.disposition.clone();
         let msgno = self.session.borrow_mut().allocate(body, disposition)?;
         self.request_commit()?;
         Ok(msgno)
     }
 
     pub fn failure(&self, reason: String) -> Result<(), String> {
-        self.session.borrow_mut().reorder_queue.clear();
-        self.host.notify(PeerEvent::Failure { reason })
+        {
+            let mut session = self.session.borrow_mut();
+            session.reorder_queue.clear();
+            if session.receive_mode == ReceiveMode::Channel {
+                session.failed = true;
+            }
+        }
+        self.host.notify(PeerEvent::Failure { reason }).map(|_| ())
     }
 
-    pub fn receive_data(&self, msgno: u64, body: Vec<u8>) -> Result<bool, String> {
+    pub fn receive(&self, input: PeerInput) -> Result<bool, String> {
+        match input {
+            PeerInput::Data { msgno, body } => self.receive_data(msgno, body),
+            PeerInput::Ack { msgno } => self.receive_ack(msgno),
+            PeerInput::Keepalive => {
+                self.host.notify(PeerEvent::Keepalive)?;
+                let acks = self.session.borrow().retry_acks();
+                for msgno in acks {
+                    self.send_ack(msgno)?;
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    fn receive_data(&self, msgno: u64, body: Vec<u8>) -> Result<bool, String> {
         match self.receive_data_inner(msgno, body) {
             Ok(()) => Ok(true),
             Err(reason) => {
@@ -70,16 +135,18 @@ impl<H: PeerHost> PeerDriver<'_, H> {
             .session
             .borrow()
             .delivery_candidate(msgno, body.len())?;
-        let ready = candidate != "duplicate" && self.host.ready()?;
-        let deliverable = ready && candidate == "next" && self.host.can_deliver(msgno, &body)?;
-        let terminal = ready && candidate == "future" && self.host.can_terminate(msgno, &body)?;
+        let ready = candidate != "duplicate" && self.available()?;
+        let deliverable =
+            ready && candidate == "next" && self.session.borrow().deliverable(msgno, &body);
+        let terminal =
+            ready && candidate == "future" && self.session.borrow().terminal_message(&body);
         let action =
             self.session
                 .borrow_mut()
                 .receive(msgno, body.clone(), deliverable, terminal)?;
         match action {
             ReceiveAction::Ack => {
-                self.host.send_ack(msgno)?;
+                self.host.send(SendFrame::Ack { msgno })?;
             }
             ReceiveAction::Deliver => self.deliver(msgno, &body)?,
             ReceiveAction::Queued => {}
@@ -91,18 +158,70 @@ impl<H: PeerHost> PeerDriver<'_, H> {
         Ok(())
     }
 
+    fn available(&self) -> Result<bool, String> {
+        let status = self.host.status()?;
+        Ok(self.session.borrow().available(&status))
+    }
+
     fn deliver(&self, msgno: u64, body: &[u8]) -> Result<(), String> {
-        self.host.deliver(msgno, body)?;
+        let mode = self.session.borrow().receive_mode;
+        let kind = application_message(body);
+        match mode {
+            ReceiveMode::Raw => {
+                self.host.notify(PeerEvent::Message {
+                    msgno,
+                    body: body.to_vec(),
+                })?;
+            }
+            ReceiveMode::Retiring => {}
+            ReceiveMode::Rejection => {
+                if msgno == 1 && kind.as_deref() == Some("session_proposal") {
+                    self.session.borrow_mut().proposal_received()?;
+                    self.request_commit()?;
+                }
+            }
+            ReceiveMode::Proposal | ReceiveMode::Channel => {
+                let status = self.host.status()?;
+                if mode == ReceiveMode::Channel && status.discarding {
+                    // The old channel consumer acknowledged but ignored these messages.
+                } else if kind.as_deref() == Some("session_reject") {
+                    if mode == ReceiveMode::Channel && status.established {
+                        self.failure("session_reject received after channel establishment".into())?;
+                    } else {
+                        self.session.borrow_mut().reject_inbound();
+                        self.request_commit()?;
+                    }
+                } else if mode == ReceiveMode::Proposal {
+                    if msgno != 1 || kind.as_deref() != Some("session_proposal") {
+                        return Err("initial reliable message is not a session proposal".into());
+                    }
+                    self.session.borrow_mut().proposal_received()?;
+                    self.host.notify(PeerEvent::Message {
+                        msgno,
+                        body: body.to_vec(),
+                    })?;
+                } else {
+                    self.host.notify(PeerEvent::Message {
+                        msgno,
+                        body: body.to_vec(),
+                    })?;
+                }
+            }
+        }
         self.session.borrow_mut().delivered(msgno);
         self.request_commit()
     }
 
     fn drain_contiguous(&self) -> Result<(), String> {
-        while self.host.ready()? {
+        while self.available()? {
             let Some(message) = self.session.borrow().next_message() else {
                 break;
             };
-            if !self.host.can_deliver(message.msgno, &message.msg)? {
+            if !self
+                .session
+                .borrow()
+                .deliverable(message.msgno, &message.msg)
+            {
                 break;
             }
             self.session
@@ -114,19 +233,20 @@ impl<H: PeerHost> PeerDriver<'_, H> {
         Ok(())
     }
 
-    pub fn consumer_ready(&self) -> Result<(), String> {
+    pub fn consumer_ready(&self, mode: ReceiveMode) -> Result<(), String> {
+        self.session.borrow_mut().receive_mode = mode;
         let obsolete: Vec<_> = {
             let session = self.session.borrow();
             session
                 .reorder_queue
                 .keys()
                 .copied()
-                .filter(|msgno| *msgno <= session.state.remote_number)
+                .filter(|n| *n <= session.state.remote_number)
                 .collect()
         };
         for msgno in obsolete {
             self.session.borrow_mut().reorder_queue.remove(&msgno);
-            self.host.send_ack(msgno)?;
+            self.host.send(SendFrame::Ack { msgno })?;
         }
         if let Err(reason) = self.drain_contiguous() {
             self.failure(reason)?;
@@ -134,11 +254,33 @@ impl<H: PeerHost> PeerDriver<'_, H> {
         Ok(())
     }
 
-    pub fn receive_ack(&self, msgno: u64) -> Result<bool, String> {
+    fn receive_ack(&self, msgno: u64) -> Result<bool, String> {
         let result = (|| {
             self.session.borrow_mut().acknowledge(msgno)?;
             self.request_commit()?;
-            self.host.notify(PeerEvent::Acknowledged { msgno })
+            let terminal = {
+                let mut session = self.session.borrow_mut();
+                if let Some(binding) = &mut session.terminal_handoff {
+                    if binding.sent && msgno >= binding.msgno {
+                        binding.acknowledged = true;
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if terminal {
+                self.complete_terminal()?;
+            }
+            if self.session.borrow().rejection_complete() {
+                self.host.notify(PeerEvent::RejectionAcknowledged)?;
+            }
+            if self.session.borrow().receive_mode == ReceiveMode::Raw {
+                self.host.notify(PeerEvent::Acknowledged { msgno })?;
+            }
+            Ok(())
         })();
         if let Err(reason) = result {
             self.failure(reason)?;
@@ -147,26 +289,59 @@ impl<H: PeerHost> PeerDriver<'_, H> {
         Ok(true)
     }
 
-    pub fn keepalive(&self) -> Result<(), String> {
-        self.host.notify(PeerEvent::Keepalive)?;
-        let acks = self.session.borrow().retry_acks();
-        for msgno in acks {
-            self.send_ack(msgno)?;
+    pub fn channel_command(
+        &self,
+        command: Option<TerminalCommand>,
+        restoring: bool,
+    ) -> Result<(), String> {
+        self.session
+            .borrow_mut()
+            .channel_command(command, restoring)?;
+        self.request_commit()?;
+        let acknowledged = self
+            .session
+            .borrow()
+            .terminal_handoff
+            .as_ref()
+            .is_some_and(|b| b.acknowledged);
+        if acknowledged {
+            self.complete_terminal()?;
+        }
+        Ok(())
+    }
+
+    fn complete_terminal(&self) -> Result<(), String> {
+        if self.host.notify(PeerEvent::TerminalAcknowledged)? {
+            self.session.borrow_mut().terminal_handoff = None;
         }
         Ok(())
     }
 
     fn send_data(&self, msgno: u64, body: &[u8]) -> Result<bool, String> {
-        let accepted = self.host.send_data(msgno, body)?;
-        self.session.borrow_mut().sent(msgno, accepted);
-        if accepted {
-            self.host.notify(PeerEvent::Sent { msgno })?;
+        let accepted = self.host.send(SendFrame::Data { msgno, body })?;
+        let terminal_sent = {
+            let mut session = self.session.borrow_mut();
+            session.sent(msgno, accepted);
+            if let Some(binding) = &mut session.terminal_handoff {
+                if accepted && binding.msgno == msgno {
+                    binding.sent = true;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+        // The aggregate checkpoint records terminal send observations too.
+        if terminal_sent {
+            self.host.notify(PeerEvent::CommitRequested)?;
         }
         Ok(accepted)
     }
 
     fn send_ack(&self, msgno: u64) -> Result<(), String> {
-        let accepted = self.host.send_ack(msgno)?;
+        let accepted = self.host.send(SendFrame::Ack { msgno })?;
         self.session.borrow_mut().ack_sent(msgno, accepted);
         Ok(())
     }

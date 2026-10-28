@@ -1,3 +1,5 @@
+import { ReliablePeerTransport } from '../../services/PeerSession';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
 import { restorePeerState } from './peer_protocol.harness';
 import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, InternalBlockchainInterface, WasmResult } from '../../types/ChiaGaming';
@@ -64,7 +66,7 @@ describe('terminal protocol cleanup', () => {
     expect(cradle.completeOutboundTerminalHandoff).toHaveBeenCalledTimes(1);
     expect(blob.messageNumber).toBe(2n);
     expect(sentMessages).toEqual([]);
-    expect((blob as any).terminalHandoff).toBeNull();
+    expect(blob.getWasmFields()?.terminalHandoff).toBeNull();
   });
 
   it('retains an ACK that arrives after transport restore but before Rust restore', () => {
@@ -279,7 +281,7 @@ describe('terminal protocol cleanup', () => {
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
     expect(() => blob.receiveAck(1n)).not.toThrow();
-    expect((blob as any).terminalHandoff).toMatchObject({ id: '1', msgno: 1n });
+    expect(blob.getWasmFields()?.terminalHandoff).toMatchObject({ id: '1', msgno: 1n });
   });
 
   it('requires a successful terminal close send before its ACK can complete Rust abandonment', async () => {
@@ -320,13 +322,52 @@ describe('terminal protocol cleanup', () => {
     blob.receiveAck(1n);
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
-    expect((blob as any).terminalHandoff).toMatchObject({ sent: false, acknowledged: false });
+    expect(blob.getWasmFields()?.terminalHandoff).toMatchObject({
+      sent: false,
+      acknowledged: false,
+    });
 
     sendMessage.mockReturnValue(true);
     blob.resendUnacked();
     blob.receiveAck(1n);
 
     expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a pending terminal handoff when the controller attaches to a replacement transport', async () => {
+    const { blob, cradle } = createReadyBlob();
+    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue(
+      wasmResult({ disposition: { kind: 'terminal' } }),
+    );
+    setTestPersistence(blob, jest.fn());
+    blob.processResult(
+      wasmResult({
+        disposition: {
+          kind: 'await-outbound-terminal',
+          command: { id: '1', message: enc('complete clean close') },
+        },
+      }),
+    );
+    await blob.flushPendingWork();
+    const checkpoint = blob.getWasmFields()!;
+    const replacement = new ReliablePeerTransport(
+      {
+        sessionId: checkpoint.gameSessionId,
+        messageNumber: checkpoint.messageNumber,
+        remoteNumber: checkpoint.remoteNumber,
+        unackedMessages: checkpoint.unackedMessages,
+        disposition: checkpoint.transportDisposition,
+      },
+      DEFAULT_SESSION_RECEIVE_POLICY,
+      () => true,
+      () => true,
+    );
+
+    blob.attachReliableTransport(replacement);
+    blob.receiveAck(1n);
+
+    expect(cradle.completeOutboundTerminalHandoff).toHaveBeenCalledTimes(1);
+    expect(blob.getWasmFields()?.terminalHandoff).toBeNull();
   });
 
   it('persists a failed terminal completion as acknowledged and retries on future transport work', async () => {

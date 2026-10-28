@@ -1017,7 +1017,7 @@ describe('outbound message numbering', () => {
     attachTestCommitCoordinator(blob);
     setTestPersistence(blob, jest.fn());
 
-    expect(blob.queueHostMessage(enc('handshake A'))).toBe(2n);
+    blob.processResult(wasmResult({ events: [{ OutboundMessage: enc('handshake A') }] }));
     await blob.flushPendingWork();
 
     expect(blob.messageNumber).toBe(3n);

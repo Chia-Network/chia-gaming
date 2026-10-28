@@ -91,29 +91,21 @@ export async function configSessionController(
   crypto.getRandomValues(entropy);
   const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
   const rngId = wasmConnection.create_rng(seedHex);
-  const peer = sc.getPeerProtocol();
-  if (!peer.wallet_address_requested()) {
-    // Resume the accepted pre-handshake checkpoint without sending another
-    // proposal. Fresh accepts already installed this state before their write.
-    peer.restore_setup(
-      {
-        proposer_amount: (iStarted ? sc.myContribution : sc.theirContribution).toString(),
-        responder_amount: (iStarted ? sc.theirContribution : sc.myContribution).toString(),
-        channel_timeout: channelTimeout?.toString(),
-        unroll_timeout: unrollTimeout?.toString(),
-      },
-      iStarted,
-    );
-  }
-  if (!peer.wallet_address_requested())
-    throw new Error('Rust setup did not request a wallet address');
-  const address = rewardPuzzleHashOverride
-    ? { puzzleHash: rewardPuzzleHashOverride }
-    : await blockchain.rpc.getAddress();
-  if (sc.isRetired()) return sc;
-  const result = peer.provide_wallet_address(rngId, address.puzzleHash, getGenesisChallenge());
+  const result = await sc.getPeerProtocol().open_channel(
+    {
+      proposer_amount: (iStarted ? sc.myContribution : sc.theirContribution).toString(),
+      responder_amount: (iStarted ? sc.theirContribution : sc.myContribution).toString(),
+      channel_timeout: channelTimeout?.toString(),
+      unroll_timeout: unrollTimeout?.toString(),
+    },
+    iStarted,
+    rngId,
+    getGenesisChallenge(),
+    async () => rewardPuzzleHashOverride ?? (await blockchain.rpc.getAddress()).puzzleHash,
+  );
+  if (!result) return sc;
   const cradle = new ChiaGame(wasmConnection, result.id);
-  sc.rewardPuzzleHash = address.puzzleHash;
+  sc.rewardPuzzleHash = result.rewardPuzzleHash;
   sc.emitRewardAddress();
   sc.setGameSession(cradle);
   sc.attachBlockchain(blockchain);
@@ -155,7 +147,6 @@ export async function restoreSession(
     throw new Error('restoreSession: reliable session id does not match persisted pairing');
   }
   sc.restoreTransportCheckpoint(session.live);
-  sc.getPeerProtocol().restore_channel();
   sc.iStarted = requireBoolean(session.pairing.iStarted, 'iStarted');
   sc.pairingToken = requireString(session.pairing.token, 'pairingToken');
   if (session.live.disposition !== 'active') {

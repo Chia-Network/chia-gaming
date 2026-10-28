@@ -1,11 +1,13 @@
 use std::cell::RefCell;
 
-use chia_gaming::peer_session::driver::{PeerDriver, PeerEvent, PeerHost};
-use chia_gaming::peer_session::{
-    PeerSession, PreparedCommit, ReceivePolicy, SessionTerms, SetupState,
+use chia_gaming::peer_session::coordination::{
+    HostStatus, ReceiveMode, TerminalCommand, TerminalHandoff,
 };
+use chia_gaming::peer_session::driver::{PeerDriver, PeerEvent, PeerHost, PeerInput, SendFrame};
+use chia_gaming::peer_session::{PeerSession, PreparedCommit, ReceivePolicy, SetupState};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
 
 fn error(value: impl ToString) -> JsValue {
     js_sys::Error::new(&value.to_string()).into()
@@ -33,43 +35,26 @@ fn host_error(value: JsValue) -> String {
 #[wasm_bindgen]
 extern "C" {
     pub type JsPeerHost;
-    #[wasm_bindgen(method, catch, js_name = sendData)]
-    fn send_data_js(this: &JsPeerHost, msgno: u64, body: &[u8]) -> Result<bool, JsValue>;
-    #[wasm_bindgen(method, catch, js_name = sendAck)]
-    fn send_ack_js(this: &JsPeerHost, msgno: u64) -> Result<bool, JsValue>;
-    #[wasm_bindgen(method, catch, js_name = ready)]
-    fn ready_js(this: &JsPeerHost) -> Result<bool, JsValue>;
-    #[wasm_bindgen(method, catch, js_name = canDeliver)]
-    fn can_deliver_js(this: &JsPeerHost, msgno: u64, body: &[u8]) -> Result<bool, JsValue>;
-    #[wasm_bindgen(method, catch, js_name = canTerminate)]
-    fn can_terminate_js(this: &JsPeerHost, msgno: u64, body: &[u8]) -> Result<bool, JsValue>;
-    #[wasm_bindgen(method, catch, js_name = deliver)]
-    fn deliver_js(this: &JsPeerHost, msgno: u64, body: &[u8]) -> Result<(), JsValue>;
+    #[wasm_bindgen(method, catch, js_name = send)]
+    fn send_js(this: &JsPeerHost, frame: JsValue) -> Result<bool, JsValue>;
+    #[wasm_bindgen(method, catch, js_name = status)]
+    fn status_js(this: &JsPeerHost) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(method, catch, js_name = notify)]
-    fn notify_js(this: &JsPeerHost, event: JsValue) -> Result<(), JsValue>;
+    fn notify_js(this: &JsPeerHost, event: JsValue) -> Result<JsValue, JsValue>;
 }
 
 impl PeerHost for JsPeerHost {
-    fn send_data(&self, msgno: u64, body: &[u8]) -> Result<bool, String> {
-        self.send_data_js(msgno, body).map_err(host_error)
+    fn send(&self, frame: SendFrame<'_>) -> Result<bool, String> {
+        self.send_js(js(&frame).map_err(host_error)?)
+            .map_err(host_error)
     }
-    fn send_ack(&self, msgno: u64) -> Result<bool, String> {
-        self.send_ack_js(msgno).map_err(host_error)
+    fn status(&self) -> Result<HostStatus, String> {
+        serde_wasm_bindgen::from_value(self.status_js().map_err(host_error)?)
+            .map_err(|e| e.to_string())
     }
-    fn ready(&self) -> Result<bool, String> {
-        self.ready_js().map_err(host_error)
-    }
-    fn can_deliver(&self, msgno: u64, body: &[u8]) -> Result<bool, String> {
-        self.can_deliver_js(msgno, body).map_err(host_error)
-    }
-    fn can_terminate(&self, msgno: u64, body: &[u8]) -> Result<bool, String> {
-        self.can_terminate_js(msgno, body).map_err(host_error)
-    }
-    fn deliver(&self, msgno: u64, body: &[u8]) -> Result<(), String> {
-        self.deliver_js(msgno, body).map_err(host_error)
-    }
-    fn notify(&self, event: PeerEvent) -> Result<(), String> {
+    fn notify(&self, event: PeerEvent) -> Result<bool, String> {
         self.notify_js(js(&event).map_err(host_error)?)
+            .map(|value| value.as_bool().unwrap_or(false))
             .map_err(host_error)
     }
 }
@@ -101,37 +86,40 @@ impl PeerProtocol {
 #[wasm_bindgen]
 impl PeerProtocol {
     pub fn snapshot(&self) -> Result<JsValue, JsValue> {
-        js(&self.inner.borrow().state)
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Snapshot<'a> {
+            #[serde(flatten)]
+            state: &'a chia_gaming::peer_session::ReliableState,
+            terminal_handoff: &'a Option<TerminalHandoff>,
+            rejection_complete: bool,
+        }
+        let session = self.inner.borrow();
+        js(&Snapshot {
+            state: &session.state,
+            terminal_handoff: &session.terminal_handoff,
+            rejection_complete: session.rejection_complete(),
+        })
     }
-    pub fn restore(&self, state: JsValue) -> Result<(), JsValue> {
-        self.inner.borrow_mut().state = serde_wasm_bindgen::from_value(state).map_err(error)?;
-        Ok(())
-    }
-    pub fn send_message(
-        &self,
-        body: &[u8],
-        disposition: Option<String>,
-        host: JsPeerHost,
-    ) -> Result<u64, JsValue> {
-        let disposition =
-            disposition.unwrap_or_else(|| self.inner.borrow().state.disposition.clone());
-        self.driver(host)
-            .send_message(body.to_vec(), disposition)
+    pub fn restore(&self, state: JsValue, terminal: JsValue) -> Result<(), JsValue> {
+        let mut session = self.inner.borrow_mut();
+        session.state = serde_wasm_bindgen::from_value(state).map_err(error)?;
+        session
+            .restore_terminal(serde_wasm_bindgen::from_value(terminal).map_err(error)?)
             .map_err(error)
     }
-    pub fn receive_data(&self, msgno: u64, body: &[u8], host: JsPeerHost) -> Result<bool, JsValue> {
+    pub fn send_message(&self, body: &[u8], host: JsPeerHost) -> Result<u64, JsValue> {
+        self.driver(host).send_message(body.to_vec()).map_err(error)
+    }
+    pub fn receive(&self, input: JsValue, host: JsPeerHost) -> Result<bool, JsValue> {
         self.driver(host)
-            .receive_data(msgno, body.to_vec())
+            .receive(serde_wasm_bindgen::from_value::<PeerInput>(input).map_err(error)?)
             .map_err(error)
     }
-    pub fn receive_ack(&self, msgno: u64, host: JsPeerHost) -> Result<bool, JsValue> {
-        self.driver(host).receive_ack(msgno).map_err(error)
-    }
-    pub fn consumer_ready(&self, host: JsPeerHost) -> Result<(), JsValue> {
-        self.driver(host).consumer_ready().map_err(error)
-    }
-    pub fn keepalive(&self, host: JsPeerHost) -> Result<(), JsValue> {
-        self.driver(host).keepalive().map_err(error)
+    pub fn consumer_ready(&self, mode: JsValue, host: JsPeerHost) -> Result<(), JsValue> {
+        self.driver(host)
+            .consumer_ready(serde_wasm_bindgen::from_value::<ReceiveMode>(mode).map_err(error)?)
+            .map_err(error)
     }
     pub fn connectivity(
         &self,
@@ -161,51 +149,46 @@ impl PeerProtocol {
             .complete_commit(commit, persisted)
             .map_err(error)
     }
-    pub fn retire(&self) {
+    /// Retire the channel consumer, optionally preserving its reliable rejection
+    /// for the application-owned tombstone transport.
+    pub fn retire(&self, retain_rejection: bool) -> bool {
         let mut session = self.inner.borrow_mut();
+        session.terminal_handoff = None;
+        session.reorder_queue.clear();
+        session.setup = Some(SetupState::Retired);
+        if retain_rejection && session.state.disposition == "outbound-reject" {
+            return true;
+        }
         session.state.unacked_messages.clear();
         session.clear_runtime();
-    }
-    pub fn stop_receiving(&self) {
-        self.inner.borrow_mut().reorder_queue.clear();
+        session.setup = Some(SetupState::Retired);
+        false
     }
     pub fn stop_protocol(&self) {
         let mut session = self.inner.borrow_mut();
+        session.terminal_handoff = None;
         session.state.unacked_messages.clear();
         session.reorder_queue.clear();
-    }
-    pub fn proposal_received(&self, host: JsPeerHost) -> Result<(), JsValue> {
-        self.inner.borrow_mut().proposal_received().map_err(error)?;
-        self.driver(host).request_commit().map_err(error)
     }
     pub fn reject_session(&self, host: JsPeerHost) -> Result<(), JsValue> {
         self.inner.borrow_mut().reject_session().map_err(error)?;
         self.driver(host).request_commit().map_err(error)
     }
-    pub fn rejection_complete(&self) -> bool {
-        self.inner.borrow().rejection_complete()
-    }
-    pub fn reject_inbound(&self, host: JsPeerHost) -> Result<(), JsValue> {
-        {
-            let mut session = self.inner.borrow_mut();
-            session.state.disposition = "inbound-reject".into();
-            session.discard_outbound();
-        }
-        self.driver(host).request_commit().map_err(error)
-    }
     pub fn failure(&self, reason: String, host: JsPeerHost) -> Result<(), JsValue> {
         self.driver(host).failure(reason).map_err(error)
     }
-    pub fn validate_terminal_handoff(
+    pub fn channel_command(
         &self,
-        msgno: u64,
-        body: &[u8],
-        sent: bool,
-        acknowledged: bool,
+        command: JsValue,
+        restoring: bool,
+        host: JsPeerHost,
     ) -> Result<(), JsValue> {
-        self.inner
-            .borrow()
-            .validate_terminal_handoff(msgno, body, sent, acknowledged)
+        self.driver(host)
+            .channel_command(
+                serde_wasm_bindgen::from_value::<Option<TerminalCommand>>(command)
+                    .map_err(error)?,
+                restoring,
+            )
             .map_err(error)
     }
 
@@ -219,31 +202,42 @@ impl PeerProtocol {
             .map_err(error)
     }
 
-    /// The durable pre-handshake pairing already records local acceptance.
-    /// Restoring it must not allocate another proposal or reset its stream.
-    pub fn restore_setup(&self, terms: JsValue, initiator: bool) -> Result<(), JsValue> {
-        if self.inner.borrow().setup.is_some() {
-            return Err(error("session setup already exists"));
+    /// The host implements only the address RPC. Rust owns setup resumption,
+    /// the wait, cancellation on retirement, and construction of the channel.
+    pub async fn open_channel(
+        &self,
+        terms: JsValue,
+        initiator: bool,
+        rng_id: i32,
+        genesis_challenge: String,
+        address_provider: js_sys::Function,
+    ) -> Result<JsValue, JsValue> {
+        if matches!(self.inner.borrow().setup, Some(SetupState::Retired)) {
+            return Ok(JsValue::UNDEFINED);
         }
-        let terms: SessionTerms = serde_wasm_bindgen::from_value(terms).map_err(error)?;
-        self.inner.borrow_mut().setup =
-            Some(SetupState::WaitingForWalletAddress { terms, initiator });
-        Ok(())
+        self.inner
+            .borrow_mut()
+            .prepare_channel(
+                serde_wasm_bindgen::from_value(terms).map_err(error)?,
+                initiator,
+            )
+            .map_err(error)?;
+        let response = address_provider.call0(&JsValue::UNDEFINED)?;
+        let address = JsFuture::from(js_sys::Promise::resolve(&response)).await?;
+        if matches!(self.inner.borrow().setup, Some(SetupState::Retired)) {
+            return Ok(JsValue::UNDEFINED);
+        }
+        let address = address
+            .as_string()
+            .ok_or_else(|| error("wallet address must be a string"))?;
+        self.provide_wallet_address(rng_id, &address, &genesis_challenge)
     }
+}
 
-    pub fn wallet_address_requested(&self) -> bool {
-        matches!(
-            self.inner.borrow().setup,
-            Some(SetupState::WaitingForWalletAddress { .. })
-        )
-    }
-    pub fn restore_channel(&self) {
-        self.inner.borrow_mut().setup = Some(SetupState::ChannelStarted);
-    }
-
+impl PeerProtocol {
     /// Complete Rust's host request and create the channel within this existing
     /// accepted peer session. The host never supplies a placeholder address.
-    pub fn provide_wallet_address(
+    fn provide_wallet_address(
         &self,
         rng_id: i32,
         address: &str,
@@ -281,6 +275,7 @@ impl PeerProtocol {
         };
         let result = super::gaming_wasm::create_game_session(js(&config)?)?;
         self.inner.borrow_mut().setup = Some(SetupState::ChannelStarted);
+        js_sys::Reflect::set(&result, &"rewardPuzzleHash".into(), &address.into())?;
         Ok(result)
     }
 }
