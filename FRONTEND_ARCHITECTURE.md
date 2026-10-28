@@ -796,9 +796,11 @@ prepares and releases each captured generation. TypeScript reports connectivity
 and checkpoint completion; it has no queue accessors or delivery-confirmation
 steps. Rust also owns the pre-consent delivery rules, incoming rejection
 recognition, repeated-proposal rejection handling, and terminal-message
-reconciliation and sent/ACK state. The accepted owner owns the channel handle:
-Rust directly delivers inbound messages, journals channel output, and completes
-terminal acknowledgements. TypeScript receives the resulting UI/wallet effects
+reconciliation and sent/ACK state. One Rust session directly contains the
+reliability state and channel; gameplay handles resolve to that owner. Native
+calls and results deliver inbound messages, journal channel output, and complete
+terminal acknowledgements without internal JavaScript conversions or callback
+routing. TypeScript receives the resulting UI/wallet effects
 without forwarding peer bodies or channel commands between Rust objects.
 Replacing the carrier transfers the existing owner, and retirement releases its
 channel. Host notifications can request rejection retirement. The three host

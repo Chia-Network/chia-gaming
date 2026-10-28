@@ -1,5 +1,8 @@
 mod peer;
 mod gaming_wasm {
+    use chia_gaming::peer_session::coordination::TerminalCommand;
+    use chia_gaming::peer_session::session::{ChannelOutput, Session};
+    use std::rc::Rc;
 
     use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap};
@@ -67,17 +70,15 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize, Deserialize)]
-    struct JsGameSession {
+    pub(super) struct Channel {
         #[serde(skip)]
         allocator: AllocEncoder,
         #[serde(skip)]
         rng: ChaCha8SerializationWrapper,
         cradle: TransactionManager<GameSession>,
-        #[serde(skip)]
-        peer: std::rc::Weak<super::peer::PeerRuntime>,
     }
 
-    /// Increment for every incompatible change to the persisted `JsGameSession`
+    /// Increment for every incompatible change to the persisted `Channel`
     /// shape, including incompatible shapes owned by nested Rust types.
     const GAME_SESSION_SERIALIZATION_SCHEMA: u32 = 24;
 
@@ -151,7 +152,7 @@ mod gaming_wasm {
         static NEXT_ID: AtomicI32 = const {
             AtomicI32::new(0)
         };
-        static CRADLES: RefCell<HashMap<i32, JsGameSession>> = {
+        static CRADLES: RefCell<HashMap<i32, RegisteredSession>> = {
             return RefCell::new(HashMap::new());
         };
         static RNGS: RefCell<HashMap<i32, ChaCha8Rng>> = {
@@ -187,14 +188,17 @@ mod gaming_wasm {
         wasm_cache_file(name, data);
     }
 
-    fn get_next_id() -> i32 {
+    pub(super) fn get_next_id() -> i32 {
         NEXT_ID.with(|n| n.fetch_add(1, Ordering::SeqCst))
     }
 
-    fn insert_cradle(this_id: i32, runner: JsGameSession) {
+    fn insert_cradle(this_id: i32, runner: Channel) {
         CRADLES.with(|cell| {
             let mut mut_ref = cell.borrow_mut();
-            mut_ref.insert(this_id, runner);
+            mut_ref.insert(
+                this_id,
+                RegisteredSession::Standalone(Rc::new(RefCell::new(runner))),
+            );
         });
     }
 
@@ -238,20 +242,19 @@ mod gaming_wasm {
         rng_id: i32,
     }
 
-    fn parse_game_config(js_config: JsValue) -> Result<GameConfigPartial, JsValue> {
-        let jsconfig: JsGameSessionConfig = serde_wasm_bindgen::from_value(js_config).into_js()?;
+    fn parse_game_config(jsconfig: JsGameSessionConfig) -> Result<GameConfigPartial, types::Error> {
         // Handshake does not need factories. Page load warms them in the
         // background; OffChainPhase installs the cached collection when the
         // channel becomes live.
         let game_types = BTreeMap::new();
         let reward_puzzle_hash_bytes = hex::decode(&jsconfig.reward_puzzle_hash).map_err(|e| {
-            js_error(&format!(
+            types::Error::StrErr(format!(
                 "reward_puzzle_hash hex decode: {e:?} (length={})",
                 jsconfig.reward_puzzle_hash.len(),
             ))
         })?;
         let genesis_challenge_bytes = hex::decode(&jsconfig.genesis_challenge).map_err(|e| {
-            js_error(&format!(
+            types::Error::StrErr(format!(
                 "genesis_challenge hex decode: {e:?} (length={})",
                 jsconfig.genesis_challenge.len(),
             ))
@@ -264,10 +267,8 @@ mod gaming_wasm {
             unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
             my_contribution: jsconfig.my_contribution.amt.clone(),
             their_contribution: jsconfig.their_contribution.amt.clone(),
-            reward_puzzle_hash: PuzzleHash::from_hash(
-                Hash::from_slice(&reward_puzzle_hash_bytes).into_js()?,
-            ),
-            agg_sig_me_additional_data: Hash::from_slice(&genesis_challenge_bytes).into_js()?,
+            reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)?),
+            agg_sig_me_additional_data: Hash::from_slice(&genesis_challenge_bytes)?,
             rng_id: jsconfig.rng_id,
         })
     }
@@ -318,28 +319,50 @@ mod gaming_wasm {
         Ok(id)
     }
 
-    pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, JsValue>
+    pub fn with_rng<F, T>(cid: i32, f: F) -> Result<T, types::Error>
     where
         F: FnOnce(&mut ChaCha8Rng) -> Result<T, types::Error>,
     {
         RNGS.with(|cell| {
             let mut mut_ref = cell.borrow_mut();
             if let Some(cradle) = mut_ref.get_mut(&cid) {
-                return f(cradle).into_js();
+                return f(cradle);
             }
 
-            Err(JsValue::from_str(&format!(
+            Err(types::Error::StrErr(format!(
                 "could not find RNG instance {cid}"
             )))
         })
+    }
+
+    #[derive(Serialize)]
+    pub(super) struct ChannelCreated {
+        pub id: i32,
+        pub puzzle_hash: String,
+        #[serde(rename = "rewardPuzzleHash", skip_serializing_if = "Option::is_none")]
+        pub reward_puzzle_hash: Option<String>,
     }
 
     #[wasm_bindgen(unchecked_return_type = "GameSessionCreateResult")]
     pub fn create_game_session(
         #[wasm_bindgen(unchecked_param_type = "GameSessionConfig")] js_config: JsValue,
     ) -> Result<JsValue, JsValue> {
-        let new_id = get_next_id();
-        let partial = parse_game_config(js_config)?;
+        let config = serde_wasm_bindgen::from_value(js_config).into_js()?;
+        let (channel, puzzle_hash) = create_channel(config).into_js()?;
+        let id = get_next_id();
+        insert_cradle(id, channel);
+        serde_wasm_bindgen::to_value(&ChannelCreated {
+            id,
+            puzzle_hash,
+            reward_puzzle_hash: None,
+        })
+        .into_js()
+    }
+
+    pub(super) fn create_channel(
+        config: JsGameSessionConfig,
+    ) -> Result<(Channel, String), types::Error> {
+        let partial = parse_game_config(config)?;
         with_rng(partial.rng_id, move |rng: &mut ChaCha8Rng| {
             let mut allocator = AllocEncoder::new();
             let private_key: PrivateKey = rng.random();
@@ -359,39 +382,30 @@ mod gaming_wasm {
             };
 
             let game_cradle = GameSession::new(rng, config);
-            let cradle = JsGameSession {
+            let cradle = Channel {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng.clone()),
                 cradle: TransactionManager::new(game_cradle),
-                peer: std::rc::Weak::new(),
             };
-            insert_cradle(new_id, cradle);
-
-            #[derive(Serialize)]
-            struct CradleResult {
-                id: i32,
-                puzzle_hash: String,
-            }
-            serde_wasm_bindgen::to_value(&CradleResult {
-                id: new_id,
-                puzzle_hash: puzzle_hash_hex,
-            })
-            .map_err(|e| types::Error::StrErr(format!("{e:?}")))
+            Ok((cradle, puzzle_hash_hex))
         })
     }
 
+    pub(super) fn restore_channel(data: &[u8], seed: &str) -> Result<Channel, types::Error> {
+        let mut channel: Channel =
+            bencodex::from_slice(data).map_err(|e| types::Error::StrErr(e.to_string()))?;
+        let hashed = Sha256Input::Bytes(seed.as_bytes()).hash();
+        channel.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
+        channel.cradle.restore_runtime();
+        Ok(channel)
+    }
+
     #[wasm_bindgen]
-    pub fn restore_session(data: &[u8], new_seed: &str) -> Result<i32, JsValue> {
-        let cradle: JsGameSession = bencodex::from_slice::<JsGameSession>(data)
-            .map_err(|e| types::Error::StrErr(e.to_string()))
-            .into_js()?;
-        let mut cradle = cradle;
-        let hashed = Sha256Input::Bytes(new_seed.as_bytes()).hash();
-        cradle.rng = ChaCha8SerializationWrapper(ChaCha8Rng::from_seed(*hashed.bytes()));
-        cradle.cradle.restore_runtime();
-        let new_id = get_next_id();
-        insert_cradle(new_id, cradle);
-        Ok(new_id)
+    pub fn restore_session(data: &[u8], seed: &str) -> Result<i32, JsValue> {
+        let channel = restore_channel(data, seed).into_js()?;
+        let id = get_next_id();
+        insert_cradle(id, channel);
+        Ok(id)
     }
 
     #[wasm_bindgen]
@@ -402,9 +416,9 @@ mod gaming_wasm {
     /// Release this call's temporary CLVM on both success and error. Session
     /// state and returned values must own program bytes, never allocator-local
     /// NodePtrs: restore_session already rebuilds sessions with a fresh allocator.
-    fn call_releasing_allocator<F, T>(cradle: &mut JsGameSession, f: F) -> Result<T, types::Error>
+    fn call_releasing_allocator<F, T>(cradle: &mut Channel, f: F) -> Result<T, types::Error>
     where
-        F: FnOnce(&mut JsGameSession) -> Result<T, types::Error>,
+        F: FnOnce(&mut Channel) -> Result<T, types::Error>,
     {
         let checkpoint = cradle.allocator.allocator_ref().checkpoint();
         let result = f(cradle);
@@ -412,75 +426,137 @@ mod gaming_wasm {
         result
     }
 
-    fn with_game<F, T>(cid: i32, f: F) -> Result<T, JsValue>
-    where
-        F: FnOnce(&mut JsGameSession) -> Result<T, types::Error>,
-    {
-        CRADLES.with(|cell| {
-            let mut mut_ref = cell.borrow_mut();
-            if let Some(cradle) = mut_ref.get_mut(&cid) {
-                return call_releasing_allocator(cradle, f).into_js();
-            }
-
-            Err(JsValue::from_str(&format!(
-                "could not find game instance {cid}"
-            )))
-        })
+    // Handles are only an external WASM entry point. The accepted session owns
+    // its channel directly; channel operations never look up their peer owner.
+    #[derive(Clone)]
+    enum RegisteredSession {
+        Standalone(Rc<RefCell<Channel>>),
+        Accepted(Rc<Session<Channel>>),
     }
 
-    pub(super) fn attach_peer(
-        cid: i32,
-        peer: std::rc::Weak<super::peer::PeerRuntime>,
-    ) -> Result<(), JsValue> {
-        with_game(cid, |cradle| {
-            let owner = peer.upgrade().expect("attaching a live peer session");
-            let command = cradle.cradle.pending_terminal_handoff().map(|command| {
-                chia_gaming::peer_session::coordination::TerminalCommand {
+    impl RegisteredSession {
+        fn with_channel<T>(
+            &self,
+            f: impl FnOnce(&mut Channel) -> Result<T, types::Error>,
+        ) -> Result<T, types::Error> {
+            match self {
+                Self::Standalone(channel) => call_releasing_allocator(&mut channel.borrow_mut(), f),
+                Self::Accepted(session) => {
+                    let mut channel = session.channel.borrow_mut();
+                    call_releasing_allocator(
+                        channel.as_mut().ok_or_else(|| {
+                            types::Error::StrErr("accepted session has no channel".into())
+                        })?,
+                        f,
+                    )
+                }
+            }
+        }
+    }
+
+    pub(super) fn register_peer(id: i32, session: Rc<Session<Channel>>) {
+        CRADLES.with(|cell| {
+            cell.borrow_mut()
+                .insert(id, RegisteredSession::Accepted(session))
+        });
+    }
+
+    fn registered_session(id: i32) -> Result<RegisteredSession, JsValue> {
+        CRADLES
+            .with(|cell| cell.borrow().get(&id).cloned())
+            .ok_or_else(|| js_error(&format!("could not find game instance {id}")))
+    }
+
+    fn with_game<F, T>(id: i32, f: F) -> Result<T, JsValue>
+    where
+        F: FnOnce(&mut Channel) -> Result<T, types::Error>,
+    {
+        registered_session(id)?.with_channel(f).into_js()
+    }
+
+    fn with_game_output(
+        id: i32,
+        f: impl FnOnce(&mut Channel) -> Result<ChannelOutput, types::Error>,
+    ) -> Result<JsValue, JsValue> {
+        let session = registered_session(id)?;
+        let mut output = session.with_channel(f).into_js()?;
+        if let RegisteredSession::Accepted(session) = session {
+            session
+                .collect_output(&mut output)
+                .map_err(|reason| js_error(&reason))?;
+        }
+        channel_output_to_js(&output).into_js()
+    }
+
+    impl Channel {
+        pub(super) fn pending_terminal(&self) -> Option<TerminalCommand> {
+            self.cradle
+                .pending_terminal_handoff()
+                .map(|command| TerminalCommand {
                     id: command.id.to_string(),
                     message: command.message,
+                })
+        }
+
+        fn collect(&mut self, action_succeeded: bool) -> Result<ChannelOutput, types::Error> {
+            Ok(ChannelOutput {
+                drain: self.cradle.flush_and_collect(&mut self.allocator)?,
+                command: self.cradle.pending_terminal_handoff(),
+                terminal: self.cradle.is_fully_resolved(),
+                on_chain: self.cradle.is_on_chain(),
+                action_succeeded,
+            })
+        }
+
+        fn action(
+            &mut self,
+            context: Option<(GameID, FailedGameAction)>,
+            f: impl FnOnce(&mut Self) -> Result<(), types::Error>,
+        ) -> Result<ChannelOutput, types::Error> {
+            let succeeded = match f(self) {
+                Ok(()) => true,
+                Err(error) => {
+                    self.cradle.push_event(GameSessionEvent::Notification(
+                        GameNotification::ActionFailed {
+                            id: context.as_ref().map(|(id, _)| *id),
+                            action: context.map(|(_, action)| action),
+                            reason: format!("{error:?}"),
+                        },
+                    ));
+                    false
                 }
-            });
-            owner
-                .state
-                .borrow_mut()
-                .channel_command(command, true)
-                .map_err(types::Error::StrErr)?;
-            cradle.peer = peer;
-            Ok(())
-        })
+            };
+            self.collect(succeeded)
+        }
     }
 
-    pub(super) fn peer_channel_status(cid: i32) -> Result<(bool, bool), JsValue> {
-        with_game(cid, |cradle| {
-            Ok((
-                cradle.cradle.handshake_finished(),
-                cradle.cradle.is_fully_resolved() || cradle.cradle.is_on_chain(),
-            ))
-        })
-    }
-
-    fn project_session_drain(
-        cradle: &JsGameSession,
-        drain: &mut ManagerDrain,
-        action_succeeded: bool,
-    ) -> Result<JsValue, types::Error> {
-        let command = cradle.cradle.pending_terminal_handoff();
-        let terminal = cradle.cradle.is_fully_resolved();
-        let command = if let Some(peer) = cradle.peer.upgrade() {
-            peer.collect_channel_output(drain, command, terminal, cradle.cradle.is_on_chain())
-                .map_err(types::Error::StrErr)?;
-            None
-        } else {
-            command
-        };
-        manager_drain_to_js(drain, command, terminal, action_succeeded)
+    impl chia_gaming::peer_session::session::Channel for Channel {
+        fn status(&self) -> (bool, bool) {
+            (
+                self.cradle.handshake_finished(),
+                self.cradle.is_fully_resolved() || self.cradle.is_on_chain(),
+            )
+        }
+        fn deliver(&mut self, body: &[u8]) -> Result<ChannelOutput, String> {
+            call_releasing_allocator(self, |channel| {
+                channel.action(None, |channel| channel.cradle.deliver_message(body))
+            })
+            .map_err(|error| format!("{error:?}"))
+        }
+        fn complete_terminal(&mut self) -> Result<ChannelOutput, String> {
+            call_releasing_allocator(self, |channel| {
+                channel.cradle.complete_outbound_terminal_handoff()?;
+                channel.collect(true)
+            })
+            .map_err(|error| format!("{error:?}"))
+        }
     }
 
     #[cfg(test)]
     mod session_allocator_tests {
         use super::*;
 
-        fn session() -> JsGameSession {
+        fn session() -> Channel {
             let mut allocator = AllocEncoder::new();
             let mut rng = ChaCha8Rng::from_seed([42; 32]);
             let identity = ChiaIdentity::new(&mut allocator, rng.random()).unwrap();
@@ -496,15 +572,14 @@ mod gaming_wasm {
                 agg_sig_me_additional_data: Hash::from_bytes([0; 32]),
             };
             let cradle = TransactionManager::new(GameSession::new(&mut rng, config));
-            JsGameSession {
+            Channel {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng),
                 cradle,
-                peer: std::rc::Weak::new(),
             }
         }
 
-        fn allocation_counts(cradle: &JsGameSession) -> (usize, usize, usize) {
+        fn allocation_counts(cradle: &Channel) -> (usize, usize, usize) {
             let allocator = cradle.allocator.allocator_ref();
             (
                 allocator.pair_count(),
@@ -513,7 +588,7 @@ mod gaming_wasm {
             )
         }
 
-        fn allocate_program(cradle: &mut JsGameSession) -> Result<Program, types::Error> {
+        fn allocate_program(cradle: &mut Channel) -> Result<Program, types::Error> {
             let node = vec!["temporary CLVM allocation"; 10_000]
                 .to_clvm(&mut cradle.allocator)
                 .unwrap();
@@ -580,14 +655,14 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn serialize_game_session(cid: i32) -> Result<js_sys::Uint8Array, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             let bytes =
                 bencodex::to_vec(&cradle).map_err(|e| types::Error::StrErr(e.to_string()))?;
             Ok(js_sys::Uint8Array::from(bytes.as_slice()))
         })
     }
 
-    fn watch_coin_entries(cradle: &JsGameSession) -> Vec<JsWatchCoinEntry> {
+    fn watch_coin_entries(cradle: &Channel) -> Vec<JsWatchCoinEntry> {
         watch_coin_entries_from_coins(&cradle.cradle.snapshot_watched_coins())
     }
 
@@ -605,7 +680,7 @@ mod gaming_wasm {
     /// restore.
     #[wasm_bindgen]
     pub fn snapshot_watched_coins(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut JsGameSession| {
+        let result = with_game(cid, move |cradle: &mut Channel| {
             Ok(watch_coin_entries(cradle))
         })?;
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -616,7 +691,7 @@ mod gaming_wasm {
     /// and provider reconnection without inventing a second request journal.
     #[wasm_bindgen]
     pub fn snapshot_pending_coin_solution_requests(cid: i32) -> Result<JsValue, JsValue> {
-        let result = with_game(cid, move |cradle: &mut JsGameSession| {
+        let result = with_game(cid, move |cradle: &mut Channel| {
             Ok(cradle
                 .cradle
                 .snapshot_pending_coin_solution_requests()
@@ -632,7 +707,7 @@ mod gaming_wasm {
     /// is needed.
     #[wasm_bindgen]
     pub fn drain_submissions(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.apply_working_copy_transaction(
                 &mut cradle.allocator,
                 |working, _allocator| {
@@ -716,7 +791,7 @@ mod gaming_wasm {
         let amount = amount
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid submission fee: {e}")))?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.configure_fee(FeeConfiguration {
                 amount: Amount::new(amount),
                 attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
@@ -733,7 +808,7 @@ mod gaming_wasm {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .acknowledge_submission_attempt(token)
@@ -746,7 +821,7 @@ mod gaming_wasm {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .stop_submission_attempt(token)
@@ -762,7 +837,7 @@ mod gaming_wasm {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .stop_submission_attempt(token)
@@ -775,7 +850,7 @@ mod gaming_wasm {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .relinquish_submission_attempt(token)
@@ -795,7 +870,7 @@ mod gaming_wasm {
     /// one coherent fresh snapshot. Rust chooses exact replay versus fee upgrade.
     #[wasm_bindgen]
     pub fn chain_snapshot_ready(cid: i32) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.chain_snapshot_ready();
             Ok(())
         })
@@ -803,7 +878,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn request_fee_upgrades(cid: i32) -> Result<(), JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.request_fee_upgrades();
             Ok(())
         })
@@ -836,7 +911,7 @@ mod gaming_wasm {
                 spent_height: r.spent_height,
             });
         }
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .report_coin_states(&mut cradle.allocator, height, &records)
@@ -848,7 +923,7 @@ mod gaming_wasm {
     /// empty coin list is an authoritative watched-coin snapshot.
     #[wasm_bindgen]
     pub fn report_height(cid: i32, height: u64) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.report_height(&mut cradle.allocator, height)
         })?;
         with_game_drain(cid, |_| Ok(()))
@@ -871,7 +946,7 @@ mod gaming_wasm {
             .parse::<u64>()
             .map(Amount::new)
             .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle.cradle.start_handshake(&mut cradle.allocator, fee)
         })
     }
@@ -905,7 +980,7 @@ mod gaming_wasm {
         let bundle = serde_json::from_str::<CoinsetSpendBundle>(bundle_json)
             .map_err(|e| JsValue::from_str(&format!("bad spend bundle json: {e}")))?;
         let spend_bundle = coinset_spend_bundle_to_spend_bundle(&bundle).into_js()?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .provide_coin_spend_bundle(&mut cradle.allocator, spend_bundle)
@@ -1081,7 +1156,7 @@ mod gaming_wasm {
     pub fn provide_offer_bech32(cid: i32, offer_bech32: &str) -> Result<JsValue, JsValue> {
         let bundle = decode_offer_to_spend_bundle(offer_bech32)
             .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .provide_coin_spend_bundle(&mut cradle.allocator, bundle)
@@ -1091,7 +1166,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn wallet_callback_failed(cid: i32, reason: &str) -> Result<JsValue, JsValue> {
         let reason = reason.to_string();
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .wallet_callback_failed(&mut cradle.allocator, reason)
@@ -1122,7 +1197,7 @@ mod gaming_wasm {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
-        let fee_intent = with_game(cid, move |cradle: &mut JsGameSession| {
+        let fee_intent = with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.submission_fee_intent_for_attempt(token)
         })?;
         let Some(fee_intent) = fee_intent else {
@@ -1160,7 +1235,7 @@ mod gaming_wasm {
                 SubmissionFeeSource::NotRequested
             }
         };
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle.cradle.apply_working_copy_transaction(
                 &mut cradle.allocator,
                 move |working, _allocator| {
@@ -1212,7 +1287,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn get_channel_puzzle_hash(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             let ph = cradle.cradle.channel_puzzle_hash();
             match ph {
                 Some(p) => Ok(JsValue::from_str(&hex::encode(p.bytes()))),
@@ -1311,7 +1386,8 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn propose(cid: i32, proposal: JsValue) -> Result<JsValue, JsValue> {
         let proposal: JsGameProposal = serde_wasm_bindgen::from_value(proposal).into_js()?;
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        let mut proposal_id = None;
+        let result = with_game_output(cid, |cradle: &mut Channel| {
             let game_type = parse_game_type_hex(&proposal.game_type)
                 .map_err(|e| types::Error::StrErr(format!("{e:?}")))?;
             let start = GameProposal {
@@ -1321,18 +1397,21 @@ mod gaming_wasm {
                 parameters: proposal.parameters,
             };
             let id = cradle.cradle.propose(&mut cradle.allocator, &start)?;
-            let mut dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            let result = project_session_drain(cradle, &mut dr, true)?;
-            let _ =
-                js_sys::Reflect::set(&result, &"id".into(), &JsValue::from_str(&id.to_string()));
-            Ok(result)
-        })
+            proposal_id = Some(id);
+            cradle.collect(true)
+        })?;
+        js_sys::Reflect::set(
+            &result,
+            &"id".into(),
+            &proposal_id.unwrap().to_string().into(),
+        )?;
+        Ok(result)
     }
 
     #[wasm_bindgen]
     pub fn accept_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let proposal_id = string_to_local_proposal_id(game_id)?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .accept_proposal(&mut cradle.allocator, &proposal_id)
@@ -1342,7 +1421,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn cancel_proposal(cid: i32, game_id: &str) -> Result<JsValue, JsValue> {
         let proposal_id = string_to_local_proposal_id(game_id)?;
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .cancel_proposal(&mut cradle.allocator, &proposal_id)
@@ -1363,28 +1442,13 @@ mod gaming_wasm {
         } else {
             None
         };
-        with_game(cid, move |cradle: &mut JsGameSession| {
-            let entropy: Hash = new_entropy.unwrap_or_else(|| cradle.rng.0.random());
-            let action_succeeded = match cradle.cradle.make_move(
-                &mut cradle.allocator,
-                &game_id,
-                readable_move.clone(),
-                entropy.clone(),
-            ) {
-                Ok(()) => true,
-                Err(e) => {
-                    cradle.cradle.push_event(GameSessionEvent::Notification(
-                        GameNotification::ActionFailed {
-                            id: Some(game_id),
-                            action: Some(FailedGameAction::MakeMove),
-                            reason: format!("{e:?}"),
-                        },
-                    ));
-                    false
-                }
-            };
-            let mut dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            project_session_drain(cradle, &mut dr, action_succeeded)
+        with_game_output(cid, move |channel| {
+            let entropy = new_entropy.unwrap_or_else(|| channel.rng.0.random());
+            channel.action(Some((game_id, FailedGameAction::MakeMove)), |channel| {
+                channel
+                    .cradle
+                    .make_move(&mut channel.allocator, &game_id, readable_move, entropy)
+            })
         })
     }
 
@@ -1417,9 +1481,7 @@ mod gaming_wasm {
             cid,
             game_id,
             FailedGameAction::Cheat,
-            move |cradle: &mut JsGameSession| {
-                cradle.cradle.cheat(&mut cradle.allocator, &game_id, share)
-            },
+            move |cradle: &mut Channel| cradle.cradle.cheat(&mut cradle.allocator, &game_id, share),
         )
     }
 
@@ -1428,7 +1490,7 @@ mod gaming_wasm {
     /// being pushed through notifications.
     #[wasm_bindgen]
     pub fn historical_unroll_count(cid: i32) -> Result<Option<u32>, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .historical_unroll_count()
@@ -1455,7 +1517,7 @@ mod gaming_wasm {
     /// Labeled coin ids (hex) to show above the protocol state.
     #[wasm_bindgen]
     pub fn coins_of_interest(cid: i32) -> Result<JsValue, JsValue> {
-        let coins = with_game(cid, move |cradle: &mut JsGameSession| {
+        let coins = with_game(cid, move |cradle: &mut Channel| {
             Ok(cradle.cradle.coins_of_interest())
         })?;
         let entries: Vec<JsCoinOfInterest> = coins
@@ -1483,7 +1545,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn get_identity(cid: i32) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut JsGameSession| {
+        serde_wasm_bindgen::to_value(&with_game(cid, move |cradle: &mut Channel| {
             Ok(Into::<JsChiaIdentity>::into(cradle.cradle.identity()))
         })?)
         .into_js()
@@ -1496,7 +1558,7 @@ mod gaming_wasm {
             cid,
             game_id,
             FailedGameAction::AcceptSettlement,
-            move |cradle: &mut JsGameSession| {
+            move |cradle: &mut Channel| {
                 cradle
                     .cradle
                     .accept_settlement(&mut cradle.allocator, &game_id)
@@ -1506,33 +1568,20 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn shut_down(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle.cradle.shut_down(&mut cradle.allocator)
         })
     }
 
     #[wasm_bindgen]
     pub fn abandon(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
-            cradle.cradle.abandon()
-        })
+        with_game_drain(cid, move |cradle: &mut Channel| cradle.cradle.abandon())
     }
 
     #[wasm_bindgen]
     pub fn complete_outbound_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle.cradle.complete_outbound_terminal_handoff()
-        })
-    }
-
-    // A failed action must retain the acknowledged peer binding for retry.
-    // Unlike UI actions, this internal call cannot turn failure into a result
-    // that the caller might mistake for completed channel retirement.
-    pub(super) fn complete_peer_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, |cradle| {
-            cradle.cradle.complete_outbound_terminal_handoff()?;
-            let mut drain = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            project_session_drain(cradle, &mut drain, true)
         })
     }
 
@@ -1550,7 +1599,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn pending_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
-        with_game(cid, move |cradle: &mut JsGameSession| {
+        with_game(cid, move |cradle: &mut Channel| {
             Ok(cradle
                 .cradle
                 .pending_terminal_handoff()
@@ -1562,7 +1611,7 @@ mod gaming_wasm {
 
     #[wasm_bindgen]
     pub fn go_on_chain(cid: i32) -> Result<JsValue, JsValue> {
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .go_on_chain(&mut cradle.allocator, false)
@@ -1594,7 +1643,7 @@ mod gaming_wasm {
             _ => None,
         };
 
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle
                 .cradle
                 .report_puzzle_and_solution(&mut cradle.allocator, &coin, ps_pair)
@@ -1604,7 +1653,7 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn deliver_message(cid: i32, inbound_message: &[u8]) -> Result<JsValue, JsValue> {
         let message_data = inbound_message.to_vec();
-        with_game_drain(cid, move |cradle: &mut JsGameSession| {
+        with_game_drain(cid, move |cradle: &mut Channel| {
             cradle.cradle.deliver_message(&message_data)
         })
     }
@@ -1804,6 +1853,15 @@ mod gaming_wasm {
         Ok(events)
     }
 
+    pub(super) fn channel_output_to_js(output: &ChannelOutput) -> Result<JsValue, types::Error> {
+        manager_drain_to_js(
+            &output.drain,
+            output.command.clone(),
+            output.terminal,
+            output.action_succeeded,
+        )
+    }
+
     fn manager_drain_to_js(
         drain: &ManagerDrain,
         pending_terminal: Option<TerminalHandoffCommand>,
@@ -1849,7 +1907,7 @@ mod gaming_wasm {
 
     fn with_game_drain<F>(cid: i32, f: F) -> Result<JsValue, JsValue>
     where
-        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+        F: FnOnce(&mut Channel) -> Result<(), types::Error>,
     {
         with_game_drain_context(cid, None, f)
     }
@@ -1861,7 +1919,7 @@ mod gaming_wasm {
         f: F,
     ) -> Result<JsValue, JsValue>
     where
-        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+        F: FnOnce(&mut Channel) -> Result<(), types::Error>,
     {
         with_game_drain_context(cid, Some((game_id, action)), f)
     }
@@ -1872,26 +1930,9 @@ mod gaming_wasm {
         f: F,
     ) -> Result<JsValue, JsValue>
     where
-        F: FnOnce(&mut JsGameSession) -> Result<(), types::Error>,
+        F: FnOnce(&mut Channel) -> Result<(), types::Error>,
     {
-        with_game(cid, move |cradle: &mut JsGameSession| {
-            let action_succeeded = match f(cradle) {
-                Ok(()) => true,
-                Err(e) => {
-                    let reason = format!("{e:?}");
-                    cradle.cradle.push_event(GameSessionEvent::Notification(
-                        GameNotification::ActionFailed {
-                            id: action_context.as_ref().map(|(id, _)| *id),
-                            action: action_context.as_ref().map(|(_, action)| *action),
-                            reason,
-                        },
-                    ));
-                    false
-                }
-            };
-            let mut dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            project_session_drain(cradle, &mut dr, action_succeeded)
-        })
+        with_game_output(cid, move |channel| channel.action(action_context, f))
     }
 
     #[derive(Serialize, Deserialize)]
@@ -1977,6 +2018,7 @@ mod gaming_wasm {
             serde_wasm_bindgen::to_value(&js_identity)
                 .map_err(|x| types::Error::StrErr(format!("{x:?}")))
         })
+        .into_js()
     }
 
     #[wasm_bindgen]

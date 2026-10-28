@@ -1,20 +1,46 @@
-//! Transport rules are tested at their Rust boundary. The host is an internal
-//! channel/carrier fixture, not a TypeScript message-forwarding implementation.
-use std::cell::Cell;
+//! Transport rules run against an owned channel and an external host fixture.
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use super::*;
 use crate::peer_session::coordination::TerminalHandoff;
-use crate::peer_session::{Message, ReceivePolicy, ReliableState};
+use crate::peer_session::{Message, PeerSession, ReceivePolicy, ReliableState};
+
+struct TestChannel {
+    established: Rc<Cell<bool>>,
+    discarding: Rc<Cell<bool>>,
+    completion_ok: Rc<Cell<bool>>,
+    completion_attempts: Rc<Cell<usize>>,
+}
+
+impl Channel for TestChannel {
+    fn status(&self) -> (bool, bool) {
+        (self.established.get(), self.discarding.get())
+    }
+    fn deliver(&mut self, _body: &[u8]) -> Result<ChannelOutput, String> {
+        Ok(ChannelOutput::default())
+    }
+    fn complete_terminal(&mut self) -> Result<ChannelOutput, String> {
+        self.completion_attempts
+            .set(self.completion_attempts.get() + 1);
+        if !self.completion_ok.get() {
+            return Err("completion failed".into());
+        }
+        Ok(ChannelOutput {
+            terminal: true,
+            ..Default::default()
+        })
+    }
+}
 
 struct Harness {
-    peer: RefCell<PeerSession>,
+    peer: Session<TestChannel>,
     available: Cell<bool>,
-    established: Cell<bool>,
-    discarding: Cell<bool>,
+    established: Rc<Cell<bool>>,
+    discarding: Rc<Cell<bool>>,
     send_ok: Cell<bool>,
-    channel_loaded: Cell<bool>,
-    completion_ok: Cell<bool>,
-    completion_attempts: Cell<usize>,
+    completion_ok: Rc<Cell<bool>>,
+    completion_attempts: Rc<Cell<usize>>,
     reply: Cell<bool>,
     fail_delivery: Cell<bool>,
     sent: RefCell<Vec<(u64, Vec<u8>)>>,
@@ -47,15 +73,25 @@ impl Harness {
             },
         );
         peer.restore_terminal(binding).unwrap();
+        let established = Rc::new(Cell::new(false));
+        let discarding = Rc::new(Cell::new(false));
+        let completion_ok = Rc::new(Cell::new(true));
+        let completion_attempts = Rc::new(Cell::new(0));
+        let peer = Session::new(peer);
+        *peer.channel.borrow_mut() = Some(TestChannel {
+            established: established.clone(),
+            discarding: discarding.clone(),
+            completion_ok: completion_ok.clone(),
+            completion_attempts: completion_attempts.clone(),
+        });
         Self {
-            peer: RefCell::new(peer),
+            peer,
             available: Cell::new(true),
-            established: Cell::new(false),
-            discarding: Cell::new(false),
+            established,
+            discarding,
             send_ok: Cell::new(true),
-            channel_loaded: Cell::new(true),
-            completion_ok: Cell::new(true),
-            completion_attempts: Cell::new(0),
+            completion_ok,
+            completion_attempts,
             reply: Cell::new(false),
             fail_delivery: Cell::new(false),
             sent: RefCell::new(vec![]),
@@ -64,7 +100,7 @@ impl Harness {
             failures: RefCell::new(vec![]),
         }
     }
-    fn driver(&self) -> PeerDriver<'_, &Self> {
+    fn driver(&self) -> PeerDriver<'_, &Self, TestChannel> {
         PeerDriver {
             session: &self.peer,
             host: self,
@@ -85,7 +121,7 @@ impl Harness {
             .unwrap());
     }
     fn commit(&self, persisted: bool) {
-        let commit = self.peer.borrow().prepare_commit();
+        let commit = self.peer.state.borrow().prepare_commit();
         self.driver().complete_commit(commit, persisted).unwrap();
     }
     fn terminal(&self, restoring: bool) -> Result<(), String> {
@@ -98,7 +134,7 @@ impl Harness {
         )
     }
     fn restored(&self) -> Self {
-        let peer = self.peer.borrow();
+        let peer = self.peer.state.borrow();
         Self::restore(peer.state.clone(), peer.terminal_handoff.clone())
     }
 }
@@ -118,7 +154,7 @@ impl PeerHost for &Harness {
             discarding: self.discarding.get(),
         })
     }
-    fn notify(&self, event: PeerEvent) -> Result<bool, String> {
+    fn notify(&self, event: PeerEvent) -> Result<(), String> {
         match event {
             PeerEvent::Message { msgno, body } => {
                 if self.fail_delivery.get() {
@@ -129,18 +165,10 @@ impl PeerHost for &Harness {
                     self.driver().send_message(b"reply".to_vec())?;
                 }
             }
-            PeerEvent::TerminalAcknowledged => {
-                if !self.channel_loaded.get() {
-                    return Ok(false);
-                }
-                self.completion_attempts
-                    .set(self.completion_attempts.get() + 1);
-                return Ok(self.completion_ok.get());
-            }
             PeerEvent::Failure { reason } => self.failures.borrow_mut().push(reason),
             _ => {}
         }
-        Ok(false)
+        Ok(())
     }
 }
 
@@ -175,7 +203,7 @@ fn ordered_delivery_deduplicates_and_checkpoints_reentrant_replies_and_acks() {
     );
     assert_eq!(*h.acks.borrow(), vec![1, 2, 3, 2]);
     h.ack(3);
-    assert!(h.peer.borrow().state.unacked_messages.is_empty());
+    assert!(h.peer.state.borrow().state.unacked_messages.is_empty());
 }
 
 #[test]
@@ -215,7 +243,7 @@ fn reload_reconstructs_receive_gap_from_the_original_sender_journal() {
     sender.ack(1);
     let sender = sender.restored();
     let receiver = receiver.restored();
-    assert!(receiver.peer.borrow().reorder_queue.is_empty());
+    assert!(receiver.peer.state.borrow().reorder_queue.is_empty());
     sender
         .driver()
         .connectivity("registered", 10000.0, false)
@@ -231,7 +259,7 @@ fn reload_reconstructs_receive_gap_from_the_original_sender_journal() {
         *receiver.delivered.borrow(),
         vec![(2, b"b".to_vec()), (3, b"c".to_vec())]
     );
-    assert_eq!(receiver.peer.borrow().state.remote_number, 3);
+    assert_eq!(receiver.peer.state.borrow().state.remote_number, 3);
 }
 
 #[test]
@@ -239,20 +267,20 @@ fn failed_checkpoint_releases_only_its_capture_once_then_remains_dirty() {
     let h = Harness::new();
     h.reply.set(true);
     h.data(1, b"first");
-    let captured = h.peer.borrow().prepare_commit();
+    let captured = h.peer.state.borrow().prepare_commit();
     h.data(2, b"second");
     h.driver().complete_commit(captured.clone(), false).unwrap();
-    assert!(h.peer.borrow().dirty());
+    assert!(h.peer.state.borrow().dirty());
     assert_eq!(*h.sent.borrow(), vec![(1, b"reply".to_vec())]);
     assert_eq!(*h.acks.borrow(), vec![1]);
     h.driver().complete_commit(captured, true).unwrap();
     assert_eq!(h.sent.borrow().len(), 1);
     assert_eq!(h.acks.borrow().len(), 1);
-    assert!(h.peer.borrow().dirty());
+    assert!(h.peer.state.borrow().dirty());
     h.commit(true);
     assert_eq!(*h.acks.borrow(), vec![1, 2]);
     assert_eq!(h.sent.borrow().len(), 2);
-    assert!(!h.peer.borrow().dirty());
+    assert!(!h.peer.state.borrow().dirty());
 }
 
 #[test]
@@ -286,8 +314,8 @@ fn failed_channel_delivery_discards_the_receive_gap_without_acknowledging_it() {
     h.fail_delivery.set(true);
     assert!(!h.data(1, b"bad"));
     assert_eq!(*h.failures.borrow(), vec!["invalid channel message"]);
-    assert_eq!(h.peer.borrow().state.remote_number, 0);
-    assert!(h.peer.borrow().reorder_queue.is_empty());
+    assert_eq!(h.peer.state.borrow().state.remote_number, 0);
+    assert!(h.peer.state.borrow().reorder_queue.is_empty());
     h.commit(true);
     assert!(h.acks.borrow().is_empty());
 }
@@ -298,7 +326,10 @@ fn rejection_cancels_setup_but_fails_an_established_channel_and_is_ignored_on_ch
     let setup = Harness::new();
     setup.driver().consumer_ready(ReceiveMode::Channel).unwrap();
     assert!(setup.data(1, rejection));
-    assert_eq!(setup.peer.borrow().state.disposition, "inbound-reject");
+    assert_eq!(
+        setup.peer.state.borrow().state.disposition,
+        "inbound-reject"
+    );
     assert!(setup.failures.borrow().is_empty());
     let active = Harness::new();
     active.established.set(true);
@@ -311,7 +342,7 @@ fn rejection_cancels_setup_but_fails_an_established_channel_and_is_ignored_on_ch
         *active.failures.borrow(),
         vec!["session_reject received after channel establishment"]
     );
-    assert_eq!(active.peer.borrow().state.disposition, "active");
+    assert_eq!(active.peer.state.borrow().state.disposition, "active");
     let on_chain = Harness::new();
     on_chain.established.set(true);
     on_chain.discarding.set(true);
@@ -323,7 +354,7 @@ fn rejection_cancels_setup_but_fails_an_established_channel_and_is_ignored_on_ch
     on_chain.commit(true);
     assert_eq!(*on_chain.acks.borrow(), vec![1]);
     assert!(on_chain.failures.borrow().is_empty());
-    assert_eq!(on_chain.peer.borrow().state.disposition, "active");
+    assert_eq!(on_chain.peer.state.borrow().state.disposition, "active");
 }
 
 #[test]
@@ -332,13 +363,22 @@ fn terminal_handoff_waits_for_checkpoint_successful_send_and_ack() {
     h.terminal(false).unwrap();
     h.ack(1);
     assert_eq!(h.completion_attempts.get(), 0);
-    assert!(!h.peer.borrow().terminal_handoff.as_ref().unwrap().sent);
+    assert!(
+        !h.peer
+            .state
+            .borrow()
+            .terminal_handoff
+            .as_ref()
+            .unwrap()
+            .sent
+    );
     h.send_ok.set(false);
     h.commit(true);
     h.ack(1);
     assert_eq!(h.completion_attempts.get(), 0);
     assert!(
         !h.peer
+            .state
             .borrow()
             .terminal_handoff
             .as_ref()
@@ -352,7 +392,7 @@ fn terminal_handoff_waits_for_checkpoint_successful_send_and_ack() {
     assert_eq!(h.completion_attempts.get(), 0);
     h.ack(1);
     assert_eq!(h.completion_attempts.get(), 1);
-    assert!(h.peer.borrow().terminal_handoff.is_none());
+    assert!(h.peer.state.borrow().terminal_handoff.is_none());
 }
 
 #[test]
@@ -362,7 +402,7 @@ fn terminal_restore_reuses_exact_frame_and_rejects_mismatched_commands() {
     original.commit(true);
     let h = original.restored();
     h.terminal(true).unwrap();
-    assert_eq!(h.peer.borrow().state.message_number, 2);
+    assert_eq!(h.peer.state.borrow().state.message_number, 2);
     assert!(h.sent.borrow().is_empty());
     assert!(h
         .driver()
@@ -381,7 +421,7 @@ fn terminal_restore_reuses_exact_frame_and_rejects_mismatched_commands() {
     assert_eq!(*h.sent.borrow(), vec![(1, b"close".to_vec())]);
     h.ack(1);
     assert_eq!(h.completion_attempts.get(), 1);
-    assert_eq!(h.peer.borrow().state.message_number, 2);
+    assert_eq!(h.peer.state.borrow().state.message_number, 2);
 }
 
 #[test]
@@ -390,23 +430,24 @@ fn ack_before_channel_restore_completes_after_attach_without_allocating_or_resen
     original.terminal(false).unwrap();
     original.commit(true);
     let h = original.restored();
-    h.channel_loaded.set(false);
+    let channel = h.peer.channel.borrow_mut().take();
     h.ack(1);
     assert_eq!(h.completion_attempts.get(), 0);
     assert!(
         h.peer
+            .state
             .borrow()
             .terminal_handoff
             .as_ref()
             .unwrap()
             .acknowledged
     );
-    h.channel_loaded.set(true);
+    *h.peer.channel.borrow_mut() = channel;
     h.terminal(true).unwrap();
     assert_eq!(h.completion_attempts.get(), 1);
     assert!(h.sent.borrow().is_empty());
-    assert_eq!(h.peer.borrow().state.message_number, 2);
-    assert!(h.peer.borrow().terminal_handoff.is_none());
+    assert_eq!(h.peer.state.borrow().state.message_number, 2);
+    assert!(h.peer.state.borrow().terminal_handoff.is_none());
 }
 
 #[test]
@@ -420,6 +461,7 @@ fn failed_terminal_completion_survives_reload_and_retries_on_readiness() {
     let h = original.restored();
     assert!(
         h.peer
+            .state
             .borrow()
             .terminal_handoff
             .as_ref()
@@ -427,6 +469,7 @@ fn failed_terminal_completion_survives_reload_and_retries_on_readiness() {
             .acknowledged
     );
     h.peer
+        .state
         .borrow_mut()
         .channel_command(
             Some(TerminalCommand {
@@ -438,8 +481,8 @@ fn failed_terminal_completion_survives_reload_and_retries_on_readiness() {
         .unwrap();
     h.driver().consumer_ready(ReceiveMode::Channel).unwrap();
     assert_eq!(h.completion_attempts.get(), 1);
-    assert!(h.peer.borrow().terminal_handoff.is_none());
-    assert_eq!(h.peer.borrow().state.message_number, 2);
+    assert!(h.peer.state.borrow().terminal_handoff.is_none());
+    assert_eq!(h.peer.state.borrow().state.message_number, 2);
     assert!(h.sent.borrow().is_empty());
 }
 
@@ -452,6 +495,7 @@ fn repeated_ack_retries_failed_completion_without_resending_close() {
     h.ack(1);
     assert!(
         h.peer
+            .state
             .borrow()
             .terminal_handoff
             .as_ref()
@@ -462,7 +506,7 @@ fn repeated_ack_retries_failed_completion_without_resending_close() {
     h.ack(1);
     assert_eq!(h.completion_attempts.get(), 2);
     assert_eq!(*h.sent.borrow(), vec![(1, b"close".to_vec())]);
-    assert!(h.peer.borrow().terminal_handoff.is_none());
+    assert!(h.peer.state.borrow().terminal_handoff.is_none());
 }
 
 #[test]

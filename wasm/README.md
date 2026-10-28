@@ -6,8 +6,11 @@ Node.js tests via wasm-pack.
 `create_peer_protocol` constructs the Rust peer-session owner used by the
 browser's `ReliablePeerTransport` adapter. Rust handles numbering, ACKs,
 ordering, replay, proposal/rejection policy, and terminal-message tracking.
-The accepted Rust owner also owns the channel: incoming channel messages,
-outgoing message allocation, and terminal acknowledgements stay inside Rust.
+`peer_session::session::Session` directly contains reliability state and the
+optional channel, including its allocator, RNG and transaction manager.
+Incoming channel messages, outgoing message allocation, and terminal
+acknowledgements use native Rust calls and results. There is no internal
+JavaScript conversion, host-notification routing or channel back-reference.
 Retiring or freeing that owner releases its channel; replacing a hub carrier
 transfers the same owner without creating another channel.
 `accept_session` starts local acceptance and constructs the initiator's proposal.
@@ -29,6 +32,7 @@ policy callbacks or sent/ACK confirmation sequence.
 
 Synchronous host callbacks run without a Rust session borrow. They are passed
 per call; the address-provider callback is retained only for its asynchronous
-request. The existing channel bindings remain the API for gameplay and on-chain
-work. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
+request. Existing gameplay and on-chain handles resolve to the same session
+owner at the WASM boundary; standalone engine bindings remain available for
+callers that do not use peer reliability. See [frontend architecture](../FRONTEND_ARCHITECTURE.md) and
 [peer protocol](../PEER_PROTOCOL.md) for lifetime and ordering contracts.

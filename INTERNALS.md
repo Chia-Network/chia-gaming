@@ -27,24 +27,30 @@ Local acceptance begins the Rust session in `src/peer_session.rs`. Rust
 constructs the initiating proposal and records `WaitingForWalletAddress`;
 `wasm/src/peer.rs` calls the TypeScript address provider and awaits its result.
 Retiring setup cancels channel construction while that request is in flight. Rust then creates `TransactionManager<GameSession>` and
-marks setup `ChannelStarted`. The WASM peer owner retains the channel handle
-and releases it on retirement or drop. The channel has a weak reference back to
-that owner, so its outbound messages are numbered and journaled directly in Rust. Pending incoming proposals and retained rejection
+marks setup `ChannelStarted`. `peer_session::session::Session` directly owns
+the reliability state and optional channel, including its allocator, RNG and
+`TransactionManager<GameSession>`. Retirement or drop releases the channel.
+Channel calls return native output to their owner, which numbers and journals
+outbound messages before projecting UI/wallet effects. Pending incoming proposals and retained rejection
 records use reliability without implying an accepted session.
 
 The same Rust delivery owner allocates message numbers, buffers out-of-order
 input, retires acknowledged messages, and chooses reconnect replay. Its driver
 in `src/peer_session/driver.rs` runs the entire delivery turn and calls host
-carrier/application callbacks itself. Accepted channel messages and terminal
-acknowledgements are delivered within Rust, with only the resulting UI/wallet
-effects sent to TypeScript. Callback return values drive Rust's delivery
-and send bookkeeping; TypeScript never selects, removes, or confirms queued
+carrier/application callbacks itself. It calls the owned channel directly for
+accepted messages and terminal acknowledgements; no internal host notification,
+JavaScript conversion, registry lookup or back-reference connects the two.
+Only the resulting UI/wallet effects are converted at the JavaScript boundary.
+Native results and carrier acceptance drive Rust's delivery and send
+bookkeeping; TypeScript never selects, removes, or confirms queued
 messages. Host callbacks run with no session borrow held because a delivered
 message can synchronously produce a reply on the same session. The host reports
 connection events and checkpoint outcomes. `coordination.rs` also owns consent
 delivery gates, rejection recognition and the terminal handoff binding. Its
 three host capabilities are frame sending, consumer availability,
 and notifications; TypeScript supplies no per-message delivery policy.
+Existing gameplay handles resolve to this same owner at the WASM boundary.
+Standalone channel bindings remain available for engine callers and tests.
 Checkpoint capture freezes a generation and frame/ACK counts: release sends
 only that boundary, once. An ordinary failed write leaves it dirty while still
 releasing once; authority loss is fenced by the host before release. A failed

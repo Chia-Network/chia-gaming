@@ -28,9 +28,9 @@ The reference implementation places reliable delivery and accepted-session
 setup in Rust (`src/peer_session.rs`, exposed by `wasm/src/peer.rs`). Local
 acceptance starts the session; Rust constructs the proposal and requests the
 wallet address through the TypeScript host. The host owns hub connectivity,
-storage writes, and carrier execution. The accepted Rust owner owns the channel;
-message delivery, outgoing journal allocation, and terminal acknowledgement
-completion happen directly between Rust components. Carrier replacement
+storage writes, and carrier execution. One accepted Rust session directly owns
+reliability state and channel; message delivery, outgoing journal allocation,
+and terminal acknowledgement completion use native calls and results. Carrier replacement
 preserves this owner, and retirement releases its channel. Registration and peer-availability
 observations tell Rust when to replay. This ownership does not change any wire
 format, message numbering, consent requirement, or checkpoint-release rule

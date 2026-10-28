@@ -1,10 +1,9 @@
-use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use chia_gaming::peer_session::coordination::{
-    HostStatus, ReceiveMode, TerminalCommand, TerminalHandoff,
-};
+use super::gaming_wasm::Channel;
+use chia_gaming::peer_session::coordination::{HostStatus, ReceiveMode, TerminalHandoff};
 use chia_gaming::peer_session::driver::{PeerDriver, PeerEvent, PeerHost, PeerInput, SendFrame};
+use chia_gaming::peer_session::session::Session;
 use chia_gaming::peer_session::{PeerSession, PreparedCommit, ReceivePolicy, SetupState};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -63,187 +62,65 @@ impl PeerHost for JsPeerHost {
             discarding: false,
         })
     }
-    fn notify(&self, event: PeerEvent) -> Result<bool, String> {
-        self.notify_js(js(&event).map_err(host_error)?)
-            .map(|_| false)
-            .map_err(host_error)
+    fn notify(&self, event: PeerEvent) -> Result<(), String> {
+        let event = if let PeerEvent::ChannelResult(output) = event {
+            let result =
+                super::gaming_wasm::channel_output_to_js(&output).map_err(|e| e.to_string())?;
+            let event = js_sys::Object::new();
+            js_sys::Reflect::set(&event, &"type".into(), &"channel-result".into())
+                .map_err(host_error)?;
+            js_sys::Reflect::set(&event, &"result".into(), &result).map_err(host_error)?;
+            event.into()
+        } else {
+            js(&event).map_err(host_error)?
+        };
+        self.notify_js(event).map(|_| ()).map_err(host_error)
     }
 }
 
 #[wasm_bindgen]
 pub struct PeerProtocol {
-    inner: Rc<PeerRuntime>,
+    inner: Rc<Session<Channel>>,
+    // External gameplay calls resolve this handle to the same owned session.
+    id: i32,
 }
 
-/// One accepted session owns both reliability and the channel's registry handle.
-/// The channel points back weakly; retiring or dropping this owner releases it.
-pub(super) struct PeerRuntime {
-    pub state: RefCell<PeerSession>,
-    channel: Cell<Option<i32>>,
-}
-
-impl Drop for PeerRuntime {
+impl Drop for PeerProtocol {
     fn drop(&mut self) {
-        self.drop_channel();
-    }
-}
-
-impl PeerRuntime {
-    fn drop_channel(&self) {
-        if let Some(id) = self.channel.take() {
-            super::gaming_wasm::drop_game_session(id);
-        }
-    }
-
-    fn attach_channel(self: &Rc<Self>, id: i32) -> Result<(), JsValue> {
-        if self.channel.get().is_some() {
-            return Err(error("peer session already owns a channel"));
-        }
-        if let Err(err) = super::gaming_wasm::attach_peer(id, Rc::downgrade(self)) {
-            super::gaming_wasm::drop_game_session(id);
-            return Err(err);
-        }
-        self.channel.set(Some(id));
-        Ok(())
-    }
-
-    pub fn collect_channel_output(
-        &self,
-        drain: &mut chia_gaming::transaction_manager::ManagerDrain,
-        command: Option<chia_gaming::game_session::TerminalHandoffCommand>,
-        terminal: bool,
-        on_chain: bool,
-    ) -> Result<(), String> {
-        let mut session = self.state.borrow_mut();
-        if terminal {
-            session.terminal_handoff = None;
-            session.state.unacked_messages.clear();
-            session.reorder_queue.clear();
-            session.discard_outbound();
-        }
-        if let Some(command) = command {
-            if session.terminal_handoff.is_none() {
-                session.channel_command(
-                    Some(TerminalCommand {
-                        id: command.id.to_string(),
-                        message: command.message,
-                    }),
-                    false,
-                )?;
-            }
-        }
-        let mut projected = Vec::new();
-        for event in drain.events.drain(..) {
-            if let chia_gaming::session_phases::effects::GameSessionEvent::OutboundMessage(body) =
-                event
-            {
-                if !terminal && !on_chain {
-                    let disposition = session.state.disposition.clone();
-                    session.allocate(body, disposition)?;
-                }
-            } else {
-                projected.push(event);
-            }
-        }
-        drain.events = projected.into();
-        Ok(())
-    }
-}
-
-struct SessionHost<'a> {
-    runtime: &'a PeerRuntime,
-    host: JsPeerHost,
-}
-
-impl SessionHost<'_> {
-    fn channel_result(&self, result: JsValue) -> Result<(), String> {
-        let event = js_sys::Object::new();
-        js_sys::Reflect::set(&event, &"type".into(), &"channel-result".into())
-            .map_err(host_error)?;
-        js_sys::Reflect::set(&event, &"result".into(), &result).map_err(host_error)?;
-        self.host.notify_js(event.into()).map_err(host_error)?;
-        Ok(())
-    }
-}
-
-impl PeerHost for SessionHost<'_> {
-    fn send(&self, frame: SendFrame<'_>) -> Result<bool, String> {
-        self.host.send(frame)
-    }
-    fn status(&self) -> Result<HostStatus, String> {
-        let mut status = self.host.status()?;
-        if self.runtime.state.borrow().receive_mode == ReceiveMode::Channel {
-            if let Some(id) = self.runtime.channel.get() {
-                let (established, discarding) =
-                    super::gaming_wasm::peer_channel_status(id).map_err(host_error)?;
-                status.established = established;
-                status.discarding = discarding;
-            } else {
-                status.available = false;
-            }
-        }
-        Ok(status)
-    }
-    fn notify(&self, event: PeerEvent) -> Result<bool, String> {
-        match event {
-            PeerEvent::Message { body, .. }
-                if self.runtime.state.borrow().receive_mode == ReceiveMode::Channel =>
-            {
-                let id = self
-                    .runtime
-                    .channel
-                    .get()
-                    .ok_or("accepted session has no channel")?;
-                self.channel_result(
-                    super::gaming_wasm::deliver_message(id, &body).map_err(host_error)?,
-                )?;
-                Ok(true)
-            }
-            PeerEvent::TerminalAcknowledged => {
-                let Some(id) = self.runtime.channel.get() else {
-                    return Ok(false);
-                };
-                let completion = super::gaming_wasm::complete_peer_terminal_handoff(id)
-                    .map_err(host_error)
-                    .and_then(|result| self.channel_result(result));
-                if let Err(reason) = completion {
-                    let event = js_sys::Object::new();
-                    js_sys::Reflect::set(&event, &"type".into(), &"error".into())
-                        .map_err(host_error)?;
-                    js_sys::Reflect::set(&event, &"reason".into(), &reason.into())
-                        .map_err(host_error)?;
-                    self.host.notify_js(event.into()).map_err(host_error)?;
-                    return Ok(false);
-                }
-                Ok(true)
-            }
-            event => self.host.notify(event),
-        }
+        super::gaming_wasm::drop_game_session(self.id);
     }
 }
 
 #[wasm_bindgen]
 pub fn create_peer_protocol(state: JsValue, policy: JsValue) -> Result<PeerProtocol, JsValue> {
-    Ok(PeerProtocol {
-        inner: Rc::new(PeerRuntime {
-            state: RefCell::new(PeerSession::new(
-                serde_wasm_bindgen::from_value(state).map_err(error)?,
-                serde_wasm_bindgen::from_value::<ReceivePolicy>(policy).map_err(error)?,
-            )),
-            channel: Cell::new(None),
-        }),
-    })
+    let inner = Rc::new(Session::new(PeerSession::new(
+        serde_wasm_bindgen::from_value(state).map_err(error)?,
+        serde_wasm_bindgen::from_value::<ReceivePolicy>(policy).map_err(error)?,
+    )));
+    let id = super::gaming_wasm::get_next_id();
+    super::gaming_wasm::register_peer(id, inner.clone());
+    Ok(PeerProtocol { inner, id })
 }
 
 impl PeerProtocol {
-    fn driver(&self, host: JsPeerHost) -> PeerDriver<'_, SessionHost<'_>> {
+    fn driver(&self, host: JsPeerHost) -> PeerDriver<'_, JsPeerHost, Channel> {
         PeerDriver {
-            session: &self.inner.state,
-            host: SessionHost {
-                runtime: &self.inner,
-                host,
-            },
+            session: &self.inner,
+            host,
         }
+    }
+
+    fn attach_channel(&self, channel: Channel) -> Result<(), JsValue> {
+        if self.inner.channel.borrow().is_some() {
+            return Err(error("peer session already owns a channel"));
+        }
+        self.inner
+            .state
+            .borrow_mut()
+            .channel_command(channel.pending_terminal(), true)
+            .map_err(error)?;
+        *self.inner.channel.borrow_mut() = Some(channel);
+        Ok(())
     }
 }
 
@@ -319,7 +196,7 @@ impl PeerProtocol {
     /// Retire the channel consumer, optionally preserving its reliable rejection
     /// for the application-owned tombstone transport.
     pub fn retire(&self, retain_rejection: bool) -> bool {
-        self.inner.drop_channel();
+        self.inner.channel.borrow_mut().take();
         let mut session = self.inner.state.borrow_mut();
         session.terminal_handoff = None;
         session.reorder_queue.clear();
@@ -355,9 +232,9 @@ impl PeerProtocol {
     }
 
     pub fn restore_channel(&self, data: &[u8], seed: &str) -> Result<i32, JsValue> {
-        let id = super::gaming_wasm::restore_session(data, seed)?;
-        self.inner.attach_channel(id)?;
-        Ok(id)
+        let channel = super::gaming_wasm::restore_channel(data, seed).map_err(error)?;
+        self.attach_channel(channel)?;
+        Ok(self.id)
     }
 
     /// The host implements only the address RPC. Rust owns setup resumption,
@@ -432,139 +309,12 @@ impl PeerProtocol {
             reward_puzzle_hash: address.into(),
             genesis_challenge: genesis_challenge.into(),
         };
-        let result = super::gaming_wasm::create_game_session(js(&config)?)?;
-        let id = js_sys::Reflect::get(&result, &"id".into())?
-            .as_f64()
-            .ok_or_else(|| error("created channel has no id"))? as i32;
-        self.inner.attach_channel(id)?;
-        self.inner.state.borrow_mut().setup = Some(SetupState::ChannelStarted);
-        js_sys::Reflect::set(&result, &"rewardPuzzleHash".into(), &address.into())?;
-        Ok(result)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chia_gaming::game_session::TerminalHandoffCommand;
-    use chia_gaming::peer_session::ReliableState;
-    use chia_gaming::session_phases::effects::GameSessionEvent;
-    use chia_gaming::transaction_manager::ManagerDrain;
-
-    fn runtime() -> PeerRuntime {
-        PeerRuntime {
-            state: RefCell::new(PeerSession::new(
-                ReliableState {
-                    session_id: "00".repeat(16),
-                    message_number: 1,
-                    remote_number: 0,
-                    unacked_messages: vec![],
-                    disposition: "active".into(),
-                },
-                ReceivePolicy {
-                    max_future_reliable_msgno_gap: 100,
-                    max_queued_messages: 10,
-                    max_queued_bytes: 1024,
-                    max_peer_body_bytes: 1024,
-                },
-            )),
-            channel: Cell::new(None),
-        }
-    }
-
-    #[test]
-    fn channel_output_stays_in_rust_and_close_precedes_ordinary_output() {
-        let runtime = runtime();
-        let mut drain = ManagerDrain {
-            events: vec![
-                GameSessionEvent::Log("before".into()),
-                GameSessionEvent::OutboundMessage(b"ordinary".to_vec()),
-                GameSessionEvent::Log("after".into()),
-            ]
-            .into(),
-            ..Default::default()
-        };
-        runtime
-            .collect_channel_output(
-                &mut drain,
-                Some(TerminalHandoffCommand {
-                    id: 1,
-                    message: b"close".to_vec(),
-                }),
-                false,
-                false,
-            )
-            .unwrap();
-        let session = runtime.state.borrow();
-        assert_eq!(
-            session
-                .state
-                .unacked_messages
-                .iter()
-                .map(|m| (m.msgno, m.msg.as_slice()))
-                .collect::<Vec<_>>(),
-            vec![(1, b"close".as_slice()), (2, b"ordinary".as_slice())]
-        );
-        assert_eq!(session.terminal_handoff.as_ref().unwrap().msgno, 1);
-        assert!(session.dirty());
-        let logs: Vec<_> = drain
-            .events
-            .iter()
-            .map(|event| match event {
-                GameSessionEvent::Log(message) => message.as_str(),
-                _ => panic!("peer output leaked into the host projection"),
-            })
-            .collect();
-        assert_eq!(logs, vec!["before", "after"]);
-    }
-
-    #[test]
-    fn terminal_channel_discards_pending_peer_work_and_preserves_host_output() {
-        let runtime = runtime();
-        runtime
-            .state
-            .borrow_mut()
-            .channel_command(
-                Some(TerminalCommand {
-                    id: "1".into(),
-                    message: b"close".to_vec(),
-                }),
-                false,
-            )
-            .unwrap();
-        let mut drain = ManagerDrain {
-            events: vec![
-                GameSessionEvent::OutboundMessage(b"obsolete".to_vec()),
-                GameSessionEvent::Log("terminal".into()),
-            ]
-            .into(),
-            ..Default::default()
-        };
-        runtime
-            .collect_channel_output(&mut drain, None, true, false)
-            .unwrap();
-        let mut session = runtime.state.borrow_mut();
-        assert!(session.terminal_handoff.is_none());
-        assert!(session.state.unacked_messages.is_empty());
-        let commit = session.prepare_commit();
-        assert!(session.complete_commit(commit, true).outbound.is_empty());
-        assert!(
-            matches!(drain.events.front(), Some(GameSessionEvent::Log(message)) if message == "terminal")
-        );
-        assert_eq!(drain.events.len(), 1);
-    }
-
-    #[test]
-    fn on_chain_channel_does_not_allocate_peer_output() {
-        let runtime = runtime();
-        let mut drain = ManagerDrain {
-            events: vec![GameSessionEvent::OutboundMessage(b"obsolete".to_vec())].into(),
-            ..Default::default()
-        };
-        runtime
-            .collect_channel_output(&mut drain, None, false, true)
-            .unwrap();
-        assert!(runtime.state.borrow().state.unacked_messages.is_empty());
-        assert!(drain.events.is_empty());
+        let (channel, puzzle_hash) = super::gaming_wasm::create_channel(config).map_err(error)?;
+        self.attach_channel(channel)?;
+        js(&super::gaming_wasm::ChannelCreated {
+            id: self.id,
+            puzzle_hash,
+            reward_puzzle_hash: Some(address.into()),
+        })
     }
 }

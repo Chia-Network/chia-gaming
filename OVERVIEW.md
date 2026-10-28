@@ -108,8 +108,8 @@ the returned address lets Rust create the channel engine in the same session.
 Rust also owns reliable peer numbering, acknowledgements, ordering, and replay,
 including consent/rejection delivery policy, terminal-message tracking, queue
 draining and send attempts (`src/peer_session.rs` and its driver). The accepted
-Rust owner owns the channel and connects it directly to reliable delivery:
-TypeScript does not forward messages or terminal acknowledgements between them.
+Rust session directly contains the reliability state and channel; native calls
+and results connect them without internal JavaScript conversions or callbacks.
 Retirement releases the channel; a carrier replacement preserves the same owner.
 TypeScript owns the connections, provides the socket-send callback and wallet
 requests, and performs the aggregate checkpoint. It reports connection events

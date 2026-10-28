@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod coordination;
 pub mod driver;
+pub mod session;
 
 use coordination::{ReceiveMode, TerminalHandoff};
 

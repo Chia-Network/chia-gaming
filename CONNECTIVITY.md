@@ -121,8 +121,10 @@ observations to Rust. Pending incoming proposal records and retained rejection
 records sit outside that session lifetime. Rust reliable delivery preserves
 their counters when an incoming proposal is accepted; reconnecting never
 creates another session. Rust owns pre-consent delivery, rejection handling,
-and terminal-message send/ACK tracking. Its accepted owner owns the channel
-and delivers messages and terminal acknowledgements to it directly in Rust.
+and terminal-message send/ACK tracking. One accepted Rust session directly owns
+both reliability state and channel. It delivers messages and terminal
+acknowledgements through native calls and results, without internal JavaScript
+conversions or callback routing.
 A replacement carrier retains that owner; retirement releases its channel.
 The host reports consumer availability and performs persistence and application
 effects requested by Rust. WalletConnect normalization remains in the TypeScript adapter.
