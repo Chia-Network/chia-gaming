@@ -171,9 +171,7 @@ export function submissionDrain(
   };
 }
 
-export function makeMockCradle(
-  onDeliver: (msg: Uint8Array) => Partial<WasmResult> | undefined = () => wasmResult(),
-): ChiaGame {
+export function makeMockCradle(): ChiaGame {
   const finalizeSubmissionAttempt = jest.fn((_attemptToken: string, feeSourceJson?: string) => ({
     protocol_bundle: testSpendBundle('00'),
     bundle: {},
@@ -186,10 +184,6 @@ export function makeMockCradle(
   const acknowledgeSubmissionAttempt = jest.fn();
   const rejectSubmissionAttempt = jest.fn();
   const cradle = {
-    deliver_message: jest.fn((msg: Uint8Array) => {
-      const result = onDeliver(msg);
-      return result === undefined ? undefined : wasmResult(result);
-    }),
     report_coin_states: jest.fn(() => wasmResult()),
     report_height: jest.fn(() => wasmResult()),
     report_puzzle_and_solution: jest.fn(() => wasmResult()),
@@ -208,8 +202,6 @@ export function makeMockCradle(
     serialize: jest.fn(() => new Uint8Array([0])),
     go_on_chain: jest.fn(() => wasmResult()),
     abandon: jest.fn(() => wasmResult()),
-    completeOutboundTerminalHandoff: jest.fn(() => wasmResult()),
-    pendingTerminalHandoff: jest.fn(() => null),
     provide_coin_spend_bundle: jest.fn(() => wasmResult()),
     cradle: 0,
   } as unknown as ChiaGame;
@@ -276,10 +268,7 @@ export function attachTestCommitCoordinator(blob: SessionController): void {
  * Returns a SessionController at qualifyingEvents=7 (system ready).
  * Setup: loadWasm → setGameSession → kickSystem(2) → qe=7.
  */
-export function createReadyBlob(
-  onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
-  receivePolicy?: ReadonlySessionReceivePolicy,
-): TestHarness {
+export function createReadyBlob(receivePolicy?: ReadonlySessionReceivePolicy): TestHarness {
   if (trackedBlobs.length === 0) mockBlockchain.refreshProviderReadiness();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
@@ -290,7 +279,7 @@ export function createReadyBlob(
     100n,
     makePeerConn(sentMessages, sentAcks, receivePolicy),
   );
-  const cradle = makeMockCradle(onDeliver);
+  const cradle = makeMockCradle();
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameSession(cradle);
@@ -318,7 +307,6 @@ export function createReadyBlob(
     }),
   );
 
-  (cradle.deliver_message as jest.Mock).mockClear();
   (cradle.report_coin_states as jest.Mock).mockClear();
   sentMessages.length = 0;
   sentAcks.length = 0;
@@ -328,10 +316,7 @@ export function createReadyBlob(
 }
 
 /** Returns a SessionController at qe=1 — messages will be buffered until kickSystem(2). */
-export function createUnreadyBlob(
-  onDeliver?: (msg: Uint8Array) => Partial<WasmResult> | undefined,
-  receivePolicy?: ReadonlySessionReceivePolicy,
-): TestHarness {
+export function createUnreadyBlob(receivePolicy?: ReadonlySessionReceivePolicy): TestHarness {
   if (trackedBlobs.length === 0) mockBlockchain.refreshProviderReadiness();
   const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
   const sentAcks: number[] = [];
@@ -342,7 +327,7 @@ export function createUnreadyBlob(
     100n,
     makePeerConn(sentMessages, sentAcks, receivePolicy),
   );
-  const cradle = makeMockCradle(onDeliver);
+  const cradle = makeMockCradle();
 
   blob.loadWasm(mockWasmConnection);
   blob.setGameSession(cradle);
@@ -380,6 +365,10 @@ export function setActiveBlob(blob: SessionController | null): void {
   activeBlob = blob;
 }
 const trackedBlobs: SessionController[] = [];
+
+export function trackTestController(blob: SessionController): void {
+  trackedBlobs.push(blob);
+}
 
 export function setTestGlobal(key: string, value: unknown) {
   Object.defineProperty(globalThis, key, {

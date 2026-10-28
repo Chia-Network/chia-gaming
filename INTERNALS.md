@@ -27,19 +27,23 @@ Local acceptance begins the Rust session in `src/peer_session.rs`. Rust
 constructs the initiating proposal and records `WaitingForWalletAddress`;
 `wasm/src/peer.rs` calls the TypeScript address provider and awaits its result.
 Retiring setup cancels channel construction while that request is in flight. Rust then creates `TransactionManager<GameSession>` and
-marks setup `ChannelStarted`. Pending incoming proposals and retained rejection
+marks setup `ChannelStarted`. The WASM peer owner retains the channel handle
+and releases it on retirement or drop. The channel has a weak reference back to
+that owner, so its outbound messages are numbered and journaled directly in Rust. Pending incoming proposals and retained rejection
 records use reliability without implying an accepted session.
 
 The same Rust delivery owner allocates message numbers, buffers out-of-order
 input, retires acknowledged messages, and chooses reconnect replay. Its driver
 in `src/peer_session/driver.rs` runs the entire delivery turn and calls host
-carrier/application callbacks itself. Their return values drive Rust's delivery
+carrier/application callbacks itself. Accepted channel messages and terminal
+acknowledgements are delivered within Rust, with only the resulting UI/wallet
+effects sent to TypeScript. Callback return values drive Rust's delivery
 and send bookkeeping; TypeScript never selects, removes, or confirms queued
 messages. Host callbacks run with no session borrow held because a delivered
 message can synchronously produce a reply on the same session. The host reports
 connection events and checkpoint outcomes. `coordination.rs` also owns consent
 delivery gates, rejection recognition and the terminal handoff binding. Its
-three host capabilities are frame sending, availability/channel observations,
+three host capabilities are frame sending, consumer availability,
 and notifications; TypeScript supplies no per-message delivery policy.
 Checkpoint capture freezes a generation and frame/ACK counts: release sends
 only that boundary, once. An ordinary failed write leaves it dirty while still
@@ -662,7 +666,8 @@ residue stays durable and may survive capture.
 The live transport checkpoint includes the cooperative terminal handoff's Rust
 command identity, exact reliable frame bytes and message number, sent state, and
 ACK state. The Rust peer owner tracks the binding and reconciles it with the
-channel command and unacknowledged frame journal during restore. An ACKed binding completes Rust without
+channel command and unacknowledged frame journal during restore, entirely inside
+Rust. An ACKed binding completes the channel without
 retransmission; an unacknowledged binding reuses the same frame. The receive
 reorder queue is not persisted: retransmission from the sender's durable
 unacknowledged journal reconstructs the gap. Outstanding puzzle/solution host

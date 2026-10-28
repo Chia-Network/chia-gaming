@@ -428,20 +428,8 @@ export class ChiaGame {
     return this.wasm.shut_down(this.session);
   }
 
-  dropGameSession(): void {
-    this.wasm.drop_game_session?.(this.session);
-  }
-
   abandon(): WasmResult {
     return this.wasm.abandon(this.session);
-  }
-
-  completeOutboundTerminalHandoff(): WasmResult {
-    return this.wasm.complete_outbound_terminal_handoff(this.session);
-  }
-
-  pendingTerminalHandoff(): { id: string; message: Uint8Array } | null {
-    return this.wasm.pending_terminal_handoff(this.session);
   }
 
   go_on_chain(): WasmResult {
@@ -470,10 +458,6 @@ export class ChiaGame {
 
   cheat(game_id: string, mover_share: bigint): WasmResult {
     return this.wasm.cheat(this.session, game_id, String(mover_share));
-  }
-
-  deliver_message(msg: Uint8Array): WasmResult {
-    return this.wasm.deliver_message(this.session, msg);
   }
 
   start_handshake(opening_fee: string): WasmResult {

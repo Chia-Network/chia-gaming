@@ -10,6 +10,7 @@ import type {
   PeerProtocolSnapshot,
   PeerReceiveMode,
   PeerTerminalHandoff,
+  WasmResult,
 } from '../../../wasm/contract';
 import {
   DEFAULT_SESSION_RECEIVE_POLICY,
@@ -66,14 +67,13 @@ export type MessageHandler = {
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
   mode?: PeerReceiveMode;
-  isEstablished?: () => boolean;
-  isDiscarding?: () => boolean;
   deliver: (msgno: bigint, body: Uint8Array) => void;
   persist: () => Promise<void>;
   failure: (reason: string) => void;
   acknowledged?: (ack: bigint) => void;
   rejectionAcknowledged?: () => void;
-  terminalAcknowledged?: () => boolean;
+  channelResult?: (result: WasmResult) => void;
+  error?: (reason: string) => void;
   keepalive?: () => void;
   committed?: () => void;
 }
@@ -83,7 +83,7 @@ export type PreparedReliableCommit = PeerPreparedCommit;
 /** The host persists snapshots and supplies carrier/application callbacks.
  * Rust owns every receive, send, ACK and replay turn. */
 export class ReliablePeerTransport {
-  readonly protocol: PeerProtocolApi;
+  protocol: PeerProtocolApi;
   private readonly host: PeerHost;
   private consumer: ReliableMessageConsumer | null = null;
   private flushScheduled = false;
@@ -105,8 +105,6 @@ export class ReliablePeerTransport {
           : sendAck(frame.msgno),
       status: () => ({
         available: !!this.consumer?.isReady(),
-        established: this.consumer?.isEstablished?.() ?? false,
-        discarding: this.consumer?.isDiscarding?.() ?? false,
       }),
       notify: (event) => {
         switch (event.type) {
@@ -119,8 +117,12 @@ export class ReliablePeerTransport {
           case 'rejection-acknowledged':
             this.consumer?.rejectionAcknowledged?.();
             break;
-          case 'terminal-acknowledged':
-            return this.consumer?.terminalAcknowledged?.() ?? false;
+          case 'channel-result':
+            this.consumer?.channelResult?.(event.result);
+            break;
+          case 'error':
+            this.consumer?.error?.(event.reason);
+            break;
           case 'acknowledged':
             this.consumer?.acknowledged?.(event.msgno);
             break;
@@ -183,10 +185,6 @@ export class ReliablePeerTransport {
     if (!consumer || this.consumer === consumer) this.consumer = null;
   }
 
-  sendMessage(body: Uint8Array): bigint {
-    return this.protocol.send_message(body, this.host);
-  }
-
   receiveData(msgno: bigint, body: Uint8Array): boolean {
     let accepted = true;
     const receive = () => {
@@ -232,14 +230,14 @@ export class ReliablePeerTransport {
   hasPendingDurability(): boolean {
     return this.protocol.dirty();
   }
-  stopProtocol(): void {
-    this.protocol.stop_protocol();
-  }
   rejectSession(): void {
     this.protocol.reject_session(this.host);
   }
-  channelCommand(command: { id: string; message: Uint8Array } | null, restoring = false): void {
-    this.protocol.channel_command(command, restoring, this.host);
+  takeSession(from: ReliablePeerTransport): void {
+    // A carrier replacement transfers the existing Rust owner, including its channel.
+    // Give the detached carrier our unused negotiation object so its later cleanup
+    // cannot retire the live session.
+    [this.protocol, from.protocol] = [from.protocol, this.protocol];
   }
 
   clearRuntime(retainRejection = false): void {

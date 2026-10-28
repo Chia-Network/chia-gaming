@@ -73,6 +73,8 @@ mod gaming_wasm {
         #[serde(skip)]
         rng: ChaCha8SerializationWrapper,
         cradle: TransactionManager<GameSession>,
+        #[serde(skip)]
+        peer: std::rc::Weak<super::peer::PeerRuntime>,
     }
 
     /// Increment for every incompatible change to the persisted `JsGameSession`
@@ -361,6 +363,7 @@ mod gaming_wasm {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng.clone()),
                 cradle: TransactionManager::new(game_cradle),
+                peer: std::rc::Weak::new(),
             };
             insert_cradle(new_id, cradle);
 
@@ -425,6 +428,54 @@ mod gaming_wasm {
         })
     }
 
+    pub(super) fn attach_peer(
+        cid: i32,
+        peer: std::rc::Weak<super::peer::PeerRuntime>,
+    ) -> Result<(), JsValue> {
+        with_game(cid, |cradle| {
+            let owner = peer.upgrade().expect("attaching a live peer session");
+            let command = cradle.cradle.pending_terminal_handoff().map(|command| {
+                chia_gaming::peer_session::coordination::TerminalCommand {
+                    id: command.id.to_string(),
+                    message: command.message,
+                }
+            });
+            owner
+                .state
+                .borrow_mut()
+                .channel_command(command, true)
+                .map_err(types::Error::StrErr)?;
+            cradle.peer = peer;
+            Ok(())
+        })
+    }
+
+    pub(super) fn peer_channel_status(cid: i32) -> Result<(bool, bool), JsValue> {
+        with_game(cid, |cradle| {
+            Ok((
+                cradle.cradle.handshake_finished(),
+                cradle.cradle.is_fully_resolved() || cradle.cradle.is_on_chain(),
+            ))
+        })
+    }
+
+    fn project_session_drain(
+        cradle: &JsGameSession,
+        drain: &mut ManagerDrain,
+        action_succeeded: bool,
+    ) -> Result<JsValue, types::Error> {
+        let command = cradle.cradle.pending_terminal_handoff();
+        let terminal = cradle.cradle.is_fully_resolved();
+        let command = if let Some(peer) = cradle.peer.upgrade() {
+            peer.collect_channel_output(drain, command, terminal, cradle.cradle.is_on_chain())
+                .map_err(types::Error::StrErr)?;
+            None
+        } else {
+            command
+        };
+        manager_drain_to_js(drain, command, terminal, action_succeeded)
+    }
+
     #[cfg(test)]
     mod session_allocator_tests {
         use super::*;
@@ -449,6 +500,7 @@ mod gaming_wasm {
                 allocator,
                 rng: ChaCha8SerializationWrapper(rng),
                 cradle,
+                peer: std::rc::Weak::new(),
             }
         }
 
@@ -465,7 +517,7 @@ mod gaming_wasm {
             let node = vec!["temporary CLVM allocation"; 10_000]
                 .to_clvm(&mut cradle.allocator)
                 .unwrap();
-            Program::from_nodeptr(&mut cradle.allocator, node)
+            Program::from_nodeptr(&cradle.allocator, node)
         }
 
         #[test]
@@ -480,7 +532,7 @@ mod gaming_wasm {
                     assert_eq!(allocation_counts(cradle), baseline);
                     // Owned output remains usable after its producing call is released.
                     let node = program.to_nodeptr(&mut cradle.allocator)?;
-                    assert_eq!(Program::from_nodeptr(&mut cradle.allocator, node)?, program);
+                    assert_eq!(Program::from_nodeptr(&cradle.allocator, node)?, program);
                     Ok(())
                 })
                 .unwrap();
@@ -494,14 +546,14 @@ mod gaming_wasm {
             let node = ("retained before call", 42)
                 .to_clvm(&mut cradle.allocator)
                 .unwrap();
-            let before = Program::from_nodeptr(&mut cradle.allocator, node).unwrap();
+            let before = Program::from_nodeptr(&cradle.allocator, node).unwrap();
             let baseline = allocation_counts(&cradle);
             let cid = get_next_id();
             insert_cradle(cid, cradle);
             with_game(cid, allocate_program).unwrap();
             with_game(cid, |cradle| {
                 assert_eq!(allocation_counts(cradle), baseline);
-                assert_eq!(Program::from_nodeptr(&mut cradle.allocator, node)?, before);
+                assert_eq!(Program::from_nodeptr(&cradle.allocator, node)?, before);
                 Ok(())
             })
             .unwrap();
@@ -1269,10 +1321,8 @@ mod gaming_wasm {
                 parameters: proposal.parameters,
             };
             let id = cradle.cradle.propose(&mut cradle.allocator, &start)?;
-            let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            let pending_terminal = cradle.cradle.pending_terminal_handoff();
-            let terminal = cradle.cradle.is_fully_resolved();
-            let result = manager_drain_to_js(&dr, pending_terminal, terminal, true)?;
+            let mut dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
+            let result = project_session_drain(cradle, &mut dr, true)?;
             let _ =
                 js_sys::Reflect::set(&result, &"id".into(), &JsValue::from_str(&id.to_string()));
             Ok(result)
@@ -1333,10 +1383,8 @@ mod gaming_wasm {
                     false
                 }
             };
-            let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            let pending_terminal = cradle.cradle.pending_terminal_handoff();
-            let terminal = cradle.cradle.is_fully_resolved();
-            manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)
+            let mut dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
+            project_session_drain(cradle, &mut dr, action_succeeded)
         })
     }
 
@@ -1474,6 +1522,17 @@ mod gaming_wasm {
     pub fn complete_outbound_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
         with_game_drain(cid, move |cradle: &mut JsGameSession| {
             cradle.cradle.complete_outbound_terminal_handoff()
+        })
+    }
+
+    // A failed action must retain the acknowledged peer binding for retry.
+    // Unlike UI actions, this internal call cannot turn failure into a result
+    // that the caller might mistake for completed channel retirement.
+    pub(super) fn complete_peer_terminal_handoff(cid: i32) -> Result<JsValue, JsValue> {
+        with_game(cid, |cradle| {
+            cradle.cradle.complete_outbound_terminal_handoff()?;
+            let mut drain = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
+            project_session_drain(cradle, &mut drain, true)
         })
     }
 
@@ -1830,10 +1889,8 @@ mod gaming_wasm {
                     false
                 }
             };
-            let dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
-            let pending_terminal = cradle.cradle.pending_terminal_handoff();
-            let terminal = cradle.cradle.is_fully_resolved();
-            manager_drain_to_js(&dr, pending_terminal, terminal, action_succeeded)
+            let mut dr = cradle.cradle.flush_and_collect(&mut cradle.allocator)?;
+            project_session_drain(cradle, &mut dr, action_succeeded)
         })
     }
 

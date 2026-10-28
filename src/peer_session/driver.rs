@@ -248,6 +248,15 @@ impl<H: PeerHost> PeerDriver<'_, H> {
             self.session.borrow_mut().reorder_queue.remove(&msgno);
             self.host.send(SendFrame::Ack { msgno })?;
         }
+        if self
+            .session
+            .borrow()
+            .terminal_handoff
+            .as_ref()
+            .is_some_and(|b| b.acknowledged)
+        {
+            self.complete_terminal()?;
+        }
         if let Err(reason) = self.drain_contiguous() {
             self.failure(reason)?;
         }
@@ -372,3 +381,6 @@ impl<H: PeerHost> PeerDriver<'_, H> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

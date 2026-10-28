@@ -328,8 +328,6 @@ export class SessionController implements PollingGameSession {
     this.inboundSessionRejectHandler = peer_conn.onSessionReject ?? null;
     this.reliableConsumer = {
       mode: 'channel',
-      isEstablished: () => this.channelReady,
-      isDiscarding: () => this.protocolStopped || this.onChain,
       isReady: () =>
         !!this.wc &&
         !!this.cradle &&
@@ -337,13 +335,19 @@ export class SessionController implements PollingGameSession {
         !this.reloading &&
         !this.pendingPeerFailure &&
         !this.retired,
-      deliver: (msgno, body) => this.deliverOrderedMessage(msgno, body),
+      deliver: () => {
+        throw new Error('accepted session leaked a peer message to TypeScript');
+      },
+      channelResult: (result) => this.processResult(result),
+      error: (reason) => {
+        this.rxjsEmitter?.next({ type: 'error', error: reason });
+        this.requestCommit();
+      },
       persist: () =>
         Promise.reject(
           new Error('Active-session persistence requires SessionMachineRuntime coordination'),
         ),
       failure: (reason) => this.failPeerProcessing(reason),
-      terminalAcknowledged: () => this.completeOutboundTerminalHandoffAfterAck(),
       keepalive: () => this.notePeerActivity(),
       committed: () => this.notifyInboundSessionRejectCommitted(),
     };
@@ -407,10 +411,11 @@ export class SessionController implements PollingGameSession {
 
   attachReliableTransport(transport: ReliablePeerTransport): void {
     if (this.reliableTransport === transport) return;
-    // The channel's existing checkpoint survives a carrier replacement.
-    const terminalHandoff = this.reliableTransport.state.terminalHandoff;
-    if (terminalHandoff) transport.restore(transport.state, terminalHandoff);
     this.reliableTransport.detachConsumer(this.reliableConsumer);
+    if (this.persistenceSessionRuntime) {
+      this.reliableTransport.detachCommitCoordinator(this.persistenceSessionRuntime);
+    }
+    transport.takeSession(this.reliableTransport);
     this.reliableTransport = transport;
     this.reliableTransport.attachConsumer(this.reliableConsumer);
     if (this.persistenceSessionRuntime) {
@@ -839,9 +844,7 @@ export class SessionController implements PollingGameSession {
       window.removeEventListener('beforeunload', this.beforeUnloadHandler);
       this.beforeUnloadHandler = null;
     }
-    const cradle = this.cradle;
     this.cradle = undefined;
-    cradle?.dropGameSession?.();
   }
 
   reportDurabilityError(error: unknown): void {
@@ -1020,8 +1023,6 @@ export class SessionController implements PollingGameSession {
       this.escalatePeerFailure();
       return;
     }
-    const command = cradle.pendingTerminalHandoff();
-    this.reliableTransport.channelCommand(command, true);
     this.blockchain?.snapshotGameSessionCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
@@ -1301,9 +1302,6 @@ export class SessionController implements PollingGameSession {
         this.eventQueue.push(event);
       }
     }
-    if (disposition.kind === 'await-outbound-terminal') {
-      this.reliableTransport.channelCommand(disposition.command);
-    }
 
     // A terminal manager drain can still contain already-queued on-chain
     // submissions (for example a mature timeout claim). Actual abandonment
@@ -1313,7 +1311,8 @@ export class SessionController implements PollingGameSession {
       this.flushDeferredWork();
       return;
     }
-    if (this.eventQueue.length > 0) this.requestCommit();
+    if (this.eventQueue.length > 0 || this.reliableTransport.hasPendingDurability())
+      this.requestCommit();
   }
 
   private assertActionSucceeded(result: WasmResult | undefined, action: string): void {
@@ -1396,7 +1395,6 @@ export class SessionController implements PollingGameSession {
     // facts from an earlier manager drain remain authoritative, however, and
     // may be the only terminal notification emitted for that accepted game.
     this.eventQueue = this.eventQueue.filter((event) => this.isQueuedGameTerminalEvent(event));
-    this.reliableTransport.stopProtocol();
   }
 
   flushDeferredWork(eventBudget = Number.POSITIVE_INFINITY): void {
@@ -1529,10 +1527,7 @@ export class SessionController implements PollingGameSession {
   }
 
   private dispatchEvent(event: GameSessionEvent): void {
-    if ('OutboundMessage' in event) {
-      if (this.protocolStopped || this.onChain) return;
-      this.reliableTransport.sendMessage(event.OutboundMessage);
-    } else if ('Notification' in event) {
+    if ('Notification' in event) {
       const n = event.Notification;
       let notification = n;
       const tag = typeof n === 'object' && n !== null ? Object.keys(n)[0] : String(n);
@@ -1774,11 +1769,6 @@ export class SessionController implements PollingGameSession {
     this.goOnChain('peer-failure');
   }
 
-  private deliverOrderedMessage(_msgno: bigint, msg: Uint8Array): void {
-    const result = this.cradle!.deliver_message(msg);
-    this.processResult(result);
-  }
-
   private notifyInboundSessionRejectCommitted(): void {
     if (!this.inboundSessionRejectCommitted) return;
     this.inboundSessionRejectCommitted = false;
@@ -1959,27 +1949,6 @@ export class SessionController implements PollingGameSession {
       }
       this.inboundSessionRejectCommitted = true;
     })();
-  }
-
-  private completeOutboundTerminalHandoffAfterAck(): boolean {
-    if (!this.cradle) {
-      this.requestCommit();
-      return false;
-    }
-    try {
-      const result = this.cradle.completeOutboundTerminalHandoff();
-      if (result.disposition.kind !== 'terminal') {
-        throw new Error('cooperative terminal handoff did not produce a terminal result');
-      }
-      this.processResult(result);
-      return true;
-    } catch (error) {
-      const message = extractErrorMessage(error);
-      diagStack('complete terminal handoff failed', error);
-      this.rxjsEmitter?.next({ type: 'error', error: message });
-      this.requestCommit();
-      return false;
-    }
   }
 
   getWasmFields(): WasmFields | null {

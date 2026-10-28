@@ -1,3 +1,4 @@
+import { handshakeA } from './accepted_session.harness';
 import * as wasm from '../../../node-pkg/chia_gaming_wasm';
 import { createPeerProtocol } from '../../services/peerProtocol';
 import { decodePeerAppMessage, encodePeerAppMessage } from '../../services/PeerSession';
@@ -41,7 +42,7 @@ function pendingPeer() {
       else acks.push(frame.msgno);
       return true;
     },
-    status: () => ({ available: true, established: false, discarding: false }),
+    status: () => ({ available: true }),
     notify: (event) => {
       events.push(event);
       if (event.type === 'message') delivered.push(event.msgno);
@@ -82,7 +83,6 @@ test('Rust releases the proposal after checkpointing while waiting for the walle
   expect(peer.snapshot().messageNumber).toBe(2n);
   await expect(openChannel(peer, address)).rejects.toThrow('already started');
   expect(address).toHaveBeenCalledTimes(1);
-  wasm.drop_game_session(channel.id);
   peer.free();
 });
 
@@ -91,11 +91,11 @@ test('restoring accepted setup requests an address and replays the original prop
   original.accept_session(terms, true);
   const restored = createPeerProtocol(original.snapshot(), DEFAULT_SESSION_RECEIVE_POLICY);
   const channel = (await openChannel(restored, async () => '02'.repeat(32)))!;
+  expect(wasm.serialize_game_session(channel.id).length).toBeGreaterThan(0);
   restored.connectivity('registered', 10000, false, host);
   expect(sent).toHaveLength(1);
   expect(sent[0].msgno).toBe(1n);
   expect(restored.snapshot().messageNumber).toBe(2n);
-  wasm.drop_game_session(channel.id);
   original.free();
   restored.free();
 });
@@ -122,78 +122,30 @@ test.each([false, true])(
   },
 );
 
-test('inbound acceptance preserves buffered traffic without an outgoing proposal', () => {
-  const { peer, host, delivered, sent } = pendingPeer();
+test('inbound acceptance retains buffered channel traffic until the wallet address arrives, then delivers inside Rust', async () => {
+  const { peer, host, delivered, sent, events } = pendingPeer();
   peer.consumer_ready('proposal', host);
   data(peer, host, 1n, proposal());
-  data(peer, host, 2n, new Uint8Array([7]));
+  data(peer, host, 2n, await handshakeA(terms));
   peer.accept_session(terms, false);
+  peer.consumer_ready('channel', host);
   expect(delivered).toEqual([1n]);
+  expect(peer.snapshot().remoteNumber).toBe(1n);
+  const channel = (await peer.open_channel(
+    terms,
+    false,
+    wasm.create_rng('02'.repeat(32)),
+    '03'.repeat(32),
+    async () => '05'.repeat(32),
+  ))!;
   peer.consumer_ready('channel', host);
   commit(peer, host);
-  expect(delivered).toEqual([1n, 2n]);
-  expect(sent).toEqual([]);
-  peer.free();
-});
-
-test('Rust orders delivery, tolerates a reentrant reply, and checkpoints sends and ACKs', () => {
-  const { peer, host, delivered, sent, acks } = pendingPeer();
-  const notify = host.notify;
-  host.notify = (event) => {
-    notify(event);
-    if (event.type === 'message' && event.msgno === 1n)
-      peer.send_message(new Uint8Array([9]), host);
-  };
-  data(peer, host, 3n, new Uint8Array([3]));
-  data(peer, host, 1n, new Uint8Array([1]));
-  data(peer, host, 2n, new Uint8Array([2]));
-  expect(delivered).toEqual([1n, 2n, 3n]);
-  expect(sent).toEqual([]);
-  expect(acks).toEqual([]);
-  commit(peer, host);
-  expect(sent.map(({ msgno }) => msgno)).toEqual([1n]);
-  expect(acks).toEqual([1n, 2n, 3n]);
-  ack(peer, host, 1n);
-  expect(peer.snapshot().unackedMessages).toEqual([]);
-  peer.free();
-});
-
-test('Rust stops replay on carrier refusal and retries on the next registration', () => {
-  const { peer, host, sent } = pendingPeer();
-  peer.send_message(new Uint8Array([1]), host);
-  peer.send_message(new Uint8Array([2]), host);
-  commit(peer, host);
-  sent.length = 0;
-  const send = host.send;
-  host.send = (frame) => {
-    send(frame);
-    return false;
-  };
-  peer.connectivity('disconnected', 10000, false, host);
-  peer.connectivity('reconnected', 10000, false, host);
-  expect(sent).toEqual([]);
-  expect(peer.connectivity('registered', 10000, false, host)).toBe(false);
-  expect(sent.map(({ msgno }) => msgno)).toEqual([1n]);
-  host.send = send;
-  expect(peer.connectivity('registered', 11000, false, host)).toBe(true);
-  expect(sent.map(({ msgno }) => msgno)).toEqual([1n, 1n, 2n]);
-  peer.free();
-});
-
-test('Rust retires buffered traffic when application delivery fails', () => {
-  const { peer, host, delivered, events } = pendingPeer();
-  const notify = host.notify;
-  host.notify = (event) => {
-    if (event.type === 'message') throw new Error('invalid application message');
-    notify(event);
-  };
-  data(peer, host, 2n, new Uint8Array([2]));
-  expect(data(peer, host, 1n, new Uint8Array([1]))).toBe(false);
-  expect(events).toContainEqual({ type: 'failure', reason: 'invalid application message' });
-  host.notify = notify;
-  data(peer, host, 1n, new Uint8Array([1]));
+  expect(peer.snapshot().remoteNumber).toBe(2n);
   expect(delivered).toEqual([1n]);
+  expect(events.filter(({ type }) => type === 'channel-result')).toHaveLength(1);
+  expect(sent).toEqual([]);
   peer.free();
+  expect(() => wasm.serialize_game_session(channel.id)).toThrow();
 });
 
 test('Rust handles rejected-session traffic without an application decoder', () => {

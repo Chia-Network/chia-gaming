@@ -6,17 +6,22 @@ Node.js tests via wasm-pack.
 `create_peer_protocol` constructs the Rust peer-session owner used by the
 browser's `ReliablePeerTransport` adapter. Rust handles numbering, ACKs,
 ordering, replay, proposal/rejection policy, and terminal-message tracking.
+The accepted Rust owner also owns the channel: incoming channel messages,
+outgoing message allocation, and terminal acknowledgements stay inside Rust.
+Retiring or freeing that owner releases its channel; replacing a hub carrier
+transfers the same owner without creating another channel.
 `accept_session` starts local acceptance and constructs the initiator's proposal.
 `open_channel` resumes the accepted setup, calls the supplied address provider,
 awaits its result, and creates the channel. Retiring setup cancels construction
 even when its address request is still in flight. TypeScript's WalletConnect
 adapter continues to own RPC normalization, retries and connection recovery.
 
-The host has three capabilities: send a frame, report consumer availability and
-channel facts, and handle notifications. Rust owns delivery eligibility, rejection
+The host has three capabilities: send a frame, report consumer availability, and
+handle notifications. Rust owns delivery eligibility, rejection
 recognition, and terminal-frame reconciliation, send/ACK bookkeeping and retry
-eligibility. The terminal-acknowledged notification returns whether the channel
-completed; a failed completion retains the acknowledged binding for retry.
+eligibility. Rust completes the channel directly on terminal acknowledgement;
+a failed completion retains the acknowledged binding for retry. Channel output
+notifies TypeScript only of presentation and wallet work, never peer messages.
 TypeScript supplies application effects and IndexedDB writes, and reports
 connection events and checkpoint outcomes. Snapshot/restore carries saved data;
 the checkpoint token is opaque. The API has no queue accessors, per-message

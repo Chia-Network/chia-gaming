@@ -784,7 +784,7 @@ Peer message counters and queues are part of the reliable transport protocol.
 The Rust reliability owner exists before the TypeScript controller: it increments
 `messageNumber`, appends every outbound semantic body to `unackedMessages`, and
 stages the actual WebSocket send. When an inbound body is delivered to
-negotiation or WASM, it advances `remoteNumber` and stages the ack. With a live
+negotiation or the owned Rust channel, it advances `remoteNumber` and stages the ack. With a live
 runtime these allocations participate in the same fixed-point drain and active
 commit as all other session work.
 
@@ -796,10 +796,13 @@ prepares and releases each captured generation. TypeScript reports connectivity
 and checkpoint completion; it has no queue accessors or delivery-confirmation
 steps. Rust also owns the pre-consent delivery rules, incoming rejection
 recognition, repeated-proposal rejection handling, and terminal-message
-reconciliation and sent/ACK state. Host notifications request rejection retirement
-or channel completion; TypeScript does not compare message numbers to make those
-decisions. Its three callbacks send frames, report consumer availability and
-channel facts, and handle notifications. IndexedDB and commit scheduling remain
+reconciliation and sent/ACK state. The accepted owner owns the channel handle:
+Rust directly delivers inbound messages, journals channel output, and completes
+terminal acknowledgements. TypeScript receives the resulting UI/wallet effects
+without forwarding peer bodies or channel commands between Rust objects.
+Replacing the carrier transfers the existing owner, and retirement releases its
+channel. Host notifications can request rejection retirement. The three host
+callbacks send frames, report consumer availability, and handle notifications. IndexedDB and commit scheduling remain
 host work. Rust's `open_channel` awaits the existing TypeScript address provider
 and suppresses construction if setup retires during that request. WalletConnect
 RPC normalization and recovery stay in the TypeScript adapter.

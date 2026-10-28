@@ -303,7 +303,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     runtime.activatePersistence();
     transport.attachCommitCoordinator(runtime);
     try {
-      // Stand-in for WASM's completed funding event and signed peer payload.
+      // A projected funding event and a real Rust proposal share this checkpoint.
       // Persistence, React projection scheduling, and queued release are real.
       runtime.dispatch({
         type: 'wasm-notification',
@@ -319,7 +319,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
           },
         },
       });
-      transport.sendMessage(new Uint8Array([0x42]));
+      transport.acceptSession({ proposer_amount: '100', responder_amount: '100' }, true);
       expect(mockSendToPeer).not.toHaveBeenCalled();
       await runtime.persist();
       expect(order.slice(0, 3)).toEqual(['saved', 'projection', 'release']);

@@ -141,12 +141,12 @@ export async function restoreSession(
       : (() => {
           throw new Error('restoreSession serializedGameSession must be a Uint8Array');
         })();
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
   if (sc.getGameSessionId() !== session.pairing.gameSessionId) {
     throw new Error('restoreSession: reliable session id does not match persisted pairing');
   }
   sc.restoreTransportCheckpoint(session.live);
+  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes, sc.getPeerProtocol());
   sc.iStarted = requireBoolean(session.pairing.iStarted, 'iStarted');
   sc.pairingToken = requireString(session.pairing.token, 'pairingToken');
   if (session.live.disposition !== 'active') {

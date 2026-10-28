@@ -193,7 +193,10 @@ describe('acceptLifecycle', () => {
         mockHubConnection(),
         sessionReceivePolicy(),
       );
-      peer.reliableTransport.sendMessage(new Uint8Array([0x01]));
+      peer.reliableTransport.acceptSession(
+        { proposer_amount: '100', responder_amount: '100' },
+        true,
+      );
       // The live reliableState carries a `sessionId` the durable save must not.
       expect(peer.reliableState).toHaveProperty('sessionId');
 

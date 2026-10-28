@@ -39,22 +39,21 @@ export type PeerInput =
   | { type: 'ack'; msgno: bigint }
   | { type: 'keepalive' };
 export type PeerEvent =
-  | { type: 'commit-requested' | 'keepalive' | 'committed' | 'rejection-acknowledged' | 'terminal-acknowledged' }
+  | { type: 'commit-requested' | 'keepalive' | 'committed' | 'rejection-acknowledged' }
   | { type: 'message'; msgno: bigint; body: Uint8Array }
   | { type: 'acknowledged'; msgno: bigint }
-  | { type: 'failure'; reason: string };
+  | { type: 'failure' | 'error'; reason: string }
+  | { type: 'channel-result'; result: WasmResult };
 
 export interface PeerHost {
   send(frame: Exclude<PeerInput, { type: 'keepalive' }>): boolean;
-  status(): { available: boolean; established: boolean; discarding: boolean };
-  /** Only terminal-acknowledged returns whether the channel completed. */
-  notify(event: PeerEvent): boolean | void;
+  status(): { available: boolean };
+  notify(event: PeerEvent): void;
 }
 
 export interface PeerProtocolApi {
   snapshot(): PeerProtocolSnapshot;
   restore(state: PeerProtocolState, terminal: PeerTerminalHandoff | null): void;
-  send_message(body: Uint8Array, host: PeerHost): bigint;
   receive(input: PeerInput, host: PeerHost): boolean;
   consumer_ready(mode: PeerReceiveMode, host: PeerHost): void;
   connectivity(event: string, now: number, force: boolean, host: PeerHost): boolean;
@@ -62,10 +61,9 @@ export interface PeerProtocolApi {
   prepare_commit(): PeerPreparedCommit;
   complete_commit(commit: PeerPreparedCommit, persisted: boolean, host: PeerHost): void;
   retire(retainRejection: boolean): boolean;
-  stop_protocol(): void;
   reject_session(host: PeerHost): void;
   failure(reason: string, host: PeerHost): void;
-  channel_command(command: { id: string; message: Uint8Array } | null, restoring: boolean, host: PeerHost): void;
+  restore_channel(data: Uint8Array, seed: string): number;
   accept_session(terms: PeerSessionTerms, initiator: boolean): void;
   open_channel(terms: PeerSessionTerms, initiator: boolean, rngId: number, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ id: number; puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
   free(): void;

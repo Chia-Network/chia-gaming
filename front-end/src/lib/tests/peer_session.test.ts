@@ -587,7 +587,7 @@ describe('PeerSession', () => {
         failure: (reason) => fail(reason),
       });
 
-      ps.reliableTransport.sendMessage(new Uint8Array([0xaa]));
+      ps.reliableTransport.rejectSession();
       const flush = ps.reliableTransport.flushPending();
       ps.reliableTransport.receiveKeepalive();
       expect(conn.sentPeerMessages).toEqual([]);
@@ -613,7 +613,7 @@ describe('PeerSession', () => {
         committed,
       });
 
-      ps.reliableTransport.sendMessage(new Uint8Array([0xaa]));
+      ps.reliableTransport.rejectSession();
       ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xbb])));
 
       await expect(ps.reliableTransport.flushPending()).rejects.toThrow('storage unavailable');
@@ -671,9 +671,9 @@ describe('PeerSession', () => {
         failure: (reason) => fail(reason),
       });
 
-      ps.reliableTransport.sendMessage(new Uint8Array([0x01]));
+      ps.reliableTransport.rejectSession();
       const flush = ps.reliableTransport.flushPending();
-      ps.reliableTransport.sendMessage(new Uint8Array([0x02]));
+      ps.reliableTransport.rejectSession();
       ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0x03])));
       resolveFirstPersist();
       await flush;
