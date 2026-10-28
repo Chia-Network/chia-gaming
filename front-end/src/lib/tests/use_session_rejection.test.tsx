@@ -1,3 +1,4 @@
+import { restorePeerState } from './peer_protocol.harness';
 import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
@@ -130,7 +131,7 @@ describe('useSessionRejection authority owner', () => {
   it('releases primary authority before persistence and launches once after handoff', async () => {
     const hub = mockHub();
     primary = new PeerSession('peer-1', '11'.repeat(16), hub);
-    primary.reliableState.remoteNumber = 1n;
+    restorePeerState(primary, { remoteNumber: 1n });
     const saved = storageRepository.loadState();
     jest.spyOn(storageRepository, 'loadState').mockReturnValue(saved);
     mockRootPatching();

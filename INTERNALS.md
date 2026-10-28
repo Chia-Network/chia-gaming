@@ -31,8 +31,13 @@ marks setup `ChannelStarted`. Pending incoming proposals and retained rejection
 records use reliability without implying an accepted session.
 
 The same Rust delivery owner allocates message numbers, buffers out-of-order
-input, retires acknowledged messages, and chooses reconnect replay. The host
-confirms successful body consumption, checkpoint outcomes, and carrier sends.
+input, retires acknowledged messages, and chooses reconnect replay. Its driver
+in `src/peer_session/driver.rs` runs the entire delivery turn and calls host
+carrier/application callbacks itself. Their return values drive Rust's delivery
+and send bookkeeping; TypeScript never selects, removes, or confirms queued
+messages. Host callbacks run with no session borrow held because a delivered
+message can synchronously produce a reply on the same session. The host reports
+connection events and checkpoint outcomes.
 Checkpoint capture freezes a generation and frame/ACK counts: release sends
 only that boundary, once. An ordinary failed write leaves it dirty while still
 releasing once; authority loss is fenced by the host before release. A failed

@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+pub mod driver;
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
@@ -167,6 +169,35 @@ impl PeerSession {
         self.pending_outbound.push(message);
         self.generation += 1;
         Ok(msgno)
+    }
+
+    pub fn reject_session(&mut self) -> Result<(), String> {
+        let body = bencodex::encode(&bencodex::Value::Dictionary(
+            [(
+                bencodex::Value::Text("type".into()),
+                bencodex::Value::Text("session_reject".into()),
+            )]
+            .into_iter()
+            .collect(),
+        ))
+        .map_err(|e| e.to_string())?;
+        self.allocate(body, "outbound-reject".into())?;
+        Ok(())
+    }
+
+    pub fn rejection_complete(&self) -> bool {
+        self.state.disposition == "outbound-reject" && self.state.unacked_messages.is_empty()
+    }
+
+    pub fn proposal_received(&mut self) -> Result<(), String> {
+        if self.state.disposition == "outbound-reject" {
+            if self.rejection_complete() {
+                self.reject_session()?;
+            }
+        } else {
+            self.state.disposition = "proposal-received".into();
+        }
+        Ok(())
     }
 
     pub fn delivery_candidate(&self, msgno: u64, body_size: usize) -> Result<&'static str, String> {
@@ -377,6 +408,39 @@ impl PeerSession {
         self.retry_acks.clear();
         self.released_generation = self.generation;
         self.persisted_generation = self.generation;
+    }
+
+    pub fn validate_terminal_handoff(
+        &self,
+        msgno: u64,
+        body: &[u8],
+        sent: bool,
+        acknowledged: bool,
+    ) -> Result<(), String> {
+        if acknowledged {
+            if !sent
+                || self
+                    .state
+                    .unacked_messages
+                    .iter()
+                    .any(|message| message.msgno <= msgno)
+            {
+                return Err(
+                    "persisted acknowledged terminal handoff has inconsistent transport state"
+                        .into(),
+                );
+            }
+        } else if !self
+            .state
+            .unacked_messages
+            .iter()
+            .any(|message| message.msgno == msgno && message.msg == body)
+        {
+            return Err(
+                "persisted terminal handoff does not match its unacked reliable frame".into(),
+            );
+        }
+        Ok(())
     }
 }
 

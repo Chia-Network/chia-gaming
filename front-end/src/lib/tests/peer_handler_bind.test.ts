@@ -1,3 +1,4 @@
+import { restorePeerState } from './peer_protocol.harness';
 import { encodePeerAppMessage, PeerSession, type MessageHandler } from '../../services/PeerSession';
 import type { HubConnection } from '../../services/HubConnection';
 import { SessionController } from '../../hooks/SessionController';
@@ -90,7 +91,7 @@ describe('delayed PeerSession message-handler binding', () => {
       return true;
     });
     const peerSession = new PeerSession('peer-1', sessionId, hub);
-    peerSession.reliableState.remoteNumber = 5n;
+    restorePeerState(peerSession, { remoteNumber: 5n });
     const controller = new SessionController(null, 'test', 100n, 100n, peerSession);
     const cradle = makeMockCradle((body) => {
       order.push(`wasm-${body[0]}`);
@@ -134,7 +135,7 @@ describe('delayed PeerSession message-handler binding', () => {
       return true;
     });
     const peerSession = new PeerSession('peer-1', sessionId, hub);
-    peerSession.reliableState.remoteNumber = 5n;
+    restorePeerState(peerSession, { remoteNumber: 5n });
     const controller = new SessionController(null, 'test', 100n, 100n, peerSession);
     const cradle = makeMockCradle();
     controller.loadWasm(mockWasmConnection);

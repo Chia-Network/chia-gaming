@@ -319,7 +319,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
           },
         },
       });
-      transport.allocateOutbound(new Uint8Array([0x42]));
+      transport.sendMessage(new Uint8Array([0x42]));
       expect(mockSendToPeer).not.toHaveBeenCalled();
       await runtime.persist();
       expect(order.slice(0, 3)).toEqual(['saved', 'projection', 'release']);

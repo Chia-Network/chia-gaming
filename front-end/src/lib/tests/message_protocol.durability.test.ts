@@ -1,3 +1,4 @@
+import { restorePeerState } from './peer_protocol.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
@@ -406,11 +407,13 @@ describe('resendUnacked', () => {
     setActiveBlob(blob);
     await blob.flushPendingSave();
 
-    blob.messageNumber = 3n;
-    blob.unackedMessages = [
-      { msgno: 1n, msg: enc('a') },
-      { msgno: 2n, msg: enc('b') },
-    ];
+    restorePeerState(blob, { messageNumber: 3n });
+    restorePeerState(blob, {
+      unackedMessages: [
+        { msgno: 1n, msg: enc('a') },
+        { msgno: 2n, msg: enc('b') },
+      ],
+    });
     blob.resendUnacked();
 
     expect(sentMessages).toEqual([

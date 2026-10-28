@@ -408,7 +408,8 @@ proposal was accepted or that an on-chain transaction succeeded.
 
 ### 5.4 Replay
 
-The host replays all unacknowledged data frames only in these two cases:
+The Rust delivery owner attempts to resend unacknowledged data frames through
+the host carrier only in these two cases:
 
 - after this endpoint reconnects to the hub and receives `registered`, including
   a reload that restores a saved session and then re-identifies; and

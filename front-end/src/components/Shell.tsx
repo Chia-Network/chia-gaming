@@ -1991,7 +1991,7 @@ const Shell = () => {
             const peerAlias = fromAlias || fromId;
             const pairingToken = `peer_${fromId}_${Date.now()}`;
             const provisional = new PeerSession(fromId, frame.sessionId, conn);
-            provisional.reliableState.disposition = 'proposal-received';
+            provisional.reliableTransport.proposalReceived();
             peerSessionRef.current = provisional;
             bindInboundProposal({
               conn,

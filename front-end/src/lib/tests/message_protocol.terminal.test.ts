@@ -1,3 +1,4 @@
+import { restorePeerState } from './peer_protocol.harness';
 import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, InternalBlockchainInterface, WasmResult } from '../../types/ChiaGaming';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
@@ -48,7 +49,7 @@ describe('terminal protocol cleanup', () => {
         wasmResult({ disposition: { kind: 'terminal' } }),
       ),
     } as unknown as ChiaGame;
-    blob.messageNumber = 2n;
+    restorePeerState(blob, { messageNumber: 2n });
     blob.restoreTerminalHandoff({
       id: 'restored',
       message,
@@ -123,8 +124,8 @@ describe('terminal protocol cleanup', () => {
       ...makeMockCradle(),
       pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
     } as unknown as ChiaGame;
-    blob.messageNumber = 2n;
-    blob.unackedMessages = [{ msgno: 1n, msg: Uint8Array.from(message) }];
+    restorePeerState(blob, { messageNumber: 2n });
+    restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: Uint8Array.from(message) }] });
     blob.restoreTerminalHandoff({
       id: 'restored',
       message,
@@ -149,8 +150,8 @@ describe('terminal protocol cleanup', () => {
       100n,
       makePeerConn(sentMessages, []),
     );
-    blob.messageNumber = 2n;
-    blob.unackedMessages = [{ msgno: 1n, msg: enc('persisted close') }];
+    restorePeerState(blob, { messageNumber: 2n });
+    restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: enc('persisted close') }] });
     blob.restoreTerminalHandoff({
       id: 'persisted',
       message: enc('persisted close'),
@@ -250,7 +251,7 @@ describe('terminal protocol cleanup', () => {
           }) as WasmResult,
       ),
     } as unknown as ChiaGame;
-    blob.unackedMessages = [{ msgno: 1n, msg: enc('complete clean close') }];
+    restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: enc('complete clean close') }] });
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
     blob.kickSystem(2);

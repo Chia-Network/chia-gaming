@@ -19,39 +19,45 @@ export interface PeerSessionTerms {
   network?: string;
 }
 
-export interface PeerPreparedCommit {
-  generation: number;
-  outboundCount: number;
-  ackCount: number;
-  remoteNumber: bigint;
+/** Captured by Rust and returned unchanged after the host's checkpoint write. */
+export type PeerPreparedCommit = unknown;
+
+export type PeerEvent =
+  | { type: 'commit-requested' | 'keepalive' | 'committed' }
+  | { type: 'sent' | 'acknowledged'; msgno: bigint }
+  | { type: 'failure'; reason: string };
+
+export interface PeerHost {
+  sendData(msgno: bigint, body: Uint8Array): boolean;
+  sendAck(msgno: bigint): boolean;
+  ready(): boolean;
+  canDeliver(msgno: bigint, body: Uint8Array): boolean;
+  canTerminate(msgno: bigint, body: Uint8Array): boolean;
+  deliver(msgno: bigint, body: Uint8Array): void;
+  notify(event: PeerEvent): void;
 }
 
 export interface PeerProtocolApi {
-  session_id(): string;
-  message_number(): bigint;
-  remote_number(): bigint;
-  disposition(): PeerProtocolState['disposition'];
-  unacked(): PeerProtocolState['unackedMessages'];
   snapshot(): PeerProtocolState;
-  restore_state(state: PeerProtocolState): void;
-  queued(): Array<{ msgno: bigint; msg: Uint8Array }>;
-  clear_receive_queue(): void;
-  remove_queued(msgno: bigint): void;
-  allocate(body: Uint8Array, disposition: string): bigint;
-  receive(msgno: bigint, body: Uint8Array, deliverable: boolean, terminal: boolean): 'queued' | 'deliver' | 'ack';
-  delivery_candidate(msgno: bigint, bodySize: number): 'duplicate' | 'next' | 'future';
-  next_message(): { msgno: bigint; msg: Uint8Array } | undefined;
-  delivered(msgno: bigint): void;
-  acknowledge(msgno: bigint): void;
-  connectivity(event: string, now: number, force: boolean): Array<{ msgno: bigint; msg: Uint8Array }> | undefined;
-  sent(msgno: bigint, accepted: boolean): void;
-  ack_sent(msgno: bigint, accepted: boolean): void;
-  retry_acks(): bigint[];
+  restore(state: PeerProtocolState): void;
+  send_message(body: Uint8Array, disposition: string | undefined, host: PeerHost): bigint;
+  receive_data(msgno: bigint, body: Uint8Array, host: PeerHost): boolean;
+  receive_ack(msgno: bigint, host: PeerHost): boolean;
+  consumer_ready(host: PeerHost): void;
+  keepalive(host: PeerHost): void;
+  connectivity(event: string, now: number, force: boolean, host: PeerHost): boolean;
   dirty(): boolean;
   prepare_commit(): PeerPreparedCommit;
-  complete_commit(commit: PeerPreparedCommit, persisted: boolean): { outbound: Array<{ msgno: bigint; msg: Uint8Array }>; acks: bigint[] };
-  clear_runtime(): void;
-  discard_outbound(): void;
+  complete_commit(commit: PeerPreparedCommit, persisted: boolean, host: PeerHost): void;
+  retire(): void;
+  stop_receiving(): void;
+  stop_protocol(): void;
+  proposal_received(host: PeerHost): void;
+  reject_session(host: PeerHost): void;
+  rejection_complete(): boolean;
+  reject_inbound(host: PeerHost): void;
+  failure(reason: string, host: PeerHost): void;
+  validate_terminal_handoff(msgno: bigint, body: Uint8Array, sent: boolean, acknowledged: boolean): void;
   accept_session(terms: PeerSessionTerms, initiator: boolean): void;
   restore_setup(terms: PeerSessionTerms, initiator: boolean): void;
   wallet_address_requested(): boolean;

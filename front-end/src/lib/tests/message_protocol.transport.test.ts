@@ -1,3 +1,4 @@
+import { restorePeerState } from './peer_protocol.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { Program } from 'clvm-lib';
@@ -716,8 +717,8 @@ describe('duplicate detection', () => {
     const { blob, sentMessages, sentAcks } = createReadyBlob();
     setActiveBlob(blob);
     const offer = enc('offer-sent-payload');
-    blob.messageNumber = 3n;
-    blob.unackedMessages = [{ msgno: 2n, msg: offer }];
+    restorePeerState(blob, { messageNumber: 3n });
+    restorePeerState(blob, { unackedMessages: [{ msgno: 2n, msg: offer }] });
 
     blob.deliverMessage(1n, enc('first'));
     await blob.flushPendingWork();
@@ -755,8 +756,8 @@ describe('keepalive activity', () => {
           blob.processResult(wasmResult({ events: [{ Notification: { ChannelStatus: status } }] }));
         }
         const close = enc('signed close completion');
-        blob.messageNumber = 2n;
-        blob.unackedMessages = [{ msgno: 1n, msg: close }];
+        restorePeerState(blob, { messageNumber: 2n });
+        restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: close }] });
         blob.resendUnacked();
         expect(sentMessages).toContainEqual({ msgno: 1, msg: close });
         blob.deliverMessage(1n, enc('pending shutdown traffic'));
@@ -800,8 +801,8 @@ describe('keepalive activity', () => {
     setActiveBlob(blob);
     await blob.flushPendingSave();
     const pending = enc('pending-offer');
-    blob.messageNumber = 4n;
-    blob.unackedMessages = [{ msgno: 3n, msg: pending }];
+    restorePeerState(blob, { messageNumber: 4n });
+    restorePeerState(blob, { unackedMessages: [{ msgno: 3n, msg: pending }] });
 
     blob.receiveKeepalive();
 
@@ -839,7 +840,6 @@ describe('out-of-order delivery with reorder queue', () => {
       sender.sentMessages[1].msg,
     );
     expect(beforeReload.cradle.deliver_message).not.toHaveBeenCalled();
-    expect((beforeReload.blob as any).reorderQueue.size).toBe(1);
     beforeReload.blob.cleanup();
 
     let authoritativeMoveEvents = 0;
@@ -861,7 +861,6 @@ describe('out-of-order delivery with reorder queue', () => {
         authoritativeMoveEvents += 1;
       }
     });
-    expect((afterReload.blob as any).reorderQueue.size).toBe(0);
 
     const retransmitted: Array<{ msgno: number; msg: Uint8Array }> = [];
     const restoredSender = new SessionController(
@@ -871,8 +870,8 @@ describe('out-of-order delivery with reorder queue', () => {
       100n,
       makePeerConn(retransmitted, []),
     );
-    restoredSender.messageNumber = senderCheckpoint.messageNumber;
-    restoredSender.unackedMessages = senderCheckpoint.unackedMessages;
+    restorePeerState(restoredSender, { messageNumber: senderCheckpoint.messageNumber });
+    restorePeerState(restoredSender, { unackedMessages: senderCheckpoint.unackedMessages });
     restoredSender.loadWasm(mockWasmConnection);
     restoredSender.setGameSession(makeMockCradle());
     restoredSender.kickSystem(2);
@@ -890,7 +889,6 @@ describe('out-of-order delivery with reorder queue', () => {
     ).toEqual(['frame-n', 'frame-n-plus-one']);
     expect(afterReload.blob.remoteNumber).toBe(2n);
     expect(authoritativeMoveEvents).toBe(1);
-    expect((afterReload.blob as any).reorderQueue.size).toBe(0);
   });
 
   it('delivers 3, 1, 2 → cradle sees a, b, c in order', async () => {
@@ -919,8 +917,6 @@ describe('out-of-order delivery with reorder queue', () => {
 
     expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect((blob as any).reorderQueue.size).toBe(0);
-    expect((blob as any).reorderQueue.size).toBe(0);
   });
 
   it('fails on queued message count and aggregate bytes', () => {
@@ -928,13 +924,11 @@ describe('out-of-order delivery with reorder queue', () => {
     countLimited.blob.deliverMessage(2n, enc('a'));
     countLimited.blob.deliverMessage(3n, enc('b'));
     expect(countLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect((countLimited.blob as any).reorderQueue.size).toBe(0);
 
     const byteLimited = createUnreadyBlob(undefined, sessionReceivePolicy({ maxQueuedBytes: 3 }));
     byteLimited.blob.deliverMessage(1n, enc('ab'));
     byteLimited.blob.deliverMessage(2n, enc('cd'));
     expect(byteLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect((byteLimited.blob as any).reorderQueue.size).toBe(0);
   });
 
   it('does not double-account duplicate queued msgnos', () => {
@@ -996,12 +990,14 @@ describe('ACK pruning', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
 
-    blob.unackedMessages = [
-      { msgno: 1n, msg: enc('a') },
-      { msgno: 2n, msg: enc('b') },
-      { msgno: 3n, msg: enc('c') },
-    ];
-    blob.messageNumber = 4n;
+    restorePeerState(blob, {
+      unackedMessages: [
+        { msgno: 1n, msg: enc('a') },
+        { msgno: 2n, msg: enc('b') },
+        { msgno: 3n, msg: enc('c') },
+      ],
+    });
+    restorePeerState(blob, { messageNumber: 4n });
     blob.receiveAck(2n);
 
     expect(blob.unackedMessages).toEqual([{ msgno: 3n, msg: enc('c') }]);
@@ -1013,8 +1009,8 @@ describe('outbound message numbering', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const peer = makePeerConn(sentMessages, []);
     const proposal = enc('session proposal');
-    peer.reliableState!.messageNumber = 2n;
-    peer.reliableState!.unackedMessages = [{ msgno: 1n, msg: proposal }];
+    restorePeerState(peer, { messageNumber: 2n });
+    restorePeerState(peer, { unackedMessages: [{ msgno: 1n, msg: proposal }] });
     const blob = new SessionController(null, 'test', 100n, 100n, peer, channelFundingRuntime);
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(makeMockCradle());

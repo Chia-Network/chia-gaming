@@ -790,9 +790,11 @@ commit as all other session work.
 
 `ReliablePeerTransport` is the TypeScript host adapter for this Rust owner. It
 provides the existing consumer, carrier callbacks, and commit coordinator; its
-snapshot accessors read Rust state rather than maintaining another message log.
-Rust prepares and releases each captured generation, including failed-send
-retention. IndexedDB, commit scheduling, and actual socket sends remain host work.
+snapshot is a read-only copy for persistence. Rust's driver invokes the carrier
+and application callbacks, drains its queues, processes callback results, and
+prepares and releases each captured generation. TypeScript reports connectivity
+and checkpoint completion; it has no queue accessors or delivery-confirmation
+steps. IndexedDB and commit scheduling remain host work.
 
 At quiescence `SessionMachineRuntime` drains machine, controller, and generated
 work to a fixed point, then:
@@ -1151,9 +1153,10 @@ ack protocol to guarantee exactly-once ordered delivery across reconnects. The
 hub relays frames and relay-control messages verbatim — it does not understand
 peer session IDs, message numbers, or acks.
 
-The delivery engine is `src/peer_session.rs`, exposed by `wasm/src/peer.rs`.
-It owns counters, buffered incoming messages, ACK retirement, pending release,
-and reconnect replay. The browser `PeerSession` handles frame routing and
+The delivery engine is `src/peer_session.rs` and `src/peer_session/driver.rs`,
+exposed by `wasm/src/peer.rs`. Rust owns counters, buffered incoming messages,
+ACK retirement, pending release, and reconnect replay, including the loops
+that attempt sends and deliver eligible incoming messages. The browser `PeerSession` handles frame routing and
 liveness presentation; `ReliablePeerTransport` executes the Rust engine's
 carrier and persistence work. WASM is initialized before opening the hub relay.
 
