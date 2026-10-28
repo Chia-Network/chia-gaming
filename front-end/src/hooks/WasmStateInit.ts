@@ -3,6 +3,11 @@ import { Observable, Subject } from 'rxjs';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
 import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../lib/gameIdentities';
 import { PRESET_FILES } from '../generated/gamePresets';
+import {
+  installPeerProtocol,
+  isPeerProtocolInstalled,
+  resetPeerProtocolForTests,
+} from '../services/peerProtocol';
 
 let chia_gaming_init: WasmInitFn | undefined = undefined;
 let cg: WasmConnection | undefined = undefined;
@@ -23,6 +28,7 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
 
 let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
 let loadPromise: Promise<WasmConnection> | null = null;
+let moduleLoadPromise: Promise<WasmConnection> | null = null;
 
 type WasmLoaderTarget = {
   loadWasm?: (init: WasmInitFn, wasmConn: WasmConnection) => void;
@@ -56,31 +62,54 @@ export function storeInitArgs(chia_gaming_init_ready: WasmInitFn, cg_ready: Wasm
   readyToInit.next(true);
 }
 
+async function waitForInitArgs(): Promise<void> {
+  if (chia_gaming_init && cg) return;
+  await new Promise<void>((resolve, reject) => {
+    const sub = waitForReadyToInit.subscribe({
+      next: () => {
+        sub.unsubscribe();
+        resolve();
+      },
+      error: reject,
+    });
+  });
+}
+
+function ensureWasmModuleLoaded(): Promise<WasmConnection> {
+  if (!moduleLoadPromise) {
+    moduleLoadPromise = (async () => {
+      try {
+        await waitForInitArgs();
+        const initFn = chia_gaming_init!;
+        const wasmConn = cg!;
+        await initFn({ module_or_path: WASM_URL });
+        if (!logInitialized) {
+          logInitialized = true;
+          wasmConn.init();
+        }
+        installPeerProtocol(wasmConn.create_peer_protocol);
+        return wasmConn;
+      } catch (error) {
+        moduleLoadPromise = null;
+        throw error;
+      }
+    })();
+  }
+  return moduleLoadPromise;
+}
+
+/** Hub delivery needs the Rust peer engine, independently of game assets. */
+export async function ensurePeerProtocolLoaded(): Promise<void> {
+  if (isPeerProtocolInstalled()) return;
+  await ensureWasmModuleLoaded();
+}
+
 async function runWasmLoad(): Promise<WasmConnection> {
-  if (!chia_gaming_init || !cg) {
-    throw new Error('wasm init args not set');
-  }
-  const initFn = chia_gaming_init;
-  const wasmConn = cg;
-
   const presetFetches = Promise.all(
-    PRESET_FILES.map(async (name) => ({
-      name,
-      content: await presetFetcher(name),
-    })),
+    PRESET_FILES.map(async (name) => ({ name, content: await presetFetcher(name) })),
   );
-
-  const [, presets] = await Promise.all([initFn({ module_or_path: WASM_URL }), presetFetches]);
-
-  if (!logInitialized) {
-    logInitialized = true;
-    wasmConn.init();
-  }
-
-  for (const { name, content } of presets) {
-    wasmConn.cache_file(name, content);
-  }
-
+  const [wasmConn, presets] = await Promise.all([ensureWasmModuleLoaded(), presetFetches]);
+  for (const { name, content } of presets) wasmConn.cache_file(name, content);
   return wasmConn;
 }
 
@@ -105,20 +134,7 @@ export function ensureWasmLoaded(): Promise<WasmConnection> {
   if (!loadPromise) {
     loadPromise = (async () => {
       try {
-        if (!chia_gaming_init || !cg) {
-          await new Promise<void>((resolve, reject) => {
-            const sub = waitForReadyToInit.subscribe({
-              next: () => {
-                sub.unsubscribe();
-                resolve();
-              },
-              error: (e) => {
-                sub.unsubscribe();
-                reject(e);
-              },
-            });
-          });
-        }
+        await waitForInitArgs();
         return await runWasmLoad();
       } catch (err) {
         loadPromise = null;
@@ -131,7 +147,9 @@ export function ensureWasmLoaded(): Promise<WasmConnection> {
 
 /** Test helper: clear module load state between cases. */
 export function _resetWasmLoadForTests(): void {
+  resetPeerProtocolForTests();
   loadPromise = null;
+  moduleLoadPromise = null;
   logInitialized = false;
   chia_gaming_init = undefined;
   cg = undefined;
@@ -161,34 +179,6 @@ export class WasmStateInit {
       return new RngId(rng_handle);
     }
     return undefined;
-  }
-
-  createGame(
-    rngId: number,
-    wasm: WasmConnection,
-    isInitiator: boolean,
-    my_contribution: bigint,
-    their_contribution: bigint,
-    rewardPuzzleHash: string,
-    genesisChallenge: string,
-    channelTimeout = 15,
-    unrollTimeout = 15,
-  ): { game: ChiaGame; puzzleHash: string } {
-    const result = wasm.create_game_session({
-      rng_id: rngId,
-      is_initiator: isInitiator,
-      my_contribution: { amt: my_contribution },
-      their_contribution: { amt: their_contribution },
-      channel_timeout: channelTimeout,
-      unroll_timeout: unrollTimeout,
-      reward_puzzle_hash: rewardPuzzleHash,
-      genesis_challenge: genesisChallenge,
-    });
-
-    return {
-      game: new ChiaGame(wasm, result.id),
-      puzzleHash: result.puzzle_hash,
-    };
   }
 
   deserializeGame(wasm: WasmConnection, serializedGame: Uint8Array): ChiaGame {

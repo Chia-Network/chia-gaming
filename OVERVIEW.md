@@ -102,6 +102,14 @@ compatibility-sensitive contracts.
 
 ## Persistence transactionality
 
+Local acceptance starts the Rust peer session. Its setup state constructs the
+outgoing proposal and requests the wallet reward address through the host;
+the returned address lets Rust create the channel engine in the same session.
+Rust also owns reliable peer numbering, acknowledgements, ordering, and replay
+(`src/peer_session.rs`). TypeScript owns the connections, executes sends and
+wallet requests, and performs the aggregate checkpoint. Pending proposal and
+retained rejection records are distinct from the accepted session lifetime.
+
 Persistence is crash transactionality over the residue of a completed drain,
 not continuous autosave and not a substitute for in-process rollback. A drain
 owner consumes one stimulus and all consequences to a fixed point, then captures
@@ -952,7 +960,7 @@ protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
 The browser aggregate is strict `DurableApplicationState` v5, its opaque
-Rust/WASM cradle is schema 23, and the app IndexedDB is schema 5. Under the
+Rust/WASM cradle is schema 24, and the app IndexedDB is schema 5. Under the
 [unreleased-format policy](#unreleased-app-owned-formats), any incompatible or
 malformed field rejects the whole root. The unchanged evidence remains
 available for diagnosis until explicit hard reset.

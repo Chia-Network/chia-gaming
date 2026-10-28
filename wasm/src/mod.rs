@@ -1,3 +1,4 @@
+mod peer;
 mod gaming_wasm {
 
     use std::cell::RefCell;
@@ -39,8 +40,8 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionDrainFailureStage,
-        SubmissionAttemptRelationship, SubmissionAttemptStatus, SubmissionFeeSource,
+        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionAttemptRelationship,
+        SubmissionAttemptStatus, SubmissionDrainFailureStage, SubmissionFeeSource,
         TransactionManager,
     };
     use chia_protocol::SpendBundle as ProtocolSpendBundle;
@@ -61,8 +62,8 @@ mod gaming_wasm {
     const TS_APPEND_CONTENT: &'static str = include_str!("../contract.d.ts");
 
     #[derive(Serialize, Deserialize, Default, Debug)]
-    struct JsAmount {
-        amt: Amount,
+    pub(super) struct JsAmount {
+        pub(super) amt: Amount,
     }
 
     #[derive(Serialize, Deserialize)]
@@ -212,15 +213,15 @@ mod gaming_wasm {
     }
 
     #[derive(Serialize, Deserialize, Default, Debug)]
-    struct JsGameSessionConfig {
-        rng_id: i32,
-        is_initiator: bool,
-        my_contribution: JsAmount,
-        their_contribution: JsAmount,
-        channel_timeout: i32,
-        unroll_timeout: i32,
-        reward_puzzle_hash: String,
-        genesis_challenge: String,
+    pub(super) struct JsGameSessionConfig {
+        pub(super) rng_id: i32,
+        pub(super) is_initiator: bool,
+        pub(super) my_contribution: JsAmount,
+        pub(super) their_contribution: JsAmount,
+        pub(super) channel_timeout: i32,
+        pub(super) unroll_timeout: i32,
+        pub(super) reward_puzzle_hash: String,
+        pub(super) genesis_challenge: String,
     }
 
     struct GameConfigPartial {
@@ -718,10 +719,7 @@ mod gaming_wasm {
     }
 
     #[wasm_bindgen]
-    pub fn relinquish_submission_attempt(
-        cid: i32,
-        attempt_token: &str,
-    ) -> Result<String, JsValue> {
+    pub fn relinquish_submission_attempt(cid: i32, attempt_token: &str) -> Result<String, JsValue> {
         let token = attempt_token
             .parse::<u64>()
             .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
@@ -1120,7 +1118,8 @@ mod gaming_wasm {
                         fee_source,
                         &additional_data,
                         working.last_height(),
-                    )? else {
+                    )?
+                    else {
                         return serde_wasm_bindgen::to_value(&JsStaleSubmissionAttempt {
                             status: "stale",
                         })
@@ -1326,7 +1325,7 @@ mod gaming_wasm {
                 Err(e) => {
                     cradle.cradle.push_event(GameSessionEvent::Notification(
                         GameNotification::ActionFailed {
-                            id: Some(game_id.clone()),
+                            id: Some(game_id),
                             action: Some(FailedGameAction::MakeMove),
                             reason: format!("{e:?}"),
                         },
@@ -1368,7 +1367,7 @@ mod gaming_wasm {
         );
         with_game_action_drain(
             cid,
-            game_id.clone(),
+            game_id,
             FailedGameAction::Cheat,
             move |cradle: &mut JsGameSession| {
                 cradle.cradle.cheat(&mut cradle.allocator, &game_id, share)
@@ -1447,7 +1446,7 @@ mod gaming_wasm {
         let game_id = string_to_game_id(id)?;
         with_game_action_drain(
             cid,
-            game_id.clone(),
+            game_id,
             FailedGameAction::AcceptSettlement,
             move |cradle: &mut JsGameSession| {
                 cradle
@@ -1823,7 +1822,7 @@ mod gaming_wasm {
                     let reason = format!("{e:?}");
                     cradle.cradle.push_event(GameSessionEvent::Notification(
                         GameNotification::ActionFailed {
-                            id: action_context.as_ref().map(|(id, _)| id.clone()),
+                            id: action_context.as_ref().map(|(id, _)| *id),
                             action: action_context.as_ref().map(|(_, action)| *action),
                             reason,
                         },

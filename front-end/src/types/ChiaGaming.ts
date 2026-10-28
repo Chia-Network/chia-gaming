@@ -303,6 +303,7 @@ export type WalletOfferBeginOutcome =
   | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
+  create_peer_protocol: import('../services/peerProtocol').PeerProtocolFactory;
   // System
   init: () => void;
   create_rng: (seed: string) => number;

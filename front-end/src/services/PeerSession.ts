@@ -1,6 +1,8 @@
 import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
 import { HubConnection } from './HubConnection';
 import { log } from './log';
+import { createPeerProtocol } from './peerProtocol';
+import type { PeerProtocolApi, PeerSessionTerms } from '../../../wasm/contract';
 import {
   DEFAULT_SESSION_RECEIVE_POLICY,
   type ReadonlySessionReceivePolicy,
@@ -73,34 +75,66 @@ export interface PreparedReliableCommit {
   remoteNumber: bigint;
 }
 
+/** Executes host work around the Rust reliability owner. Scheduling and the
+ * aggregate checkpoint remain in TypeScript; protocol decisions live in Rust. */
 export class ReliablePeerTransport {
   readonly state: ReliableTransportState;
-  readonly runtime = {
-    reorderQueue: new Map<bigint, Uint8Array>(),
-  };
+  readonly protocol: PeerProtocolApi;
+  readonly runtime: { readonly reorderQueue: Map<bigint, Uint8Array> };
   private consumer: ReliableMessageConsumer | null = null;
-  private pendingOutbound: Array<{ msgno: bigint; msg: Uint8Array }> = [];
-  private pendingAcks: bigint[] = [];
-  private unsentDurableOutbound = new Set<bigint>();
-  private durableAckRetries: bigint[] = [];
-  private durabilityGeneration = 0;
-  private releasedGeneration = 0;
-  private persistedGeneration = 0;
-  private releasedRemoteNumber: bigint;
   private flushScheduled = false;
   private flushing = false;
   private flushPromise: Promise<void> = Promise.resolve();
-  private lastReplayAt = 0;
   private commitCoordinator: ReliableCommitCoordinator | null = null;
 
   constructor(
     state: ReliableTransportState,
-    private readonly receivePolicy: ReadonlySessionReceivePolicy,
+    receivePolicy: ReadonlySessionReceivePolicy,
     private readonly sendData: (msgno: bigint, body: Uint8Array) => boolean,
     private readonly sendAck: (msgno: bigint) => boolean,
   ) {
+    this.protocol = createPeerProtocol(state, receivePolicy);
+    const reads = {
+      sessionId: () => this.protocol.session_id(),
+      messageNumber: () => this.protocol.message_number(),
+      remoteNumber: () => this.protocol.remote_number(),
+      disposition: () => this.protocol.disposition(),
+      unackedMessages: () =>
+        this.protocol.unacked().map(({ msgno, msg }) => ({ msgno, msg: Uint8Array.from(msg) })),
+    };
+    // Existing snapshot consumers retain their narrow data interface. These
+    // accessors read/write Rust state; there is no second mutable transport log.
+    for (const key of Object.keys(state) as Array<keyof ReliableTransportState>) {
+      Object.defineProperty(state, key, {
+        enumerable: true,
+        configurable: true,
+        get: reads[key],
+        set: (value: unknown) => this.protocol.restore_state({ ...this.snapshot(), [key]: value }),
+      });
+    }
     this.state = state;
-    this.releasedRemoteNumber = state.remoteNumber;
+    const protocol = this.protocol;
+    this.runtime = {
+      get reorderQueue() {
+        return new Map(protocol.queued().map(({ msgno, msg }) => [msgno, Uint8Array.from(msg)]));
+      },
+    };
+  }
+
+  private snapshot(): ReliableTransportState {
+    const state = this.protocol.snapshot();
+    return {
+      ...state,
+      unackedMessages: state.unackedMessages.map(({ msgno, msg }) => ({
+        msgno,
+        msg: Uint8Array.from(msg),
+      })),
+    };
+  }
+
+  acceptSession(terms: PeerSessionTerms, initiator: boolean): void {
+    this.protocol.accept_session(terms, initiator);
+    if (this.hasPendingDurability()) this.scheduleFlush();
   }
 
   attachConsumer(consumer: ReliableMessageConsumer): void {
@@ -120,7 +154,7 @@ export class ReliablePeerTransport {
   drain(): void {
     for (const msgno of this.runtime.reorderQueue.keys()) {
       if (msgno > this.state.remoteNumber) continue;
-      this.runtime.reorderQueue.delete(msgno);
+      this.protocol.remove_queued(msgno);
       this.sendAck(msgno);
     }
     this.drainContiguous();
@@ -130,19 +164,8 @@ export class ReliablePeerTransport {
     if (!consumer || this.consumer === consumer) this.consumer = null;
   }
 
-  allocateOutbound(
-    body: Uint8Array,
-    disposition: ReliableTransportState['disposition'] = this.state.disposition,
-  ): bigint {
-    const msgno = this.state.messageNumber;
-    if (msgno < 1n || msgno > 0xffff_ffffn) {
-      throw new Error('Reliable message number exhausted for this session');
-    }
-    this.state.messageNumber = msgno + 1n;
-    this.state.disposition = disposition;
-    this.state.unackedMessages.push({ msgno, msg: body });
-    this.pendingOutbound.push({ msgno, msg: body });
-    this.durabilityGeneration += 1;
+  allocateOutbound(body: Uint8Array, disposition = this.state.disposition): bigint {
+    const msgno = this.protocol.allocate(body, disposition);
     this.scheduleFlush();
     return msgno;
   }
@@ -159,69 +182,31 @@ export class ReliablePeerTransport {
   }
 
   private receiveDataNow(msgno: bigint, body: Uint8Array): boolean {
-    if (body.byteLength > this.receivePolicy.maxPeerBodyBytes) {
-      this.reportFailure(
-        `peer message body ${body.byteLength} exceeds maximum ${this.receivePolicy.maxPeerBodyBytes}`,
+    try {
+      const consumer = this.consumer;
+      const candidate = this.protocol.delivery_candidate(msgno, body.byteLength);
+      const ready = candidate !== 'duplicate' && !!consumer?.isReady();
+      const action = this.protocol.receive(
+        msgno,
+        body,
+        ready &&
+          candidate === 'next' &&
+          (!consumer!.canDeliver || consumer!.canDeliver(msgno, body)),
+        ready && candidate === 'future' && !!consumer!.canTerminateAt?.(msgno, body),
       );
-      return false;
-    }
-    if (msgno <= this.state.remoteNumber) {
-      if (msgno <= this.releasedRemoteNumber) {
-        this.sendAck(msgno);
-      } else if (!this.pendingAcks.includes(msgno)) {
-        this.pendingAcks.push(msgno);
-        this.scheduleFlush();
+      if (action === 'ack') this.sendAck(msgno);
+      if (candidate === 'duplicate') {
+        if (this.hasPendingDurability()) this.scheduleFlush();
+        return true;
       }
-      return true;
-    }
-    const futureGap = msgno - (this.state.remoteNumber + 1n);
-    if (futureGap > this.receivePolicy.maxFutureReliableMsgnoGap) {
-      this.reportFailure(
-        `peer message ${msgno} is ${futureGap} ahead of next expected ${this.state.remoteNumber + 1n}; maximum gap is ${this.receivePolicy.maxFutureReliableMsgnoGap}`,
-      );
-      return false;
-    }
-    if (
-      futureGap > 0n &&
-      this.consumer?.isReady() &&
-      this.canTerminateAt(this.consumer, msgno, body)
-    ) {
-      for (const queuedMsgno of this.runtime.reorderQueue.keys()) {
-        if (queuedMsgno <= msgno) this.runtime.reorderQueue.delete(queuedMsgno);
-      }
-      if (!this.deliverOne(msgno, body)) return false;
+      if (action === 'deliver' && !this.deliverOne(msgno, body)) return false;
+      if (this.hasPendingDurability()) this.scheduleFlush();
       this.drainContiguous();
       return true;
-    }
-    if (
-      msgno === this.state.remoteNumber + 1n &&
-      this.consumer?.isReady() &&
-      this.canDeliver(this.consumer, msgno, body)
-    ) {
-      if (!this.deliverOne(msgno, body)) return false;
-      this.drainContiguous();
-      return true;
-    }
-    if (this.runtime.reorderQueue.has(msgno)) return true;
-    const queuedBytes = [...this.runtime.reorderQueue.values()].reduce(
-      (total, queued) => total + queued.byteLength,
-      0,
-    );
-    if (this.runtime.reorderQueue.size + 1 > this.receivePolicy.maxQueuedMessages) {
-      this.reportFailure(
-        `peer receive queue count ${this.runtime.reorderQueue.size + 1} exceeds maximum ${this.receivePolicy.maxQueuedMessages}`,
-      );
+    } catch (error) {
+      this.reportFailure(error instanceof Error ? error.message : String(error));
       return false;
     }
-    if (queuedBytes + body.byteLength > this.receivePolicy.maxQueuedBytes) {
-      this.reportFailure(
-        `peer receive queue bytes ${queuedBytes + body.byteLength} exceeds maximum ${this.receivePolicy.maxQueuedBytes}`,
-      );
-      return false;
-    }
-    this.runtime.reorderQueue.set(msgno, body);
-    this.drainContiguous();
-    return true;
   }
 
   receiveAck(ack: bigint): boolean {
@@ -236,47 +221,41 @@ export class ReliablePeerTransport {
   }
 
   private receiveAckNow(ack: bigint): boolean {
-    const highestAllocated = this.state.messageNumber - 1n;
-    if (ack < 1n || ack > highestAllocated) {
-      this.reportFailure(
-        `peer acknowledgement ${ack} exceeds highest allocated message ${highestAllocated}`,
-      );
+    try {
+      this.protocol.acknowledge(ack);
+      if (this.hasPendingDurability()) this.scheduleFlush();
+      this.consumer?.acknowledged?.(ack);
+      return true;
+    } catch (error) {
+      this.reportFailure(error instanceof Error ? error.message : String(error));
       return false;
     }
-    const before = this.state.unackedMessages.length;
-    const unsent = new Set([
-      ...this.pendingOutbound.map((message) => message.msgno),
-      ...this.unsentDurableOutbound,
-    ]);
-    this.state.unackedMessages = this.state.unackedMessages.filter(
-      (message) => message.msgno > ack || unsent.has(message.msgno),
-    );
-    if (this.state.unackedMessages.length !== before) {
-      this.durabilityGeneration += 1;
-      this.scheduleFlush();
-    }
-    this.consumer?.acknowledged?.(ack);
-    return true;
   }
 
   receiveKeepalive(): void {
     this.consumer?.keepalive?.();
-    this.retryDurableAcks();
+    for (const ack of this.protocol.retry_acks()) {
+      this.protocol.ack_sent(ack, this.sendAck(ack));
+    }
   }
 
-  replayUnacked(force = false): boolean {
-    if (this.state.unackedMessages.length === 0) return true;
-    const now = Date.now();
-    if (!force && now - this.lastReplayAt < 1_000) return false;
-    this.lastReplayAt = now;
-    const awaitingPersistence = new Set(this.pendingOutbound.map((pending) => pending.msgno));
-    for (const { msgno, msg } of this.state.unackedMessages) {
-      if (awaitingPersistence.has(msgno)) continue;
-      if (!this.sendData(msgno, msg)) return false;
-      this.unsentDurableOutbound.delete(msgno);
+  connectivity(
+    event: 'disconnected' | 'reconnected' | 'registered' | 'peer-available' | 'peer-unavailable',
+    force = false,
+  ): boolean {
+    const messages = this.protocol.connectivity(event, Date.now(), force);
+    if (!messages) return false;
+    for (const { msgno, msg } of messages) {
+      const sent = this.sendData(msgno, Uint8Array.from(msg));
+      this.protocol.sent(msgno, sent);
+      if (!sent) return false;
       this.consumer?.sent?.(msgno);
     }
     return true;
+  }
+
+  replayUnacked(force = false): boolean {
+    return this.connectivity('registered', force);
   }
 
   async flushPending(): Promise<void> {
@@ -291,80 +270,53 @@ export class ReliablePeerTransport {
   }
 
   hasPendingDurability(): boolean {
-    return this.durabilityGeneration > this.persistedGeneration;
+    return this.protocol.dirty();
+  }
+  clearReceiveQueue(): void {
+    this.protocol.clear_receive_queue();
   }
 
   clearRuntime(): void {
-    this.runtime.reorderQueue.clear();
-    this.pendingOutbound = [];
-    this.pendingAcks = [];
-    this.unsentDurableOutbound.clear();
-    this.durableAckRetries = [];
-    this.releasedGeneration = this.durabilityGeneration;
-    this.persistedGeneration = this.durabilityGeneration;
+    this.protocol.clear_runtime();
     this.flushScheduled = false;
     this.consumer = null;
     this.commitCoordinator = null;
   }
 
   discardOutbound(): void {
-    if (this.state.unackedMessages.length === 0 && this.pendingOutbound.length === 0) return;
-    this.state.unackedMessages = [];
-    this.pendingOutbound = [];
-    this.unsentDurableOutbound.clear();
-    this.durabilityGeneration += 1;
-    this.scheduleFlush();
+    this.protocol.discard_outbound();
+    if (this.hasPendingDurability()) this.scheduleFlush();
   }
 
   private drainContiguous(): void {
     const consumer = this.consumer;
     if (!consumer?.isReady()) return;
     while (consumer.isReady()) {
-      const next = this.state.remoteNumber + 1n;
-      const body = this.runtime.reorderQueue.get(next);
-      if (!body) break;
-      if (!this.canDeliver(consumer, next, body)) break;
-      this.runtime.reorderQueue.delete(next);
+      const message = this.protocol.next_message();
+      if (!message) break;
+      const next = message.msgno;
+      const body = Uint8Array.from(message.msg);
+      try {
+        if (consumer.canDeliver && !consumer.canDeliver(next, body)) break;
+      } catch (error) {
+        this.reportFailure(error instanceof Error ? error.message : String(error));
+        return;
+      }
+      this.protocol.remove_queued(next);
       if (!this.deliverOne(next, body)) return;
-    }
-  }
-
-  private canDeliver(consumer: ReliableMessageConsumer, msgno: bigint, body: Uint8Array): boolean {
-    if (!consumer.canDeliver) return true;
-    try {
-      return consumer.canDeliver(msgno, body);
-    } catch (error) {
-      this.reportFailure(error instanceof Error ? error.message : String(error));
-      return false;
-    }
-  }
-
-  private canTerminateAt(
-    consumer: ReliableMessageConsumer,
-    msgno: bigint,
-    body: Uint8Array,
-  ): boolean {
-    if (!consumer.canTerminateAt) return false;
-    try {
-      return consumer.canTerminateAt(msgno, body);
-    } catch (error) {
-      this.reportFailure(error instanceof Error ? error.message : String(error));
-      return false;
     }
   }
 
   private deliverOne(msgno: bigint, body: Uint8Array): boolean {
     try {
       this.consumer!.deliver(msgno, body);
+      this.protocol.delivered(msgno);
+      this.scheduleFlush();
+      return true;
     } catch (error) {
       this.reportFailure(error instanceof Error ? error.message : String(error));
       return false;
     }
-    this.state.remoteNumber = msgno;
-    this.pendingAcks.push(msgno);
-    this.durabilityGeneration += 1;
-    this.scheduleFlush();
-    return true;
   }
 
   private scheduleFlush(): void {
@@ -375,8 +327,6 @@ export class ReliablePeerTransport {
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     const timer = setTimeout(() => {
-      // Persistence failures leave the transport work queued. The consumer
-      // reports durability errors; they are not peer protocol failures.
       void this.flushPending().catch(() => {});
     }, 0);
     if (typeof timer === 'object' && 'unref' in timer) timer.unref();
@@ -384,66 +334,37 @@ export class ReliablePeerTransport {
 
   private async drainDurabilityWork(): Promise<void> {
     while (this.hasPendingDurability()) {
-      await this.performFlushPass();
+      const consumer = this.consumer;
+      if (!consumer) throw new Error('Reliable transport has no durability consumer');
+      const commit = this.prepareCommit();
+      try {
+        await consumer.persist();
+      } catch (error) {
+        this.completeCommit(commit, false);
+        throw error;
+      }
+      this.completeCommit(commit, true);
     }
-  }
-
-  private async performFlushPass(): Promise<void> {
-    const consumer = this.consumer;
-    if (!consumer) throw new Error('Reliable transport has no durability consumer');
-    const commit = this.prepareCommit();
-    try {
-      await consumer.persist();
-    } catch (error) {
-      this.completeCommit(commit, false);
-      throw error;
-    }
-    this.completeCommit(commit, true);
   }
 
   prepareCommit(): PreparedReliableCommit {
-    return {
-      generation: this.durabilityGeneration,
-      outboundCount: this.pendingOutbound.length,
-      ackCount: this.pendingAcks.length,
-      remoteNumber: this.state.remoteNumber,
-    };
+    return this.protocol.prepare_commit();
   }
 
   completeCommit(commit: PreparedReliableCommit, persistenceSucceeded: boolean): void {
     const consumer = this.consumer;
-    if (persistenceSucceeded) {
-      this.persistedGeneration = Math.max(this.persistedGeneration, commit.generation);
+    const frames = this.protocol.complete_commit(commit, persistenceSucceeded);
+    for (const { msgno, msg } of frames.outbound) {
+      const sent = this.sendData(msgno, Uint8Array.from(msg));
+      this.protocol.sent(msgno, sent);
+      if (sent) consumer?.sent?.(msgno);
     }
-    if (commit.generation <= this.releasedGeneration) {
-      if (persistenceSucceeded) consumer?.committed?.();
-      return;
-    }
-    const outbound = this.pendingOutbound.splice(0, commit.outboundCount);
-    const acks = this.pendingAcks.splice(0, commit.ackCount);
-    this.releasedGeneration = commit.generation;
-    this.releasedRemoteNumber = commit.remoteNumber;
-    for (const { msgno } of outbound) this.unsentDurableOutbound.add(msgno);
-    const failedOutbound = outbound.filter(({ msgno, msg }) => {
-      const sent = this.sendData(msgno, msg);
-      if (sent) {
-        this.unsentDurableOutbound.delete(msgno);
-        consumer?.sent?.(msgno);
-      }
-      return !sent;
-    });
-    const failedAcks = acks.filter((ack) => !this.sendAck(ack));
-    for (const { msgno } of failedOutbound) this.unsentDurableOutbound.add(msgno);
-    this.durableAckRetries = [...new Set([...this.durableAckRetries, ...failedAcks])];
+    for (const ack of frames.acks) this.protocol.ack_sent(ack, this.sendAck(ack));
     if (persistenceSucceeded) consumer?.committed?.();
   }
 
-  private retryDurableAcks(): void {
-    this.durableAckRetries = this.durableAckRetries.filter((ack) => !this.sendAck(ack));
-  }
-
   reportFailure(reason: string): void {
-    this.runtime.reorderQueue.clear();
+    this.clearReceiveQueue();
     this.consumer?.failure(reason);
   }
 }

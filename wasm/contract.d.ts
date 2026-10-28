@@ -2,6 +2,64 @@ export interface Amount {
   amt: bigint;
 }
 
+/** Rust-owned peer reliability. The host supplies checkpoint and carrier results. */
+export interface PeerProtocolState {
+  sessionId: string;
+  messageNumber: bigint;
+  remoteNumber: bigint;
+  unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
+  disposition: 'active' | 'proposal-received' | 'outbound-reject' | 'inbound-reject';
+}
+
+export interface PeerSessionTerms {
+  proposer_amount: string;
+  responder_amount: string;
+  channel_timeout?: string;
+  unroll_timeout?: string;
+  network?: string;
+}
+
+export interface PeerPreparedCommit {
+  generation: number;
+  outboundCount: number;
+  ackCount: number;
+  remoteNumber: bigint;
+}
+
+export interface PeerProtocolApi {
+  session_id(): string;
+  message_number(): bigint;
+  remote_number(): bigint;
+  disposition(): PeerProtocolState['disposition'];
+  unacked(): PeerProtocolState['unackedMessages'];
+  snapshot(): PeerProtocolState;
+  restore_state(state: PeerProtocolState): void;
+  queued(): Array<{ msgno: bigint; msg: Uint8Array }>;
+  clear_receive_queue(): void;
+  remove_queued(msgno: bigint): void;
+  allocate(body: Uint8Array, disposition: string): bigint;
+  receive(msgno: bigint, body: Uint8Array, deliverable: boolean, terminal: boolean): 'queued' | 'deliver' | 'ack';
+  delivery_candidate(msgno: bigint, bodySize: number): 'duplicate' | 'next' | 'future';
+  next_message(): { msgno: bigint; msg: Uint8Array } | undefined;
+  delivered(msgno: bigint): void;
+  acknowledge(msgno: bigint): void;
+  connectivity(event: string, now: number, force: boolean): Array<{ msgno: bigint; msg: Uint8Array }> | undefined;
+  sent(msgno: bigint, accepted: boolean): void;
+  ack_sent(msgno: bigint, accepted: boolean): void;
+  retry_acks(): bigint[];
+  dirty(): boolean;
+  prepare_commit(): PeerPreparedCommit;
+  complete_commit(commit: PeerPreparedCommit, persisted: boolean): { outbound: Array<{ msgno: bigint; msg: Uint8Array }>; acks: bigint[] };
+  clear_runtime(): void;
+  discard_outbound(): void;
+  accept_session(terms: PeerSessionTerms, initiator: boolean): void;
+  restore_setup(terms: PeerSessionTerms, initiator: boolean): void;
+  wallet_address_requested(): boolean;
+  restore_channel(): void;
+  provide_wallet_address(rngId: number, address: string, genesisChallenge: string): { id: number; puzzle_hash: string };
+  free(): void;
+}
+
 export interface Spend {
   puzzle: string;
   solution: string;

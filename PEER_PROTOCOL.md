@@ -24,6 +24,15 @@ and continuing through handshake, play, and cooperative shutdown. Transport
 acknowledgements and keepalives are not recursively acknowledged, but they are
 bound to the same peer session ID.
 
+The reference implementation places reliable delivery and accepted-session
+setup in Rust (`src/peer_session.rs`, exposed by `wasm/src/peer.rs`). Local
+acceptance starts the session; Rust constructs the proposal and requests the
+wallet address through the TypeScript host. The host owns hub connectivity,
+storage writes, and carrier execution. Registration and peer-availability
+observations tell Rust when to replay. This ownership does not change any wire
+format, message numbering, consent requirement, or checkpoint-release rule
+specified below.
+
 This document covers:
 
 - reliable session negotiation;

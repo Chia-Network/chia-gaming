@@ -95,13 +95,12 @@ dumb pipe — it delivers messages to the target peer if connected and reports
 `delivery_failure` if not. It also tells recent correspondents when one of them
 connects (`peer_available`) or actually disconnects (`peer_unavailable`).
 
-Per-session peer state is encapsulated in the peer transport
-(`front-end/src/services/PeerSession.ts`). Shell holds the selected transport
-instead of independent routing and reliability refs. The transport owns the
-peer ID, session ID, liveness, ordered delivery, acknowledgement state, replay
-log, and outbound framing from consent negotiation onward. Accepting a proposal
-attaches the WASM consumer without resetting transport counters. Destroying the
-transport makes it inert — all further method calls are no-ops.
+Shell holds the selected browser peer adapter (`front-end/src/services/PeerSession.ts`),
+which owns routing, framing, and liveness presentation. Its Rust delivery owner
+(`src/peer_session.rs`) owns counters, ordering, acknowledgements, and replay.
+Accepting a proposal starts Rust session setup and attaches channel processing
+without resetting the incoming stream. Destroying the browser adapter makes
+its carrier inert. Wallet and hub resources remain application-owned.
 
 Transient loss does not create a new peer session. The hub remembers a bounded,
 expiring relationship between recent correspondents and emits `peer_available`
@@ -112,6 +111,14 @@ receives `registered` from the hub (including reload) or a matching
 it cannot be rebound safely without peer authentication.
 
 ### Session
+
+A session begins at local acceptance. Rust owns proposal/setup progression and
+the wait for its requested wallet address. TypeScript maintains wallet/hub
+connections, executes requested host work, and reports results and connectivity
+observations to Rust. Pending incoming proposal records and retained rejection
+records sit outside that session lifetime. Rust reliable delivery preserves
+their counters when an incoming proposal is accepted; reconnecting never
+creates another session.
 
 A session is an **obligation**, not a connection. Once started, it runs to
 completion. Funds are locked in the channel coin and must be distributed
@@ -413,9 +420,11 @@ The hub does not create a session. It can only advise and relay:
    session, on-chain resolution, restore/handshake, or another consent prompt,
    it **ignores** the advisory (no `session_reject`).
 4. If the target consents, it marks itself busy, generates a random 16-byte
-   peer session ID, persists a reliable transport epoch, and sends
-   `session_proposal` as data message 1 under that ID. It then starts WASM as
-   initiator and sends handshake messages through the same counter sequence.
+   peer session ID, and starts the Rust session at local acceptance. Rust queues
+   `session_proposal` as data message 1; TypeScript checkpoints and sends it.
+   Rust setup requests the wallet reward address through TypeScript, then
+   creates its channel engine when the result arrives. Handshake messages use
+   the same counter sequence.
    Persist of that start is async; `session_reject` / local cancel must abort
    any in-flight start so it cannot resurrect an orphan handshake.
 5. The challenger app checks local availability before showing the proposal
@@ -463,12 +472,13 @@ The hub does not create a session. It can only advise and relay:
   `ShutdownTransactionPending` reports a fully signed close awaiting chain
   confirmation, outgoing peer keepalives stop and the warning is suppressed.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
-  challenge accepter; peers exchange consent messages before starting WASM.
+  challenge accepter. Local consent starts Rust session setup; the initial
+  proposal precedes completion of the wallet-address request and channel setup.
 - **Application persistence**: `StorageRepository` atomically claims and reads
   one salt-prefixed, masked Bencodex `DurableApplicationState` v5, owns ordered
   root transforms, and checkpoints the whole aggregate. IndexedDB v5 has only
   coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
-  schema 23. Owner-specific channel-funding operations, fee attachments, and
+  schema 24. Owner-specific channel-funding operations, fee attachments, and
   rejection transports are nested in the same root and have no independent
   record, version, hydration, or writer. A non-current version therefore blocks
   connectivity restore for the whole root rather than selecting a predecessor

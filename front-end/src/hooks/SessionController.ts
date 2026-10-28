@@ -842,7 +842,7 @@ export class SessionController implements PollingGameSession {
     this.terminalHandoff = null;
     this.eventQueue = [];
     if (!retainRejectedTransport) this.unackedMessages = [];
-    this.reorderQueue.clear();
+    this.reliableTransport.clearReceiveQueue();
     if (!retainRejectedTransport) this.reliableTransport.clearRuntime();
     this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
@@ -1426,7 +1426,7 @@ export class SessionController implements PollingGameSession {
     // may be the only terminal notification emitted for that accepted game.
     this.eventQueue = this.eventQueue.filter((event) => this.isQueuedGameTerminalEvent(event));
     this.unackedMessages = [];
-    this.reorderQueue.clear();
+    this.reliableTransport.clearReceiveQueue();
   }
 
   flushDeferredWork(eventBudget = Number.POSITIVE_INFINITY): void {
@@ -1859,7 +1859,7 @@ export class SessionController implements PollingGameSession {
   failPeerProcessing(reason: string): void {
     if (this.retired || this.pendingPeerFailure) return;
     this.pendingPeerFailure = reason;
-    this.reorderQueue.clear();
+    this.reliableTransport.clearReceiveQueue();
     log(`[peer-policy] ${reason}`);
     this.rxjsEmitter?.next({ type: 'error', error: reason });
     this.escalatePeerFailure();
@@ -1914,9 +1914,21 @@ export class SessionController implements PollingGameSession {
     }
   }
 
-  resendUnacked(): boolean {
+  reportPeerConnectivity(event: 'registered' | 'peer-available'): boolean {
     if (this.protocolStopped) return false;
-    return this.reliableTransport.replayUnacked();
+    return this.reliableTransport.connectivity(event);
+  }
+
+  resendUnacked(): boolean {
+    return this.reportPeerConnectivity('registered');
+  }
+
+  getPeerProtocol() {
+    return this.reliableTransport.protocol;
+  }
+
+  isRetired(): boolean {
+    return this.retired;
   }
 
   // --- PollingGameSession: driven by the BlockchainPoller ---

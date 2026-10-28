@@ -6,6 +6,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 ## Table of Contents
 
 - [Timeouts](#timeouts)
+- [Peer Setup and Reliable Delivery](#peer-setup-and-reliable-delivery)
 - [Peer Disconnect Invariant](#peer-disconnect-invariant)
 - [Peer Error Escalation](#peer-error-escalation)
 - [Local Action Errors](#local-action-errors)
@@ -19,6 +20,28 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Invariant Assertions: game_assert! / game_assert_eq!](#invariant-assertions-game_assert--game_assert_eq)
 
 ---
+
+## Peer Setup and Reliable Delivery
+
+Local acceptance begins the Rust session in `src/peer_session.rs`. Rust
+constructs the initiating proposal and records `WaitingForWalletAddress`;
+TypeScript executes the address request and supplies its result through
+`wasm/src/peer.rs`. Rust then creates `TransactionManager<GameSession>` and
+marks setup `ChannelStarted`. Pending incoming proposals and retained rejection
+records use reliability without implying an accepted session.
+
+The same Rust delivery owner allocates message numbers, buffers out-of-order
+input, retires acknowledged messages, and chooses reconnect replay. The host
+confirms successful body consumption, checkpoint outcomes, and carrier sends.
+Checkpoint capture freezes a generation and frame/ACK counts: release sends
+only that boundary, once. An ordinary failed write leaves it dirty while still
+releasing once; authority loss is fenced by the host before release. A failed
+carrier send remains unacknowledgeable until the carrier accepts a later send.
+
+Hub socket loss and reopening are observations, distinct from the channel's
+terminal `peer_disconnected` flag described below. Registration with the same
+identity or matching peer availability selects replay; a raw socket opening,
+keepalive, or duplicate input does not replay outgoing data.
 
 ## Timeouts
 
@@ -524,7 +547,7 @@ offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
 The current app-owned contracts are `DurableApplicationState` v5, opaque
-Rust/WASM cradle schema 23, and app IndexedDB v5. Internally, that means a
+Rust/WASM cradle schema 24, and app IndexedDB v5. Internally, that means a
 non-current version is an unsupported root, not an alternate restore path; see
 the canonical
 [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).

@@ -1,6 +1,11 @@
 import { Program } from 'clvm-lib';
 import { Subscription } from 'rxjs';
-import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
+import {
+  WasmStateInit,
+  storeInitArgs,
+  _resetWasmLoadForTests,
+  ensurePeerProtocolLoaded,
+} from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
 import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
@@ -104,6 +109,7 @@ beforeEach(async () => {
   storageRepository._resetForTests();
   _resetWasmLoadForTests();
   storeInitArgs(async () => {}, WholeWasmObject);
+  await ensurePeerProtocolLoaded();
   await deleteSessionDatabase();
   await storageRepository.claimApplicationState();
 });

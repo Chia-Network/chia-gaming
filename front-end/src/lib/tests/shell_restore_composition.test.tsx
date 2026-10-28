@@ -4,6 +4,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
+import * as wasmInit from '../../hooks/WasmStateInit';
 import * as blobSingleton from '../../hooks/blobSingleton';
 import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
 import { storageRepository } from '../session/storageRepository';
@@ -344,8 +345,22 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell));
     });
     await waitForText(renderer!, 'You have previously saved state.');
+    let finishPeerLoad!: () => void;
+    const peerLoading = new Promise<void>((resolve) => {
+      finishPeerLoad = resolve;
+    });
+    const peerLoader = jest
+      .spyOn(wasmInit, 'ensurePeerProtocolLoaded')
+      .mockReturnValue(peerLoading);
     await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      void renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    for (let n = 0; n < 30 && !peerLoader.mock.calls.length; n++) await flushEffects();
+    expect(peerLoader).toHaveBeenCalled();
+    expect(renderer!.root.findAllByProps({ children: 'Handshaking' })).toHaveLength(0);
+    peerLoader.mockRestore();
+    await act(async () => {
+      finishPeerLoad();
     });
     await waitForText(renderer!, 'Handshaking');
     for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
