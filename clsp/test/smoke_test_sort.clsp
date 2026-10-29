@@ -1,5 +1,5 @@
 (mod (X)
-  (include *standard-cl-21*)
+  (include *standard-cl-26*)
   (include prepend.clinc)
   (include sort.clinc)
   (include assert.clinc)

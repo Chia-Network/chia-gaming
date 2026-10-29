@@ -1,4 +1,7 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
+(import std.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.spacepoker.clsp.onchain.begin_round exposing (program_hash as begin_hash))
 (import games.spacepoker.clsp.onchain.mid_round exposing (program_hash as mid_hash))
@@ -7,18 +10,18 @@
 (import std.if_any_fail)
 (import std.li)
 
-; state is (bet_unit alice_image_5)
+; state is (space-commit bet_unit alice_image_5)
 ; MOVE is Bob's hash-chain tip (image_4), 32 bytes
 ; evidence is empty
-(export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (bet_unit alice_image_5) previous_validation_program evidence)
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (space-commit bet_unit alice_image_5) previous_validation_program evidence unused_payout)
 
     (if_any_fail
         (= (strlen MOVE) 32)
         (= MOVER_SHARE (- (/ AMOUNT 2) bet_unit))
         0
-        (list begin_hash (li bet_unit bet_unit alice_image_5 MOVE 4 mid_hash) 42)
+        (validator-transition begin_hash (make-space-open bet_unit bet_unit alice_image_5 MOVE 4 mid_hash) 42)
     )
 )

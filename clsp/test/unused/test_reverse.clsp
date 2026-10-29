@@ -1,5 +1,5 @@
 (mod (X)
-  (include *standard-cl-21*)
+  (include *standard-cl-26*)
   (include reverse.clinc)
 
   (reverse X)
