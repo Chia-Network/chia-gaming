@@ -36,6 +36,8 @@ export interface SessionPreferencesSave {
   defaultFee?: bigint;
   feeUnit?: 'mojo' | 'xch';
   hubUrl?: string;
+  // Last hub the user connected to. Kept on disconnect so the hub picker can prefill it.
+  lastHubUrl?: string;
   activeTab?: string;
   unreadGame?: boolean;
   walletAlert?: boolean;
