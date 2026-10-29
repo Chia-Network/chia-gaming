@@ -211,8 +211,7 @@ export class SessionController implements PollingGameSession {
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
   private transactionPublishNerfPolicy:
-    | ((nerfed: boolean, apply: (nerfed: boolean) => void) => void)
-    | null = null;
+    ((nerfed: boolean, apply: (nerfed: boolean) => void) => void) | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private reliableState: NonNullable<PeerConnectionResult['reliableState']>;
@@ -221,8 +220,7 @@ export class SessionController implements PollingGameSession {
   private inboundSessionRejected = false;
   private inboundSessionRejectCommitted = false;
   private persistInboundSessionReject:
-    | ((sessionId: string, remoteNumber: bigint) => Promise<void>)
-    | null = null;
+    ((sessionId: string, remoteNumber: bigint) => Promise<void>) | null = null;
   private inboundSessionRejectHandler: ((sessionId: string, remoteNumber: bigint) => void) | null =
     null;
   cradle: ChiaGame | undefined;

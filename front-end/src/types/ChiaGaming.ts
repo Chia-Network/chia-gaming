@@ -276,8 +276,7 @@ export type WalletOfferRequest =
     };
 
 export type WalletOfferMaterial =
-  | { kind: 'offer'; offer: string }
-  | { kind: 'bundle'; bundle: unknown };
+  { kind: 'offer'; offer: string } | { kind: 'bundle'; bundle: unknown };
 
 export type WalletOfferReservedCompletion = {
   kind: 'created-reserved';
@@ -299,8 +298,7 @@ export type WalletOfferCompletion =
   | { kind: 'unavailable'; reason: string };
 
 export type WalletOfferBeginOutcome =
-  | WalletOfferCompletion
-  | { kind: 'pending'; recoveryId: string };
+  WalletOfferCompletion | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
   // System
@@ -630,8 +628,7 @@ export type WalletOfferCancellationOutcome =
   | { status: 'rejected'; detail: string };
 
 export type WalletOfferCancellationBeginOutcome =
-  | WalletOfferCancellationOutcome
-  | { status: 'pending'; recoveryId: string };
+  WalletOfferCancellationOutcome | { status: 'pending'; recoveryId: string };
 
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
