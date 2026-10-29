@@ -101,6 +101,7 @@ const PREFERENCE_FIELDS = new Set([
   'defaultFee',
   'feeUnit',
   'hubUrl',
+  'lastHubUrl',
   'activeTab',
   'unreadGame',
   'walletAlert',
@@ -247,6 +248,7 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
         : requireBigint(fields.defaultFee, 'preferences.defaultFee'),
     feeUnit,
     hubUrl: optionalString(fields.hubUrl, 'preferences.hubUrl'),
+    lastHubUrl: optionalString(fields.lastHubUrl, 'preferences.lastHubUrl'),
     activeTab: optionalString(fields.activeTab, 'preferences.activeTab'),
     unreadGame:
       fields.unreadGame === undefined

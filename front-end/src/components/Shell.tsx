@@ -383,6 +383,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     networkLocked,
     network,
     hubConnectionError,
+    lastHubUrl,
     terminalFinalizationBlocker,
     restoreBlocked,
     terminalPresentation,
@@ -1308,6 +1309,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               <HubPicker
                 onConnect={(origin) => dispatch({ type: 'hub-connect', origin })}
                 connectionError={hubConnectionError}
+                defaultHubUrl={lastHubUrl}
               />
             )}
           </div>

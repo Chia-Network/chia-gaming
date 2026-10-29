@@ -1438,6 +1438,8 @@ export function createApplication() {
       update('hubConnectionError', trustError);
       return;
     }
+    // Survives hub disconnects (unlike hubUrl) so the picker offers it after a restart.
+    storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
     if (trust === 'granted') {
       storageRepository.regenerateSessionId();
       storageRepository.updatePreference({ key: 'hubUrl', value: origin });
@@ -2444,6 +2446,7 @@ export function createApplication() {
       ...sessionState,
       alias: storageRepository.query('alias'),
       theme: storageRepository.query('theme'),
+      lastHubUrl: storageRepository.query('lastHubUrl'),
       keepSession: shouldMountGameSession(
         !!sessions.state.sessionConfig && !!sessions.state.peerConn,
         state.walletView.connected,
