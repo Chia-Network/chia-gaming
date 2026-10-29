@@ -13,6 +13,9 @@ ordering, replay, proposal/rejection policy, and terminal-message tracking.
 optional channel, including its allocator, RNG and transaction manager.
 Delivery, replay and checkpoint release are methods on this owner; each call
 receives the host directly, without a separate driver object.
+Its mutable `SessionState` is private to the native implementation. The bindings
+call `Session` operations for setup, snapshots and retirement rather than
+constructing or manipulating a second session object.
 Incoming channel messages, outgoing message allocation, and terminal
 acknowledgements use native Rust calls and results. There is no internal
 JavaScript conversion, host-notification routing or channel back-reference.

@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{PeerSession, SessionTerms, SetupState};
+use super::{SessionState, SessionTerms, SetupState};
 
 #[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -62,7 +62,7 @@ pub fn application_message(body: &[u8]) -> Option<String> {
     Some(kind.clone())
 }
 
-impl PeerSession {
+impl SessionState {
     pub fn available(&self, status: &HostStatus) -> bool {
         status.available
             && !(matches!(

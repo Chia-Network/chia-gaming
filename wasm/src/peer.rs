@@ -1,8 +1,8 @@
 use super::gaming_wasm::Channel;
 use chia_gaming::common::types::Sha256Input;
-use chia_gaming::peer_session::coordination::{HostStatus, ReceiveMode, TerminalHandoff};
+use chia_gaming::peer_session::coordination::{HostStatus, ReceiveMode};
 use chia_gaming::peer_session::session::{PeerEvent, PeerHost, PeerInput, SendFrame, Session};
-use chia_gaming::peer_session::{PeerSession, PreparedCommit, ReceivePolicy, SetupState};
+use chia_gaming::peer_session::{PreparedCommit, ReceivePolicy};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -11,13 +11,12 @@ fn error(value: impl ToString) -> JsValue {
     js_sys::Error::new(&value.to_string()).into()
 }
 fn js(value: &impl Serialize) -> Result<JsValue, JsValue> {
-    value
-        .serialize(
-            &serde_wasm_bindgen::Serializer::new()
-                .serialize_maps_as_objects(true)
-                .serialize_large_number_types_as_bigints(true),
-        )
-        .map_err(error)
+    value.serialize(&serializer()).map_err(error)
+}
+fn serializer() -> serde_wasm_bindgen::Serializer {
+    serde_wasm_bindgen::Serializer::new()
+        .serialize_maps_as_objects(true)
+        .serialize_large_number_types_as_bigints(true)
 }
 fn host_error(value: JsValue) -> String {
     value
@@ -88,10 +87,10 @@ pub fn create_peer_protocol(
     policy: JsValue,
     seed: &str,
 ) -> Result<PeerProtocol, JsValue> {
-    let inner = Session::new(PeerSession::new(
+    let inner = Session::new(
         serde_wasm_bindgen::from_value(state).map_err(error)?,
         serde_wasm_bindgen::from_value::<ReceivePolicy>(policy).map_err(error)?,
-    ));
+    );
     Ok(PeerProtocol {
         inner,
         seed: *Sha256Input::Bytes(seed.as_bytes()).hash().bytes(),
@@ -100,42 +99,22 @@ pub fn create_peer_protocol(
 
 impl PeerProtocol {
     fn attach_channel(&self, channel: Channel) -> Result<(), JsValue> {
-        if self.inner.channel.borrow().is_some() {
-            return Err(error("peer session already owns a channel"));
-        }
-        self.inner
-            .state
-            .borrow_mut()
-            .channel_command(channel.pending_terminal(), true)
-            .map_err(error)?;
-        *self.inner.channel.borrow_mut() = Some(channel);
-        Ok(())
+        let command = channel.pending_terminal();
+        self.inner.attach_channel(channel, command).map_err(error)
     }
 }
 
 #[wasm_bindgen]
 impl PeerProtocol {
     pub fn snapshot(&self) -> Result<JsValue, JsValue> {
-        #[derive(Serialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Snapshot<'a> {
-            #[serde(flatten)]
-            state: &'a chia_gaming::peer_session::ReliableState,
-            terminal_handoff: &'a Option<TerminalHandoff>,
-            rejection_complete: bool,
-        }
-        let session = self.inner.state.borrow();
-        js(&Snapshot {
-            state: &session.state,
-            terminal_handoff: &session.terminal_handoff,
-            rejection_complete: session.rejection_complete(),
-        })
+        self.inner.snapshot(&serializer()).map_err(error)
     }
     pub fn restore(&self, state: JsValue, terminal: JsValue) -> Result<(), JsValue> {
-        let mut session = self.inner.state.borrow_mut();
-        session.state = serde_wasm_bindgen::from_value(state).map_err(error)?;
-        session
-            .restore_terminal(serde_wasm_bindgen::from_value(terminal).map_err(error)?)
+        self.inner
+            .restore(
+                serde_wasm_bindgen::from_value(state).map_err(error)?,
+                serde_wasm_bindgen::from_value(terminal).map_err(error)?,
+            )
             .map_err(error)
     }
     pub fn receive(&self, input: JsValue, host: JsPeerHost) -> Result<bool, JsValue> {
@@ -147,10 +126,7 @@ impl PeerProtocol {
             .map_err(error)
     }
     pub fn consumer_ready(&self, mode: JsValue, host: JsPeerHost) -> Result<(), JsValue> {
-        let mode = if matches!(
-            self.inner.state.borrow().setup,
-            Some(SetupState::WaitingForWalletAddress { .. } | SetupState::ChannelStarted)
-        ) {
+        let mode = if self.inner.accepted() {
             ReceiveMode::Channel
         } else {
             serde_wasm_bindgen::from_value::<ReceiveMode>(mode).map_err(error)?
@@ -169,10 +145,10 @@ impl PeerProtocol {
             .map_err(error)
     }
     pub fn dirty(&self) -> bool {
-        self.inner.state.borrow().dirty()
+        self.inner.dirty()
     }
     pub fn prepare_commit(&self) -> Result<JsValue, JsValue> {
-        js(&self.inner.state.borrow().prepare_commit())
+        js(&self.inner.prepare_commit())
     }
     pub fn complete_commit(
         &self,
@@ -185,38 +161,18 @@ impl PeerProtocol {
             .complete_commit(commit, persisted, &host)
             .map_err(error)
     }
-    /// Retire the channel consumer, optionally preserving its reliable rejection
-    /// for the application-owned tombstone transport.
     pub fn retire(&self, retain_rejection: bool) -> bool {
-        self.inner.channel.borrow_mut().take();
-        let mut session = self.inner.state.borrow_mut();
-        session.terminal_handoff = None;
-        session.reorder_queue.clear();
-        session.setup = Some(SetupState::Retired);
-        if retain_rejection && session.state.disposition == "outbound-reject" {
-            return true;
-        }
-        session.state.unacked_messages.clear();
-        session.clear_runtime();
-        session.setup = Some(SetupState::Retired);
-        false
+        self.inner.retire(retain_rejection)
     }
     pub fn reject_session(&self, host: JsPeerHost) -> Result<(), JsValue> {
-        self.inner
-            .state
-            .borrow_mut()
-            .reject_session()
-            .map_err(error)?;
-        self.inner.request_commit(&host).map_err(error)
+        self.inner.reject_session(&host).map_err(error)
     }
     pub fn failure(&self, reason: String, host: JsPeerHost) -> Result<(), JsValue> {
         self.inner.failure(reason, &host).map_err(error)
     }
     pub fn accept_session(&self, terms: JsValue, initiator: bool) -> Result<(), JsValue> {
         self.inner
-            .state
-            .borrow_mut()
-            .accept(
+            .accept_session(
                 serde_wasm_bindgen::from_value(terms).map_err(error)?,
                 initiator,
             )
@@ -237,12 +193,10 @@ impl PeerProtocol {
         genesis_challenge: String,
         address_provider: js_sys::Function,
     ) -> Result<JsValue, JsValue> {
-        if matches!(self.inner.state.borrow().setup, Some(SetupState::Retired)) {
+        if self.inner.retired() {
             return Ok(JsValue::UNDEFINED);
         }
         self.inner
-            .state
-            .borrow_mut()
             .prepare_channel(
                 serde_wasm_bindgen::from_value(terms).map_err(error)?,
                 initiator,
@@ -250,7 +204,7 @@ impl PeerProtocol {
             .map_err(error)?;
         let response = address_provider.call0(&JsValue::UNDEFINED)?;
         let address = JsFuture::from(js_sys::Promise::resolve(&response)).await?;
-        if matches!(self.inner.state.borrow().setup, Some(SetupState::Retired)) {
+        if self.inner.retired() {
             return Ok(JsValue::UNDEFINED);
         }
         let address = address
@@ -268,10 +222,7 @@ impl PeerProtocol {
         address: &str,
         genesis_challenge: &str,
     ) -> Result<JsValue, JsValue> {
-        let setup = self.inner.state.borrow().setup.clone();
-        let Some(SetupState::WaitingForWalletAddress { terms, initiator }) = &setup else {
-            return Err(error("peer session is not waiting for a wallet address"));
-        };
+        let (terms, initiator) = self.inner.channel_terms().map_err(error)?;
         let amount = |value: &str| value.parse::<u64>().map_err(error);
         let timeout = |value: &Option<String>| {
             value
@@ -279,13 +230,13 @@ impl PeerProtocol {
                 .map(|v| v.parse::<i32>().map_err(error))
                 .unwrap_or(Ok(15))
         };
-        let (mine, theirs) = if *initiator {
+        let (mine, theirs) = if initiator {
             (&terms.proposer_amount, &terms.responder_amount)
         } else {
             (&terms.responder_amount, &terms.proposer_amount)
         };
         let config = super::gaming_wasm::ChannelConfig {
-            is_initiator: *initiator,
+            is_initiator: initiator,
             my_contribution: chia_gaming::common::types::Amount::new(amount(mine)?),
             their_contribution: chia_gaming::common::types::Amount::new(amount(theirs)?),
             channel_timeout: timeout(&terms.channel_timeout)?,

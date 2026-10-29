@@ -339,7 +339,7 @@ watched coins. Disconnecting a wallet does not end or abandon that session,
 including during a handshake. Wallet-dependent work pauses until a ready backend
 is attached; losing connectivity is not a terminal protocol event.
 
-The session starts at local acceptance. Rust's `peer_session::PeerSession`
+The session starts at local acceptance. Rust's `peer_session::session::Session`
 records the accepted setup and requests the wallet address; TypeScript executes
 the request and returns its result to that owner. The channel `GameSession`
 is constructed by Rust when the address arrives. Pending incoming proposals

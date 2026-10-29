@@ -30,6 +30,9 @@ Retiring setup cancels channel construction while that request is in flight. Rus
 marks setup `ChannelStarted`. `peer_session::session::Session` directly owns
 the reliability state and optional channel, including its allocator, RNG and
 `TransactionManager<GameSession>`. Retirement or drop releases the channel.
+Its private `SessionState` groups mutable reliability and setup fields with
+callback-free update helpers. Callers use `Session` operations for construction,
+snapshot/restore, setup and retirement; they cannot access this state container.
 Channel calls return native output to their owner, which numbers and journals
 outbound messages before projecting UI/wallet effects. Pending incoming proposals and retained rejection
 records use reliability without implying an accepted session.

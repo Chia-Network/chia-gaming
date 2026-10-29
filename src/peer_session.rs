@@ -66,7 +66,7 @@ pub struct SessionTerms {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SetupState {
+enum SetupState {
     WaitingForWalletAddress {
         terms: SessionTerms,
         initiator: bool,
@@ -77,13 +77,14 @@ pub enum SetupState {
 
 /// Receive classification. Delivery is confirmed only after the body consumer
 /// succeeds, preserving rollback on an invalid protocol message.
-pub enum ReceiveAction {
+enum ReceiveAction {
     Queued,
     Deliver,
     Ack,
 }
 
-pub struct PeerSession {
+/// Mutable state borrowed only within the owning session's operations.
+struct SessionState {
     pub state: ReliableState,
     pub setup: Option<SetupState>,
     pub receive_mode: ReceiveMode,
@@ -102,7 +103,7 @@ pub struct PeerSession {
     last_replay_at: f64,
 }
 
-impl PeerSession {
+impl SessionState {
     pub fn new(state: ReliableState, policy: ReceivePolicy) -> Self {
         Self {
             released_remote_number: state.remote_number,
@@ -458,8 +459,8 @@ impl PeerSession {
 mod tests {
     use super::*;
 
-    fn peer() -> PeerSession {
-        PeerSession::new(
+    fn peer() -> SessionState {
+        SessionState::new(
             ReliableState {
                 session_id: "000102030405060708090a0b0c0d0e0f".into(),
                 message_number: 1,

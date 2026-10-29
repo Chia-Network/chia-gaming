@@ -3,8 +3,13 @@
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 
-use super::coordination::{application_message, HostStatus, ReceiveMode, TerminalCommand};
-use super::{PeerSession, PreparedCommit, ReceiveAction};
+use super::coordination::{
+    application_message, HostStatus, ReceiveMode, TerminalCommand, TerminalHandoff,
+};
+use super::{
+    PreparedCommit, ReceiveAction, ReceivePolicy, ReliableState, SessionState, SessionTerms,
+    SetupState,
+};
 use crate::game_session::TerminalHandoffCommand;
 use crate::session_phases::effects::GameSessionEvent;
 use crate::transaction_manager::ManagerDrain;
@@ -102,16 +107,110 @@ pub trait Channel {
 }
 
 pub struct Session<C> {
-    pub state: RefCell<PeerSession>,
+    state: RefCell<SessionState>,
     pub channel: RefCell<Option<C>>,
 }
 
 impl<C> Session<C> {
-    pub fn new(state: PeerSession) -> Self {
+    pub fn new(state: ReliableState, policy: ReceivePolicy) -> Self {
         Self {
-            state: RefCell::new(state),
+            state: RefCell::new(SessionState::new(state, policy)),
             channel: RefCell::new(None),
         }
+    }
+
+    pub fn snapshot<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Snapshot<'a> {
+            #[serde(flatten)]
+            state: &'a ReliableState,
+            terminal_handoff: &'a Option<TerminalHandoff>,
+            rejection_complete: bool,
+        }
+        let session = self.state.borrow();
+        Snapshot {
+            state: &session.state,
+            terminal_handoff: &session.terminal_handoff,
+            rejection_complete: session.rejection_complete(),
+        }
+        .serialize(serializer)
+    }
+
+    pub fn restore(
+        &self,
+        state: ReliableState,
+        terminal: Option<TerminalHandoff>,
+    ) -> Result<(), String> {
+        let mut session = self.state.borrow_mut();
+        session.state = state;
+        session.restore_terminal(terminal)
+    }
+
+    pub fn accepted(&self) -> bool {
+        matches!(
+            self.state.borrow().setup,
+            Some(SetupState::WaitingForWalletAddress { .. } | SetupState::ChannelStarted)
+        )
+    }
+
+    pub fn retired(&self) -> bool {
+        matches!(self.state.borrow().setup, Some(SetupState::Retired))
+    }
+
+    pub fn accept_session(&self, terms: SessionTerms, initiator: bool) -> Result<(), String> {
+        self.state.borrow_mut().accept(terms, initiator)
+    }
+
+    pub fn prepare_channel(&self, terms: SessionTerms, initiator: bool) -> Result<(), String> {
+        self.state.borrow_mut().prepare_channel(terms, initiator)
+    }
+
+    pub fn channel_terms(&self) -> Result<(SessionTerms, bool), String> {
+        match &self.state.borrow().setup {
+            Some(SetupState::WaitingForWalletAddress { terms, initiator }) => {
+                Ok((terms.clone(), *initiator))
+            }
+            _ => Err("peer session is not waiting for a wallet address".into()),
+        }
+    }
+
+    pub fn attach_channel(
+        &self,
+        channel: C,
+        command: Option<TerminalCommand>,
+    ) -> Result<(), String> {
+        if self.channel.borrow().is_some() {
+            return Err("peer session already owns a channel".into());
+        }
+        self.state.borrow_mut().channel_command(command, true)?;
+        *self.channel.borrow_mut() = Some(channel);
+        Ok(())
+    }
+
+    /// Retire the channel consumer, optionally preserving its reliable rejection
+    /// for the application-owned tombstone transport.
+    pub fn retire(&self, retain_rejection: bool) -> bool {
+        self.channel.borrow_mut().take();
+        let mut session = self.state.borrow_mut();
+        session.terminal_handoff = None;
+        session.reorder_queue.clear();
+        session.setup = Some(SetupState::Retired);
+        if retain_rejection && session.state.disposition == "outbound-reject" {
+            return true;
+        }
+        session.state.unacked_messages.clear();
+        session.clear_runtime();
+        session.setup = Some(SetupState::Retired);
+        false
+    }
+
+    pub fn dirty(&self) -> bool {
+        self.state.borrow().dirty()
+    }
+
+    pub fn prepare_commit(&self) -> PreparedCommit {
+        self.state.borrow().prepare_commit()
     }
 
     pub fn collect_output(&self, output: &mut ChannelOutput) -> Result<(), String> {
@@ -150,6 +249,11 @@ impl<C> Session<C> {
 }
 
 impl<C: Channel> Session<C> {
+    pub fn reject_session(&self, host: &impl PeerHost) -> Result<(), String> {
+        self.state.borrow_mut().reject_session()?;
+        self.request_commit(host)
+    }
+
     pub fn request_commit(&self, host: &impl PeerHost) -> Result<(), String> {
         if self.state.borrow().dirty() {
             host.notify(PeerEvent::CommitRequested)?;

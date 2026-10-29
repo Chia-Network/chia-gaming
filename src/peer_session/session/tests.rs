@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use super::*;
 use crate::peer_session::coordination::TerminalHandoff;
-use crate::peer_session::{Message, PeerSession, ReceivePolicy, ReliableState};
+use crate::peer_session::Message;
 
 struct TestChannel {
     established: Rc<Cell<bool>>,
@@ -63,7 +63,7 @@ impl Harness {
         )
     }
     fn restore(state: ReliableState, binding: Option<TerminalHandoff>) -> Self {
-        let mut peer = PeerSession::new(
+        let peer = Session::new(
             state,
             ReceivePolicy {
                 max_future_reliable_msgno_gap: 100,
@@ -72,12 +72,11 @@ impl Harness {
                 max_peer_body_bytes: 1024,
             },
         );
-        peer.restore_terminal(binding).unwrap();
+        peer.state.borrow_mut().restore_terminal(binding).unwrap();
         let established = Rc::new(Cell::new(false));
         let discarding = Rc::new(Cell::new(false));
         let completion_ok = Rc::new(Cell::new(true));
         let completion_attempts = Rc::new(Cell::new(0));
-        let peer = Session::new(peer);
         *peer.channel.borrow_mut() = Some(TestChannel {
             established: established.clone(),
             discarding: discarding.clone(),
@@ -118,7 +117,7 @@ impl Harness {
             .unwrap());
     }
     fn commit(&self, persisted: bool) {
-        let commit = self.peer.state.borrow().prepare_commit();
+        let commit = self.peer.prepare_commit();
         self.peer.complete_commit(commit, persisted, self).unwrap();
     }
     fn terminal(&self, restoring: bool) -> Result<(), String> {
@@ -546,24 +545,21 @@ fn acknowledged_restore_requires_a_sent_frame_absent_from_the_replay_journal() {
 }
 
 fn runtime() -> Session<()> {
-    Session {
-        state: RefCell::new(PeerSession::new(
-            ReliableState {
-                session_id: "00".repeat(16),
-                message_number: 1,
-                remote_number: 0,
-                unacked_messages: vec![],
-                disposition: "active".into(),
-            },
-            ReceivePolicy {
-                max_future_reliable_msgno_gap: 100,
-                max_queued_messages: 10,
-                max_queued_bytes: 1024,
-                max_peer_body_bytes: 1024,
-            },
-        )),
-        channel: RefCell::new(None),
-    }
+    Session::new(
+        ReliableState {
+            session_id: "00".repeat(16),
+            message_number: 1,
+            remote_number: 0,
+            unacked_messages: vec![],
+            disposition: "active".into(),
+        },
+        ReceivePolicy {
+            max_future_reliable_msgno_gap: 100,
+            max_queued_messages: 10,
+            max_queued_bytes: 1024,
+            max_peer_body_bytes: 1024,
+        },
+    )
 }
 
 #[test]
