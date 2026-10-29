@@ -377,12 +377,18 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     const peer = mockGameProps!.peerConn;
     const params = mockGameProps!.params;
     act(() => connectionChange!(true));
-    act(() => renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' }).props.onClick());
+    renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' });
     act(() =>
       renderer!.root
         .findAll(
-          (node) => node.props.variant === 'solid' && node.props.children === 'Disconnect',
+          (node) =>
+            node.props['data-slot'] === 'tabs' && typeof node.props.onValueChange === 'function',
         )[0]
+        .props.onValueChange('wallet'),
+    );
+    act(() =>
+      renderer!.root
+        .findAll((node) => node.type === 'button' && node.props.children === 'Disconnect')[0]
         .props.onClick(),
     );
     await act(async () => {
@@ -404,9 +410,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     jest.spyOn(realBlockchainInfo, 'isReadyForPlay').mockReturnValue(true);
     await act(async () => {
       await renderer!.root
-        .findAll(
-          (node) => node.props.variant === 'solid' && node.props.children === 'Link Wallet',
-        )[0]
+        .findAll((node) => node.type === 'button' && node.props.children === 'Link Wallet')[0]
         .props.onClick();
     });
     await waitForText(renderer!, 'Connected');
