@@ -1,7 +1,12 @@
 import { useState, useCallback } from 'react';
-import { Button } from './button';
+import { Autocomplete } from '@base-ui/react/autocomplete';
+import { ChevronDownIcon } from 'lucide-react';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 const DEV_HUB = 'http://localhost:3003';
+// Suggested hubs; the first one prefills the field.
+const KNOWN_HUBS = ['https://hub.nokitlan.com'];
 
 export function parseHubUrl(raw: string): string | null {
   const trimmed = raw.trim();
@@ -45,22 +50,29 @@ function insecureHubWarning(raw: string): string | null {
 interface HubPickerProps {
   onConnect: (origin: string) => void;
   connectionError?: string | null;
+  /** Last hub the user connected to; prefills the field and joins the suggestions. */
+  defaultHubUrl?: string;
 }
 
-export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
-  const [customUrl, setCustomUrl] = useState('');
+export function HubPicker({ onConnect, connectionError, defaultHubUrl }: HubPickerProps) {
+  const [hubUrl, setHubUrl] = useState(defaultHubUrl ?? KNOWN_HUBS[0]);
+  // Show a custom last-used hub first, above the known hubs.
+  const suggestions =
+    defaultHubUrl && !KNOWN_HUBS.includes(defaultHubUrl)
+      ? [defaultHubUrl, ...KNOWN_HUBS]
+      : KNOWN_HUBS;
   const [error, setError] = useState('');
-  const insecureWarning = insecureHubWarning(customUrl);
+  const insecureWarning = insecureHubWarning(hubUrl);
 
-  const handleCustomConnect = useCallback(() => {
-    const origin = parseHubUrl(customUrl);
+  const handleConnect = useCallback(() => {
+    const origin = parseHubUrl(hubUrl);
     if (origin) {
       setError('');
       onConnect(origin);
     } else {
       setError('Enter a valid URL (e.g. https://hub.example.com)');
     }
-  }, [customUrl, onConnect]);
+  }, [hubUrl, onConnect]);
 
   return (
     <div className="flex flex-col items-center justify-center h-full px-4">
@@ -76,27 +88,55 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
           </p>
         </div>
 
-        <div className="flex flex-col gap-1 w-full">
+        <div className="flex flex-col gap-2 w-full">
           <div className="flex gap-2 w-full">
-            <input
-              type="text"
-              value={customUrl}
-              onChange={(e) => {
-                setCustomUrl(e.target.value);
+            <Autocomplete.Root
+              items={suggestions}
+              filter={null}
+              value={hubUrl}
+              onValueChange={(value) => {
+                setHubUrl(value);
                 setError('');
               }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCustomConnect();
-              }}
-              placeholder="https://hub.example.com"
-              className={
-                'flex-1 px-3 py-2 rounded-lg text-sm bg-canvas-bg border text-canvas-text placeholder:text-canvas-solid outline-none ' +
-                (error
-                  ? 'border-alert-border'
-                  : 'border-canvas-border focus:border-primary-border-hover')
-              }
-            />
-            <Button variant="solid" onClick={handleCustomConnect} disabled={!customUrl.trim()}>
+              openOnInputClick
+            >
+              <Autocomplete.InputGroup className="relative flex-1">
+                <Autocomplete.Input
+                  render={<Input />}
+                  aria-label="Hub URL"
+                  aria-invalid={error ? true : undefined}
+                  placeholder="https://hub.example.com"
+                  className="pr-9"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleConnect();
+                  }}
+                />
+                <Autocomplete.Trigger
+                  aria-label="Show suggested hubs"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground"
+                >
+                  <ChevronDownIcon className="size-4 opacity-50" />
+                </Autocomplete.Trigger>
+              </Autocomplete.InputGroup>
+              <Autocomplete.Portal>
+                <Autocomplete.Positioner sideOffset={4} className="z-50 outline-none">
+                  <Autocomplete.Popup className="w-(--anchor-width) rounded-md border border-canvas-border bg-canvas-base p-1 text-sm text-canvas-text shadow-md">
+                    <Autocomplete.List>
+                      {(origin: string) => (
+                        <Autocomplete.Item
+                          key={origin}
+                          value={origin}
+                          className="cursor-pointer select-none rounded-sm px-2 py-1.5 outline-none data-[highlighted]:bg-canvas-bg-hover"
+                        >
+                          {origin}
+                        </Autocomplete.Item>
+                      )}
+                    </Autocomplete.List>
+                  </Autocomplete.Popup>
+                </Autocomplete.Positioner>
+              </Autocomplete.Portal>
+            </Autocomplete.Root>
+            <Button onClick={handleConnect} disabled={!hubUrl.trim()}>
               Connect
             </Button>
           </div>

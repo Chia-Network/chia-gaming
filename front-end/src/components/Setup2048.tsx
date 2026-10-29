@@ -7,7 +7,7 @@ import {
   type Setup2048Board,
   type Setup2048Direction,
 } from '../lib/setup2048';
-import { Button } from './button';
+import { Button } from './ui/button';
 
 export const SETUP_2048_SLIDE_MS = 150;
 type Tile = { id: number; index: number; value: number; appearance?: 'new' | 'merged' };
@@ -220,8 +220,7 @@ export function Setup2048() {
         <div className="flex gap-2" role="group" aria-label="No moves left">
           <Button
             size="sm"
-            color="neutral"
-            variant="surface"
+            variant="outline"
             onClick={() => {
               restart();
               boardRef.current?.focus({ preventScroll: true });
@@ -236,8 +235,7 @@ export function Setup2048() {
             <Button
               key={direction}
               size="sm"
-              color="neutral"
-              variant="surface"
+              variant="outline"
               aria-label={`Move ${direction}`}
               disabled={status !== 'playing' || game.pending !== null}
               onClick={() => {

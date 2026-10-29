@@ -12,7 +12,8 @@ import {
   MAX_GAME_TIMEOUT_BLOCKS,
   MIN_GAME_TIMEOUT_BLOCKS,
 } from '../lib/session/gameTimeout';
-import { Button } from './button';
+import { Button } from './ui/button';
+import { Input } from './ui/input';
 
 export function ComposeProposalDialog({
   session,
@@ -59,8 +60,7 @@ export function ComposeProposalDialog({
           {REGISTERED_GAMES.map(({ gameType, displayName }) => (
             <Button
               key={gameType}
-              variant={compose.selectedGame === gameType ? 'solid' : 'outline'}
-              color={compose.selectedGame === gameType ? 'primary' : 'neutral'}
+              variant={compose.selectedGame === gameType ? 'default' : 'outline'}
               size="sm"
               disabled={session.composeProposalSent}
               onClick={() => session.setComposeGameType(gameType)}
@@ -79,11 +79,11 @@ export function ComposeProposalDialog({
         })}
         <div className="flex w-full flex-col items-center gap-1">
           <label className="text-xs font-medium text-canvas-text">Timeout (blocks)</label>
-          <input
+          <Input
             type="number"
             min={MIN_GAME_TIMEOUT_BLOCKS.toString()}
             max={MAX_GAME_TIMEOUT_BLOCKS.toString()}
-            className="w-full rounded border border-canvas-line bg-canvas-bg px-2 py-1 text-center text-sm text-canvas-text-contrast focus:outline-none focus:ring-1 focus:ring-canvas-solid"
+            className="h-8 text-center"
             value={compose.gameTimeout.toString()}
             disabled={session.composeProposalSent}
             onChange={(event) => {
@@ -95,14 +95,7 @@ export function ComposeProposalDialog({
             }}
           />
         </div>
-        <Button
-          variant="solid"
-          color="primary"
-          size="sm"
-          className="self-center"
-          disabled={!canSubmit}
-          onClick={submit}
-        >
+        <Button size="sm" className="self-center" disabled={!canSubmit} onClick={submit}>
           {session.composeProposalSent ? 'Proposal Sent' : 'Send Proposal'}
         </Button>
       </div>
@@ -129,20 +122,13 @@ export function ReviewProposalDialog({ session }: { session: UseGameSessionResul
         </p>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
-            variant="solid"
-            color="primary"
             size="sm"
             disabled={accepting}
             onClick={() => session.acceptReviewedProposal(review.id)}
           >
             {accepting ? 'Accepting…' : 'Yes'}
           </Button>
-          <Button
-            variant="solid"
-            size="sm"
-            disabled={accepting}
-            onClick={session.rejectReviewedProposal}
-          >
+          <Button size="sm" disabled={accepting} onClick={session.rejectReviewedProposal}>
             No
           </Button>
         </div>

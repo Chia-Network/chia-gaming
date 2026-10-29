@@ -144,9 +144,12 @@ import { formatMojos } from '../util';
 import { needsConnectionSetupPrompt, needsWalletPairing } from '../util/connectionSetup';
 import { isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
-import { Button } from './button';
+import { Button } from './ui/button';
 
 import { HubPicker } from './HubPicker';
+import { Input } from './ui/input';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
+import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group';
 
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
 
@@ -453,8 +456,6 @@ function GameDashboard({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
-              variant="solid"
-              color="primary"
               size="sm"
               className="min-w-40"
               disabled={!view.actionEnabled}
@@ -545,12 +546,11 @@ function LogPanel({ lines }: { lines: string[] }) {
   return (
     <div className="flex flex-col h-full gap-2">
       <div className="flex items-center gap-2 shrink-0">
-        <input
-          type="text"
+        <Input
           placeholder="Filter"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="flex-1 px-3 py-1.5 text-xs font-mono rounded-md border border-canvas-border bg-canvas-bg text-canvas-text placeholder:text-canvas-solid focus:outline-none"
+          className="flex-1 h-8 text-xs md:text-xs font-mono"
         />
         {filter && (
           <span className="text-xs text-canvas-solid whitespace-nowrap">
@@ -2328,6 +2328,8 @@ const Shell = () => {
         setHubConnectionError(trustError);
         return;
       }
+      // Survives hub disconnects (unlike hubUrl) so the picker offers it after a restart.
+      storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
       if (trust === 'granted') {
         storageRepository.regenerateSessionId();
         storageRepository.updatePreference({ key: 'hubUrl', value: origin });
@@ -3773,69 +3775,81 @@ const Shell = () => {
             background: 'var(--color-canvas-bg-active)',
           }}
         >
-          {/* Tabs */}
-          {TAB_DEFS.map((tab) => {
-            const active = activeTab === tab.id;
-            const showDot =
-              !active &&
-              ((tab.id === 'game' && unreadGame) ||
-                (tab.id === 'wallet' && walletAlert) ||
-                (tab.id === 'hub' && hubAlert));
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) => {
+              const tab = TAB_DEFS.find((def) => def.id === value);
+              if (tab) handleTabChange(tab.id);
+            }}
+            className="contents"
+          >
+            <TabsList className="items-end gap-1 rounded-none bg-transparent p-0 text-inherit group-data-[orientation=horizontal]/tabs:h-auto">
+              {TAB_DEFS.map((tab) => {
+                const active = activeTab === tab.id;
+                const showDot =
+                  !active &&
+                  ((tab.id === 'game' && unreadGame) ||
+                    (tab.id === 'wallet' && walletAlert) ||
+                    (tab.id === 'hub' && hubAlert));
 
-            let pipeConnected: boolean | null = null;
-            switch (tab.id) {
-              case 'wallet':
-                pipeConnected = walletConnected;
-                break;
-              case 'hub':
-                pipeConnected = hubLiveness === 'connected';
-                break;
-              case 'game':
-                pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
-                break;
-            }
-            const walletDisconnected = tab.id === 'wallet' && !walletConnected;
-            const pipeLabel =
-              pipeConnected === null
-                ? tab.label
-                : `${tab.label}, ${pipeConnected ? 'connected' : 'disconnected'}`;
+                let pipeConnected: boolean | null = null;
+                switch (tab.id) {
+                  case 'wallet':
+                    pipeConnected = walletConnected;
+                    break;
+                  case 'hub':
+                    pipeConnected = hubLiveness === 'connected';
+                    break;
+                  case 'game':
+                    pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
+                    break;
+                }
+                const walletDisconnected = tab.id === 'wallet' && !walletConnected;
+                const pipeLabel =
+                  pipeConnected === null
+                    ? tab.label
+                    : `${tab.label}, ${pipeConnected ? 'connected' : 'disconnected'}`;
 
-            return (
-              <button
-                key={tab.id}
-                onClick={() => handleTabChange(tab.id)}
-                aria-label={pipeLabel}
-                style={
-                  active
-                    ? {
-                        background: 'var(--canvas-bg-subtle)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.35rem',
-                      }
-                    : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
-                }
-                className={
-                  'relative px-3 py-1.5 text-sm font-medium rounded-t-md transition-colors ' +
-                  (active
-                    ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
-                    : 'text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
-                }
-              >
-                {pipeConnected !== null && (
-                  <span aria-hidden="true" className="text-base leading-none">
-                    {pipeConnected ? TAB_PIPE_CONNECTED : TAB_PIPE_DISCONNECTED}
-                  </span>
-                )}
-                <span className={walletDisconnected ? 'text-alert-text' : undefined}>
-                  {tab.label}
-                </span>
-                {showDot && (
-                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
-                )}
-              </button>
-            );
-          })}
+                return (
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                    id={`tab-${tab.id}`}
+                    aria-controls={`panel-${tab.id}`}
+                    aria-label={pipeLabel}
+                    style={
+                      active
+                        ? {
+                            background: 'var(--canvas-bg-subtle)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.35rem',
+                          }
+                        : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
+                    }
+                    className={
+                      'relative h-auto flex-none px-3 py-1.5 text-sm font-medium rounded-t-md rounded-b-none transition-colors group-data-[variant=default]/tabs-list:data-[state=active]:shadow-none ' +
+                      (active
+                        ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
+                        : 'text-canvas-text dark:text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')
+                    }
+                  >
+                    {pipeConnected !== null && (
+                      <span aria-hidden="true" className="text-base leading-none">
+                        {pipeConnected ? TAB_PIPE_CONNECTED : TAB_PIPE_DISCONNECTED}
+                      </span>
+                    )}
+                    <span className={walletDisconnected ? 'text-alert-text' : undefined}>
+                      {tab.label}
+                    </span>
+                    {showDot && (
+                      <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-alert-text" />
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </Tabs>
 
           {/* Right side: Branding + Theme */}
           <div
@@ -3872,6 +3886,9 @@ const Shell = () => {
         >
           {/* Wallet tab */}
           <div
+            role="tabpanel"
+            id="panel-wallet"
+            aria-labelledby="tab-wallet"
             style={{
               position: 'absolute',
               inset: 0,
@@ -3885,8 +3902,7 @@ const Shell = () => {
             <WalletRecoveryNotice />
             {showTransactionPublishControl && (
               <Button
-                variant={transactionPublishNerfed ? 'solid' : 'outline'}
-                color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                variant={transactionPublishNerfed ? 'default' : 'outline'}
                 size="sm"
                 className="absolute right-4 top-4"
                 onClick={toggleTransactionPublishNerf}
@@ -3918,27 +3934,29 @@ const Shell = () => {
                 <div className="w-full max-w-xs text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>
-                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                      <button
-                        onClick={() => handleFeeUnitChange('mojo')}
-                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      aria-label="Fee unit"
+                      value={feeUnit}
+                      onValueChange={(unit) => {
+                        if (unit === 'mojo' || unit === 'xch') handleFeeUnitChange(unit);
+                      }}
+                    >
+                      <ToggleGroupItem value="mojo" className="h-6 px-2 text-xs">
                         {currency.mojo}
-                      </button>
-                      <button
-                        onClick={() => handleFeeUnitChange('xch')}
-                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="xch" className="h-6 px-2 text-xs">
                         {currency.xch}
-                      </button>
-                    </div>
+                      </ToggleGroupItem>
+                    </ToggleGroup>
                   </div>
                   {feeEditing ? (
                     <>
                       <div className="flex gap-2">
-                        <input
+                        <Input
                           ref={feeInputRef}
-                          type="text"
                           inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
                           value={feeInput}
                           onChange={(e) => setFeeInput(e.target.value)}
@@ -3946,7 +3964,7 @@ const Shell = () => {
                             if (e.key === 'Enter' && feeInputValid) commitFee();
                             if (e.key === 'Escape') cancelEditFee();
                           }}
-                          className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                          className="flex-1"
                         />
                         <button
                           onClick={commitFee}
@@ -3975,9 +3993,7 @@ const Shell = () => {
                     </button>
                   )}
                 </div>
-                <Button variant="solid" onClick={handleDisconnectWallet}>
-                  Disconnect
-                </Button>
+                <Button onClick={handleDisconnectWallet}>Disconnect</Button>
               </div>
             ) : connectionSetup && !connectionSetup.skipQr ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -4016,27 +4032,29 @@ const Shell = () => {
                 <div className="w-full max-w-sm text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>
-                    <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                      <button
-                        onClick={() => handleFeeUnitChange('mojo')}
-                        className={`px-2 py-0.5 transition-colors ${feeUnit === 'mojo' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                    <ToggleGroup
+                      type="single"
+                      variant="outline"
+                      size="sm"
+                      aria-label="Fee unit"
+                      value={feeUnit}
+                      onValueChange={(unit) => {
+                        if (unit === 'mojo' || unit === 'xch') handleFeeUnitChange(unit);
+                      }}
+                    >
+                      <ToggleGroupItem value="mojo" className="h-6 px-2 text-xs">
                         {currency.mojo}
-                      </button>
-                      <button
-                        onClick={() => handleFeeUnitChange('xch')}
-                        className={`px-2 py-0.5 transition-colors border-l border-canvas-border ${feeUnit === 'xch' ? 'bg-canvas-bg-active font-semibold' : 'hover:bg-canvas-bg-hover'}`}
-                      >
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value="xch" className="h-6 px-2 text-xs">
                         {currency.xch}
-                      </button>
-                    </div>
+                      </ToggleGroupItem>
+                    </ToggleGroup>
                   </div>
                   {feeEditing ? (
                     <>
                       <div className="flex gap-2">
-                        <input
+                        <Input
                           ref={feeInputRef}
-                          type="text"
                           inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
                           value={feeInput}
                           onChange={(e) => setFeeInput(e.target.value)}
@@ -4044,7 +4062,7 @@ const Shell = () => {
                             if (e.key === 'Enter' && feeInputValid) commitFee();
                             if (e.key === 'Escape') cancelEditFee();
                           }}
-                          className="flex-1 px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none"
+                          className="flex-1"
                         />
                         <button
                           onClick={commitFee}
@@ -4076,17 +4094,13 @@ const Shell = () => {
                 <p className="text-sm text-canvas-text animate-pulse">
                   Waiting for wallet to connect…
                 </p>
-                <Button variant="solid" onClick={handleCancelConnect}>
-                  Cancel
-                </Button>
+                <Button onClick={handleCancelConnect}>Cancel</Button>
               </div>
             ) : connecting ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
                 <p className="text-sm text-canvas-text animate-pulse">Connecting…</p>
-                <Button variant="solid" onClick={handleCancelConnect}>
-                  Cancel
-                </Button>
+                <Button onClick={handleCancelConnect}>Cancel</Button>
               </div>
             ) : !walletConnected && activeBlockchainRef.current ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -4095,33 +4109,31 @@ const Shell = () => {
                   <span className="text-lg font-semibold text-alert-text">Disconnected</span>
                 </div>
                 <p className="text-sm text-canvas-text">Connection was lost</p>
-                <Button variant="solid" onClick={handleReconnect}>
-                  Reconnect
-                </Button>
+                <Button onClick={handleReconnect}>Reconnect</Button>
               </div>
             ) : (
               <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
                 <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
                 <div className="w-full max-w-sm flex flex-col items-center gap-1">
                   <span className="text-sm text-canvas-text">Network</span>
-                  <div className="flex rounded-md border border-canvas-border overflow-hidden text-xs">
-                    <button
-                      type="button"
-                      disabled={networkLocked}
-                      onClick={() => handleNetworkChange('mainnet')}
-                      className={`px-3 py-1 transition-colors ${network === 'mainnet' ? 'bg-canvas-bg-active font-semibold' : networkLocked ? '' : 'hover:bg-canvas-bg-hover'} ${networkLocked ? 'opacity-40 cursor-default' : ''}`}
-                    >
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    aria-label="Network"
+                    disabled={networkLocked}
+                    value={network}
+                    onValueChange={(next) => {
+                      if (next === 'mainnet' || next === 'testnet') handleNetworkChange(next);
+                    }}
+                  >
+                    <ToggleGroupItem value="mainnet" className="h-7 px-3 text-xs">
                       Mainnet
-                    </button>
-                    <button
-                      type="button"
-                      disabled={networkLocked}
-                      onClick={() => handleNetworkChange('testnet')}
-                      className={`px-3 py-1 transition-colors border-l border-canvas-border ${network === 'testnet' ? 'bg-canvas-bg-active font-semibold' : networkLocked ? '' : 'hover:bg-canvas-bg-hover'} ${networkLocked ? 'opacity-40 cursor-default' : ''}`}
-                    >
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="testnet" className="h-7 px-3 text-xs">
                       Testnet
-                    </button>
-                  </div>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                   {networkLocked && (
                     <p className="text-xs text-canvas-text text-center">
                       Network is locked for this session
@@ -4129,36 +4141,36 @@ const Shell = () => {
                   )}
                 </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
-                  {!isElectronDistribution() && (
-                    <>
-                      <Button
-                        variant="solid"
-                        fullWidth
-                        onClick={() => handleConnect('simulator', false, true)}
-                      >
-                        Continue with Simulator
-                      </Button>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 border-t border-canvas-border" />
-                        <span className="text-canvas-text font-medium text-sm">OR</span>
-                        <div className="flex-1 border-t border-canvas-border" />
-                      </div>
-                    </>
-                  )}
                   <Button
-                    variant="solid"
-                    fullWidth
+                    variant="outline"
+                    size="lg"
+                    className="w-full h-12 text-base"
+                    onClick={() => handleConnect('cloud', false, true)}
+                  >
+                    <img src="images/cloud-wallet.svg" alt="" className="block size-6" />
+                    Continue with Cloud Wallet
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 border-t border-canvas-border" />
+                    <span className="text-canvas-text font-medium text-sm">OR</span>
+                    <div className="flex-1 border-t border-canvas-border" />
+                  </div>
+                  <Button
+                    className="w-full"
+                    variant="outline"
                     onClick={() => handleConnect('walletconnect', false, true)}
                   >
                     Link Wallet
                   </Button>
-                  <Button
-                    variant="solid"
-                    fullWidth
-                    onClick={() => handleConnect('cloud', false, true)}
-                  >
-                    Cloud Wallet
-                  </Button>
+                  {!isElectronDistribution() && (
+                    <Button
+                      className="w-full"
+                      variant="outline"
+                      onClick={() => handleConnect('simulator', false, true)}
+                    >
+                      Continue with Simulator
+                    </Button>
+                  )}
                 </div>
                 {connectError ? (
                   <p className="w-full max-w-sm text-sm text-alert-text text-center break-words">
@@ -4171,6 +4183,9 @@ const Shell = () => {
 
           {/* Hub tab */}
           <div
+            role="tabpanel"
+            id="panel-hub"
+            aria-labelledby="tab-hub"
             style={{
               position: 'absolute',
               inset: 0,
@@ -4211,12 +4226,19 @@ const Shell = () => {
                 <HubIframe iframeUrl={iframeUrl} />
               </>
             ) : (
-              <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
+              <HubPicker
+                onConnect={requestHubConnect}
+                connectionError={hubConnectionError}
+                defaultHubUrl={storageRepository.query('lastHubUrl')}
+              />
             )}
           </div>
 
           {/* Game Session tab */}
           <div
+            role="tabpanel"
+            id="panel-game"
+            aria-labelledby="tab-game"
             style={{
               position: 'absolute',
               inset: 0,
@@ -4341,6 +4363,9 @@ const Shell = () => {
 
           {/* History tab */}
           <div
+            role="tabpanel"
+            id="panel-history"
+            aria-labelledby="tab-history"
             style={{
               position: 'absolute',
               inset: 0,
@@ -4353,6 +4378,9 @@ const Shell = () => {
 
           {/* Log tab */}
           <div
+            role="tabpanel"
+            id="panel-log"
+            aria-labelledby="tab-log"
             style={{
               position: 'absolute',
               inset: 0,

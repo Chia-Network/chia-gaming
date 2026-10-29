@@ -215,6 +215,19 @@ describe('flat state', () => {
     });
   });
 
+  it('keeps lastHubUrl after the hub disconnects and the app restarts', async () => {
+    await storageRepository.updatePreference({ key: 'lastHubUrl', value: 'https://my-hub.test' });
+    await storageRepository.updatePreference({ key: 'hubUrl', value: 'https://my-hub.test' });
+    await storageRepository.updatePreference({ key: 'hubUrl', value: undefined });
+    await storageRepository.checkpointDomainMutations();
+
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+
+    expect(storageRepository.query('lastHubUrl')).toBe('https://my-hub.test');
+    expect(storageRepository.query('hubUrl')).toBeUndefined();
+  });
+
   it('aggregate clear keeps logs, connection prefs, and pre-cradle handshake', async () => {
     markSavedSession();
     saveLiveFields({

@@ -14,25 +14,22 @@
     "test": "pnpm run generate:games && pnpm exec tsc -p tsconfig.json --noEmit && pnpm exec jest --testPathIgnorePatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit && node -e \"console.error('=== WASM/Jest load_wasm starting ===')\" && pnpm exec jest --runInBand --testPathPatterns=load_wasm --silent=false --verbose --useStderr --ci --forceExit"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "1.1.23",
-    "@radix-ui/react-scroll-area": "1.4.0",
-    "@radix-ui/react-separator": "1.1.15",
-    "@radix-ui/react-slot": "1.5.0",
-    "@radix-ui/react-tooltip": "1.4.1",
+    "@base-ui/react": "1.9.0",
     "@walletconnect/sign-client": "2.23.10",
     "@walletconnect/types": "2.23.10",
     "bech32": "^2.0.0",
     "chia-gaming-bencodex": "workspace:*",
     "chia-gaming-protocol-constants": "workspace:*",
     "class-variance-authority": "0.7.1",
-    "clsx": "2.1.1",
     "clvm-lib": "1.0.1",
+    "cn": "0.5.0",
     "framer-motion": "14.4.0",
+    "lucide-react": "1.61.0",
     "qrcode": "1.5.4",
+    "radix-ui": "1.8.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "rxjs": "7.8.2",
-    "tailwind-merge": "3.7.0"
+    "rxjs": "7.8.2"
   },
   "devDependencies": {
     "@tailwindcss/cli": "4.3.3",
