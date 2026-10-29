@@ -1,3 +1,4 @@
+import { configureSessionExecution } from './session_execution.harness';
 import 'fake-indexeddb/auto';
 import { createApplication, type Application } from '../application/Application';
 import * as blobSingleton from '../session/sessionHost';
@@ -18,9 +19,9 @@ import { markSavedSession, releaseLeaseIfOwner } from '../session/saveCoordinati
 import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset';
 import type { SessionController } from '../session/SessionController';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
-import { deactivate } from '../wallet/activeBlockchain';
+import { WalletConnection } from '../wallet/WalletConnection';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -129,7 +130,15 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
+  const wallets = new Set<WalletConnection>();
+  const startWallet = WalletConnection.prototype.start;
   beforeEach(async () => {
+    jest.spyOn(WalletConnection.prototype, 'start').mockImplementation(function (
+      this: WalletConnection,
+    ) {
+      wallets.add(this);
+      return startWallet.call(this);
+    });
     globalThis.requestAnimationFrame = () => 0;
     globalThis.cancelAnimationFrame = () => {};
     Object.defineProperty(globalThis, 'localStorage', {
@@ -148,7 +157,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       .spyOn(blobSingleton, 'getOrCreateSessionController')
       .mockImplementation((_wallet, peer) => {
         mockPeer = peer;
-        return { sessionController: mockSession.controller };
+        return mockSession.controller;
       });
     mockHub = null;
     mockSendToPeer.mockClear();
@@ -195,6 +204,8 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       await storageRepository.inspect();
       renderer?.unmount();
       stop?.();
+      for (const wallet of wallets) wallet.stopLocalActivity();
+      wallets.clear();
     });
     renderer = null;
     await storageRepository.inspect();
@@ -262,7 +273,6 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     const controller = {
       getCoinsOfInterest: () => [],
       isChannelReady: () => false,
-      commitSessionRuntime: jest.fn(),
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: () => transport.prepareCommit(),
       completeReliableCommit: (commit, success) => {
@@ -270,7 +280,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
         transport.completeCommit(commit, success);
       },
     } as unknown as SessionController;
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       createSessionMachineState(channelModel('OurWalletMakingOfferAcceptance')),
       {
         controller,
@@ -334,13 +344,13 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       });
       transport.acceptSession({ proposer_amount: '100', responder_amount: '100' }, true);
       expect(mockSendToPeer).not.toHaveBeenCalled();
-      await runtime.persist();
+      await runtime.flush();
       expect(order.slice(0, 3)).toEqual(['saved', 'projection', 'release']);
       expect(mockSendToPeer).toHaveBeenCalledTimes(1);
       expect(mockSendToPeer.mock.calls[0][0]).toBe('22'.repeat(32));
     } finally {
       transport.detachCommitCoordinator(runtime);
-      runtime.retire();
+      runtime.retireExecution();
     }
   }
 
@@ -477,7 +487,6 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await waitForText(renderer!, 'Connected');
     expect(mockGameProps!.peerConn).toBe(peer);
     expect(mockGameProps!.params).toEqual(params);
-    deactivate();
   });
 
   it('updates pending consent when only wallet readiness changes', async () => {
@@ -539,7 +548,6 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     expect(accept().props.disabled).toBe(false);
     act(() => readinessChange!(false));
     expect(accept().props.disabled).toBe(true);
-    deactivate();
   });
 
   it('preserves a sent offer when delivery fails before the UI projects OfferSent', async () => {

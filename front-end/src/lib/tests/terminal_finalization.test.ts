@@ -1,3 +1,4 @@
+import { configureSessionExecution } from './session_execution.harness';
 import 'fake-indexeddb/auto';
 import { useTestSessionPresentation } from './session_frontend.harness';
 
@@ -22,7 +23,7 @@ import { decodeDurableApplicationState } from '../session/persistence';
 import { hasSavedSessionMarker, markSavedSession } from '../session/saveCoordination';
 import type { SessionController } from '../session/SessionController';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
 import {
   finalizeTerminalSession,
@@ -336,7 +337,7 @@ it('keeps terminal root authoritative when fee cancellation completes during its
   }));
   await storageRepository.write(seeded);
 
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -373,7 +374,7 @@ it('keeps terminal root authoritative when fee cancellation completes during its
   const finalization = finalizeTerminalSession(finalizationArgs(controller), {
     persistTerminal: persistTerminalSnapshot,
     updateMarker: markSavedSession,
-    teardown: (terminalController) => terminalController.cleanupAfterTerminalFlush(),
+    teardown: (terminalController) => terminalController.cleanup(),
   });
   await reachedTerminalWrite;
   finishCancellation();
@@ -433,7 +434,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
 
 it('keeps the blockchain attached until finalization finishes before terminal presentation', async () => {
   const { controller, blockchain } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -483,7 +484,7 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
       await writeGate;
     },
     updateMarker: () => {},
-    teardown: (finished) => finished.cleanupAfterTerminalFlush(),
+    teardown: (finished) => finished.cleanup(),
   });
   try {
     await enteredWrite;
@@ -508,7 +509,7 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
 
 it('seals the concrete runtime before a microtask queued during snapshot can mutate it', async () => {
   const { controller } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -533,7 +534,7 @@ it('seals the concrete runtime before a microtask queued during snapshot can mut
 
     expect(first.model).toEqual(model);
     expect(runtime.getState().coordination.firstGameAccepted).toBe(false);
-    expect(controller.getCommittedSessionRuntime()).toBeNull();
+    expect(controller.executionActive).toBe(false);
   } finally {
     controller.cleanup();
   }
@@ -541,7 +542,7 @@ it('seals the concrete runtime before a microtask queued during snapshot can mut
 
 it('rejects a remounted runtime while the sealed terminal model is being written', async () => {
   const { controller } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -579,7 +580,7 @@ it('rejects a remounted runtime while the sealed terminal model is being written
       status: { ...model.channel.status, ourBalance: '999' },
     },
   });
-  const remountedRuntime = new SessionMachineRuntime(createSessionMachineState(remountedModel), {
+  const remountedRuntime = configureSessionExecution(createSessionMachineState(remountedModel), {
     controller,
     iStarted: true,
     restoring: false,
@@ -592,7 +593,7 @@ it('rejects a remounted runtime while the sealed terminal model is being written
   remountedRuntime.activate();
   remountedRuntime.dispatch({ type: 'set-first-game-accepted', accepted: true });
 
-  expect(controller.getCommittedSessionRuntime()).toBeNull();
+  expect(controller.executionActive).toBe(false);
   expect(remountedRuntime.getState().coordination.firstGameAccepted).toBe(false);
   expect(persistTerminal).toHaveBeenCalledWith(
     expect.objectContaining({

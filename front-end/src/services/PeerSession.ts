@@ -57,13 +57,6 @@ export type ReliableFrame =
   | { tag: 0x02; sessionId: string; msgno: number }
   | { tag: 0x03; sessionId: string };
 
-export type MessageHandler = {
-  handler: (msgno: number, msg: Uint8Array) => void;
-  ackHandler: (ack: number) => void;
-  keepaliveHandler: () => void;
-  failureHandler?: (reason: string) => void;
-};
-
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
   mode?: PeerReceiveMode;
@@ -402,8 +395,6 @@ export class PeerSession implements PeerConnectionResult {
   private hubConn: PeerCarrier;
   private _liveness: PeerLiveness = null;
   private _lastActivity: number = 0;
-  private messageHandler: MessageHandler | null = null;
-  private messageConsumer: ReliableMessageConsumer | null = null;
   private failureReason: string | null = null;
   private destroyed = false;
   private livenessListeners = new Set<(liveness: PeerLiveness) => void>();
@@ -522,32 +513,6 @@ export class PeerSession implements PeerConnectionResult {
     this.setLiveness(null);
   }
 
-  // --- Message handler registration ---
-
-  registerMessageHandler(mh: MessageHandler): void {
-    this.messageHandler = mh;
-    if (this.failureReason) {
-      mh.failureHandler?.(this.failureReason);
-      return;
-    }
-    const consumer: ReliableMessageConsumer = {
-      isReady: () => true,
-      deliver: (msgno, body) => mh.handler(Number(msgno), body),
-      persist: () => Promise.resolve(),
-      failure: (reason) => mh.failureHandler?.(reason),
-      acknowledged: (ack) => mh.ackHandler(Number(ack)),
-      keepalive: mh.keepaliveHandler,
-    };
-    this.messageConsumer = consumer;
-    this.reliableTransport.attachConsumer(consumer);
-  }
-
-  clearMessageHandler(): void {
-    if (this.messageConsumer) this.reliableTransport.detachConsumer(this.messageConsumer);
-    this.messageConsumer = null;
-    this.messageHandler = null;
-  }
-
   private failBufferedPeer(reason: string): void {
     if (this.failureReason) return;
     this.failureReason = reason;
@@ -617,7 +582,6 @@ export class PeerSession implements PeerConnectionResult {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.clearMessageHandler();
     this.reliableTransport.clearRuntime();
     this.livenessListeners.clear();
     log(`[PeerSession] destroyed session=${this.sessionId} peer=${this.peerId}`);

@@ -1,3 +1,4 @@
+import { observeWasmEvents } from './session_execution.harness';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { decodePersistedGameState } from '../gameRegistry';
 import { SESSION_DB_NAME } from '../session/indexedDb';
@@ -65,14 +66,14 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const mover = cradles[1].blob!;
     let proposerActiveIds: string[] = [];
     let moverActiveIds: string[] = [];
-    const proposerSubscription = proposer.getObservable().subscribe((event) => {
+    const proposerSubscription = observeWasmEvents(proposer).subscribe((event) => {
       if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
         proposerActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
           String(member.id),
         );
       }
     });
-    const moverSubscription = mover.getObservable().subscribe((event) => {
+    const moverSubscription = observeWasmEvents(mover).subscribe((event) => {
       if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
         moverActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
           String(member.id),

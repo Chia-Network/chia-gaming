@@ -1,3 +1,5 @@
+import { observeWasmEvents } from './session_execution.harness';
+import { configureSessionExecution } from './session_execution.harness';
 import type { KrunkGameState } from '@games/krunk/ui/serialize';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import { Program } from 'clvm-lib';
@@ -7,7 +9,7 @@ import { channelStatusModelFromPayload, createSessionModel } from '../session/mo
 import { decodeDurableApplicationState } from '../session/persistence';
 import { SessionController } from '../session/SessionController';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
 import type { GameTerminalModel, HandProposal } from '../session/types';
 import { installCapturedState } from './checkpoint_capture.harness';
@@ -51,7 +53,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     Array<{ currentHandIds: string[]; payloadMemberCount: number; activeIds: string[] }>
   > = [[], []];
   const errors: unknown[] = [];
-  const runtimes: SessionMachineRuntime[] = [];
+  const runtimes: SessionController[] = [];
   const settlementTraces: KrunkSettlementTrace[][] = [[], []];
   const pendingSettlementIds: string[][] = [[], []];
   const acceptedGroups: ProposalAcceptedGroupPayload[][] = [[], []];
@@ -85,7 +87,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   for (const [index, controller] of controllers.entries()) {
     const status = controller.lastChannelStatus;
     assert.ok(status, `krunk completion player ${index}: missing active channel status`);
-    cradles[index].retireRuntime();
     const persist = async () => {
       const runtime = runtimes[index];
       assert.ok(
@@ -111,7 +112,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       if (snapshot) await storageRepository.write(snapshot);
       decodeDurableApplicationState((await storageRepository.readCurrentState())!);
     };
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       createSessionMachineState(
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
@@ -133,7 +134,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     cradles[index].bindRuntime(runtime);
     runtimes.push(runtime);
     addActiveSubscription(
-      controller.getObservable().subscribe((event) => {
+      observeWasmEvents(controller).subscribe((event) => {
         if (event.type === 'notification') {
           if ('ProposalAcceptedGroup' in event.data && event.data.ProposalAcceptedGroup) {
             acceptedGroups[index].push(event.data.ProposalAcceptedGroup);

@@ -1,13 +1,10 @@
 import { Component, createElement, StrictMode, type ReactNode } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Subject } from 'rxjs';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { useGameSession } from '../../hooks/useGameSession';
 import type { GameSessionParams, WasmEvent } from '../../types/ChiaGaming';
-import type { SessionController } from '../session/SessionController';
 import { SessionController as ConcreteSessionController } from '../session/SessionController';
-import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { createOwnedSessionRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
 import { makeMockCradle, mockWasmConnection } from './message_protocol.harness';
 import { useTestSessionPresentation } from './session_frontend.harness';
@@ -28,37 +25,13 @@ class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boo
 
 describe('useGameSession committed runtime', () => {
   function setup() {
-    let runtime: SessionMachineRuntime | null = null;
-    const commitSessionRuntime = jest.fn((nextRuntime: SessionMachineRuntime) => {
-      if (runtime && runtime !== nextRuntime) runtime.retire();
-      runtime = nextRuntime;
+    const controller = new ConcreteSessionController(null, 'test', 100n, 100n, {
+      sendMessage: () => true,
+      sendAck: () => true,
     });
-    const events = new Subject<WasmEvent>();
-    const controller = {
-      cleanShutdownCalled: false,
-      getCoinsOfInterest: () => [],
-      perGameAmount: 10n,
-      iStarted: false,
-      wasmNotificationHistory: [],
-      diagnosticLog: [],
-      getCommittedSessionRuntime: () => runtime,
-      commitSessionRuntime,
-      getRestoreStatus: () => 'idle',
-      getRestoreError: () => null,
-      reportRuntimeError: jest.fn(),
-      flushDeferredWork: jest.fn(),
-      getWasmFields: () => null,
-      prepareReliableCommit: jest.fn(() => ({
-        generation: 0,
-        outboundCount: 0,
-        ackCount: 0,
-        remoteNumber: 0n,
-      })),
-      completeReliableCommit: jest.fn(),
-      getObservable: () => events,
-      onRestoreStatusChange: () => () => {},
-      isChannelReady: () => false,
-    } as unknown as SessionController;
+    controller.perGameAmount = 10n;
+    const events = { next: (event: WasmEvent) => controller.receiveEvent(event) };
+    const activate = jest.spyOn(controller, 'activate');
     const params = {
       iStarted: false,
       myContribution: 100n,
@@ -66,14 +39,14 @@ describe('useGameSession committed runtime', () => {
       perGameAmount: 10n,
       pairingToken: 'pairing',
     } as GameSessionParams;
-    const frontend = createOwnedSessionRuntime(controller, false).frontend;
+    const frontend = controller.initializeExecution(false);
     return {
       controller,
       frontend,
       params,
-      getRuntime: () => runtime,
+      getRuntime: () => controller,
       events,
-      commitSessionRuntime,
+      activate,
     };
   }
 
@@ -113,7 +86,7 @@ describe('useGameSession committed runtime', () => {
       perGameAmount: 10n,
       pairingToken: 'pairing',
     } as GameSessionParams;
-    const frontend = controller.initializeFrontend(false);
+    const frontend = controller.initializeExecution(false);
     function Harness() {
       useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
@@ -123,7 +96,7 @@ describe('useGameSession committed runtime', () => {
     act(() => {
       renderer = create(createElement(Harness));
     });
-    expect(controller.getCommittedSessionRuntime()).not.toBeNull();
+    expect(controller.executionActive).toBe(true);
     expect(attachRuntime).not.toHaveBeenCalled();
 
     await storageRepository.updatePreference({ key: 'alias', value: 'before-cradle' });
@@ -142,7 +115,7 @@ describe('useGameSession committed runtime', () => {
   });
 
   it('keeps the same runtime through Strict Effects setup-cleanup-setup replay', () => {
-    const { frontend, params, getRuntime, commitSessionRuntime } = setup();
+    const { frontend, params, getRuntime, activate } = setup();
     function Harness() {
       useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
@@ -154,7 +127,7 @@ describe('useGameSession committed runtime', () => {
     });
     const runtime = getRuntime();
     expect(runtime).not.toBeNull();
-    expect(commitSessionRuntime).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledTimes(1);
 
     act(() => renderer?.unmount());
     expect(getRuntime()).toBe(runtime);

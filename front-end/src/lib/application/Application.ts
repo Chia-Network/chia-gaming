@@ -651,7 +651,6 @@ export function createApplication() {
     syncPeerLiveness();
     return true;
   };
-  const registerMessageHandler = () => bindPeerMessageHandler(peerSession);
   const isAvailableForNewSessionPrompt = () => {
     return (
       checkAvailableForNewSessionPrompt(
@@ -1477,15 +1476,17 @@ export function createApplication() {
       connectToHub(origin, { resetSession: true });
     }
   };
-  const handleConnect = (type: ShellBlockchainType, silent = false, fresh = false) =>
-    walletOwner.connect(type, silent, fresh);
+  const handleConnect = async (type: ShellBlockchainType, silent = false, fresh = false) => {
+    if (await walletOwner.connect(type, silent, fresh)) {
+      if (!silent) setActiveTab('hub');
+    }
+  };
   walletEvents = (event) => {
     switch (event.type) {
       case 'view':
         setWalletView(event.view);
         break;
       case 'connected':
-        if (event.switchToHub) setActiveTab('hub');
         hubConn?.setBusy(hubPresenceNow(sessions.state.sessionPhase, true));
         break;
       case 'connection':
@@ -2272,7 +2273,6 @@ export function createApplication() {
     const controller = getOrCreateSessionController(
       wallet,
       peer,
-      registerMessageHandler,
       uniqueId,
       params.myContribution,
       params.theirContribution,
@@ -2283,7 +2283,7 @@ export function createApplication() {
       () => storageRepository.query('defaultFee'),
       Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
       Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
-    ).sessionController;
+    );
     if (params.myAlias) controller.myAlias = params.myAlias;
     if (params.opponentAlias) controller.opponentAlias = params.opponentAlias;
     if (frontend !== controller.frontend) {
@@ -2431,9 +2431,11 @@ export function createApplication() {
       case 'close-tab':
         return handleCloseTab();
       case 'wallet-connect':
-        return walletOwner.connect(intent.wallet, false, intent.fresh ?? false);
+        return handleConnect(intent.wallet, false, intent.fresh ?? false);
       case 'wallet-finalize':
-        return walletOwner.finalize(intent.values);
+        return walletOwner.finalize(intent.values).then((connected) => {
+          if (connected) setActiveTab('hub');
+        });
       case 'wallet-cancel':
         return walletOwner.cancel();
       case 'wallet-disconnect':

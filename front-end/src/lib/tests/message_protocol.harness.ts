@@ -18,7 +18,7 @@ import { SessionController } from '../session/SessionController';
 import { storageRepository } from '../session/storageRepository';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
-import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import { activateTestExecution } from './session_machine.harness';
 import { liveSave } from './session_save_envelope.fixtures';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
@@ -257,14 +257,13 @@ export function setTestPersistence(
 }
 
 /**
- * Protocol unit tests intentionally isolate SessionController from React. Give
- * them an explicit coordinator instead of reviving the removed production
- * controller-owned persistence fallback.
+ * Protocol unit tests activate the real execution owner with a controlled
+ * checkpoint writer. No renderer or second runtime owns these tests.
  */
 export function attachTestCommitCoordinator(blob: SessionController): void {
   if (coordinatedControllers.has(blob)) return;
   coordinatedControllers.add(blob);
-  createCoordinatorOnlySessionMachineRuntime(blob, () => testPersistence.get(blob)?.());
+  activateTestExecution(blob, () => testPersistence.get(blob)?.());
 }
 
 /**

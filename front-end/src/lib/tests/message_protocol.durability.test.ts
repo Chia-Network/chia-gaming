@@ -1,3 +1,4 @@
+import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
@@ -72,7 +73,7 @@ describe('WASM command persistence', () => {
     blob.getPeerProtocol().accept_session(acceptedTerms, true);
     const outbound = blob.unackedMessages[0].msg;
     await expect(blob.flushPendingSave()).rejects.toThrow(
-      'Active-session persistence requires SessionMachineRuntime coordination',
+      'Active-session persistence requires session execution coordination',
     );
     expect(save).not.toHaveBeenCalled();
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
@@ -127,10 +128,10 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     const warnings: string[] = [];
     const retry = jest.fn();
-    const unsubscribeRetry = blob.getCommittedSessionRuntime()!.frontend.subscribe((event) => {
+    const unsubscribeRetry = blob.frontend.subscribe((event) => {
       if (event.type === 'terminal-retry') retry();
     });
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
 
@@ -153,7 +154,7 @@ describe('durability failures', () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     const warnings: string[] = [];
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
     let fail = true;
@@ -194,7 +195,7 @@ describe('durability failures', () => {
   it('keeps valid WASM state and releases reliable effects once across IndexedDB failure', async () => {
     const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     const warnings: string[] = [];
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
     let fail = true;
@@ -436,8 +437,15 @@ describe('restore ordering', () => {
     blob.kickSystem(2);
     blob.deliverMessage(1n, enc('already-processed'));
     await blob.flushPendingWork();
-    const statuses: string[] = [];
-    const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
+    const statuses: string[] = [blob.getRestoreStatus()];
+    const setStatus = (blob as any).setRestoreStatus.bind(blob);
+    const statusSpy = jest
+      .spyOn(blob as any, 'setRestoreStatus')
+      .mockImplementation((...args: any[]) => {
+        setStatus(...args);
+        statuses.push(blob.getRestoreStatus());
+      });
+    const unsubscribe = () => statusSpy.mockRestore();
 
     const newestDiagnostic = `newest:${'界'.repeat(60_000)}`;
     const save = liveSave({
@@ -491,7 +499,7 @@ describe('restore ordering', () => {
     setActiveBlob(blob);
 
     const errors: string[] = [];
-    const sub = blob.getObservable().subscribe({
+    const sub = observeWasmEvents(blob).subscribe({
       next: (evt) => {
         if (evt.type === 'error') errors.push(evt.error);
       },
@@ -521,7 +529,7 @@ describe('restore ordering', () => {
     setActiveBlob(blob);
 
     const errors: string[] = [];
-    const sub = blob.getObservable().subscribe({
+    const sub = observeWasmEvents(blob).subscribe({
       next: (evt) => {
         if (evt.type === 'error') errors.push(evt.error);
       },
@@ -711,7 +719,7 @@ describe('abandon calls Rust through cradle', () => {
       }),
     } as unknown as ChiaGame;
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     blob.loadWasm(mockWasmConnection);

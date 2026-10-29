@@ -301,7 +301,7 @@ state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`) and
 any pending hand obligations have finished:
 
 1. The session is done.
-2. Application consumes the runtime's ordered session batch and resolved phase.
+2. Application consumes the session owner's ordered batch and resolved phase.
 3. Live protocol interaction stops: the WASM cradle is no longer used for new
    game actions, the `PeerSession` is destroyed (making it inert), keepalives
    stop, `sessionStarted` is reset, and the finished session is treated as a
@@ -576,7 +576,7 @@ The hub does not create a session. It can only advise and relay:
   for a coherent snapshot, a newer fee-bearing successor may replace the base
   immediately, and unrelated IDs remain independent.
 
-- **Session state surfaced to the GUI**: Application consumes the runtime's
+- **Session state surfaced to the GUI**: Application consumes the session owner's
   coarse phase (`off-chain | on-chain | resolved`), model, coins and restore status
   directly, computes lifecycle effects, and publishes ordered presentation batches.
   GameSession renders snapshots and sends typed session/game intents.

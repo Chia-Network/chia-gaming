@@ -1,3 +1,4 @@
+import { configureSessionExecution } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { SessionController } from '../session/SessionController';
@@ -7,7 +8,7 @@ import type { ChannelFundingEntry } from '../session/channelFundingStore';
 import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
@@ -178,7 +179,7 @@ describe('durable channel funding record', () => {
       cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
       let releaseCheckpoint!: () => void;
       let holdCheckpoint = false;
-      const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
         controller,
         iStarted: true,
         restoring: false,
@@ -221,7 +222,7 @@ describe('durable channel funding record', () => {
         runtime.requestCommit();
         const checkpoint = runtime.flush();
         const timeout = timedOut
-          ? controller.runCommittedMutation(() => {
+          ? controller.enqueueResult(() => {
               controller.processResult(wasmResult({ events: [{ ChannelCreationTimedOut: null }] }));
               controller.flushDeferredWork();
             })
@@ -276,7 +277,7 @@ describe('durable channel funding record', () => {
       } finally {
         holdCheckpoint = false;
         releaseCheckpoint?.();
-        runtime.retire();
+        runtime.retireExecution();
         controller.cleanup();
         replacement.detachProvider();
       }
@@ -300,7 +301,8 @@ describe('durable channel funding record', () => {
     ]);
     controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     controller.flushDeferredWork();
-    commitRuntime(controller, new ControlledRuntime(undefined, 'funding:'));
+    const gate = new ControlledRuntime(undefined, 'funding:');
+    commitRuntime(controller, gate);
     controller.detachBlockchain(blockchain);
     blockchain.detachProvider();
     const beginCreation = jest.fn().mockResolvedValue({
@@ -323,7 +325,7 @@ describe('durable channel funding record', () => {
     try {
       replacement.refreshProviderReadiness();
       controller.attachBlockchain(replacement);
-      commitRuntime(controller, new ControlledRuntime());
+      await gate.launchAll('funding:');
       await controller.flushPendingWork();
       expect(oldBegin).not.toHaveBeenCalled();
       expect(beginCreation).toHaveBeenCalledTimes(1);

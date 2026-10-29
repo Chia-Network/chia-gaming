@@ -707,7 +707,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 
     act(() => storageRepository.loseAuthority('takeover'));
     await waitForRender(renderer!, 'Tab conflict');
-    expect(oldController.getCommittedSessionRuntime()).toBeNull();
+    expect(oldController.executionActive).toBe(false);
 
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Take over' }).props.onClick();

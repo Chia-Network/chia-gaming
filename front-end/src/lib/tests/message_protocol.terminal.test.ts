@@ -1,3 +1,4 @@
+import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
@@ -115,10 +116,9 @@ describe('transaction submission', () => {
     const sentAcks: number[] = [];
     const updates: boolean[] = [];
     const unsubscribe = subscribeTransactionPublishNerfed((nerfed) => updates.push(nerfed));
-    const { sessionController: blob } = getOrCreateSessionController(
+    const blob = getOrCreateSessionController(
       null,
       makePeerConn(sentMessages, sentAcks),
-      () => {},
       'test',
       100n,
       100n,
@@ -399,7 +399,7 @@ describe('transaction submission', () => {
     );
     attachTestCommitCoordinator(blob);
     const recoverableErrors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableErrors.push(event.error);
     });
     const cradle = {
@@ -672,7 +672,7 @@ describe('transaction submission', () => {
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     const cradle = {
@@ -723,7 +723,7 @@ describe('transaction submission', () => {
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     const cradle = {
@@ -817,7 +817,7 @@ describe('transaction submission', () => {
     setActiveBlob(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((evt) => {
+    observeWasmEvents(blob).subscribe((evt) => {
       if (evt.type === 'error') errors.push(evt.error);
     });
     const cradle = {

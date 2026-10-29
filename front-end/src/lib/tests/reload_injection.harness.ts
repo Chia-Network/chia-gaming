@@ -1,3 +1,5 @@
+import { observeWasmEvents } from './session_execution.harness';
+import { configureSessionExecution } from './session_execution.harness';
 import type { Subscription } from 'rxjs';
 import { SessionController } from '../session/SessionController';
 import { WasmStateInit } from '../session/WasmStateInit';
@@ -6,7 +8,7 @@ import { rehydrateDurableApplicationState } from '../session/persistence';
 import { type DurableApplicationState, type LiveSessionSave } from '../session/saveEnvelope';
 import { restoreSession } from '../session/sessionHost';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
 import type { SessionModel } from '../session/types';
 import type { BlockchainPoller } from '../wallet/BlockchainPoller';
@@ -21,7 +23,7 @@ import { observeSessionProjection } from './session_frontend.harness';
 export interface ReloadableSessionLane {
   adapter: SessionControllerAdapter;
   controller: SessionController;
-  runtime: SessionMachineRuntime;
+  runtime: SessionController;
   subscription: Subscription;
 }
 
@@ -32,8 +34,7 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
-  adapter.retireRuntime();
-  const runtime = new SessionMachineRuntime(
+  const runtime = configureSessionExecution(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',
     }),
@@ -63,7 +64,7 @@ function bindRuntime(
   };
   dispatchHostProjection();
   const subscription = addActiveSubscription(
-    controller.getObservable().subscribe((event) => {
+    observeWasmEvents(controller).subscribe((event) => {
       switch (event.type) {
         case 'notification':
           dispatchWasmNotification(
@@ -120,10 +121,10 @@ export async function injectSessionReload(
   lane: ReloadableSessionLane;
   save: DurableApplicationState & { session: LiveSessionSave };
 }> {
-  await lane.runtime.persist();
+  await lane.runtime.flush();
   await lane.controller.flushPendingWork();
-  await lane.runtime.persist();
-  await lane.runtime.persist();
+  await lane.runtime.flush();
+  await lane.runtime.flush();
   const snapshot = installCapturedState({
     kind: 'live',
     controller: lane.controller,

@@ -1,12 +1,10 @@
-import { Subject } from 'rxjs';
+import { configureSessionExecution } from './session_execution.harness';
 import { SessionController } from '../session/SessionController';
 import { StorageAuthorityLostError } from '../session/indexedDb';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import {
-  SessionMachineRuntime,
-  SessionRuntimeRetiredError,
-} from '../session/sessionMachineRuntime';
+import { SessionRuntimeRetiredError } from '../session/sessionMachineTypes';
+
 import { observeSessionProjection } from './session_frontend.harness';
 import { runSessionMachineTransition, send } from './session_machine.harness';
 
@@ -25,16 +23,9 @@ describe('session machine behavior sequences', () => {
     persist: (state: ReturnType<typeof createSessionMachineState>) => Promise<void>,
     flushDeferredWork: () => void = () => {},
   ) {
-    let coordinator: SessionMachineRuntime | undefined;
     const controller = {
       getCoinsOfInterest: () => [],
       isChannelReady: () => false,
-      commitSessionRuntime: (runtime: SessionMachineRuntime) => {
-        coordinator?.retire();
-        coordinator = runtime;
-      },
-      getObservable: () => new Subject(),
-      onRestoreStatusChange: () => () => {},
       flushDeferredWork,
       prepareReliableCommit: () => ({
         generation: 0,
@@ -46,7 +37,7 @@ describe('session machine behavior sequences', () => {
       reportDurabilityError: jest.fn(),
       clearDurabilityError: jest.fn(),
     } as unknown as SessionController;
-    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
       controller,
       iStarted: false,
       restoring: false,
@@ -57,107 +48,8 @@ describe('session machine behavior sequences', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    if (!coordinator) throw new Error('runtime did not commit');
-    return { runtime, coordinator, controller };
+    return { runtime, coordinator: runtime, controller };
   }
-
-  it('does not attach an abandoned render candidate or revoke controller authority', async () => {
-    const controller = new SessionController(null, 'session-id', 0n, 0n, {
-      sendMessage: () => true,
-      sendAck: () => true,
-    });
-    const current = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
-      controller,
-      iStarted: false,
-      restoring: false,
-      getRestoreStatus: () => 'idle',
-      getRestoreError: () => null,
-      onError: jest.fn(),
-      persist: async () => {},
-    });
-    const retire = jest.spyOn(current, 'retire');
-    const flush = jest.spyOn(current, 'flush');
-    current.activate();
-
-    new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
-      controller,
-      iStarted: false,
-      restoring: false,
-      getRestoreStatus: () => 'idle',
-      getRestoreError: () => null,
-      onError: jest.fn(),
-      persist: async () => {},
-    });
-
-    expect(retire).not.toHaveBeenCalled();
-    await controller.flushPendingSave();
-    expect(flush).not.toHaveBeenCalled();
-    controller.cleanup();
-    expect(retire).toHaveBeenCalledTimes(1);
-  });
-
-  it('makes committed replacement the sole authority and retires the old runtime', () => {
-    const controller = new SessionController(null, 'session-id', 0n, 0n, {
-      sendMessage: () => true,
-      sendAck: () => true,
-    });
-    const makeRuntime = () =>
-      new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
-        controller,
-        iStarted: false,
-        restoring: false,
-        getRestoreStatus: () => 'idle',
-        getRestoreError: () => null,
-        onError: jest.fn(),
-        persist: async () => {},
-      });
-    const first = makeRuntime();
-    const replacement = makeRuntime();
-    first.activate();
-    expect(controller.getCommittedSessionRuntime()).toBe(first);
-
-    replacement.activate();
-    expect(controller.getCommittedSessionRuntime()).toBe(replacement);
-    const retiredState = first.getState();
-    first.dispatch({ type: 'set-first-game-accepted', accepted: true });
-    expect(first.getState()).toBe(retiredState);
-
-    controller.cleanup();
-    const replacementState = replacement.getState();
-    replacement.dispatch({ type: 'set-first-game-accepted', accepted: true });
-    expect(replacement.getState()).toBe(replacementState);
-  });
-
-  it('synchronously revokes a replaced runtime owner', async () => {
-    const controller = new SessionController(null, 'session-id', 0n, 0n, {
-      sendMessage: () => true,
-      sendAck: () => true,
-    });
-    const makeRuntime = () =>
-      new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
-        controller,
-        iStarted: false,
-        restoring: false,
-        getRestoreStatus: () => 'idle',
-        getRestoreError: () => null,
-        onError: jest.fn(),
-        persist: async () => {},
-      });
-    const first = makeRuntime();
-    const second = makeRuntime();
-    const firstRetire = jest.spyOn(first, 'retire');
-    const secondFlush = jest.spyOn(second, 'flush');
-    const secondRetire = jest.spyOn(second, 'retire');
-    first.activate();
-    second.activate();
-    expect(firstRetire).toHaveBeenCalledTimes(1);
-
-    await controller.flushPendingSave();
-    expect(secondFlush).not.toHaveBeenCalled();
-
-    controller.cleanup();
-    expect(secondRetire).toHaveBeenCalledTimes(1);
-  });
 
   it('deduplicates pending external effects by key without awaiting their completion', async () => {
     let resolveEffect!: () => void;
@@ -171,7 +63,7 @@ describe('session machine behavior sequences', () => {
     const second = coordinator.releaseAfterPersistence('same-key', async () => {});
     expect(second).toBe(first);
 
-    await runtime.persist();
+    await runtime.flush();
     expect(launcher).toHaveBeenCalledTimes(1);
     let settled = false;
     void first.then(() => {
@@ -192,7 +84,7 @@ describe('session machine behavior sequences', () => {
 
     const first = coordinator.releaseAfterPersistence('first-key', firstLauncher);
     const second = coordinator.releaseAfterPersistence('second-key', secondLauncher);
-    await runtime.persist();
+    await runtime.flush();
     await Promise.all([first, second]);
 
     expect(persist).toHaveBeenCalledTimes(1);
@@ -250,11 +142,11 @@ describe('session machine behavior sequences', () => {
     });
     const completion = coordinator.releaseAfterPersistence('failing-launch', launcher);
 
-    await expect(runtime.persist()).rejects.toThrow('disk full');
+    await expect(runtime.flush()).rejects.toThrow('disk full');
     await expect(completion).rejects.toThrow('sync launch failure');
     expect(launcher).toHaveBeenCalledTimes(1);
 
-    await runtime.persist();
+    await runtime.flush();
     expect(launcher).toHaveBeenCalledTimes(1);
   });
 
@@ -266,7 +158,7 @@ describe('session machine behavior sequences', () => {
     const launcher = jest.fn(async () => {});
     const effect = coordinator.releaseAfterPersistence('authority-lost', launcher);
 
-    await expect(runtime.persist()).rejects.toBeInstanceOf(StorageAuthorityLostError);
+    await expect(runtime.flush()).rejects.toBeInstanceOf(StorageAuthorityLostError);
     await expect(effect).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
     expect(launcher).not.toHaveBeenCalled();
     expect(controller.reportDurabilityError).not.toHaveBeenCalled();
@@ -278,7 +170,6 @@ describe('session machine behavior sequences', () => {
     const controller = {
       getCoinsOfInterest: () => [],
       isChannelReady: () => false,
-      commitSessionRuntime: (runtime: SessionMachineRuntime) => runtime.activatePersistence(),
       flushDeferredWork: jest.fn(),
       getWasmFields: () => null,
       prepareReliableCommit: () => ({
@@ -289,7 +180,7 @@ describe('session machine behavior sequences', () => {
       }),
       completeReliableCommit,
     } as unknown as SessionController;
-    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
       controller,
       iStarted: false,
       restoring: false,
@@ -299,6 +190,7 @@ describe('session machine behavior sequences', () => {
     });
     runtime.activate();
     const launcher = jest.fn(async () => {});
+    runtime.activatePersistence();
     const effect = runtime.releaseAfterPersistence('requires-snapshot', launcher);
 
     await expect(runtime.flush()).rejects.toThrow(
@@ -310,7 +202,7 @@ describe('session machine behavior sequences', () => {
     expect(completeReliableCommit).not.toHaveBeenCalled();
     expect(launcher).not.toHaveBeenCalled();
 
-    runtime.retire();
+    runtime.retireExecution();
     await expect(effect).rejects.toBeInstanceOf(SessionRuntimeRetiredError);
   });
 
@@ -332,7 +224,7 @@ describe('session machine behavior sequences', () => {
     const launcher = jest.fn(async () => {});
 
     const completion = coordinator.releaseAfterPersistence('cleanup', launcher);
-    await expect(runtime.persist()).rejects.toThrow('disk full');
+    await expect(runtime.flush()).rejects.toThrow('disk full');
     await expect(completion).resolves.toBeUndefined();
     expect(launcher).toHaveBeenCalledTimes(1);
     expect(runtime.getState().model.channel.queue).toContainEqual(
@@ -347,7 +239,7 @@ describe('session machine behavior sequences', () => {
     );
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(persisted).toHaveLength(2);
     expect(
@@ -359,7 +251,7 @@ describe('session machine behavior sequences', () => {
     expect(launcher).toHaveBeenCalledTimes(1);
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
-    await expect(runtime.persist()).rejects.toThrow('different later failure');
+    await expect(runtime.flush()).rejects.toThrow('different later failure');
     expect(persisted).toHaveLength(3);
     expect(runtime.getState().model.channel.queue).toContainEqual(
       expect.objectContaining({ kind: 'durability-error' }),
@@ -396,7 +288,7 @@ describe('session machine behavior sequences', () => {
     const write = deferred();
     const { runtime, coordinator } = runtimeWithCoordinator(() => write.promise);
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
-    const flush = runtime.persist();
+    const flush = runtime.flush();
     await Promise.resolve();
 
     const order: string[] = [];
@@ -425,7 +317,7 @@ describe('session machine behavior sequences', () => {
       .mockResolvedValue(undefined);
     const { runtime, coordinator } = runtimeWithCoordinator(persist);
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
-    const flush = runtime.persist();
+    const flush = runtime.flush();
     await Promise.resolve();
 
     const result = coordinator.enqueueResult(() => 'released');
@@ -433,7 +325,7 @@ describe('session machine behavior sequences', () => {
 
     await expect(flush).rejects.toThrow('disk full');
     await expect(result).resolves.toBe('released');
-    await runtime.persist();
+    await runtime.flush();
   });
 
   it('allows a released keyed effect to reuse its key reentrantly', async () => {
@@ -445,7 +337,7 @@ describe('session machine behavior sequences', () => {
     });
 
     const first = coordinator.releaseAfterPersistence('reentrant', firstLauncher);
-    await runtime.persist();
+    await runtime.flush();
     await expect(first).resolves.toBeUndefined();
     await expect(later).resolves.toBeUndefined();
     expect(firstLauncher).toHaveBeenCalledTimes(1);
@@ -467,25 +359,13 @@ describe('session machine behavior sequences', () => {
       (controller as SessionController).reportDurabilityError = reportDurabilityError;
       observeSessionProjection(runtime, render);
       runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
-      const flush = runtime.persist();
+      const flush = runtime.flush();
       await Promise.resolve();
 
       const result = coordinator.enqueueResult(() => 'stale');
       const launcher = jest.fn(async () => {});
       const effect = coordinator.releaseAfterPersistence('stale-effect', launcher);
-      const replacement = new SessionMachineRuntime(
-        createSessionMachineState(createSessionModel()),
-        {
-          controller,
-          iStarted: false,
-          restoring: false,
-          getRestoreStatus: () => 'idle',
-          getRestoreError: () => null,
-          onError: jest.fn(),
-          persist: async () => {},
-        },
-      );
-      replacement.activate();
+      runtime.retireExecution();
       if (writeError) write.reject(writeError);
       else write.resolve();
 
@@ -497,7 +377,6 @@ describe('session machine behavior sequences', () => {
       expect(complete).not.toHaveBeenCalled();
       expect(reportDurabilityError).not.toHaveBeenCalled();
       expect(launcher).not.toHaveBeenCalled();
-      replacement.retire();
     },
   );
 
@@ -505,7 +384,7 @@ describe('session machine behavior sequences', () => {
     const write = deferred();
     const { runtime, coordinator } = runtimeWithCoordinator(() => write.promise);
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
-    const flush = runtime.persist();
+    const flush = runtime.flush();
     await Promise.resolve();
 
     const discarded = jest.fn();
@@ -513,7 +392,7 @@ describe('session machine behavior sequences', () => {
     const result = coordinator.enqueueResult(() => 42);
     const launcher = jest.fn(async () => {});
     const effect = coordinator.releaseAfterPersistence('cancel-me', launcher);
-    runtime.retire();
+    runtime.retireExecution();
 
     await expect(result).rejects.toMatchObject({
       name: 'SessionRuntimeRetiredError',
@@ -531,7 +410,6 @@ describe('session machine behavior sequences', () => {
     const controller = {
       getCoinsOfInterest: () => [],
       isChannelReady: () => false,
-      commitSessionRuntime: jest.fn(),
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: jest.fn(() => ({
         generation: 0,
@@ -542,7 +420,7 @@ describe('session machine behavior sequences', () => {
       completeReliableCommit: jest.fn(),
     } as unknown as SessionController;
 
-    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
       controller,
 
       iStarted: false,
@@ -579,7 +457,7 @@ describe('session machine behavior sequences', () => {
     });
 
     runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(maxRenderDepth).toBe(1);
 

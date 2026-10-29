@@ -47,7 +47,6 @@ describe('GameSession render boundary', () => {
 
   it('keeps session construction outside StrictMode view attachment', () => {
     expectConsoleError('Cannot start a new session without a blockchain connection');
-    let registrations = 0;
     const params = {
       iStarted: true,
       myContribution: 1000n,
@@ -57,15 +56,11 @@ describe('GameSession render boundary', () => {
     const controller = getOrCreateSessionController(
       null,
       peerConnection,
-      (handler) => {
-        registrations++;
-        handler(1, Uint8Array.from([1]));
-      },
       'test',
       1000n,
       1000n,
       true,
-    ).sessionController;
+    );
     const frontend = controller.frontend;
     function View() {
       useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
@@ -74,7 +69,7 @@ describe('GameSession render boundary', () => {
     act(() => {
       renderer = create(createElement(StrictMode, null, createElement(View)));
     });
-    expect(registrations).toBe(1);
+    expect(controller.initializeExecution(false)).toBe(frontend);
     expect(controller.getPeerProtocol().snapshot().remoteNumber).toBe(0n);
   });
 

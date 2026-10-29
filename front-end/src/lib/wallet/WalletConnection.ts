@@ -10,11 +10,10 @@ import { needsConnectionSetupPrompt, needsWalletPairing } from '../../util/conne
 import { markSavedSession } from '../session/saveCoordination';
 import type { BlockchainType } from '../session/saveEnvelope';
 import { storageRepository } from '../session/storageRepository';
-import { activate, deactivate } from './activeBlockchain';
 import {
   BALANCE_POLL_INTERVAL_MS,
   CHAIN_POLL_INTERVAL_MS,
-  type BlockchainPoller,
+  BlockchainPoller,
 } from './BlockchainPoller';
 import { cloudBlockchainInfo } from './CloudBlockchainInterface';
 import { fakeBlockchainInfo } from './FakeBlockchainInterface';
@@ -34,7 +33,7 @@ export interface WalletView {
 }
 export type WalletEvent =
   | { type: 'view'; view: WalletView }
-  | { type: 'connected'; switchToHub: boolean }
+  | { type: 'connected' }
   | { type: 'connection'; connected: boolean }
   | { type: 'readiness'; ready: boolean }
   | { type: 'attention' | 'reset-session' | 'fee-changed' | 'detaching' };
@@ -133,17 +132,18 @@ export class WalletConnection {
     provider: InternalBlockchainInterface,
     type: BlockchainType,
     interval: number,
-    switchToHub = false,
   ): void {
     this.detachConnection?.();
     this.detachReadiness?.();
-    deactivate();
-    this.poller = activate(provider, interval);
+    this.stopPoller();
+    this.poller = new BlockchainPoller(provider, interval, undefined, channelFundingRuntime);
+    channelFundingRuntime.retryCancelRequired();
+    this.poller.start();
     this.provider = provider;
     this.select(type);
     this.setup = null;
     this.update({ hasProvider: true, connected: true, connecting: false, setup: null });
-    this.emit({ type: 'connected', switchToHub });
+    this.emit({ type: 'connected' });
     this.watchBalance();
     this.detachConnection = provider.onConnectionChange((connected) => {
       this.update({ connected });
@@ -164,7 +164,7 @@ export class WalletConnection {
     });
   }
 
-  async connect(type: BlockchainType, silent = false, fresh = false): Promise<void> {
+  async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
     this.aborted = false;
     if (!silent) this.update({ error: null });
     const { provider, interval } = providerFor(type);
@@ -172,23 +172,25 @@ export class WalletConnection {
       this.select(type);
       this.update({ connecting: true });
       const setup = await provider.beginConnect(this.playerId, fresh);
-      if (this.aborted) return;
+      if (this.aborted) return false;
       if (needsWalletPairing(setup)) {
         this.presentSetup(setup);
         this.update({ connected: false, connecting: false });
         if (silent) {
           this.emit({ type: 'attention' });
-          return;
+          return false;
         }
       }
       if (!setup.skipQr || setup.fields) this.presentSetup(setup);
       if (setup.fields && (!silent || needsConnectionSetupPrompt(setup))) {
         this.update({ showSetup: true, connecting: false });
         if (silent) this.emit({ type: 'attention' });
-        return;
+        return false;
       }
       await setup.finalize();
-      if (!this.aborted) this.complete(provider, type, interval, !silent);
+      if (this.aborted) return false;
+      this.complete(provider, type, interval);
+      return true;
     } catch (error) {
       if (!this.aborted) {
         console.error(`[wallet] ${type} connect failed`, error);
@@ -206,27 +208,30 @@ export class WalletConnection {
         this.update({ connecting: false });
       }
     }
+    return false;
   }
 
-  async finalize(values?: ConnectionFieldValues): Promise<void> {
+  async finalize(values?: ConnectionFieldValues): Promise<boolean> {
     const type = this.view.walletType;
-    if (!this.setup || !type) return;
+    if (!this.setup || !type) return false;
     const { provider, interval } = providerFor(type);
     this.aborted = false;
     this.update({ error: null, connecting: true });
     try {
       await this.setup.finalize(values);
-      if (this.aborted) return;
+      if (this.aborted) return false;
       this.emit({ type: 'fee-changed' });
       this.update({ showSetup: false });
-      this.complete(provider, type, interval, true);
+      this.complete(provider, type, interval);
+      return true;
     } catch (error) {
-      if (this.aborted) return;
+      if (this.aborted) return false;
       console.error(`[wallet] ${type} finalize failed`, error);
       this.update({ error: error instanceof Error ? error.message : String(error) });
     } finally {
       this.update({ connecting: false });
     }
+    return false;
   }
 
   async resume(type: BlockchainType): Promise<void> {
@@ -294,13 +299,19 @@ export class WalletConnection {
     this.update({ walletType: undefined, connected: false, balance: undefined });
   }
 
+  private stopPoller(): void {
+    this.poller?.detachProvider();
+    this.poller?.stopBalanceInterest();
+    this.poller?.stop();
+    this.poller = null;
+  }
+
   stopLocalActivity(): void {
     this.detachConnection?.();
     this.detachConnection = null;
     this.detachReadiness?.();
     this.detachReadiness = null;
-    deactivate();
-    this.poller = null;
+    this.stopPoller();
     this.provider = null;
     this.update({ hasProvider: false });
   }

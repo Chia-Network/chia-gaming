@@ -1,18 +1,22 @@
+import { SessionRuntimeRetiredError } from './sessionMachineTypes';
 import { Program } from 'clvm-lib';
-import { NextObserver, Subject } from 'rxjs';
-import type { SessionWallet } from '../wallet/sessionWallet';
-import type { RehydratedDurableApplicationState } from './persistence';
-import type { SessionFrontend } from './sessionFrontend';
-
+import { type SessionWallet, type SessionFunding } from '../wallet/sessionWallet';
+import { type RehydratedDurableApplicationState } from './persistence';
+import {
+  type SessionFrontend,
+  type SessionFrontendEvent,
+  type SessionPresentation,
+} from './sessionFrontend';
 import { MIN_NONZERO_FEE_MOJOS } from '../../constants/fees';
 import { diagStack, log } from '../../services/log';
 import {
   ReliablePeerTransport,
   type PreparedReliableCommit,
   type ReliableMessageConsumer,
+  type ReliableCommitCoordinator,
 } from '../../services/PeerSession';
-import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import {
+  type ChannelStatusPayload,
   ChiaGame,
   CoinOfInterestEntry,
   CoinStateRecord,
@@ -32,18 +36,24 @@ import {
 } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
 import { jsonStringify } from '../../util/jsonSafe';
-import { markClientErrorReported } from '../clientError';
-import { catalogGameTypeFromWire, completeRegisteredGames } from '../gameIdentities';
+import { markClientErrorReported, wasClientErrorReported } from '../clientError';
+import {
+  protocolIdForCatalog,
+  catalogGameTypeFromWire,
+  completeRegisteredGames,
+} from '../gameIdentities';
 import { PollingGameSession } from '../wallet/BlockchainPoller';
-import type { ChannelFundingRuntime } from './channelFundingRuntime';
 import {
   entryForOperation,
   providerRequestFromRecovery,
   restoredFundingForSink,
   walletSessionKey,
 } from './channelFundingSelectors';
-import type { ChannelFundingOwner, ChannelFundingPurpose } from './channelFundingStore';
-import { channelFundingKey } from './channelFundingStore';
+import {
+  type ChannelFundingOwner,
+  type ChannelFundingPurpose,
+  channelFundingKey,
+} from './channelFundingStore';
 import {
   canonicalizeFundingRequest,
   fundingRequestKey,
@@ -60,16 +70,38 @@ import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './inde
 import { validateChannelStatus } from './persistencePayloads';
 import { providerScopeKey, type ProviderOwner } from './providerKeys';
 import { DEFAULT_SESSION_RECEIVE_POLICY, type ReadonlySessionReceivePolicy } from './receivePolicy';
-import type { SessionTerminalHandoffSave, SessionTransportSave } from './saveEnvelope';
-import {
-  SessionRuntimeRetiredError,
-  createOwnedSessionRuntime,
-  type SessionMachineRuntime,
-} from './sessionMachineRuntime';
+import { type SessionTerminalHandoffSave, type SessionTransportSave } from './saveEnvelope';
 import { storageRepository } from './storageRepository';
 import { SubmissionPump } from './submissionPump';
-import type { SessionModel } from './types';
+import { type SessionModel, type RegisteredGameType } from './types';
 import { cancelRetiredWalletReservations } from './walletReservationRetirement';
+import { type GameIntent } from '@games/host';
+import {
+  DEFAULT_CATALOG_GAME_TYPE,
+  packageFor,
+  restoreRegisteredGameHandState,
+  snapshotRegisteredGameHand,
+  type RegisteredGameHand,
+} from '../gameRegistry';
+import { coinIdHex, dispatchWasmNotification } from './gameSessionEvents';
+import {
+  createComposeDraftState,
+  createSessionModel,
+  DEFAULT_GAME_TIMEOUT_BLOCKS,
+  selectSessionPhase,
+  type HandProposal,
+} from './model';
+import { createSessionMachineState, reduceSessionMachine } from './sessionMachine';
+import { type ActiveGameHandContext } from './sessionMachineGame';
+import { buildDurableApplicationState } from './sessionMachinePersist';
+import {
+  type LocalGameCommand,
+  type SessionControllerCommand,
+  type SessionMachineEffect,
+  type LocalGameActionRequest,
+  type SessionMachineEvent,
+  type SessionMachineState,
+} from './sessionMachineTypes';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
@@ -108,6 +140,7 @@ function clvmToBytes(value: Program | null): Uint8Array {
 }
 
 const KEEPALIVE_INTERVAL_MS = 15_000;
+
 /** Avoid amplifying a burst of duplicate frames into a burst of retransmits. */
 const SUBMISSION_DRAIN_JS_STACK_LIMIT = 8_192;
 
@@ -198,7 +231,7 @@ class CoinSolutionCallbackRejectedError extends Error {
   }
 }
 
-export class SessionController implements PollingGameSession {
+export class SessionController implements PollingGameSession, ReliableCommitCoordinator {
   myContribution: bigint;
   theirContribution: bigint;
   perGameAmount: bigint;
@@ -211,9 +244,6 @@ export class SessionController implements PollingGameSession {
     | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  private get reliableState() {
-    return this.reliableTransport.state;
-  }
   private reliableTransport: ReliablePeerTransport;
   private readonly reliableConsumer: ReliableMessageConsumer;
   private inboundSessionRejectCommitted = false;
@@ -233,26 +263,19 @@ export class SessionController implements PollingGameSession {
   qualifyingEvents: number;
   private blockchain: SessionWallet | null;
   private blockchainAttached = false;
-  rxjsMessageSingleton: Subject<WasmEvent>;
-  rxjsEmitter: NextObserver<WasmEvent> | undefined;
   private eventQueue: GameSessionEvent[] = [];
   private pendingChainObservations: Array<
     | { kind: 'coin-states'; peak: bigint; records: CoinStateRecord[] }
     | { kind: 'height'; peak: bigint }
     | { kind: 'snapshot-ready'; peak: bigint }
   > = [];
-
   wasmNotificationHistory: string[] = [];
   diagnosticLog: string[] = [];
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
-  private sessionFrontend: SessionFrontend | null = null;
-  private committedSessionRuntime: SessionMachineRuntime | null = null;
-  private persistenceSessionRuntime: SessionMachineRuntime | null = null;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
-  private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
   private terminalSealed = false;
   private readonly submissionPump: SubmissionPump;
   private readonly pendingCoinSolutionDeliveries = new Map<string, PendingCoinSolutionDelivery>();
@@ -270,7 +293,7 @@ export class SessionController implements PollingGameSession {
   private fundingInFlight: NonNullable<SessionController['pendingFunding']> | null = null;
   private fundingEffectSequence = 0;
   private channelFundingUnsubscribe: (() => void) | null = null;
-  private fundingRuntime: ChannelFundingRuntime | null;
+  private fundingRuntime: SessionFunding | null;
   private walletProviderScope: WalletProviderScope | null = null;
   private protocolStopped = false;
   private retired = false;
@@ -282,6 +305,59 @@ export class SessionController implements PollingGameSession {
   private waitingStateEnteredAt: bigint | null = null;
   private cleanShutdownGraceStartedAt: bigint | null = null;
   private feeProvider: () => bigint = () => 0n;
+  private state: SessionMachineState = createSessionMachineState(createSessionModel());
+  private published: SessionPresentation;
+  private readonly frontendListeners = new Set<(event: SessionFrontendEvent) => void>();
+  readonly frontend: SessionFrontend = {
+    snapshot: () => this.published,
+    subscribe: (listener) => {
+      this.frontendListeners.add(listener);
+      return () => {
+        this.frontendListeners.delete(listener);
+      };
+    },
+    dispatch: (intent) => this.dispatch(intent),
+    game: {
+      isChannelReady: () => this.published.channelReady,
+      dispatch: (intent) => this.dispatchGameIntent(intent),
+    },
+  };
+  private restoring = false;
+  private activeHand: RegisteredGameHand | null = null;
+  private readonly activeHandContext: ActiveGameHandContext = {
+    create: (gameType, init) => {
+      this.activeHand = packageFor(gameType).createHand(init);
+      return snapshotRegisteredGameHand(gameType, this.activeHand);
+    },
+    receive: (update) => {
+      this.requireActiveHand().receive(update);
+      return this.snapshotActiveHand();
+    },
+    clear: () => {
+      this.activeHand = null;
+    },
+  };
+  private draining = false;
+  private readonly pendingEvents: SessionMachineEvent[] = [];
+  private readonly pendingControllerWork: PendingControllerWork[] = [];
+  private readonly pendingExternalEffects = new Map<string, PendingExternalEffect>();
+  private committing = false;
+  private durabilityDirty = false;
+  private durabilityDegraded = false;
+  private projectionPending = false;
+  private projecting = false;
+  private cancelCommitTask: (() => void) | null = null;
+  private commitPromise: Promise<void> = Promise.resolve();
+  private detachStorageRuntime: (() => void) | null = null;
+  private activated = false;
+  private persistenceActivated = false;
+  private executionRetired = false;
+  private readonly frontendEvents: SessionFrontendEvent[] = [];
+  private publishingFrontend = false;
+
+  private get reliableState() {
+    return this.reliableTransport.state;
+  }
 
   get getFee(): () => bigint {
     return this.feeProvider;
@@ -298,7 +374,7 @@ export class SessionController implements PollingGameSession {
     myContribution: bigint,
     theirContribution: bigint,
     peer_conn: PeerConnectionResult,
-    fundingRuntime: ChannelFundingRuntime | null = blockchain?.channelFundingRuntime ?? null,
+    fundingRuntime: SessionFunding | null = blockchain?.channelFundingRuntime ?? null,
     walletProviderScope?: WalletProviderScope,
   ) {
     const { sendMessage, sendAck } = peer_conn;
@@ -337,12 +413,12 @@ export class SessionController implements PollingGameSession {
       },
       channelResult: (result) => this.processResult(result),
       error: (reason) => {
-        this.rxjsEmitter?.next({ type: 'error', error: reason });
+        this.receiveEvent({ type: 'error', error: reason });
         this.requestCommit();
       },
       persist: () =>
         Promise.reject(
-          new Error('Active-session persistence requires SessionMachineRuntime coordination'),
+          new Error('Active-session persistence requires session execution coordination'),
         ),
       failure: (reason) => this.failPeerProcessing(reason),
       keepalive: () => this.notePeerActivity(),
@@ -377,13 +453,12 @@ export class SessionController implements PollingGameSession {
       getInstallationPlayerId: () => this.uniqueId,
       isRetired: () => this.retired,
       isPublishingDisabled: () => this.transactionPublishNerfed,
-      runCommittedMutation: (work) => this.runCommittedMutation(work),
-      schedulePersistenceGatedEffect: (key, launcher) =>
-        this.schedulePersistenceGatedEffect(key, launcher),
+      enqueueResult: (work) => this.enqueueResult(work),
+      releaseAfterPersistence: (key, launcher) => this.releaseAfterPersistence(key, launcher),
       requestCommit: () => this.requestCommit(),
       reportWarning: (message) => {
         log(`[wasm] submitTransaction: ${message}`);
-        this.rxjsEmitter?.next({ type: 'error', error: rewriteFeeRateRejection(message) });
+        this.receiveEvent({ type: 'error', error: rewriteFeeRateRejection(message) });
       },
       reportLocalFailure: (submission, error) =>
         this.recordLocalSubmissionFailure(submission, error),
@@ -391,12 +466,7 @@ export class SessionController implements PollingGameSession {
       requestFreshSync: () => this.requestFreshChainSnapshot(),
     });
     this.submissionPump.providerReady(blockchain?.rpc.isReadyForPlay?.() !== false && !!blockchain);
-    this.rxjsMessageSingleton = new Subject<WasmEvent>();
-    this.rxjsEmitter = {
-      next: (evt: WasmEvent) => {
-        this.rxjsMessageSingleton.next(evt);
-      },
-    };
+    this.published = this.presentation(this.state);
     this.subscribeFundingRuntime();
     this.beforeUnloadHandler = () => {
       void this.flushPendingSave().catch((error) => this.reportBackgroundSaveError(error));
@@ -409,67 +479,29 @@ export class SessionController implements PollingGameSession {
   attachReliableTransport(transport: ReliablePeerTransport): void {
     if (this.reliableTransport === transport) return;
     this.reliableTransport.detachConsumer(this.reliableConsumer);
-    if (this.persistenceSessionRuntime) {
-      this.reliableTransport.detachCommitCoordinator(this.persistenceSessionRuntime);
+    if (this.persistenceActivated && !this.executionRetired) {
+      this.reliableTransport.detachCommitCoordinator(this);
     }
     transport.takeSession(this.reliableTransport);
     this.reliableTransport = transport;
     this.reliableTransport.attachConsumer(this.reliableConsumer);
-    if (this.persistenceSessionRuntime) {
-      this.reliableTransport.attachCommitCoordinator(this.persistenceSessionRuntime);
+    if (this.persistenceActivated && !this.executionRetired) {
+      this.reliableTransport.attachCommitCoordinator(this);
     }
   }
 
-  initializeFrontend(
-    restoring: boolean,
-    bootstrap?: RehydratedDurableApplicationState,
-  ): SessionFrontend {
-    this.sessionFrontend = (
-      this.committedSessionRuntime ?? createOwnedSessionRuntime(this, restoring, bootstrap)
-    ).frontend;
-    return this.sessionFrontend;
-  }
-
-  get frontend(): SessionFrontend {
-    if (!this.sessionFrontend) throw new Error('Session frontend has not been initialized');
-    return this.sessionFrontend;
-  }
-
-  getCommittedSessionRuntime(): SessionMachineRuntime | null {
-    return this.committedSessionRuntime;
-  }
-
-  commitSessionRuntime(runtime: SessionMachineRuntime): void {
-    if (this.retired || this.terminalSealed) {
-      runtime.retire();
-      return;
-    }
-    if (this.committedSessionRuntime === runtime) return;
-    const previous = this.committedSessionRuntime;
-    this.committedSessionRuntime = runtime;
-    if (previous && this.persistenceSessionRuntime === previous) {
-      this.reliableTransport.detachCommitCoordinator(previous);
-      this.persistenceSessionRuntime = null;
-    }
-    previous?.retire();
-    this.activateCommittedSessionRuntimePersistence();
-  }
-
-  private activateCommittedSessionRuntimePersistence(): void {
-    const runtime = this.committedSessionRuntime;
-    if (!runtime || this.persistenceSessionRuntime === runtime || !this.getWasmFields()) return;
-    runtime.activatePersistence();
-    this.persistenceSessionRuntime = runtime;
-    this.reliableTransport.attachCommitCoordinator(runtime);
+  private activateExecutionPersistence(): void {
+    if (!this.executionActive || this.persistenceActivated || !this.getWasmFields()) return;
+    this.activatePersistence();
+    this.reliableTransport.attachCommitCoordinator(this);
     this.scheduleFunding();
-    for (const delivery of this.pendingCoinSolutionDeliveries.values()) {
+    for (const delivery of this.pendingCoinSolutionDeliveries.values())
       this.scheduleCoinSolutionDelivery(delivery);
-    }
     this.flushPendingCoinStates();
-    if (this.eventQueue.length > 0) runtime.requestCommit();
+    if (this.eventQueue.length > 0) this.requestCommit();
   }
 
-  private requireFundingRuntime(): ChannelFundingRuntime {
+  private requireFundingRuntime(): SessionFunding {
     if (!this.fundingRuntime) {
       throw new Error('Channel funding coordinator is unavailable');
     }
@@ -495,7 +527,7 @@ export class SessionController implements PollingGameSession {
   private scheduleFunding(): void {
     if (
       !this.fundingRuntime ||
-      !this.committedSessionRuntime ||
+      !this.executionActive ||
       !this.blockchain ||
       !this.cradle ||
       this.retired
@@ -574,7 +606,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
     const generation = storageRepository.lifecycleGeneration;
-    const effect = this.schedulePersistenceGatedEffect(
+    const effect = this.releaseAfterPersistence(
       `funding:${pending.purpose.operationId}:${++this.fundingEffectSequence}`,
       async () => {
         if (!storageRepository.isGenerationCurrent(generation) || this.pendingFunding !== pending)
@@ -612,7 +644,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
     if (outcome.kind === 'failure') {
-      await this.runCommittedMutation(() => {
+      await this.enqueueResult(() => {
         if (
           this.pendingFunding !== pending ||
           this.retired ||
@@ -656,7 +688,7 @@ export class SessionController implements PollingGameSession {
       return;
     }
     pending.materialReady = true;
-    await this.runCommittedMutation(() => {
+    await this.enqueueResult(() => {
       if (
         this.pendingFunding !== pending ||
         this.retired ||
@@ -700,7 +732,7 @@ export class SessionController implements PollingGameSession {
 
   private reportFundingWarning(message: string): void {
     log(`[wasm] ${message}`);
-    this.rxjsEmitter?.next({ type: 'error', error: message });
+    this.receiveEvent({ type: 'error', error: message });
   }
 
   private subscribeFundingRuntime(): void {
@@ -810,14 +842,6 @@ export class SessionController implements PollingGameSession {
   }
 
   cleanup() {
-    this.cleanupInternal();
-  }
-
-  cleanupAfterTerminalFlush() {
-    this.cleanupInternal();
-  }
-
-  private cleanupInternal() {
     if (this.retired) return;
     this.pendingFunding = null;
     this.retired = true;
@@ -828,13 +852,8 @@ export class SessionController implements PollingGameSession {
       this.completeCoinSolutionDelivery(delivery);
     }
     this.pendingEffects.clear();
-    const runtime = this.committedSessionRuntime;
-    this.committedSessionRuntime = null;
-    if (runtime && this.persistenceSessionRuntime === runtime) {
-      this.reliableTransport.detachCommitCoordinator(runtime);
-      this.persistenceSessionRuntime = null;
-    }
-    runtime?.retire();
+    if (this.persistenceActivated) this.reliableTransport.detachCommitCoordinator(this);
+    this.retireExecution();
     this.cleanShutdownCalled = true;
     // Retirement is not a manager terminal disposition: detach this session
     // without stopping a shared poller, but make any in-flight active drain
@@ -842,7 +861,6 @@ export class SessionController implements PollingGameSession {
     this.protocolStopped = true;
     this.eventQueue = [];
     this.reliableTransport.clearRuntime(true);
-    this.rxjsMessageSingleton.complete();
     this.blockchain?.detachGameSession(this);
     this.blockchainAttached = false;
     this.puzzleSolutionReadinessUnsubscribe?.();
@@ -863,7 +881,7 @@ export class SessionController implements PollingGameSession {
     this.durabilityFailureReported = true;
     const detail = extractErrorMessage(error);
     const warning = `Session storage failed: ${detail}. The session is continuing without a durable checkpoint; progress may be lost if this page closes before storage succeeds.`;
-    this.rxjsEmitter?.next({ type: 'durability-error', error: warning });
+    this.receiveEvent({ type: 'durability-error', error: warning });
   }
 
   clearDurabilityError(): void {
@@ -936,7 +954,7 @@ export class SessionController implements PollingGameSession {
       const message = extractErrorMessage(e);
       diagStack('completeRegisteredGames failed', e);
       log(`[wasm] completeRegisteredGames failed: ${message}`);
-      this.rxjsEmitter?.next({ type: 'error', error: message });
+      this.receiveEvent({ type: 'error', error: message });
     }
   }
 
@@ -947,14 +965,10 @@ export class SessionController implements PollingGameSession {
   restoreChannelStatus(status: ChannelStatusPayload | null): void {
     this.lastChannelStatus = status;
     this.channelReady = status !== null && isActivatedChannelStatus(status.state);
-    this.committedSessionRuntime?.publishReadiness(this.channelReady);
+    if (this.executionActive) this.publishReadiness(this.channelReady);
     if (this.channelReady && this.wc) {
       this.ensureProtocolIdentities();
     }
-  }
-
-  getObservable() {
-    return this.rxjsMessageSingleton;
   }
 
   getRestoreStatus(): RestoreStatus {
@@ -965,18 +979,8 @@ export class SessionController implements PollingGameSession {
     return this.restoreError;
   }
 
-  onRestoreStatusChange(
-    listener: (status: RestoreStatus, error: string | null) => void,
-  ): () => void {
-    this.restoreListeners.add(listener);
-    listener(this.restoreStatus, this.restoreError);
-    return () => {
-      this.restoreListeners.delete(listener);
-    };
-  }
-
   private notifyTerminalFinalizationRetry(): void {
-    this.committedSessionRuntime?.publishFrontend({ type: 'terminal-retry' });
+    if (this.executionActive) this.publishFrontend({ type: 'terminal-retry' });
   }
 
   beginRestore(promise: Promise<void>): Promise<void> {
@@ -992,7 +996,7 @@ export class SessionController implements PollingGameSession {
       .catch((e) => {
         const msg = extractErrorMessage(e);
         this.setRestoreStatus('failed', msg);
-        this.rxjsEmitter?.next({ type: 'error', error: msg });
+        this.receiveEvent({ type: 'error', error: msg });
         throw e;
       });
     return this.restorePromise;
@@ -1001,9 +1005,7 @@ export class SessionController implements PollingGameSession {
   private setRestoreStatus(status: RestoreStatus, error: string | null) {
     this.restoreStatus = status;
     this.restoreError = error;
-    for (const listener of this.restoreListeners) {
-      listener(status, error);
-    }
+    if (this.executionActive) this.dispatchHostProjection();
     if (status === 'restored') this.notifyTerminalFinalizationRetry();
   }
 
@@ -1021,7 +1023,7 @@ export class SessionController implements PollingGameSession {
 
   setGameSession(cradle: ChiaGame) {
     this.cradle = cradle;
-    this.activateCommittedSessionRuntimePersistence();
+    this.activateExecutionPersistence();
     this.syncFeeConfiguration();
     this.syncPendingCoinSolutionRequests();
     if (this.pendingPeerFailure) {
@@ -1049,7 +1051,7 @@ export class SessionController implements PollingGameSession {
   private flushPendingCoinStates() {
     // Poller attachment can precede asynchronous WASM restore. Retain raw
     // observations until setGameSession installs the cradle that consumes them.
-    if (!this.cradle || !this.committedSessionRuntime) return;
+    if (!this.cradle || !this.executionActive) return;
     const observations = this.pendingChainObservations;
     this.pendingChainObservations = [];
     const deliveries: Promise<void>[] = [];
@@ -1129,7 +1131,7 @@ export class SessionController implements PollingGameSession {
     if (!this.rewardPuzzleHash) {
       throw new Error('emitRewardAddress: rewardPuzzleHash is not set');
     }
-    this.rxjsEmitter?.next({ type: 'address', data: { puzzleHash: this.rewardPuzzleHash } });
+    this.receiveEvent({ type: 'address', data: { puzzleHash: this.rewardPuzzleHash } });
   }
 
   kickSystem(flags: number) {
@@ -1151,46 +1153,6 @@ export class SessionController implements PollingGameSession {
     this.kickSystem(1);
   }
 
-  async runCommittedMutation<T>(work: () => T): Promise<T> {
-    let runtime = this.committedSessionRuntime;
-    if (!runtime) {
-      if (this.retired) throw new SessionRuntimeRetiredError();
-      throw new Error('Authoritative runtime mutations require SessionMachineRuntime coordination');
-    }
-    for (;;) {
-      try {
-        return await runtime.enqueueResult(work);
-      } catch (error) {
-        if (!(error instanceof SessionRuntimeRetiredError) || this.retired) throw error;
-        const replacement = this.committedSessionRuntime;
-        if (!replacement || replacement === runtime) throw error;
-        runtime = replacement;
-      }
-    }
-  }
-
-  async schedulePersistenceGatedEffect(key: string, launcher: () => Promise<void>): Promise<void> {
-    let runtime = this.committedSessionRuntime;
-    if (!runtime) {
-      throw new Error('External effects require SessionMachineRuntime coordination');
-    }
-    for (;;) {
-      let launched = false;
-      try {
-        await runtime.releaseAfterPersistence(key, () => {
-          launched = true;
-          return launcher();
-        });
-        return;
-      } catch (error) {
-        if (launched || !(error instanceof SessionRuntimeRetiredError) || this.retired) throw error;
-        const replacement = this.committedSessionRuntime;
-        if (!replacement || replacement === runtime) throw error;
-        runtime = replacement;
-      }
-    }
-  }
-
   private recordLocalSubmissionFailure(submission: TransactionSubmission, error: unknown): void {
     this.cradle?.submission_attempt_unavailable(submission.attempt_token);
     const message = extractErrorMessage(error);
@@ -1202,7 +1164,7 @@ export class SessionController implements PollingGameSession {
       .join(', ');
     diagStack('submitTransaction failed', error);
     log(`[wasm] submitTransaction failed: ${message} coins=[${coinDescs}]`);
-    this.rxjsEmitter?.next({
+    this.receiveEvent({
       type: 'error',
       error: `Transaction ${submission.id} was retained for retry after a local submission failure: ${rewriteFeeRateRejection(message)}`,
     });
@@ -1228,7 +1190,7 @@ export class SessionController implements PollingGameSession {
       );
       const submissionContext =
         failure.retained_submission_id ?? failure.candidate_submission_id ?? 'unassigned';
-      this.rxjsEmitter?.next({
+      this.receiveEvent({
         type: 'recoverable-internal-error',
         error:
           `An internal transaction submission failed during ${failure.stage} ` +
@@ -1266,16 +1228,18 @@ export class SessionController implements PollingGameSession {
   }
 
   processResult(result: WasmResult | undefined): void {
-    if (this.committedSessionRuntime) {
-      this.committedSessionRuntime.enqueue(() => this.processResultNow(result));
+    if (this.executionRetired) return;
+    if (this.executionActive) {
+      this.enqueue(() => this.processResultNow(result));
       return;
     }
     this.processResultNow(result);
   }
 
   private enqueueStimulus(work: () => void): void {
-    if (this.committedSessionRuntime) {
-      this.committedSessionRuntime.enqueue(work);
+    if (this.executionRetired) return;
+    if (this.executionActive) {
+      this.enqueue(work);
     } else {
       work();
     }
@@ -1417,7 +1381,7 @@ export class SessionController implements PollingGameSession {
       this.dispatchEvent(event);
     } catch (e) {
       diagStack('dispatchEvent error', e);
-      this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(e) });
+      this.receiveEvent({ type: 'error', error: extractErrorMessage(e) });
     }
     if (!this.retired) {
       this.requestCommit();
@@ -1435,10 +1399,10 @@ export class SessionController implements PollingGameSession {
   async quiesceAndSealForTerminalFinalization(): Promise<TerminalQuiescentSnapshot> {
     const maxPasses = 20;
     let checkpointFailed = false;
-    const flushRuntime = async (runtime: SessionMachineRuntime): Promise<void> => {
+    const flushCheckpoint = async (): Promise<void> => {
       if (checkpointFailed) return;
       try {
-        await runtime.flush();
+        await this.flush();
       } catch (error) {
         if (
           error instanceof StorageAuthorityLostError ||
@@ -1450,15 +1414,14 @@ export class SessionController implements PollingGameSession {
       }
     };
     for (let pass = 0; pass < maxPasses; pass += 1) {
-      const runtime = this.committedSessionRuntime;
-      if (!runtime) {
+      if (!this.executionActive) {
         throw new Error('SessionController terminal finalization requires an active runtime');
       }
-      await flushRuntime(runtime);
+      await flushCheckpoint();
 
       await Promise.allSettled([...this.pendingEffects]);
       await this.flushTransactionSubmissions();
-      await flushRuntime(runtime);
+      await flushCheckpoint();
 
       if (
         this.pendingEffects.size === 0 &&
@@ -1466,20 +1429,17 @@ export class SessionController implements PollingGameSession {
         this.eventQueue.length === 0 &&
         (checkpointFailed || !this.reliableTransport.hasPendingDurability())
       ) {
-        const model = runtime.snapshotModel();
+        const model = this.snapshotModel();
         const coinsOfInterest = structuredClone(this.getCoinsOfInterest());
-        if (this.committedSessionRuntime !== runtime) continue;
-        if (this.persistenceSessionRuntime !== runtime) {
+        if (!this.persistenceActivated) {
           throw new Error(
             'SessionController terminal persistence sealing requires an active runtime',
           );
         }
         storageRepository.retireSessionWalletReservations(this.reliableState.sessionId);
         this.terminalSealed = true;
-        this.reliableTransport.detachCommitCoordinator(runtime);
-        this.persistenceSessionRuntime = null;
-        this.committedSessionRuntime = null;
-        runtime.retire();
+        this.reliableTransport.detachCommitCoordinator(this);
+        this.retireExecution();
         return { model, coinsOfInterest };
       }
     }
@@ -1494,11 +1454,11 @@ export class SessionController implements PollingGameSession {
       return;
     }
     for (let i = 0; i < 100; i += 1) {
-      await this.committedSessionRuntime?.flush();
+      await (this.executionActive ? this.flush() : Promise.resolve());
       const effects = [...this.pendingEffects];
       await Promise.allSettled(effects);
       await this.flushTransactionSubmissions();
-      await this.committedSessionRuntime?.flush();
+      await (this.executionActive ? this.flush() : Promise.resolve());
       if (
         this.pendingEffects.size === 0 &&
         this.submissionPump.isQuiescent() &&
@@ -1549,7 +1509,7 @@ export class SessionController implements PollingGameSession {
         notification = { ChannelStatus: channelStatus };
         if (channelStatus.state === 'Active') {
           this.channelReady = true;
-          this.committedSessionRuntime?.publishReadiness(true);
+          if (this.executionActive) this.publishReadiness(true);
           this.ensureProtocolIdentities();
         }
       }
@@ -1562,20 +1522,20 @@ export class SessionController implements PollingGameSession {
         this.ensureProtocolIdentities();
       }
       if (tag !== 'ProposalMade' || proposalMadeAdmitted(notification)) {
-        this.rxjsEmitter?.next({ type: 'notification', data: notification });
+        this.receiveEvent({ type: 'notification', data: notification });
       } else {
-        this.rxjsEmitter?.next({
+        this.receiveEvent({
           type: 'error',
           error: 'ProposalMade names an unregistered game protocol identity',
         });
       }
     } else if ('ReceiveError' in event) {
-      this.rxjsEmitter?.next({ type: 'error', error: event.ReceiveError });
+      this.receiveEvent({ type: 'error', error: event.ReceiveError });
     } else if ('CoinSolutionRequest' in event) {
       this.queueCoinSolutionRequest(event.CoinSolutionRequest);
     } else if ('Log' in event) {
       this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, event.Log);
-      this.rxjsEmitter?.next({ type: 'log', message: event.Log });
+      this.receiveEvent({ type: 'log', message: event.Log });
     } else if ('NeedCoinSpend' in event) {
       this.queueFunding(event.NeedCoinSpend);
     } else if ('ChannelCoinConfirmed' in event) {
@@ -1642,7 +1602,7 @@ export class SessionController implements PollingGameSession {
 
   private scheduleCoinSolutionDelivery(delivery: PendingCoinSolutionDelivery): void {
     if (
-      !this.committedSessionRuntime ||
+      !this.executionActive ||
       !this.blockchain ||
       this.pendingCoinSolutionDeliveries.get(delivery.coin) !== delivery
     ) {
@@ -1652,18 +1612,15 @@ export class SessionController implements PollingGameSession {
     if (delivery.state.kind === 'scheduled') return;
 
     delivery.state = { kind: 'scheduled' };
-    const release = this.schedulePersistenceGatedEffect(
-      `coin-solution:${delivery.coin}`,
-      async () => {
-        if (
-          this.pendingCoinSolutionDeliveries.get(delivery.coin) !== delivery ||
-          delivery.state.kind !== 'scheduled'
-        )
-          return;
-        delivery.state = { kind: 'launched' };
-        await this.fetchAndDeliverCoinSolution(delivery);
-      },
-    );
+    const release = this.releaseAfterPersistence(`coin-solution:${delivery.coin}`, async () => {
+      if (
+        this.pendingCoinSolutionDeliveries.get(delivery.coin) !== delivery ||
+        delivery.state.kind !== 'scheduled'
+      )
+        return;
+      delivery.state = { kind: 'launched' };
+      await this.fetchAndDeliverCoinSolution(delivery);
+    });
     void release.catch((error) => this.handleCoinSolutionReleaseError(delivery, error));
   }
 
@@ -1701,7 +1658,7 @@ export class SessionController implements PollingGameSession {
     if (this.retired || this.pendingCoinSolutionDeliveries.get(delivery.coin) !== delivery) return;
 
     try {
-      await this.runCommittedMutation(() => {
+      await this.enqueueResult(() => {
         if (!this.cradle) {
           throw new Error('WASM cradle became unavailable before puzzle/solution completion');
         }
@@ -1751,7 +1708,7 @@ export class SessionController implements PollingGameSession {
   private reportCoinSolutionError(coin: string, error: unknown): void {
     diagStack(`puzzle/solution delivery failed coin=${coin}`, error);
     log(`[wasm] puzzle/solution delivery failed coin=${coin}: ${String(error)}`);
-    this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
+    this.receiveEvent({ type: 'error', error: extractErrorMessage(error) });
   }
 
   // --- Inbound events ---
@@ -1766,7 +1723,7 @@ export class SessionController implements PollingGameSession {
     this.pendingPeerFailure = reason;
     this.reliableTransport.reportFailure(reason);
     log(`[peer-policy] ${reason}`);
-    this.rxjsEmitter?.next({ type: 'error', error: reason });
+    this.receiveEvent({ type: 'error', error: reason });
     this.escalatePeerFailure();
   }
 
@@ -1814,13 +1771,13 @@ export class SessionController implements PollingGameSession {
   }
 
   async reportCoinStates(peak: bigint, records: CoinStateRecord[]): Promise<void> {
-    if (this.retired) return;
-    if (!this.cradle || !this.committedSessionRuntime) {
+    if (this.executionRetired) return;
+    if (!this.cradle || !this.executionActive) {
       this.pendingChainObservations.push({ kind: 'coin-states', peak, records });
       return;
     }
     try {
-      await this.runCommittedMutation(() => this.deliverCoinStates(peak, records));
+      await this.enqueueResult(() => this.deliverCoinStates(peak, records));
     } catch (error) {
       if (!this.retired) this.reportAuthoritativeCompletionError('coin snapshot', error);
       throw error;
@@ -1828,13 +1785,13 @@ export class SessionController implements PollingGameSession {
   }
 
   async reportNewBlock(peak: bigint): Promise<void> {
-    if (this.retired) return;
-    if (!this.cradle || !this.committedSessionRuntime) {
+    if (this.executionRetired) return;
+    if (!this.cradle || !this.executionActive) {
       this.pendingChainObservations.push({ kind: 'height', peak });
       return;
     }
     try {
-      await this.runCommittedMutation(() => this.deliverHeight(peak));
+      await this.enqueueResult(() => this.deliverHeight(peak));
     } catch (error) {
       if (!this.retired) this.reportAuthoritativeCompletionError('block height', error);
       throw error;
@@ -1842,13 +1799,13 @@ export class SessionController implements PollingGameSession {
   }
 
   async reportChainSnapshotReady(peak: bigint): Promise<void> {
-    if (this.retired) return;
-    if (!this.cradle || !this.committedSessionRuntime) {
+    if (this.executionRetired) return;
+    if (!this.cradle || !this.executionActive) {
       this.pendingChainObservations.push({ kind: 'snapshot-ready', peak });
       return;
     }
     try {
-      await this.runCommittedMutation(() => this.deliverChainSnapshotReady(peak));
+      await this.enqueueResult(() => this.deliverChainSnapshotReady(peak));
     } catch (error) {
       if (!this.retired) this.reportAuthoritativeCompletionError('chain snapshot ready', error);
       throw error;
@@ -1901,12 +1858,6 @@ export class SessionController implements PollingGameSession {
     });
   }
 
-  // --- Persistence ---
-
-  private requestCommit(): void {
-    this.committedSessionRuntime?.requestCommit();
-  }
-
   restorePresentationTiming(
     timing: Pick<WasmFields, 'waitingStateEnteredAt' | 'cleanShutdownGraceStartedAt'>,
   ): void {
@@ -1929,8 +1880,8 @@ export class SessionController implements PollingGameSession {
   }
 
   async flushPendingSave(): Promise<void> {
-    if (this.persistenceSessionRuntime) {
-      await this.persistenceSessionRuntime.flush();
+    if (this.persistenceActivated && !this.executionRetired) {
+      await this.flush();
       return;
     }
     // Rust intentionally omits transient cradle events from serialization.
@@ -2005,7 +1956,7 @@ export class SessionController implements PollingGameSession {
 
   reportRuntimeError(error: unknown): void {
     markClientErrorReported(error);
-    this.rxjsEmitter?.next({ type: 'error', error: extractErrorMessage(error) });
+    this.receiveEvent({ type: 'error', error: extractErrorMessage(error) });
   }
 
   // --- Game actions (called by higher layer) ---
@@ -2029,7 +1980,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptProposal failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.receiveEvent({ type: 'error', error: msg });
       throw e;
     }
   }
@@ -2042,7 +1993,7 @@ export class SessionController implements PollingGameSession {
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cancel_proposal failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.receiveEvent({ type: 'error', error: msg });
       throw e;
     }
   }
@@ -2057,7 +2008,7 @@ export class SessionController implements PollingGameSession {
       const msg = extractErrorMessage(e);
       console.error('[wasm] makeMove failed:', msg);
       markClientErrorReported(e);
-      this.rxjsEmitter?.next({
+      this.receiveEvent({
         type: 'game-action-error',
         gameId,
         action: 'make-move',
@@ -2081,7 +2032,7 @@ export class SessionController implements PollingGameSession {
       const msg = extractErrorMessage(e);
       console.error('[wasm] acceptSettlement failed:', msg);
       markClientErrorReported(e);
-      this.rxjsEmitter?.next({
+      this.receiveEvent({
         type: 'game-action-error',
         gameId,
         action: 'accept-settlement',
@@ -2100,7 +2051,7 @@ export class SessionController implements PollingGameSession {
       const msg = extractErrorMessage(e);
       console.error('[wasm] cheat failed:', msg);
       markClientErrorReported(e);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.receiveEvent({ type: 'error', error: msg });
       throw e;
     }
   }
@@ -2119,7 +2070,7 @@ export class SessionController implements PollingGameSession {
             ? (e as { error: string }).error
             : String(e);
       console.error('[wasm] cleanShutdown failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.receiveEvent({ type: 'error', error: msg });
       throw e;
     }
   }
@@ -2136,7 +2087,7 @@ export class SessionController implements PollingGameSession {
             ? (e as { error: string }).error
             : String(e);
       console.error('[wasm] abandon failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.receiveEvent({ type: 'error', error: msg });
     }
   }
 
@@ -2161,7 +2112,7 @@ export class SessionController implements PollingGameSession {
             ? (e as { error: string }).error
             : String(e);
       console.error('[wasm] goOnChain failed:', msg);
-      this.rxjsEmitter?.next({ type: 'error', error: msg });
+      this.receiveEvent({ type: 'error', error: msg });
       return false;
     }
   }
@@ -2193,5 +2144,890 @@ export class SessionController implements PollingGameSession {
 
   nerf(): void {
     this.setTransactionPublishNerfed(true);
+  }
+
+  getState(): SessionMachineState {
+    return this.state;
+  }
+
+  snapshotModel(): SessionMachineState['model'] {
+    return structuredClone(this.state.model);
+  }
+
+  activate(): void {
+    if (this.activated || this.executionRetired) return;
+    this.activated = true;
+    this.activateExecutionPersistence();
+    if (!this.executionRetired) this.dispatchHostProjection();
+  }
+
+  activatePersistence(): void {
+    if (this.persistenceActivated || this.executionRetired) return;
+    if (!this.activated) {
+      throw new Error('Session persistence activation requires execution');
+    }
+    this.persistenceActivated = true;
+    this.detachStorageRuntime = storageRepository.attachRuntime(this);
+    this.scheduleCommit(false);
+  }
+
+  private presentation(state: SessionMachineState): SessionPresentation {
+    return {
+      model: state.model,
+      phase: selectSessionPhase(state.model, state.coordination.hostOnChain),
+      hand: this.activeHand,
+      coins: this.getCoinsOfInterest(),
+      channelReady: this.isChannelReady(),
+    };
+  }
+
+  private render(state: SessionMachineState): void {
+    this.published = this.presentation(state);
+    this.publishFrontend({ type: 'batch-complete', presentation: this.published });
+  }
+
+  publishReadiness(ready: boolean): void {
+    this.published = { ...this.published, channelReady: ready };
+    this.publishFrontend({ type: 'readiness', ready });
+  }
+
+  publishFrontend(event: SessionFrontendEvent): void {
+    this.frontendEvents.push(event);
+    if (this.publishingFrontend) return;
+    this.publishingFrontend = true;
+    try {
+      while (this.frontendEvents.length) {
+        const next = this.frontendEvents.shift()!;
+        for (const listener of this.frontendListeners) listener(next);
+      }
+    } finally {
+      this.publishingFrontend = false;
+    }
+  }
+
+  private dispatchGameIntent(intent: GameIntent): void {
+    const game = this.state.model.game;
+    const gameType = game.activeGameType as RegisteredGameType;
+    if (intent.type === 'state-changed') {
+      this.commitHandStateChanged(gameType);
+      return;
+    }
+    if (!Number.isInteger(intent.memberIndex) || intent.memberIndex < 0) {
+      throw new Error(
+        `Internal game action member index must be a nonnegative integer: ${intent.memberIndex}`,
+      );
+    }
+    const id = game.currentHandIds[intent.memberIndex];
+    if (id === undefined) {
+      throw new Error(
+        `Internal game action member index ${intent.memberIndex} is outside the current hand`,
+      );
+    }
+    runWithRuntimeErrorReporting(
+      () =>
+        this.commitLocalGameAction({
+          gameType,
+          id,
+          command:
+            intent.type === 'make-move'
+              ? { type: 'make-move', readable: intent.readable }
+              : intent.type === 'accept-settlement'
+                ? { type: 'accept-settlement' }
+                : { type: 'cheat', moverShare: intent.moverShare },
+        }),
+      (message) => this.dispatch({ type: 'enqueue-error', kind: 'infra-error', message }),
+    );
+  }
+
+  retireExecution(): void {
+    if (this.executionRetired) return;
+    this.executionRetired = true;
+    this.cancelCommitTask?.();
+    this.cancelCommitTask = null;
+    const error = new SessionRuntimeRetiredError();
+    for (const work of this.pendingControllerWork.splice(0)) {
+      if (work.kind === 'result') work.reject(error);
+    }
+    for (const effect of this.pendingExternalEffects.values()) {
+      effect.deferred.reject(error);
+    }
+    this.pendingExternalEffects.clear();
+    this.pendingEvents.length = 0;
+    this.detachStorageRuntime?.();
+    this.detachStorageRuntime = null;
+  }
+
+  receiveEvent(event: WasmEvent): void {
+    if (!this.executionActive) return;
+    switch (event.type) {
+      case 'notification':
+        dispatchWasmNotification(
+          event.data,
+          (notification) =>
+            this.dispatch({
+              type: 'wasm-notification',
+              notification,
+              iStarted: this.iStarted,
+            }),
+          (error) =>
+            this.dispatch({ type: 'enqueue-error', kind: 'infra-error', message: String(error) }),
+        );
+        this.dispatchHostProjection();
+        break;
+      case 'error':
+        this.dispatch({ type: 'enqueue-error', kind: 'infra-error', message: event.error });
+        break;
+      case 'game-action-error':
+        this.dispatch({ type: 'enqueue-error', kind: 'action-failed', message: event.error });
+        break;
+      case 'durability-error':
+        this.dispatch({ type: 'enqueue-error', kind: 'durability-error', message: event.error });
+        break;
+      case 'recoverable-internal-error':
+        this.dispatch({
+          type: 'enqueue-error',
+          kind: 'recoverable-internal-error',
+          message: event.error,
+        });
+        this.dispatchHostProjection();
+        break;
+      case 'log':
+        log(`[wasm] ${event.message}`);
+        this.dispatchHostProjection();
+        break;
+      case 'address':
+        break;
+    }
+  }
+
+  private dispatchHostProjection(): void {
+    const status = this.getRestoreStatus();
+    this.dispatch({
+      type: 'host-projection',
+      restore: {
+        restoring: this.restoring,
+        status,
+        error: this.getRestoreError(),
+      },
+      wasmNotificationHistory: this.wasmNotificationHistory,
+      diagnosticLog: this.diagnosticLog,
+    });
+  }
+
+  private isDurabilityProjection(event: SessionMachineEvent): boolean {
+    return (
+      (event.type === 'enqueue-error' && event.kind === 'durability-error') ||
+      ((event.type === 'dismiss-channel' || event.type === 'dismiss-channel-notification') &&
+        this.state.model.channel.queue[0]?.kind === 'durability-error')
+    );
+  }
+
+  dispatch(event: SessionMachineEvent): void {
+    if (this.executionRetired) return;
+    const durabilityProjection = this.isDurabilityProjection(event);
+    this.pendingEvents.push(event);
+    if (this.committing && durabilityProjection) {
+      return;
+    }
+    if (this.committing) return;
+    if (this.draining) return;
+    this.runTransaction(undefined, !durabilityProjection);
+    if (durabilityProjection && this.projectionPending) {
+      this.projectionPending = false;
+      try {
+        this.render(this.state);
+      } catch (error) {
+        this.reportRuntimeError(error);
+      }
+    }
+  }
+
+  private drainMachineEvents(): void {
+    while (this.pendingEvents.length > 0) {
+      const next = this.pendingEvents.shift()!;
+      const previous = this.state;
+      const transition = reduceSessionMachine(previous, next, this.activeHandContext);
+      this.state = transition.state;
+      if (this.state !== previous) {
+        this.projectionPending = true;
+        if (transition.durability === 'durable') this.durabilityDirty = true;
+      }
+      for (const effect of transition.effects) {
+        this.runSessionEffect(effect);
+      }
+    }
+  }
+
+  getGameHand(): RegisteredGameHand | null {
+    return this.activeHand;
+  }
+
+  commitHandStateChanged(gameType: RegisteredGameType): void {
+    const game = this.state.model.game;
+    if (game.activeGameType !== gameType) {
+      throw new Error(
+        `Internal hand state gameType ${gameType} does not match active ${game.activeGameType}`,
+      );
+    }
+    this.dispatch({ type: 'hand-state-changed', handState: this.snapshotActiveHand() });
+  }
+
+  commitLocalGameAction(request: LocalGameActionRequest): void {
+    const checkpoint = structuredClone(this.state.model.game.handState);
+    const stateCheckpoint = this.state;
+    try {
+      this.runTransaction(() => {
+        const game = this.state.model.game;
+        if (game.activeGameType !== request.gameType) {
+          throw new Error(
+            `Internal local action gameType ${request.gameType} does not match active ${game.activeGameType}`,
+          );
+        }
+        if (!game.currentHandIds.includes(request.id)) {
+          throw new Error(
+            `Internal local action game id ${request.id} is not a current hand member`,
+          );
+        }
+        if (!game.activeIds.includes(request.id)) {
+          throw new Error(`Internal local action game id ${request.id} is not active`);
+        }
+        const instance = game.instances[request.id];
+        if (!instance) {
+          throw new Error(`Internal local action game id ${request.id} has no game instance`);
+        }
+        if (
+          instance.presentation !== 'off-chain-my-turn' &&
+          instance.presentation !== 'on-chain-my-turn'
+        ) {
+          throw new Error(
+            `Internal local action for game ${request.id} attempted outside our turn`,
+          );
+        }
+        const disposition = this.runLocalGameCommand(request.command, request.id);
+        if (disposition === 'rejected') {
+          this.restoreAndProject(checkpoint, stateCheckpoint);
+          return;
+        }
+        this.dispatch({
+          type: 'local-game-action-committed',
+          id: request.id,
+          handState: this.snapshotActiveHand(),
+        });
+      });
+    } catch (error) {
+      this.restoreAndProject(checkpoint, stateCheckpoint);
+      throw error;
+    }
+  }
+
+  private requireActiveHand(): RegisteredGameHand {
+    if (this.activeHand === null) {
+      throw new Error('Game update requires an active hand instance');
+    }
+    return this.activeHand;
+  }
+
+  private snapshotActiveHand() {
+    return snapshotRegisteredGameHand(
+      this.state.model.game.activeGameType,
+      this.requireActiveHand(),
+    );
+  }
+
+  private restoreHandFrom(checkpoint: ReturnType<typeof this.snapshotActiveHand> | null): void {
+    if (checkpoint === null) {
+      this.activeHand = null;
+      return;
+    }
+    const gameType = checkpoint.gameType as RegisteredGameType;
+    this.activeHand = restoreRegisteredGameHandState(gameType, checkpoint);
+  }
+
+  private restoreAndProject(
+    checkpoint: ReturnType<typeof this.snapshotActiveHand> | null,
+    stateCheckpoint: SessionMachineState,
+  ): void {
+    this.restoreHandFrom(checkpoint);
+    this.state = stateCheckpoint;
+    this.projectionPending = true;
+    this.scheduleCommit(false);
+  }
+
+  enqueue(work: () => void): void {
+    if (this.executionRetired) return;
+    if (this.committing) {
+      this.pendingControllerWork.push({ kind: 'fire-and-forget', run: work });
+      return;
+    }
+    this.runTransaction(work);
+  }
+
+  enqueueResult<T>(work: () => T): Promise<T> {
+    const deferred = createResultDeferred<T>();
+    if (!this.executionActive) {
+      deferred.reject(
+        this.executionRetired
+          ? new SessionRuntimeRetiredError()
+          : new Error('Authoritative mutations require active session execution'),
+      );
+      return deferred.promise;
+    }
+    const run = () => {
+      try {
+        deferred.resolve(work());
+      } catch (error) {
+        deferred.reject(error);
+      }
+    };
+    if (this.committing) {
+      this.pendingControllerWork.push({ kind: 'result', run, reject: deferred.reject });
+    } else {
+      this.runTransaction(run);
+    }
+    return deferred.promise;
+  }
+
+  releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void> {
+    if (!this.activated)
+      return Promise.reject(new Error('External effects require active session execution'));
+    if (this.executionRetired) {
+      const deferred = createDeferred();
+      deferred.reject(new SessionRuntimeRetiredError());
+      return deferred.promise;
+    }
+    const pending = this.pendingExternalEffects.get(key);
+    if (pending) return pending.deferred.promise;
+    const effect = { launcher, deferred: createDeferred() };
+    this.pendingExternalEffects.set(key, effect);
+    this.scheduleCommit(true);
+    return effect.deferred.promise;
+  }
+
+  private runTransaction(work?: () => void, requestCommit = true): void {
+    if (this.executionRetired) return;
+    if (this.draining) {
+      work?.();
+      return;
+    }
+    this.draining = true;
+    try {
+      work?.();
+      for (;;) {
+        this.drainMachineEvents();
+        this.flushDeferredWork();
+        if (this.pendingEvents.length === 0 && !this.hasDeferredWork()) break;
+      }
+    } catch (error) {
+      this.pendingEvents.length = 0;
+      throw error;
+    } finally {
+      this.draining = false;
+    }
+    if (requestCommit) this.scheduleCommit(false);
+  }
+
+  requestCommit(): void {
+    if (this.executionActive) this.scheduleCommit(true);
+  }
+
+  private scheduleCommit(markDirty: boolean): void {
+    if (this.executionRetired) return;
+    if (markDirty) this.durabilityDirty = true;
+    if (!this.durabilityDirty && !this.projectionPending) return;
+    if (!this.persistenceActivated) {
+      if (!this.committing && !this.draining && !this.projecting) {
+        this.projecting = true;
+        try {
+          while (this.projectionPending) {
+            this.projectionPending = false;
+            try {
+              this.render(this.state);
+            } catch (error) {
+              this.reportRuntimeError(error);
+            }
+          }
+        } finally {
+          this.projecting = false;
+        }
+      }
+      return;
+    }
+    if (this.committing || this.draining || this.cancelCommitTask !== null) return;
+    // Background throttling must not delay the save that releases messages/ACKs.
+    this.cancelCommitTask = scheduleCommitTask(() => {
+      this.cancelCommitTask = null;
+      this.startCommit();
+    });
+  }
+
+  private writeCheckpoint(persistenceState: SessionMachineState): Promise<void> {
+    const wasm = this.getWasmFields();
+    if (!wasm) throw new SessionSnapshotUnavailableError();
+    const capture = {
+      kind: 'live' as const,
+      wasm,
+      model: persistenceState.model,
+      walletProviderScope: this.getWalletProviderScope(),
+      restoring: this.restoring,
+      restoreStatus: this.getRestoreStatus(),
+      restoreError: this.getRestoreError(),
+    };
+    const snapshot = storageRepository.patchApplicationState(
+      (root) => buildDurableApplicationState(root, capture)!,
+    );
+    return storageRepository.write(snapshot);
+  }
+
+  private startCommit(): void {
+    if (
+      this.executionRetired ||
+      this.committing ||
+      this.draining ||
+      (!this.durabilityDirty && !this.projectionPending)
+    ) {
+      return;
+    }
+    this.runTransaction(undefined, false);
+    if (this.committing || this.draining || (!this.durabilityDirty && !this.projectionPending)) {
+      return;
+    }
+    const projectedState = this.state;
+    const shouldProject = this.projectionPending;
+    if (!this.durabilityDirty) {
+      this.projectionPending = false;
+      try {
+        this.render(projectedState);
+      } catch (error) {
+        this.reportRuntimeError(error);
+      }
+      return;
+    }
+    const reliableCommit = this.prepareReliableCommit();
+    const externalEffects = [...this.pendingExternalEffects.entries()];
+    const recoveringDurability = this.durabilityDegraded;
+    const persistenceState = recoveringDurability
+      ? reduceSessionMachine(
+          structuredClone(projectedState),
+          { type: 'clear-durability-error' },
+          this.activeHandContext,
+        ).state
+      : structuredClone(projectedState);
+    this.durabilityDirty = false;
+    this.projectionPending = false;
+    this.committing = true;
+    let write: Promise<void>;
+    try {
+      const rejectionWrite = this.persistInboundSessionRejectIfNeeded();
+      if (rejectionWrite) {
+        write = rejectionWrite;
+      } else {
+        write = this.writeCheckpoint(persistenceState);
+      }
+    } catch (error) {
+      write = Promise.reject(error);
+    }
+    const releaseExternalEffects = () => {
+      for (const [key, effect] of externalEffects) {
+        if (this.pendingExternalEffects.get(key) !== effect) continue;
+        this.pendingExternalEffects.delete(key);
+        let completion: Promise<void>;
+        try {
+          completion = effect.launcher();
+        } catch (error) {
+          effect.deferred.reject(error);
+          continue;
+        }
+        void Promise.resolve(completion).then(effect.deferred.resolve, effect.deferred.reject);
+      }
+    };
+    let writeFailed = false;
+    let snapshotInvariantFailed = false;
+    let activityDirtyBeforeFailure = false;
+    this.commitPromise = write
+      .then(
+        () => {
+          if (this.executionRetired) return;
+          const renderedState = recoveringDurability
+            ? reduceSessionMachine(
+                this.state,
+                { type: 'clear-durability-error' },
+                this.activeHandContext,
+              ).state
+            : projectedState;
+          if (recoveringDurability) {
+            this.durabilityDegraded = false;
+            this.clearDurabilityError();
+            this.state = renderedState;
+          }
+          if (shouldProject) {
+            try {
+              this.render(renderedState);
+            } catch (error) {
+              this.reportRuntimeError(error);
+            }
+          }
+          try {
+            this.completeReliableCommit(reliableCommit, true);
+          } catch (error) {
+            this.reportRuntimeError(error);
+          }
+          releaseExternalEffects();
+        },
+        (error) => {
+          if (this.executionRetired) throw error;
+          if (error instanceof SessionSnapshotUnavailableError) {
+            writeFailed = true;
+            snapshotInvariantFailed = true;
+            this.durabilityDirty = true;
+            this.projectionPending ||= shouldProject;
+            throw error;
+          }
+          if (error instanceof StorageAuthorityLostError) {
+            this.retireExecution();
+            throw error;
+          }
+          writeFailed = true;
+          activityDirtyBeforeFailure = this.durabilityDirty;
+          this.durabilityDirty = true;
+          this.durabilityDegraded = true;
+          this.reportDurabilityError(error);
+          if (shouldProject) {
+            try {
+              this.render(projectedState);
+            } catch (renderError) {
+              this.reportRuntimeError(renderError);
+            }
+          }
+          try {
+            this.completeReliableCommit(reliableCommit, false);
+          } catch (releaseError) {
+            this.reportRuntimeError(releaseError);
+          }
+          releaseExternalEffects();
+          throw error;
+        },
+      )
+      .finally(() => {
+        this.committing = false;
+        if (this.executionRetired) return;
+        if (this.pendingControllerWork.length > 0 || this.pendingEvents.length > 0) {
+          const work = this.pendingControllerWork.splice(0);
+          const queuedActivity =
+            work.length > 0 ||
+            this.pendingEvents.some((event) => !this.isDurabilityProjection(event));
+          this.runTransaction(
+            () => {
+              for (const task of work) task.run();
+            },
+            !snapshotInvariantFailed &&
+              (!writeFailed || activityDirtyBeforeFailure || queuedActivity),
+          );
+          if (
+            !snapshotInvariantFailed &&
+            writeFailed &&
+            !activityDirtyBeforeFailure &&
+            !queuedActivity
+          ) {
+            this.projectionPending = false;
+            try {
+              this.render(this.state);
+            } catch (error) {
+              this.reportRuntimeError(error);
+            }
+          }
+        } else if (!snapshotInvariantFailed && (!writeFailed || activityDirtyBeforeFailure)) {
+          this.scheduleCommit(false);
+        }
+      });
+    void this.commitPromise.catch(() => {});
+  }
+
+  async flush(): Promise<void> {
+    if (this.executionRetired) return;
+    if (!this.persistenceActivated) {
+      this.scheduleCommit(false);
+      return;
+    }
+    this.cancelCommitTask?.();
+    this.cancelCommitTask = null;
+    if (
+      !this.committing &&
+      (this.durabilityDirty || this.projectionPending || this.pendingEvents.length > 0)
+    ) {
+      this.startCommit();
+    }
+    await this.commitPromise;
+    if (
+      this.committing ||
+      this.durabilityDirty ||
+      this.projectionPending ||
+      this.pendingEvents.length > 0 ||
+      this.pendingControllerWork.length > 0 ||
+      this.pendingExternalEffects.size > 0
+    ) {
+      return this.flush();
+    }
+  }
+
+  initializeExecution(
+    restoring: boolean,
+    bootstrap?: RehydratedDurableApplicationState,
+  ): SessionFrontend {
+    if (this.activated) return this.frontend;
+    this.restoring = restoring;
+    const handProposal: HandProposal = {
+      gameType: DEFAULT_CATALOG_GAME_TYPE,
+      senderIsPlayerA: !this.iStarted,
+      gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
+      parameters: this.perGameAmount,
+    };
+    this.state = createSessionMachineState(
+      bootstrap
+        ? structuredClone(bootstrap.model)
+        : createSessionModel({
+            channel: { cleanShutdownStarted: this.cleanShutdownCalled },
+            betweenHand: { lastHandProposal: null, compose: createComposeDraftState(handProposal) },
+          }),
+      {
+        firstGameAccepted:
+          bootstrap?.state.session?.phase === 'live' &&
+          bootstrap.state.session.presentation.channelStatus?.state === 'Active',
+      },
+    );
+
+    this.restoreHandFrom(this.state.model.game.handState);
+    this.published = this.presentation(this.state);
+    this.activate();
+    return this.frontend;
+  }
+  get executionActive(): boolean {
+    return this.activated && !this.executionRetired;
+  }
+
+  runLocalGameCommand(command: LocalGameCommand, id: string): GameCommandDisposition {
+    switch (command.type) {
+      case 'make-move':
+        return this.makeMove(id, command.readable);
+      case 'accept-settlement':
+        return this.acceptSettlement(id);
+      case 'cheat':
+        return this.cheat(id, command.moverShare);
+    }
+  }
+
+  runSessionEffect(effect: SessionMachineEffect): void {
+    switch (effect.type) {
+      case 'controller-accept-proposal':
+        this.runControllerCommand(
+          'accept-proposal',
+          () => this.acceptProposal(effect.id),
+          () =>
+            this.dispatch({
+              type: 'proposal-command-succeeded',
+              command: 'accept-proposal',
+              id: effect.id,
+            }),
+        );
+        return;
+      case 'controller-cancel-proposal':
+        this.runControllerCommand(
+          'cancel-proposal',
+          () => this.cancel_proposal(effect.id),
+          () =>
+            this.dispatch({
+              type: 'proposal-command-succeeded',
+              command: 'cancel-proposal',
+              id: effect.id,
+            }),
+        );
+        return;
+      case 'controller-propose-game': {
+        if (!this.isOffChainActive()) {
+          this.commandFailed('propose-game', new Error('channel is not active off-chain'));
+          return;
+        }
+        if (this.state.model.game.activeIds.length > 0) {
+          this.commandFailed('propose-game', new Error('a game is already active'));
+          return;
+        }
+        this.runControllerCommand(
+          'propose-game',
+          () =>
+            this.proposeGame({
+              game_type: protocolIdForCatalog(effect.handProposal.gameType),
+              timeout: effect.handProposal.gameTimeout,
+              sender_is_player_a: effect.handProposal.senderIsPlayerA,
+              parameters: effect.handProposal.parameters,
+            }),
+          (id) =>
+            this.dispatch({
+              type: 'proposal-sent',
+              id,
+              handProposal: effect.handProposal,
+            }),
+        );
+        return;
+      }
+      case 'controller-clean-shutdown':
+        this.runControllerCommand(
+          'clean-shutdown',
+          () => this.cleanShutdown(),
+          () => this.dispatch({ type: 'clean-shutdown-command-succeeded' }),
+        );
+        return;
+      case 'controller-go-on-chain': {
+        this.runControllerCommand(
+          'go-on-chain',
+          () => this.goOnChain(),
+          (started) => {
+            if (!started) {
+              this.commandFailed('go-on-chain', new Error('WASM rejected go on chain'));
+              return;
+            }
+            this.dispatch({ type: 'go-on-chain-result', started: true });
+          },
+        );
+        return;
+      }
+      case 'request-coin-enrichment':
+        void coinIdHex(effect.coin)
+          .then((coinHex) => {
+            this.dispatch({
+              type: 'coin-enrichment-completed',
+              target: effect.target,
+              id: effect.id,
+              generation: effect.generation,
+              coinHex,
+              channelState: effect.channelState,
+            });
+          })
+          .catch((error) => this.reportRuntimeError(error));
+        return;
+    }
+  }
+
+  private runControllerCommand<T>(
+    command: SessionControllerCommand,
+    run: () => T,
+    succeeded: (result: T) => void,
+  ): void {
+    let result: T;
+    try {
+      result = run();
+    } catch (error) {
+      this.commandFailed(command, error);
+      return;
+    }
+    succeeded(result);
+  }
+
+  private commandFailed(command: SessionControllerCommand, error: unknown): void {
+    this.dispatch({
+      type: 'controller-command-failed',
+      command,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function scheduleCommitTask(task: () => void): () => void {
+  if (typeof window !== 'undefined' && typeof window.MessageChannel === 'function') {
+    const channel = new window.MessageChannel();
+    const cancel = () => {
+      channel.port1.onmessage = null;
+      channel.port1.close();
+      channel.port2.close();
+    };
+    channel.port1.onmessage = () => {
+      cancel();
+      task();
+    };
+    channel.port2.postMessage(null);
+    return cancel;
+  }
+  const timer = setTimeout(task, 0);
+  if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  return () => clearTimeout(timer);
+}
+
+interface Deferred {
+  readonly promise: Promise<void>;
+  resolve(): void;
+  reject(error: unknown): void;
+}
+
+interface ResultDeferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
+
+type PendingControllerWork =
+  | { readonly kind: 'fire-and-forget'; readonly run: () => void }
+  | {
+      readonly kind: 'result';
+      readonly run: () => void;
+      readonly reject: (error: unknown) => void;
+    };
+
+interface PendingExternalEffect {
+  readonly launcher: () => Promise<void>;
+  readonly deferred: Deferred;
+}
+
+class SessionSnapshotUnavailableError extends Error {
+  constructor() {
+    super('Active session cannot persist before WASM fields are serializable');
+    this.name = 'SessionSnapshotUnavailableError';
+  }
+}
+
+function createDeferred(): Deferred {
+  let resolvePromise!: () => void;
+  let rejectPromise!: (error: unknown) => void;
+  let settled = false;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  void promise.catch(() => {});
+  return {
+    promise,
+    resolve: () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    },
+    reject: (error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    },
+  };
+}
+
+function createResultDeferred<T>(): ResultDeferred<T> {
+  let resolvePromise!: (value: T) => void;
+  let rejectPromise!: (error: unknown) => void;
+  const promise = new Promise<T>((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  void promise.catch(() => {});
+  return { promise, resolve: resolvePromise, reject: rejectPromise };
+}
+
+export function runWithRuntimeErrorReporting(
+  run: () => void,
+  report: (message: string) => void,
+): void {
+  try {
+    run();
+  } catch (error) {
+    if (!wasClientErrorReported(error)) {
+      markClientErrorReported(error);
+      report(error instanceof Error ? error.message : String(error));
+    }
+    throw error;
   }
 }

@@ -8,7 +8,6 @@ import { entriesForOwner, recoveryReadiness } from '../session/channelFundingSel
 import { providerScopeKey } from '../session/providerKeys';
 import { storageRepository } from '../session/storageRepository';
 import { BlockchainPoller, PollingGameSession } from '../wallet/BlockchainPoller';
-import { activate, deactivate } from '../wallet/activeBlockchain';
 import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 
@@ -1275,8 +1274,9 @@ describe('BlockchainPoller', () => {
       fundingOperation.purpose,
     );
 
+    const poller = new BlockchainPoller(rpc, 60_000, undefined, channelFundingRuntime);
     try {
-      activate(rpc, 60_000);
+      poller.start();
       expect(
         recoveryReadiness(
           storageRepository.channelFundingOperations(),
@@ -1302,7 +1302,8 @@ describe('BlockchainPoller', () => {
         ),
       ).toBe('ready');
     } finally {
-      deactivate();
+      poller.detachProvider();
+      poller.stop();
       channelFundingRuntime.resetForTests();
       jest.useRealTimers();
     }

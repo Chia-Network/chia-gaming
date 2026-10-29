@@ -1,6 +1,5 @@
 import { getGenesisChallenge } from '../../constants/wallet-connect';
 import { log } from '../../services/log';
-import { ReliablePeerTransport } from '../../services/PeerSession';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
 import type { SessionWallet } from '../wallet/sessionWallet';
@@ -65,7 +64,7 @@ export function destroyFlushedTerminalSessionController(controller: SessionContr
   if (sessionController !== controller) {
     throw new Error('Terminal finalization lost ownership of its SessionController');
   }
-  controller.cleanupAfterTerminalFlush();
+  controller.cleanup();
   sessionController = null;
 }
 export async function configSessionController(
@@ -171,12 +170,6 @@ export async function restoreSession(
 export function getOrCreateSessionController(
   blockchain: SessionWallet | null,
   peerConn: PeerConnectionResult,
-  registerMessageHandler: (
-    handler: (msgno: number, msg: Uint8Array) => void,
-    ackHandler: (ack: number) => void,
-    keepaliveHandler: () => void,
-    failureHandler: (reason: string) => void,
-  ) => void,
   uniqueId: string,
   myContribution: bigint,
   theirContribution: bigint,
@@ -187,9 +180,9 @@ export function getOrCreateSessionController(
   getFee?: () => bigint,
   channelTimeout?: number,
   unrollTimeout?: number,
-): { sessionController: SessionController } {
+): SessionController {
   if (sessionController) {
-    return { sessionController };
+    return sessionController;
   }
 
   const wasmStateInit = new WasmStateInit(fetchDeployPreset);
@@ -217,24 +210,7 @@ export function getOrCreateSessionController(
   if (getFee) sessionController.getFee = getFee;
   sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
 
-  if (!(peerConn.reliableTransport instanceof ReliablePeerTransport)) {
-    registerMessageHandler(
-      (msgno: number, msg: Uint8Array) => {
-        sessionController?.deliverMessage(BigInt(msgno), msg);
-      },
-      (ack: number) => {
-        sessionController?.receiveAck(BigInt(ack));
-      },
-      () => {
-        sessionController?.receiveKeepalive();
-      },
-      (reason: string) => {
-        sessionController?.failPeerProcessing(reason);
-      },
-    );
-  }
-
-  sessionController.initializeFrontend(
+  sessionController.initializeExecution(
     sessionBootstrap?.state.session?.phase === 'live',
     sessionBootstrap,
   );
@@ -291,11 +267,11 @@ export function getOrCreateSessionController(
               : String(e);
         console.error('[sessionController] newSession error:', e);
         log(`[sessionController] newSession error: ${msg}`);
-        owningController.rxjsEmitter?.next({ type: 'error', error: msg });
+        owningController.receiveEvent({ type: 'error', error: msg });
       }
     };
     newSession();
   }
 
-  return { sessionController };
+  return sessionController;
 }

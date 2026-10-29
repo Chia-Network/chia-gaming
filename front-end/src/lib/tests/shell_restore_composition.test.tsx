@@ -116,9 +116,7 @@ describe('Shell production restore composition', () => {
         restore: { status: 'restored', error: null },
       }),
     );
-    jest
-      .spyOn(blobSingleton, 'getOrCreateSessionController')
-      .mockReturnValue({ sessionController: session.controller });
+    jest.spyOn(blobSingleton, 'getOrCreateSessionController').mockReturnValue(session.controller);
     mockHub = null;
     mockSetBusy.mockClear();
     mockSendToPeer.mockClear();

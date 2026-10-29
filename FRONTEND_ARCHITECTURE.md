@@ -46,11 +46,14 @@ bootstrap. A retired session's commands remain bound to that retired session.
 terminal-notification dismissals.
 
 `WalletConnection` owns provider setup, reconnect notifications, balance interest,
-readiness subscriptions, and recovery notices. Its setup view omits `finalize`;
+readiness subscriptions, its sole poller, and recovery notices. Its setup view omits `finalize`;
 field values return through a wallet intent. Session execution receives the
 `SessionWallet` facet: queued address/solution/spend operations, readiness,
-provider ownership, and coin interest. Provider credentials and connection
-controls stay within the wallet module. WalletConnect normalization and silent
+provider ownership, coin interest, and a `SessionFunding` facet containing only
+funding commands and observations. Provider registration, recovery controls, and
+credentials stay within the wallet module. There is no second global poller.
+Connect/finalize return their outcome; Application decides when to select the
+hub tab, so wallet events contain no tab-selection policy. WalletConnect normalization and silent
 recovery remain TypeScript responsibilities. Existing terminal polling pause and
 resume ordering is preserved.
 
@@ -62,7 +65,9 @@ TypeScript adds no second message queue.
 Persistence and takeover cross these owners deliberately. `Recovery` owns boot,
 claim/takeover and authority-loss coordination; the repository owns the aggregate
 and generation-fenced storage. Session execution owns drain/capture/write/release
-ordering. `buildDurableApplicationState(root, capture)` is a pure assembler: its
+ordering in one `SessionController`. It directly handles Rust events and
+command results; there is no interpreter object or internal RxJS callback loop.
+`buildDurableApplicationState(root, capture)` is a pure assembler: its
 callers install the captured root before the exact write, preserving wallet
 notifications and both ordinary-failure and authority-loss behavior.
 
@@ -521,7 +526,7 @@ runtime and releases nothing. `ChannelFundingRuntime` and
 `FeeAttachmentRuntime` are the two explicit transient provider-orchestration
 owners over their separate aggregate slices.
 
-Session persistence is executed by `SessionMachineRuntime`, the sole active
+Session persistence is executed by `SessionController`, the sole active
 dirty/coalescing/drain scheduler. One synchronous snapshot combines two
 authoritative sources:
 
@@ -556,7 +561,7 @@ displaying intermediate states. It is the general flicker-prevention rule, not
 a collection of feature-specific rendering exceptions.
 
 The pure root reducer returns the next unpublished authority and ordered
-commands. `SessionMachineRuntime` drains reducer events, reentrant controller
+commands. `SessionController` drains reducer events, reentrant controller
 events, WASM results, and generated commands to a fixed point. It then persists
 or attempts to persist one combined snapshot, publishes the final authority to
 React once, and releases the staged effects. Games dispatch a `GameIntent`.
@@ -610,21 +615,18 @@ result-bearing companion to `enqueue`: it runs typed controller work inside the
 same serialized runtime transaction and resolves or rejects its promise when
 that work executes, including when an active commit temporarily queues it.
 
-Runtime construction itself is inert. Backend session construction installs and
-activates its runtime before asynchronous setup/restore completes. The controller
-attaches persistence and reliable-commit ownership only after serializable WASM
-fields are available; explicit pre-runtime boundaries persist earlier reliable
-work. The application consumes its event pipe. React only receives presentation
-and typed commands, and unsubscribing a view cannot retire protocol ownership.
-Replacement of the committed runtime and `SessionController` cleanup—including
-terminal cleanup—own retirement. Retirement discards queued events and
-fire-and-forget controller work, rejects queued result promises and
-not-yet-launched persistence-gated effects, and makes completion from an
-in-flight write inert. An obsolete runtime therefore cannot publish, persist,
-or release effects after replacement. The runtime directly implements the
-peer `ReliableCommitCoordinator` facet and provides `snapshotModel()` for the
-authoritative runtime model. Controller capabilities hide the only
-retire-before-launch retry loop from submission and coin-delivery callers.
+Backend session construction activates its one execution owner before
+asynchronous setup/restore completes. `SessionController` attaches persistence
+and reliable-commit ownership only after serializable WASM fields are available;
+explicit pre-runtime boundaries persist earlier reliable work. The application
+consumes its event pipe. React only receives presentation and typed commands,
+and unsubscribing a view cannot retire protocol ownership. Cleanup and terminal
+sealing retire execution, discarding queued events and fire-and-forget work,
+rejecting queued result promises and not-yet-launched persistence-gated effects,
+and making completion from an in-flight write inert. The same object directly
+implements the peer `ReliableCommitCoordinator` facet and supplies
+`snapshotModel()` for terminal capture. There is no runtime replacement or
+retire-before-launch forwarding/retry loop.
 
 `ChannelFundingRuntime` attaches one stable funding inbox per session and owns
 the durable operation lifecycle; there is no replaceable demand identity or
@@ -736,8 +738,8 @@ frames only at reconnect or peer-availability boundaries.
 `TransactionManager` is the durable retained owner of each transaction intent.
 `SubmissionPump` spans the interval after Rust drains an intent through
 persistence-gated launch, optional fee acquisition, exact-byte broadcast,
-typed completion, and relinquishment. Committed-runtime replacement reschedules
-only an unlaunched entry; the ordered queue retains launched work and terminal
+typed completion, and relinquishment. One session execution owner gates
+unlaunched work; the ordered queue retains launched work and terminal
 quiescence. The pump is neither persisted nor a retry authority. Rust validates
 stable identity before issuing each successor.
 Likewise, move redo after an unroll is serialized Rust protocol state. The
@@ -872,7 +874,7 @@ host work. Rust's `open_channel` awaits the existing TypeScript address provider
 and suppresses construction if setup retires during that request. WalletConnect
 RPC normalization and recovery stay in the TypeScript adapter.
 
-At quiescence `SessionMachineRuntime` drains machine, controller, and generated
+At quiescence `SessionController` drains machine, controller, and generated
 work to a fixed point, then:
 
 1. Captures the staged reliable generation together with the final WASM and JS
@@ -1185,8 +1187,8 @@ and actions, not visibility of a valid local restore.
 
 React and protocol cleanup are intentionally different. `Shell` unsubscribes
 from Application; game views contain no runtime installation or resource
-attachment effects. `SessionController.cleanup()` and `cleanupAfterTerminalFlush()`
-own protocol retirement, including the active runtime and controller resources.
+attachment effects. `SessionController.cleanup()` retires execution and releases
+session resources. Terminal finalization seals the same owner before cleanup.
 
 There are two different reset paths:
 
@@ -1922,11 +1924,10 @@ The cohesive session modules own those responsibilities:
 - `sessionMachine.ts` is the pure root reducer.
 - `sessionMachineNotifications.ts` reduces normalized WASM notifications.
 - `sessionMachineCommands.ts` maps UI events to typed commands.
-- `sessionMachineRuntime.ts` owns the one dirty/coalesced drain, reaches a fixed
-  point, snapshots and writes once, then projects React state and releases
-  captured effects.
-- `sessionMachineInterpreter.ts` performs controller calls, timers,
-  persistence, and async enrichment.
+- `SessionController.ts` owns Rust interaction and the one dirty/coalesced drain,
+  executes typed commands directly, reaches a fixed point, snapshots and writes
+  once, then projects React state and releases captured effects. It also owns
+  terminal quiescence and retirement.
 - `sessionMachinePersist.ts` purely assembles whole-root snapshots from captured data.
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
 - `session/incomingProposal.ts` validates the generic `ProposalMade` bridge,

@@ -177,3 +177,12 @@ export interface SessionMachineTransition {
 export interface ClassifiedSessionMachineTransition extends SessionMachineTransition {
   durability: 'durable' | 'projection-only';
 }
+
+export class SessionRuntimeRetiredError extends Error {
+  readonly code = 'SESSION_RUNTIME_RETIRED';
+
+  constructor() {
+    super('Session runtime was retired before queued work could start');
+    this.name = 'SessionRuntimeRetiredError';
+  }
+}

@@ -133,11 +133,11 @@ fail while the process continues—such as untrusted peer validation, a chain
 observation, or synchronous game-hand mutation—and its temporary working copy
 must disappear before capture.
 
-The live `SessionMachineRuntime` is the only dirty/coalescing scheduler. It owns
+The live `SessionController` is the only dirty/coalescing scheduler. It owns
 protocol/controller/UI/transport drains and folds preference, history, funding,
 fee, and rejection mutations into the same quiescent snapshot. Channel-funding
 and fee-attachment owners still checkpoint a reservation before mutating the
-provider. Before a committed runtime has serializable WASM fields and becomes
+provider. Before session execution has serializable WASM fields and becomes
 the persistence owner, reliable negotiation, rejection, and other explicit
 product boundaries build and write a whole-root snapshot immediately.
 `StorageRepository` owns the in-memory aggregate, storage authority, and exact
@@ -856,7 +856,7 @@ Shared frontend state owns only lifecycle facts: membership and protocol IDs,
 origins, keyed presentation, active-game type, and terminal facts. Each game
 package alone owns its concrete mutable hand and opaque saved state. Fresh hands
 come from accepted initialization terms; restored hands come directly from that
-package's current saved state. `SessionMachineRuntime.activeHand` is only a
+package's current saved state. `SessionController.activeHand` is only a
 cache rebuilt from and snapshotted back into canonical `handState`, never a
 second authority. For a protocol action the package mutates its hand first and
 the browser retains the previous canonical hand only as a synchronous rollback
@@ -910,14 +910,15 @@ views receive no provider, controller, transport or persistence bootstrap.
 `HubConnection` emits tagged events; peer reliability receives only the carrier's
 send capability. WalletConnect normalization remains in the wallet adapter.
 
-`SessionMachineRuntime` is constructed and activated by backend session setup.
-Persistence and reliable-commit ownership attach when serializable WASM fields
-exist. View unsubscribe/remount only changes presentation subscriptions; protocol
-retirement remains with controller cleanup and runtime replacement. Checkpoint
-assembly is pure, while runtime and terminal completion install the captured root
-before writing, retaining existing notification and failure ordering.
+`SessionController` owns both session execution and checkpoint ordering. Backend
+session setup activates this single owner; it does not install a second runtime
+or command interpreter. Persistence and reliable-commit ownership attach when
+serializable WASM fields exist. View unsubscribe/remount only changes presentation
+subscriptions. Checkpoint assembly is pure, while session and terminal completion
+install the captured root before writing, retaining existing notification and
+failure ordering.
 
-Once activated, `SessionMachineRuntime` is the sole active browser commit
+Once activated, `SessionController` is the sole active browser commit
 coordinator. It drains every consequence of a stimulus to a fixed point:
 reducer work, commands, controller/WASM results, generated events, UX-model
 updates, and reliable transport changes. It then synchronously captures one
@@ -931,12 +932,11 @@ and flicker. The runtime directly provides the peer
 serialized boundary and returns a typed promise that resolves or rejects when
 that work executes, including work queued behind an in-progress commit.
 
-The controller's single committed runtime slot is the exclusive, retire-aware
-authority. Committing a replacement retires the previous runtime; takeover,
-reload, and controller cleanup retire the current one. Retirement discards
-queued work and rejects pending promises and not-yet-launched effects, so an
-obsolete owner cannot publish, persist, release, or transfer work into a later
-authority generation. A known reservation returned late may be cancelled
+The session owns its execution authority for its entire lifetime. Takeover,
+reload, terminal sealing, and cleanup retire that authority; there is no
+replaceable runtime slot. Retirement discards queued work and rejects pending
+promises and not-yet-launched effects, so an obsolete owner cannot publish,
+persist, release, or transfer work into a later authority generation. A known reservation returned late may be cancelled
 best-effort through its original provider, but the new owner resumes only
 obligations present in its claimed durable snapshot.
 

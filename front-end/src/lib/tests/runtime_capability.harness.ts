@@ -5,10 +5,8 @@ import type {
 } from '../../types/ChiaGaming';
 import { createSessionModel } from '../session/model';
 import { SessionController } from '../session/SessionController';
-import {
-  SessionMachineRuntime,
-  SessionRuntimeRetiredError,
-} from '../session/sessionMachineRuntime';
+import { SessionRuntimeRetiredError } from '../session/sessionMachineTypes';
+
 import type { SessionModel } from '../session/types';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
@@ -129,6 +127,10 @@ export class ControlledRuntime {
     release.reject(error);
   }
 
+  async launchAll(prefix: string): Promise<void> {
+    for (const key of this.pending.keys()) if (key.startsWith(prefix)) await this.launch(key);
+  }
+
   async launch(key: string): Promise<void> {
     const release = this.pending.get(key);
     if (!release) throw new Error(`No pending release for ${key}`);
@@ -144,7 +146,26 @@ export class ControlledRuntime {
 
 export function commitRuntime(controller: SessionController, runtime: ControlledRuntime): void {
   runtime.attachController(controller);
-  controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
+  if (controller.executionActive) return;
+  for (const method of [
+    'enqueue',
+    'enqueueResult',
+    'releaseAfterPersistence',
+    'requestCommit',
+    'flush',
+    'snapshotModel',
+  ] as const) {
+    jest.spyOn(controller, method).mockImplementation(runtime[method].bind(runtime) as any);
+  }
+  const retire = controller.retireExecution.bind(controller);
+  jest.spyOn(controller, 'retireExecution').mockImplementation(() => {
+    runtime.retire();
+    retire();
+  });
+  jest.spyOn(controller, 'activatePersistence').mockImplementation(() => {
+    (controller as any).persistenceActivated = true;
+  });
+  controller.activate();
 }
 
 export function bestEffortWalletRpc(

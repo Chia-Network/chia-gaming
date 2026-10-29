@@ -1,3 +1,5 @@
+import { observeWasmEvents } from './session_execution.harness';
+import { configureSessionExecution } from './session_execution.harness';
 import type { CalpokerHand } from '@games/calpoker/ui/serialize';
 import {
   shouldAutoFireCalpokerMove,
@@ -11,7 +13,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { SessionController } from '../session/SessionController';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import type { HandProposal } from '../session/types';
 import { calpokerStateCodec } from './game_state_helpers';
 import {
@@ -38,7 +40,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     gameTimeout: 15n,
     parameters: 20n,
   };
-  const runtimes: SessionMachineRuntime[] = [];
+  const runtimes: SessionController[] = [];
   const ports: LiveGamePort[] = [];
   const errors: unknown[] = [];
   const statuses: Array<Array<{ id: string; moverShare: unknown }>> = [[], []];
@@ -49,8 +51,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   for (const [index, controller] of controllers.entries()) {
     const status = controller.lastChannelStatus;
     assert.ok(status, `calpoker initial deal player ${index}: missing active channel status`);
-    cradles[index].retireRuntime();
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       createSessionMachineState(
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
@@ -100,7 +101,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       },
     });
     addActiveSubscription(
-      controller.getObservable().subscribe((event) => {
+      observeWasmEvents(controller).subscribe((event) => {
         if (event.type !== 'notification') return;
         const gameStatus = event.data.GameStatus;
         if (gameStatus) {

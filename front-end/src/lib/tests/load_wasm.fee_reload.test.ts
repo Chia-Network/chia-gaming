@@ -1,3 +1,4 @@
+import { observeWasmEvents } from './session_execution.harness';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { readApplicationState } from '../session/indexedDb';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
@@ -37,7 +38,7 @@ it(
     );
     lane.controller.getFee = () => 10n;
     const controllerErrors: string[] = [];
-    const errorSubscription = lane.controller.getObservable().subscribe((event) => {
+    const errorSubscription = observeWasmEvents(lane.controller).subscribe((event) => {
       if (event.type === 'error') controllerErrors.push(event.error);
     });
 
@@ -118,9 +119,9 @@ it(
         `fee was not attached: fees=${submittedFees.join(',')} cancellations=${JSON.stringify(cancellationOutcomes)} errors=${controllerErrors.join('|')}`,
       );
 
-      await lane.runtime.persist();
+      await lane.runtime.flush();
       await lane.controller.flushPendingWork();
-      await lane.runtime.persist();
+      await lane.runtime.flush();
       const diskState = await readApplicationState();
       assert.equal(diskState?.session?.phase, 'live');
       assert.deepEqual(
@@ -181,7 +182,7 @@ it(
         await pollOnce(poller);
         await flushWrapperDrain(adapters);
         await lane.controller.flushPendingWork();
-        await lane.runtime.persist();
+        await lane.runtime.flush();
       }
       assert.deepEqual(
         cancellationOutcomes,

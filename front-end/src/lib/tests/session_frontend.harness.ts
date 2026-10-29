@@ -1,9 +1,9 @@
+import type { SessionController } from '../session/SessionController';
 import { useLayoutEffect, useState } from 'react';
 import type { SessionPresentation } from '../session/sessionFrontend';
-import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 
 export function observeSessionProjection(
-  runtime: SessionMachineRuntime,
+  runtime: SessionController,
   render: (presentation: SessionPresentation) => void,
 ): () => void {
   return runtime.frontend.subscribe((event) => {

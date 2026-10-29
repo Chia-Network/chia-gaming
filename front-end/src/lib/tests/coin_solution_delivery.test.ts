@@ -2,10 +2,8 @@ import { expectConsoleError } from '../../../scripts/testSetup';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { createSessionModel } from '../session/model';
 import { SessionController } from '../session/SessionController';
-import {
-  SessionMachineRuntime,
-  SessionRuntimeRetiredError,
-} from '../session/sessionMachineRuntime';
+import { SessionRuntimeRetiredError } from '../session/sessionMachineTypes';
+
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   makeMockCradle,
@@ -116,7 +114,26 @@ const effectKey = `coin-solution:${coin}`;
 
 function commitRuntime(controller: SessionController, runtime: ControlledRuntime): void {
   runtime.attachController(controller);
-  controller.commitSessionRuntime(runtime as unknown as SessionMachineRuntime);
+  if (controller.executionActive) return;
+  for (const method of [
+    'enqueue',
+    'enqueueResult',
+    'releaseAfterPersistence',
+    'requestCommit',
+    'flush',
+    'snapshotModel',
+  ] as const) {
+    jest.spyOn(controller, method).mockImplementation(runtime[method].bind(runtime) as any);
+  }
+  const retire = controller.retireExecution.bind(controller);
+  jest.spyOn(controller, 'retireExecution').mockImplementation(() => {
+    runtime.retire();
+    retire();
+  });
+  jest.spyOn(controller, 'activatePersistence').mockImplementation(() => {
+    (controller as any).persistenceActivated = true;
+  });
+  controller.activate();
 }
 
 function setup(getPuzzleAndSolution: jest.Mock, pendingRequests: string[] = []) {
@@ -280,31 +297,6 @@ describe('coin puzzle/solution delivery', () => {
       expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
     } finally {
       blockchain.stopBalanceInterest();
-      controller.cleanup();
-    }
-  });
-
-  it('replays an unstarted completion mutation on the replacement runtime', async () => {
-    let resolveLookup!: (value: string[]) => void;
-    const lookup = new Promise<string[]>((resolve) => {
-      resolveLookup = resolve;
-    });
-    const getPuzzleAndSolution = jest.fn(() => lookup);
-    const { controller, cradle, request } = setup(getPuzzleAndSolution);
-    const first = new ControlledRuntime(true);
-    const replacement = new ControlledRuntime();
-    try {
-      commitRuntime(controller, first);
-      request();
-      const launch = first.launch(effectKey);
-      resolveLookup(['aa', 'bb']);
-      await Promise.resolve();
-
-      commitRuntime(controller, replacement);
-      await launch;
-      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledTimes(1);
-      expect(cradle.report_puzzle_and_solution).toHaveBeenCalledWith(coin, 'aa', 'bb');
-    } finally {
       controller.cleanup();
     }
   });

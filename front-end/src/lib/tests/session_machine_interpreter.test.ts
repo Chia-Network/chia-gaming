@@ -1,3 +1,4 @@
+import { configureSessionExecution } from './session_execution.harness';
 import { type CalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
 import { KrunkHandler, type KrunkHand } from '@games/krunk/ui/serialize';
 import type { SpacepokerHand } from '@games/spacepoker/ui/serialize';
@@ -14,11 +15,8 @@ import {
 } from '../session/model';
 import { SessionController } from '../session/SessionController';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
-import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter';
-import {
-  runWithRuntimeErrorReporting,
-  SessionMachineRuntime,
-} from '../session/sessionMachineRuntime';
+import { runWithRuntimeErrorReporting } from '../session/SessionController';
+
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
 import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
 import { wasmResult } from './message_protocol.harness';
@@ -79,7 +77,6 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     makeMove: jest.fn(),
     acceptSettlement: jest.fn(),
     cheat: jest.fn(),
-    commitSessionRuntime: jest.fn(),
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
       generation: 0,
@@ -96,6 +93,7 @@ beforeEach(() => {
   setProtocolIds(TEST_PROTOCOL_IDS);
 });
 afterEach(() => {
+  jest.restoreAllMocks();
   resetProtocolIds();
 });
 
@@ -114,20 +112,22 @@ describe('session machine effect interpreter', () => {
         channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
       }),
     );
-    const interpreter = new SessionMachineInterpreter({
+    const interpreter = configureSessionExecution(state, {
       controller,
       iStarted: true,
-      getState: () => state,
-      dispatch: (event) => {
-        order.push('dispatch');
-        events.push(event);
-      },
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
       onError: (error) => {
         throw error;
       },
     });
 
-    interpreter.run({ type: 'controller-propose-game', handProposal: TERMS });
+    jest.spyOn(interpreter, 'dispatch').mockImplementation((event) => {
+      order.push('dispatch');
+      events.push(event);
+    });
+    interpreter.runSessionEffect({ type: 'controller-propose-game', handProposal: TERMS });
 
     expect(order).toEqual(['controller', 'dispatch']);
     expect(events).toEqual([{ type: 'proposal-sent', id: '7', handProposal: TERMS }]);
@@ -162,7 +162,7 @@ describe('session machine causal sequences', () => {
   ])(
     'preserves current Krunk authority through unroll for the $player picker',
     ({ iStarted, weProposed, pickerId }) => {
-      const runtime = new SessionMachineRuntime(
+      const runtime = configureSessionExecution(
         stateWithProposals([
           {
             id: '1',
@@ -244,7 +244,7 @@ describe('session machine causal sequences', () => {
   );
 
   it('rejects stale hand notifications after a replacement hand starts', () => {
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       stateWithProposals([
         { id: '1', handProposal: KRUNK_TERMS },
         { id: '7', handProposal: TERMS },
@@ -325,7 +325,7 @@ describe('session machine causal sequences', () => {
       ],
     });
     const handState = snapshotRegisteredGameHand('calpoker', hand);
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       createSessionMachineState(
         createSessionModel({
           channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Active' } },
@@ -380,7 +380,7 @@ describe('session machine causal sequences', () => {
       iStarted: true,
       notification: { ChannelStatus: { state: 'Active', coin: new Uint8Array([2]) } },
     });
-    await runtime.persist();
+    await runtime.flush();
     persisted.length = 0;
 
     pending[0]('stale-channel');
@@ -390,7 +390,7 @@ describe('session machine causal sequences', () => {
 
     pending[1]('channel-coin');
     await Promise.resolve();
-    await runtime.persist();
+    await runtime.flush();
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.channel.status.coinHex).toBe('channel-coin');
 
@@ -404,7 +404,7 @@ describe('session machine causal sequences', () => {
     persisted.length = 0;
     pending[2]('game-coin');
     await Promise.resolve();
-    await runtime.persist();
+    await runtime.flush();
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.game.instances['7'].coinHex).toBe('game-coin');
 
@@ -423,7 +423,7 @@ describe('session machine causal sequences', () => {
     persisted.length = 0;
     pending[3]('reward-coin');
     await Promise.resolve();
-    await runtime.persist();
+    await runtime.flush();
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.game.instances['7'].terminal.rewardCoinHex).toBe('reward-coin');
   });
@@ -716,7 +716,7 @@ describe('session machine controller command failures', () => {
     );
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const rendered: ReturnType<typeof createSessionMachineState>[] = [];
-    const runtime = new SessionMachineRuntime(initial, {
+    const runtime = configureSessionExecution(initial, {
       controller,
       iStarted: true,
       restoring: false,
@@ -742,7 +742,7 @@ describe('session machine controller command failures', () => {
     const { persisted, rendered, runtime } = runtimeHarness({ proposeGame });
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
-    await runtime.persist();
+    await runtime.flush();
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(false);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
       kind: 'action-failed',
@@ -753,7 +753,7 @@ describe('session machine controller command failures', () => {
     expect(persisted[0].model.betweenHand.compose.proposalSent).toBe(false);
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
-    await runtime.persist();
+    await runtime.flush();
     expect(proposeGame).toHaveBeenCalledTimes(2);
   });
 
@@ -799,7 +799,7 @@ describe('session machine controller command failures', () => {
       }),
     );
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
-    const runtime = new SessionMachineRuntime(initial, {
+    const runtime = configureSessionExecution(initial, {
       controller,
       iStarted: true,
       restoring: false,
@@ -814,7 +814,7 @@ describe('session machine controller command failures', () => {
     runtime.activatePersistence();
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
     expect(runtime.getState().model.betweenHand.pendingProposals[0]?.id).toBe('7');
@@ -826,7 +826,7 @@ describe('session machine controller command failures', () => {
     expect(persisted[0].model.betweenHand.mode).toBe('review-incoming-proposal');
     await controller.flushPendingWork();
     expect(persisted).toHaveLength(1);
-    controller.cleanupAfterTerminalFlush();
+    controller.cleanup();
   });
 
   it('confirms and persists a successful proposal exactly once', async () => {
@@ -835,7 +835,7 @@ describe('session machine controller command failures', () => {
     });
 
     runtime.dispatch({ type: 'submit-compose', handProposal: TERMS });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(runtime.getState().model.betweenHand.compose.proposalSent).toBe(true);
     expect(runtime.getState().model.betweenHand.pendingProposals).toEqual([
@@ -882,7 +882,7 @@ describe('session machine controller command failures', () => {
     rendered.length = 0;
 
     runtime.dispatch(event);
-    await runtime.persist();
+    await runtime.flush();
 
     expect(runtime.getState().model.betweenHand.pendingProposals).toContainEqual(review);
     expect(runtime.getState().model.betweenHand.mode).toBe('review-incoming-proposal');
@@ -922,7 +922,7 @@ describe('session machine controller command failures', () => {
     rendered.length = 0;
 
     runtime.dispatch(event);
-    await runtime.persist();
+    await runtime.flush();
 
     expect(runtime.getState().model.betweenHand.mode).toBe(mode);
     if (event.type === 'reject-review') {
@@ -941,7 +941,7 @@ describe('session machine controller command failures', () => {
     });
 
     runtime.dispatch({ type: 'go-on-chain' });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(runtime.getState().coordination.hostOnChain).toBe(false);
     expect(runtime.getState().model.channel.queue.at(-1)).toMatchObject({
@@ -959,7 +959,7 @@ describe('session machine controller command failures', () => {
       },
     });
     failed.runtime.dispatch({ type: 'start-clean-shutdown' });
-    await failed.runtime.persist();
+    await failed.runtime.flush();
     expect(failed.runtime.getState().model.channel.cleanShutdownStarted).toBe(false);
     expect(failed.persisted).toHaveLength(1);
     expect(failed.persisted[0].model.channel.cleanShutdownStarted).toBe(false);
@@ -967,7 +967,7 @@ describe('session machine controller command failures', () => {
 
     const succeeded = runtimeHarness({ cleanShutdown: jest.fn() });
     succeeded.runtime.dispatch({ type: 'start-clean-shutdown' });
-    await succeeded.runtime.persist();
+    await succeeded.runtime.flush();
     expect(succeeded.runtime.getState().model.channel.cleanShutdownStarted).toBe(true);
     expect(succeeded.persisted).toHaveLength(1);
     expect(succeeded.persisted[0].model.channel.cleanShutdownStarted).toBe(true);
@@ -986,7 +986,7 @@ describe('session machine local game action boundary', () => {
     const initial = stateWithProposals([{ id: '7', handProposal: TERMS }]);
     const persisted: ReturnType<typeof createSessionMachineState>[] = [];
     const rendered: ReturnType<typeof createSessionMachineState>[] = [];
-    const runtime = new SessionMachineRuntime(initial, {
+    const runtime = configureSessionExecution(initial, {
       controller,
       iStarted: false,
       restoring: false,
@@ -1013,14 +1013,14 @@ describe('session machine local game action boundary', () => {
         },
       ],
     });
-    await runtime.persist();
+    await runtime.flush();
     persisted.length = 0;
     rendered.length = 0;
     return { runtime, persisted, rendered };
   }
 
   function updateCalpoker(
-    runtime: SessionMachineRuntime,
+    runtime: SessionController,
     reducer: (state: CalpokerHandState) => CalpokerHandState,
   ): void {
     (runtime.getGameHand() as CalpokerHand).update(reducer);
@@ -1028,8 +1028,8 @@ describe('session machine local game action boundary', () => {
 
   function stagedKrunkRuntime(
     makeMove: SessionController['makeMove'] = () => 'queued',
-  ): SessionMachineRuntime {
-    const runtime = new SessionMachineRuntime(
+  ): SessionController {
+    const runtime = configureSessionExecution(
       stateWithProposals([{ id: '2', handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
         controller: fakeController({ makeMove }),
@@ -1079,7 +1079,7 @@ describe('session machine local game action boundary', () => {
 
   it('uses ordered Rust authority for opposite-turn Krunk members before the first move', () => {
     const makeMove = jest.fn(() => 'queued' as const);
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       stateWithProposals([{ id: '2', handProposal: KRUNK_TERMS, origin: 'local' }]),
       {
         controller: fakeController({ makeMove }),
@@ -1236,7 +1236,7 @@ describe('session machine local game action boundary', () => {
 
   it('uses Rust acceptance authority for the first Space Poker action', () => {
     const makeMove = jest.fn(() => 'queued' as const);
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       stateWithProposals([{ id: '7', handProposal: SPACEPOKER_TERMS, origin: 'local' }]),
       {
         controller: fakeController({ makeMove }),
@@ -1309,7 +1309,7 @@ describe('session machine local game action boundary', () => {
         command: { type: 'make-move', readable: null },
       }),
     ).toThrow('rejected');
-    await runtime.persist();
+    await runtime.flush();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(runtime.getState()).toBe(before);
@@ -1339,7 +1339,7 @@ describe('session machine local game action boundary', () => {
   });
 
   it('projects the synchronous tagged rejection notice without making durability dirty', async () => {
-    const runtimeRef: { current?: SessionMachineRuntime } = {};
+    const runtimeRef: { current?: SessionController } = {};
     const makeMove = jest.fn(() => {
       runtimeRef.current!.dispatch({
         type: 'wasm-notification',
@@ -1359,7 +1359,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(persisted).toHaveLength(0);
     expect(rendered).toHaveLength(1);
@@ -1379,7 +1379,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
     expect(rendered).toHaveLength(1);
@@ -1397,7 +1397,7 @@ describe('session machine local game action boundary', () => {
       iStarted: false,
       notification: { LocalActionApplied: { id: 7n, action: 'make_move' } },
     });
-    await runtime.persist();
+    await runtime.flush();
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-their-turn');
     expect(runtime.getState().model.game.handState).toBe(canonical);
     expect(runtime.getGameHand()?.getState()).toEqual(calpokerStateCodec.decode(canonical));
@@ -1405,7 +1405,7 @@ describe('session machine local game action boundary', () => {
   });
 
   it('ends an immediately applied action with Rust-reported presentation', async () => {
-    const context: { runtime?: SessionMachineRuntime } = {};
+    const context: { runtime?: SessionController } = {};
     const makeMove = jest.fn(() => {
       context.runtime!.dispatch({
         type: 'wasm-notification',
@@ -1424,7 +1424,7 @@ describe('session machine local game action boundary', () => {
       id: '7',
       command: { type: 'make-move', readable: null },
     });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
       moveNumber: 1n,
