@@ -50,10 +50,17 @@ function insecureHubWarning(raw: string): string | null {
 interface HubPickerProps {
   onConnect: (origin: string) => void;
   connectionError?: string | null;
+  /** Last hub the user connected to; prefills the field and joins the suggestions. */
+  defaultHubUrl?: string;
 }
 
-export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
-  const [hubUrl, setHubUrl] = useState(KNOWN_HUBS[0]);
+export function HubPicker({ onConnect, connectionError, defaultHubUrl }: HubPickerProps) {
+  const [hubUrl, setHubUrl] = useState(defaultHubUrl ?? KNOWN_HUBS[0]);
+  // Show a custom last-used hub first, above the known hubs.
+  const suggestions =
+    defaultHubUrl && !KNOWN_HUBS.includes(defaultHubUrl)
+      ? [defaultHubUrl, ...KNOWN_HUBS]
+      : KNOWN_HUBS;
   const [error, setError] = useState('');
   const insecureWarning = insecureHubWarning(hubUrl);
 
@@ -84,7 +91,7 @@ export function HubPicker({ onConnect, connectionError }: HubPickerProps) {
         <div className="flex flex-col gap-2 w-full">
           <div className="flex gap-2 w-full">
             <Autocomplete.Root
-              items={KNOWN_HUBS}
+              items={suggestions}
               filter={null}
               value={hubUrl}
               onValueChange={(value) => {

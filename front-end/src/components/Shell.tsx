@@ -2334,6 +2334,8 @@ const Shell = () => {
         setHubConnectionError(trustError);
         return;
       }
+      // Survives hub disconnects (unlike hubUrl) so the picker offers it after a restart.
+      storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
       if (trust === 'granted') {
         storageRepository.regenerateSessionId();
         storageRepository.updatePreference({ key: 'hubUrl', value: origin });
@@ -4240,7 +4242,11 @@ const Shell = () => {
                 <HubIframe iframeUrl={iframeUrl} />
               </>
             ) : (
-              <HubPicker onConnect={requestHubConnect} connectionError={hubConnectionError} />
+              <HubPicker
+                onConnect={requestHubConnect}
+                connectionError={hubConnectionError}
+                defaultHubUrl={storageRepository.query('lastHubUrl')}
+              />
             )}
           </div>
 

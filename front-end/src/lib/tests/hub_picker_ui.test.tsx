@@ -3,11 +3,11 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import { HubPicker } from '../../components/HubPicker';
 
-function renderPicker() {
+function renderPicker(defaultHubUrl?: string) {
   const onConnect = jest.fn();
   let renderer: ReactTestRenderer | undefined;
   act(() => {
-    renderer = create(React.createElement(HubPicker, { onConnect }));
+    renderer = create(React.createElement(HubPicker, { onConnect, defaultHubUrl }));
   });
   const root = renderer!.root;
   const input = () => root.find((n) => n.type === 'input' && n.props.role === 'combobox');
@@ -23,6 +23,7 @@ function renderPicker() {
       root.find(
         (n) => n.type === 'button' && n.findAll((c) => c.children.includes('Connect')).length > 0,
       ),
+    suggestions: () => root.find((n) => Array.isArray(n.props.items)).props.items,
     errorText: () =>
       root
         .findAll((n) => n.type === 'p' && n.props.className?.includes('text-alert-text'))
@@ -77,5 +78,18 @@ describe('hub picker', () => {
     });
 
     expect(picker.onConnect).toHaveBeenCalledWith('https://hub.example.com');
+  });
+
+  it('prefills the last used hub and keeps the known hubs as suggestions', () => {
+    const picker = renderPicker('https://my-hub.test');
+
+    expect(picker.input().props.value).toBe('https://my-hub.test');
+    expect(picker.suggestions()).toEqual(['https://my-hub.test', 'https://hub.nokitlan.com']);
+
+    act(() => {
+      picker.connectButton().props.onClick();
+    });
+
+    expect(picker.onConnect).toHaveBeenCalledWith('https://my-hub.test');
   });
 });
