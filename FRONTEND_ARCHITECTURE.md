@@ -55,7 +55,11 @@ field values return through a wallet intent. Session execution receives the
 provider ownership, batched coin-interest changes, and a `SessionFunding` facet containing only
 funding commands and observations. Provider registration, recovery controls, and
 credentials stay within the wallet module. A session readiness subscription also
-notifies wallet recovery internally. `updateCoinInterest` applies a complete Rust
+notifies wallet recovery internally. Application selects the current wallet through
+`SessionController.setWallet`; that method owns attachment and its one readiness
+subscription. Setup and reconnect handlers do not reattach it. Wallet retirement
+clears `sessionAccess` before announcing detachment, so reentrant application
+synchronization cannot select the retiring wallet. `updateCoinInterest` applies a complete Rust
 watch/unwatch batch or refreshes the authoritative watch snapshot. A terminal
 session can pause chain polling without stopping wallet balance monitoring or
 disconnecting the provider. There is no second global poller.

@@ -915,6 +915,8 @@ view batches. Its GUI surface is snapshot/subscription/typed intent dispatch;
 views receive no provider, controller, transport or persistence bootstrap.
 `HubConnection` emits tagged events; peer reliability receives only the carrier's
 send capability. WalletConnect normalization remains in the wallet adapter.
+Application selects the wallet through `SessionController.setWallet`; the session
+owns the binding and readiness subscription across transient reconnects.
 
 `SessionController` owns both session execution and checkpoint ordering. Backend
 session setup activates this single owner; it does not install a second runtime

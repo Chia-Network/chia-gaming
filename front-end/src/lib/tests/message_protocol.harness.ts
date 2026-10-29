@@ -24,6 +24,7 @@ export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
   {
     isConnected: () => true,
+    onPlayReadinessChange: () => () => {},
     getWalletOfferProvider(this: Record<string, any>) {
       return {
         capability: 'best-effort' as const,

@@ -48,7 +48,6 @@ export async function configSessionController(
   sc.rewardPuzzleHash = result.rewardPuzzleHash;
   sc.emitRewardAddress();
   sc.setGameSession(peer);
-  sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
   sc.activateSpend();
   log('[wasm] session controller configured (handshake)');

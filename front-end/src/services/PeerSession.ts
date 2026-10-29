@@ -174,10 +174,6 @@ export class ReliablePeerTransport {
     this.protocol.consumer_ready(this.consumer?.mode ?? 'raw', this.host);
   }
 
-  detachConsumer(consumer?: ReliableMessageConsumer): void {
-    if (!consumer || this.consumer === consumer) this.consumer = null;
-  }
-
   receiveData(msgno: bigint, body: Uint8Array): boolean {
     let accepted = true;
     const receive = () => {

@@ -50,7 +50,7 @@ describe('submission pump delivery and lifecycle', () => {
         },
       ],
     });
-    controller.detachBlockchain(blockchain);
+    controller.setWallet(null);
     blockchain.detachProvider();
     const beginCreation = jest.fn();
     const cancel = jest.fn();
@@ -69,7 +69,7 @@ describe('submission pump delivery and lifecycle', () => {
     );
     try {
       replacement.refreshProviderReadiness();
-      controller.attachBlockchain(replacement);
+      controller.setWallet(replacement);
       const lease = new ControlledRuntime();
       commitRuntime(controller, lease);
       submit({
@@ -128,10 +128,10 @@ describe('submission pump delivery and lifecycle', () => {
       await controller.flushPendingWork();
       expect(oldBegin).toHaveBeenCalledTimes(1);
       const oldOwner = storageRepository.feeAttachments()[0].owner;
-      controller.detachBlockchain(blockchain);
+      controller.setWallet(null);
       blockchain.detachProvider();
       replacement.refreshProviderReadiness();
-      controller.attachBlockchain(replacement);
+      controller.setWallet(replacement);
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(submissionDrain([], ['old-fee']));
       controller.processResult(wasmResult());
       submit({ ...submission('new-fee'), fee_request: { target: '33'.repeat(32), amount: '10' } });
@@ -762,7 +762,7 @@ describe('submission pump delivery and lifecycle', () => {
     });
     const lease = new ControlledRuntime();
     try {
-      controller.attachBlockchain(blockchain);
+      controller.setWallet(blockchain);
       commitRuntime(controller, lease);
       submit(submission('provider-gated'));
 

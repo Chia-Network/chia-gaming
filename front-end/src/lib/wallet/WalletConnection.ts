@@ -265,8 +265,7 @@ export class WalletConnection {
 
   async cancel(): Promise<void> {
     this.aborted = true;
-    this.emit({ type: 'detaching' });
-    this.poller?.stopBalanceInterest();
+    this.stopPoller();
     const provider =
       this.provider ?? (this.view.walletType ? providerFor(this.view.walletType).provider : null);
     try {
@@ -286,9 +285,8 @@ export class WalletConnection {
   }
 
   async disconnect(): Promise<void> {
-    this.poller?.stopBalanceInterest();
+    this.stopPoller();
     this.update({ connected: false });
-    this.emit({ type: 'detaching' });
     try {
       await this.provider?.disconnect();
     } catch {
@@ -299,10 +297,13 @@ export class WalletConnection {
   }
 
   private stopPoller(): void {
-    this.poller?.detachProvider();
-    this.poller?.stopBalanceInterest();
-    this.poller?.pauseChainPolling();
+    const poller = this.poller;
+    if (!poller) return;
     this.poller = null;
+    this.emit({ type: 'detaching' });
+    poller.detachProvider();
+    poller.stopBalanceInterest();
+    poller.pauseChainPolling();
   }
 
   stopLocalActivity(): void {

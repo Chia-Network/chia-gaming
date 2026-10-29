@@ -448,7 +448,7 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
   await runtime.flush();
   const attach = jest.spyOn(blockchain, 'attachGameSession');
   const detach = jest.spyOn(blockchain, 'detachGameSession');
-  controller.attachBlockchain(blockchain);
+  controller.setWallet(blockchain);
   const params = {
     iStarted: true,
     myContribution: 100n,

@@ -218,6 +218,7 @@ describe('transaction submission', () => {
         {
           getHeightInfo: () => Promise.resolve(1n),
           getWalletOfferProvider: () => null,
+          onPlayReadinessChange: () => () => {},
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -246,7 +247,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     (cradle.snapshot_watched_coins as jest.Mock).mockClear();
 
     blob.processResult({
@@ -268,7 +269,7 @@ describe('transaction submission', () => {
 
     expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
@@ -278,6 +279,7 @@ describe('transaction submission', () => {
         {
           getHeightInfo: () => Promise.resolve(1n),
           getWalletOfferProvider: () => null,
+          onPlayReadinessChange: () => () => {},
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -312,15 +314,15 @@ describe('transaction submission', () => {
     blob.setGameSession(cradle);
     expect(queriedNames).toEqual([]);
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await pollOnce(blockchain);
 
     expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
     expect(queriedNames).toEqual([['bb']]);
 
-    blob.attachBlockchain(blockchain);
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(blockchain);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
+    blob.setWallet(null);
   });
 
   it('hydrates without blockchain and replays retained submissions on later attach', async () => {
@@ -368,14 +370,14 @@ describe('transaction submission', () => {
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).not.toHaveBeenCalled();
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await pollOnce(blockchain);
     await transactionSubmitQueue(blob);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(5);
     expect(spend).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
     errorSpy.mockRestore();
   });
 
@@ -434,7 +436,7 @@ describe('transaction submission', () => {
     blob.loadWasm(mockWasmConnection);
     // Blockchain attachment can complete while restore is still deserializing
     // the cradle, so this height must remain buffered.
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
 
@@ -445,7 +447,7 @@ describe('transaction submission', () => {
     blob.reportChainSnapshotReady(1n);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('uses height-only sync to resubmit only restored sessions with no watches', () => {
@@ -464,13 +466,13 @@ describe('transaction submission', () => {
     const cradle = makeMockCradle();
 
     blob.loadWasm(mockWasmConnection);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
     blob.reportChainSnapshotReady(1n);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
@@ -527,7 +529,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
 
     // report_coin_states queues the first copy in processResult, then the
     // fresh-sync resubmit drains the same retained ID before promise jobs run.
@@ -541,7 +543,7 @@ describe('transaction submission', () => {
     expect(spend).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(submission.id);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('submits drained transactions sequentially', async () => {
@@ -777,7 +779,7 @@ describe('transaction submission', () => {
 
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('retains unavailable submissions and silently acknowledges an exact duplicate', async () => {

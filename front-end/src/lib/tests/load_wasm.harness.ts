@@ -589,6 +589,7 @@ export async function initSessionController(
     walletProviderScope,
   );
 
+  gameObject.setWallet(blockchain);
   await configSessionController(
     gameObject,
     iStarted,

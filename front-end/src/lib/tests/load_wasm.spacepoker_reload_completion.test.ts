@@ -115,7 +115,7 @@ class SpacepokerReloadDriver {
   }
 
   async reload(index: number, label: string): Promise<void> {
-    this.lanes[index].controller.detachBlockchain(this.poller);
+    this.lanes[index].controller.setWallet(null);
     const before = structuredClone(this.state(index));
     const beforeWasm = Uint8Array.from(
       this.lanes[index].controller.getWasmFields()!.serializedGameSession,

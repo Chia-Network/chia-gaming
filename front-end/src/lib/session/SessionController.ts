@@ -12,7 +12,6 @@ import { diagStack, log } from '../../services/log';
 import {
   ReliablePeerTransport,
   type PreparedReliableCommit,
-  type ReliableMessageConsumer,
   type ReliableCommitCoordinator,
 } from '../../services/PeerSession';
 import {
@@ -242,7 +241,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   readonly reliableTransport: ReliablePeerTransport;
-  private readonly reliableConsumer: ReliableMessageConsumer;
   private inboundSessionRejectCommitted = false;
   private persistInboundSessionReject:
     | ((sessionId: string, remoteNumber: bigint) => Promise<void>)
@@ -259,7 +257,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   reloading: boolean;
   qualifyingEvents: number;
   private blockchain: SessionWallet | null;
-  private blockchainAttached = false;
   private eventQueue: GameSessionEvent[] = [];
   private pendingChainObservations: Array<
     | { kind: 'coin-states'; peak: bigint; records: CoinStateRecord[] }
@@ -276,7 +273,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   private terminalSealed = false;
   private readonly submissionPump: SubmissionPump;
   private readonly pendingCoinSolutionDeliveries = new Map<string, PendingCoinSolutionDelivery>();
-  private puzzleSolutionReadinessUnsubscribe: (() => void) | null = null;
+  private walletReadinessUnsubscribe: (() => void) | null = null;
   private goOnChainSequence = 0;
   private beforeUnloadHandler: (() => void) | null = null;
   private pendingEffects = new Set<Promise<void>>();
@@ -396,7 +393,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
           );
     this.persistInboundSessionReject = peer_conn.persistInboundSessionReject ?? null;
     this.inboundSessionRejectHandler = peer_conn.onSessionReject ?? null;
-    this.reliableConsumer = {
+    this.reliableTransport.attachConsumer({
       mode: 'channel',
       isReady: () =>
         !!this.wc &&
@@ -420,8 +417,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       failure: (reason) => this.failPeerProcessing(reason),
       keepalive: () => this.notePeerActivity(),
       committed: () => this.notifyInboundSessionRejectCommitted(),
-    };
-    this.reliableTransport.attachConsumer(this.reliableConsumer);
+    });
     this.uniqueId = uniqueId;
     this.pairingToken = '';
     this.myContribution = myContribution;
@@ -763,35 +759,28 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     this.reloading = true;
   }
 
-  attachBlockchain(blockchain: SessionWallet) {
-    if (this.blockchain && this.blockchain !== blockchain) {
-      this.blockchain.detachGameSession(this);
-      this.blockchainAttached = false;
-    }
-    this.puzzleSolutionReadinessUnsubscribe?.();
-    const alreadyAttached = this.blockchain === blockchain && this.blockchainAttached;
+  setWallet(blockchain: SessionWallet | null): void {
+    if (this.blockchain === blockchain && (!blockchain || this.walletReadinessUnsubscribe)) return;
+    if (this.blockchain !== blockchain) this.blockchain?.detachGameSession(this);
+    this.walletReadinessUnsubscribe?.();
+    this.walletReadinessUnsubscribe = null;
     this.blockchain = blockchain;
+    this.submissionPump.providerReady(!!blockchain && blockchain.rpc.isReadyForPlay?.() !== false);
+    if (!blockchain) return;
     const owner = this.currentProviderOwner();
     if (owner) storageRepository.setWalletContext(owner.providerScope);
-    this.submissionPump.providerReady(blockchain.rpc.isReadyForPlay?.() !== false);
     if (!this.fundingRuntime) {
       this.fundingRuntime = blockchain.channelFundingRuntime;
       this.subscribeFundingRuntime();
-      this.scheduleFunding();
     } else if (this.fundingRuntime !== blockchain.channelFundingRuntime) {
       throw new Error('Blockchain attachment uses another channel funding coordinator');
     }
     this.scheduleFunding();
-    if (alreadyAttached) {
-      blockchain.updateCoinInterest(this);
-    } else {
-      blockchain.attachGameSession(this);
-      this.blockchainAttached = true;
-    }
+    if (!this.protocolStopped) blockchain.attachGameSession(this);
     this.syncPendingCoinSolutionRequests();
     this.retryPendingCoinSolutionDeliveries();
     this.flushPendingCoinStates();
-    const readinessUnsubscribe = blockchain.onSessionReadiness(
+    this.walletReadinessUnsubscribe = blockchain.onSessionReadiness(
       this.walletProviderOwnerSelector(),
       (ready) => {
         this.submissionPump.providerReady(ready);
@@ -802,23 +791,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
         }
       },
     );
-    this.puzzleSolutionReadinessUnsubscribe =
-      typeof readinessUnsubscribe === 'function' ? readinessUnsubscribe : null;
     if (blockchain.resolveProviderOwner(this.walletProviderOwnerSelector()))
       this.requestFeeUpgrades();
     this.notifyTerminalFinalizationRetry();
   }
-
-  detachBlockchain(blockchain: SessionWallet) {
-    if (this.blockchain !== blockchain) return;
-    blockchain.detachGameSession(this);
-    this.blockchainAttached = false;
-    this.puzzleSolutionReadinessUnsubscribe?.();
-    this.puzzleSolutionReadinessUnsubscribe = null;
-    this.blockchain = null;
-    this.submissionPump.providerReady(false);
-  }
-
   setPeerKeepalive(sendKeepalive: () => void) {
     this.peerSendKeepalive = sendKeepalive;
     this.startKeepaliveTimer();
@@ -844,11 +820,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     this.protocolStopped = true;
     this.eventQueue = [];
     this.reliableTransport.clearRuntime(true);
-    this.blockchain?.detachGameSession(this);
-    this.blockchainAttached = false;
-    this.puzzleSolutionReadinessUnsubscribe?.();
-    this.puzzleSolutionReadinessUnsubscribe = null;
-    this.blockchain = null;
+    this.setWallet(null);
     this.persistInboundSessionReject = null;
     this.inboundSessionRejectHandler = null;
     this.stopKeepaliveTimer();

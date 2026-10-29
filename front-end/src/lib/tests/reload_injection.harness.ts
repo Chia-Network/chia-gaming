@@ -172,7 +172,7 @@ export async function injectSessionReload(
     live.pairing.iStarted,
     true,
   );
-  controller.attachBlockchain(poller);
+  controller.setWallet(poller);
   controller.kickSystem(2);
   await controller.beginRestore(
     restoreSession(controller, bootstrap, wasmConnection ?? (await ensureWasmLoaded(fetchPreset))),

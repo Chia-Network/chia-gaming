@@ -95,7 +95,8 @@ it(
       assert.equal(lane.controller.goOnChain(), true);
       await flushWrapperDrain(adapters);
 
-      lane.controller.attachBlockchain(poller);
+      lane.controller.setWallet(null);
+      lane.controller.setWallet(poller);
       await flushWrapperDrain(adapters);
       await flushWrapperDrain(adapters);
       assert.equal(rustSubmissions.length, 2);

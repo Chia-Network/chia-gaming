@@ -21,7 +21,10 @@ it('establishes simulator polling after an unavailable resume', async () => {
   jest.spyOn(fakeBlockchainInfo, 'beginConnect').mockRejectedValue(new Error('offline simulator'));
   jest.spyOn(fakeBlockchainInfo, 'isConnected').mockReturnValue(false);
   jest.spyOn(console, 'warn').mockImplementation(() => {});
-  const wallet = new WalletConnection('player', () => {});
+  const detached = jest.fn(() => expect(wallet.sessionAccess()).toBeNull());
+  const wallet = new WalletConnection('player', (event) => {
+    if (event.type === 'detaching') detached();
+  });
   try {
     await wallet.resume('simulator');
     expect(wallet.sessionAccess()).not.toBeNull();
@@ -29,6 +32,8 @@ it('establishes simulator polling after an unavailable resume', async () => {
   } finally {
     wallet.stopLocalActivity();
   }
+  wallet.stopLocalActivity();
+  expect(detached).toHaveBeenCalledTimes(1);
 });
 
 it('keeps publishing policy in its owning application', async () => {

@@ -295,7 +295,6 @@ export function createApplication() {
   let frontend: SessionFrontend | null = null;
   let sessionPresentation: SessionPresentation | null = null;
   let detachSessionEvents: (() => void) | undefined;
-  let attachedWallet: SessionWallet | null = null;
   let sessionLaunchQueued = false;
   let resolvedPhaseReported = false;
   let resolving: Promise<void> | null = null;
@@ -1487,8 +1486,6 @@ export function createApplication() {
         if (event.connected) {
           setWalletAlert(false);
           hubConn?.setBusy(hubPresenceNow(sessions.state.sessionPhase, true));
-          const poller = walletOwner.sessionAccess();
-          if (poller && sessionController) sessionController.attachBlockchain(poller);
         } else {
           if (state.activeTab !== 'wallet') setWalletAlert(true);
           hubConn?.setBusy(presenceBusy(sessions.state.sessionPhase, false));
@@ -1507,8 +1504,7 @@ export function createApplication() {
         update('defaultFee', storageRepository.query('defaultFee'));
         break;
       case 'detaching': {
-        const poller = walletOwner.sessionAccess();
-        if (poller && sessionController) sessionController.detachBlockchain(poller);
+        sessionController?.setWallet(null);
         update('blockchainReady', false);
         break;
       }
@@ -2255,7 +2251,6 @@ export function createApplication() {
       detachSessionEvents = undefined;
       frontend = null;
       sessionPresentation = null;
-      attachedWallet = null;
       return;
     }
     if (state.terminalPresentation || sessionFinishedCleanup) return;
@@ -2307,11 +2302,7 @@ export function createApplication() {
       });
       batch(() => presentSession(source.snapshot()));
     }
-    if (attachedWallet !== wallet) {
-      if (attachedWallet) controller.detachBlockchain(attachedWallet);
-      attachedWallet = wallet;
-      if (wallet) controller.attachBlockchain(wallet);
-    }
+    controller.setWallet(wallet);
   }
   function startSession(
     controller: SessionController,

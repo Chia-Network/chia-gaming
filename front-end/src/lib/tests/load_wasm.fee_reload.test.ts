@@ -93,7 +93,8 @@ it(
       assert.equal(feeOfferCreations, 1);
       assert.deepEqual(storageRepository.feeAttachments(), []);
 
-      lane.controller.attachBlockchain(poller);
+      lane.controller.setWallet(null);
+      lane.controller.setWallet(poller);
       await flushWrapperDrain(adapters);
       await flushWrapperDrain(adapters);
       assert.equal(submittedBlobs.length, 2, 'provider attachment must publish one fee upgrade');

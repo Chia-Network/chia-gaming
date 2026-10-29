@@ -1234,7 +1234,7 @@ describe('WASM wallet funding requests', () => {
     (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
       walletCallbackFailed;
     setActiveBlob(blob);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
 
     blob.processResult(
       wasmResult({
@@ -1265,21 +1265,29 @@ describe('WASM wallet funding requests', () => {
 
   it('asks Rust for fee upgrades only on provider attach or readiness', async () => {
     let readiness: ((ready: boolean) => void) | undefined;
+    const unsubscribe = jest.fn();
+    const subscribe = jest.fn((callback: (ready: boolean) => void) => {
+      readiness = callback;
+      return unsubscribe;
+    });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
-        onPlayReadinessChange: (callback: (ready: boolean) => void) => {
-          readiness = callback;
-          return () => {};
-        },
+        onPlayReadinessChange: subscribe,
       },
       60000,
     );
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await blob.flushPendingWork();
+    expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
+
+    blob.setWallet(blockchain);
+    await blob.flushPendingWork();
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).not.toHaveBeenCalled();
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
 
     readiness?.(false);
@@ -1289,6 +1297,10 @@ describe('WASM wallet funding requests', () => {
     readiness?.(true);
     await blob.flushPendingWork();
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(2);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    blob.setWallet(null);
+    blob.cleanup();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it('fails one distinct concurrent funding request without launching it', async () => {
@@ -1835,7 +1847,7 @@ describe('wallet fee attachment on submission', () => {
       undefined,
     );
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     channelFundingRuntime.providerReconnectReady(
       blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',

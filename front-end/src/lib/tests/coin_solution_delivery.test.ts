@@ -173,7 +173,7 @@ function setup(getPuzzleAndSolution: jest.Mock, pendingRequests: string[] = []) 
   (cradle.snapshot_pending_coin_solution_requests as jest.Mock).mockReturnValue(pendingRequests);
   controller.loadWasm(mockWasmConnection);
   controller.setGameSession(cradle);
-  controller.attachBlockchain(blockchain);
+  controller.setWallet(blockchain);
   const request = () => {
     processWasmResult(controller, { events: [{ CoinSolutionRequest: coin }] });
     controller.flushDeferredWork();

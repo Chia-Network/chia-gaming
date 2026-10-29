@@ -45,8 +45,7 @@ export function stubApplicationSession(model: import('../session/model').Session
       getRestoreError: () => presentation.model.restore.error,
       reportPeerConnectivity: jest.fn(() => true),
       sendPeerKeepalive: jest.fn(),
-      attachBlockchain: jest.fn(),
-      detachBlockchain: jest.fn(),
+      setWallet: jest.fn(),
     } as unknown as import('../session/SessionController').SessionController,
     publish(next: import('../session/model').SessionModel) {
       presentation = { ...presentation, model: next };
