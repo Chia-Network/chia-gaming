@@ -861,11 +861,13 @@ package alone owns its concrete mutable hand and opaque saved state. Fresh hands
 come from accepted initialization terms; restored hands come directly from that
 package's current saved state. `SessionController.activeHand` is only a
 cache rebuilt from and snapshotted back into canonical `handState`, never a
-second authority. For a protocol action the package mutates its hand first and
-the browser retains the previous canonical hand only as a synchronous rollback
-checkpoint. Rust rejection restores both cache and model; acceptance snapshots
-the complete hand and persists it atomically with Rust's prepared-action queue.
-There is no durable candidate layer or shared inspection of package fields.
+second authority. For a protocol action the package calls Rust first. Rejection
+returns to the calling game UI for feedback and local draft cleanup; acceptance lets the
+package apply its local update and report `state-changed` in the same synchronous
+turn. The browser batches the hand and Rust's prepared-action queue into one
+checkpoint and UI publication. Rust's `LocalActionApplied` event independently
+advances the general turn/banner state. There is no optimistic hand rollback,
+durable candidate layer, or shared inspection of package fields.
 
 Proposal persistence stores the exact opaque Bencodex parameter value together
 with the generic player-A/player-B terms and sender orientation. Each package

@@ -79,7 +79,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
         const id = lanes[index].runtime.getState().model.game.currentHandIds[intent.memberIndex];
         assert.ok(id, `Calpoker reload player ${index}: invalid member ${intent.memberIndex}`);
         submittedMoves[index] += 1;
-        lanes[index].runtime.commitLocalGameAction({
+        return lanes[index].runtime.commitLocalGameAction({
           gameType: 'calpoker',
           id,
           command: { type: 'make-move', readable: intent.readable },

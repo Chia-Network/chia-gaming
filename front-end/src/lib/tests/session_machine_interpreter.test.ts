@@ -1061,17 +1061,18 @@ describe('session machine local game action boundary', () => {
         },
       ],
     });
+    runtime.commitLocalGameAction({
+      gameType: 'krunk',
+      id: '2',
+      command: { type: 'make-move', readable: null },
+    });
     (runtime.getGameHand() as KrunkHand).updateGame(0, (game) => ({
       ...game,
       handler: KrunkHandler.AliceWaiting,
       myTurn: false,
       secretWord: 'CRANE',
     }));
-    runtime.commitLocalGameAction({
-      gameType: 'krunk',
-      id: '2',
-      command: { type: 'make-move', readable: null },
-    });
+    runtime.commitHandStateChanged('krunk');
     return runtime;
   }
 
@@ -1194,11 +1195,11 @@ describe('session machine local game action boundary', () => {
     expect(runtime.getGameHand()!.getState()).toEqual(canonical);
   });
 
-  it('restores the whole Krunk checkpoint on immediate sibling rejection', () => {
+  it('preserves the whole Krunk hand on immediate sibling rejection', () => {
     const makeMove = jest
       .fn<ReturnType<SessionController['makeMove']>, Parameters<SessionController['makeMove']>>()
       .mockReturnValueOnce('queued')
-      .mockReturnValueOnce('rejected');
+      .mockReturnValueOnce({ tag: 'not_in_dictionary', message: 'XXXXX' });
     const runtime = stagedKrunkRuntime(makeMove);
     runtime.dispatch({
       type: 'wasm-notification',
@@ -1216,11 +1217,6 @@ describe('session machine local game action boundary', () => {
       },
     });
     const checkpoint = krunkStateCodec.decode(runtime.getState().model.game.handState)!;
-    (runtime.getGameHand() as KrunkHand).updateGame(1, (game) => ({
-      ...game,
-      handler: KrunkHandler.BobWaiting,
-      myTurn: false,
-    }));
     runtime.commitLocalGameAction({
       gameType: 'krunk',
       id: '4',
@@ -1299,7 +1295,6 @@ describe('session machine local game action boundary', () => {
     const before = runtime.getState();
     const current = calpokerStateCodec.decode(before.model.game.handState)!;
 
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     expect(() =>
       runtime.commitLocalGameAction({
         gameType: 'calpoker',
@@ -1313,18 +1308,16 @@ describe('session machine local game action boundary', () => {
     expect(runtime.getState()).toBe(before);
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
     expect(persisted).toHaveLength(0);
-    expect(rendered).toHaveLength(1);
-    expect(rendered[0].model).toBe(before.model);
+    expect(rendered).toHaveLength(0);
     expect(runtime.getGameHand()?.getState()).toEqual(current);
   });
 
-  it('rolls back an immediate tagged rejection without persisting rejected state', async () => {
-    const makeMove = jest.fn(() => 'rejected' as const);
+  it('returns an immediate tagged rejection without persisting rejected state', async () => {
+    const makeMove = jest.fn(() => ({ tag: 'not_in_dictionary', message: 'XXXXX' }));
     const { runtime, persisted } = await localActionHarness(makeMove);
     const canonical = runtime.getState().model.game.handState;
     const checkpoint = calpokerStateCodec.decode(canonical)!;
 
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
       gameType: 'calpoker',
       id: '7',
@@ -1336,47 +1329,31 @@ describe('session machine local game action boundary', () => {
     expect(persisted).toHaveLength(0);
   });
 
-  it('projects the synchronous tagged rejection notice without making durability dirty', async () => {
-    const runtimeRef: { current?: SessionController } = {};
-    const makeMove = jest.fn(() => {
-      runtimeRef.current!.dispatch({
-        type: 'wasm-notification',
-        iStarted: false,
-        notification: {
-          MoveRejected: { id: 7n, tag: 'illegal_move', message: 'not allowed' },
-        },
-      });
-      return 'rejected' as const;
-    });
-    const { runtime, persisted, rendered } = await localActionHarness(makeMove);
-    runtimeRef.current = runtime;
-
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
-    runtime.commitLocalGameAction({
-      gameType: 'calpoker',
-      id: '7',
-      command: { type: 'make-move', readable: null },
-    });
+  it('returns a tagged rejection without changing the hand or publishing a banner', async () => {
+    const rejection = { tag: 'not_in_dictionary', message: 'XXXXX' };
+    const { runtime, persisted, rendered } = await localActionHarness(jest.fn(() => rejection));
+    const before = runtime.getGameHand()!.getState();
+    expect(
+      runtime.frontend.game.dispatch({ type: 'make-move', memberIndex: 0, readable: null }),
+    ).toEqual(rejection);
     await runtime.flush();
-
+    expect(runtime.getGameHand()!.getState()).toBe(before);
+    expect(runtime.getState().model.game.queue).toEqual([]);
     expect(persisted).toHaveLength(0);
-    expect(rendered).toHaveLength(1);
-    expect(runtime.getState().model.game.queue.at(-1)).toMatchObject({
-      kind: 'move-rejected',
-      message: 'not allowed',
-    });
+    expect(rendered).toHaveLength(0);
   });
 
   it('commits queued success as canonical and persists it immediately', async () => {
     const makeMove = jest.fn(() => 'queued' as const);
     const { runtime, persisted, rendered } = await localActionHarness(makeMove);
 
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
       gameType: 'calpoker',
       id: '7',
       command: { type: 'make-move', readable: null },
     });
+    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
+    runtime.commitHandStateChanged('calpoker');
     await runtime.flush();
 
     expect(makeMove).toHaveBeenCalledTimes(1);
@@ -1416,12 +1393,13 @@ describe('session machine local game action boundary', () => {
     const runtime = harness.runtime;
     context.runtime = runtime;
 
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
       gameType: 'calpoker',
       id: '7',
       command: { type: 'make-move', readable: null },
     });
+    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
+    runtime.commitHandStateChanged('calpoker');
     await runtime.flush();
 
     expect(calpokerStateCodec.decode(runtime.getState().model.game.handState)).toMatchObject({
@@ -1440,13 +1418,14 @@ describe('session machine local game action boundary', () => {
         cheat: jest.fn(() => 'queued'),
       },
     );
-    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
     runtime.commitLocalGameAction({
       gameType: 'calpoker',
       id: '7',
       command: { type: 'cheat', moverShare: 0n },
     });
 
+    updateCalpoker(runtime, (state) => ({ ...state, moveNumber: 1n, isPlayerTurn: false }));
+    runtime.commitHandStateChanged('calpoker');
     runtime.dispatch({
       type: 'wasm-notification',
       iStarted: false,

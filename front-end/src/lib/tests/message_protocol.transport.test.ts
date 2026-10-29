@@ -632,6 +632,8 @@ describe('game action failure events', () => {
 
   it('returns rejection before a local candidate can be committed', () => {
     const { blob, cradle } = createReadyBlob();
+    const broadcast = jest.fn();
+    observeWasmEvents(blob).subscribe(broadcast);
     const makeMove = jest.fn(() =>
       wasmResult({
         events: [
@@ -649,7 +651,8 @@ describe('game action failure events', () => {
       }
     ).make_move = makeMove;
 
-    expect(blob.makeMove('41', null)).toBe('rejected');
+    expect(blob.makeMove('41', null)).toEqual({ tag: 'illegal_move', message: 'not allowed' });
+    expect(broadcast).not.toHaveBeenCalled();
     makeMove.mockReturnValue(wasmResult());
     expect(blob.makeMove('41', null)).toBe('queued');
     makeMove.mockReturnValue(

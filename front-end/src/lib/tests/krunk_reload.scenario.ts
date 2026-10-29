@@ -54,12 +54,14 @@ function makeMove(
   next: (current: KrunkGameState) => KrunkGameState,
   readable: Program | null,
 ): void {
-  (lane.runtime.getGameHand() as KrunkHand).updateGame(memberIndex(lane, id), next);
-  lane.runtime.commitLocalGameAction({
+  const rejected = lane.runtime.commitLocalGameAction({
     gameType: 'krunk',
     id,
     command: { type: 'make-move', readable },
   });
+  assert.equal(rejected, undefined);
+  (lane.runtime.getGameHand() as KrunkHand).updateGame(memberIndex(lane, id), next);
+  lane.runtime.commitHandStateChanged('krunk');
 }
 
 function commitWord(lane: ReloadableSessionLane, id: string): void {

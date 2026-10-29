@@ -75,7 +75,7 @@ import { storageRepository } from './storageRepository';
 import { SubmissionPump } from './submissionPump';
 import { type SessionModel, type RegisteredGameType } from './types';
 import { cancelRetiredWalletReservations } from './walletReservationRetirement';
-import { type GameIntent } from '@games/host';
+import { type GameIntent, type GameActionRejection } from '@games/host';
 import {
   DEFAULT_CATALOG_GAME_TYPE,
   packageFor,
@@ -103,7 +103,7 @@ import {
   type SessionMachineState,
 } from './sessionMachineTypes';
 
-export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
+export type GameCommandDisposition = GameActionRejection | 'queued' | 'applied';
 
 export interface TerminalQuiescentSnapshot {
   model: SessionModel;
@@ -1312,21 +1312,29 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     actionKind: 'make_move' | 'accept_settlement' | 'cheat',
   ): GameCommandDisposition {
     const required = requireWasmResult(result);
-    const rejected = required.events.some(
-      (event) =>
-        'Notification' in event &&
-        event.Notification.MoveRejected?.id != null &&
-        String(event.Notification.MoveRejected.id) === gameId,
+    const rejection = required.events.find(
+      (event) => 'Notification' in event && String(event.Notification.MoveRejected?.id) === gameId,
     );
+    const rejected =
+      rejection && 'Notification' in rejection ? rejection.Notification.MoveRejected : undefined;
     const applied = required.events.some(
       (event) =>
         'Notification' in event &&
-        event.Notification.LocalActionApplied?.id != null &&
-        String(event.Notification.LocalActionApplied.id) === gameId &&
-        event.Notification.LocalActionApplied.action === actionKind,
+        String(event.Notification.LocalActionApplied?.id) === gameId &&
+        event.Notification.LocalActionApplied?.action === actionKind,
     );
-    this.processCommandResult(required, action);
-    return rejected ? 'rejected' : applied ? 'applied' : 'queued';
+    // Immediate validation failures belong to the calling game UI, not the shared banner.
+    this.processCommandResult(
+      rejected
+        ? { ...required, events: required.events.filter((event) => event !== rejection) }
+        : required,
+      action,
+    );
+    return rejected
+      ? { tag: rejected.tag, message: rejected.message }
+      : applied
+        ? 'applied'
+        : 'queued';
   }
 
   private isTerminalPresentationEvent(event: GameSessionEvent): boolean {
@@ -2178,7 +2186,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     }
   }
 
-  private dispatchGameIntent(intent: GameIntent): void {
+  private dispatchGameIntent(intent: GameIntent): GameActionRejection | void {
     const game = this.state.model.game;
     const gameType = game.activeGameType as RegisteredGameType;
     if (intent.type === 'state-changed') {
@@ -2196,7 +2204,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
         `Internal game action member index ${intent.memberIndex} is outside the current hand`,
       );
     }
-    runWithRuntimeErrorReporting(
+    return runWithRuntimeErrorReporting(
       () =>
         this.commitLocalGameAction({
           gameType,
@@ -2345,52 +2353,35 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     this.dispatch({ type: 'hand-state-changed', handState: this.snapshotActiveHand() });
   }
 
-  commitLocalGameAction(request: LocalGameActionRequest): void {
-    const checkpoint = structuredClone(this.state.model.game.handState);
-    const stateCheckpoint = this.state;
-    try {
-      this.runTransaction(() => {
-        const game = this.state.model.game;
-        if (game.activeGameType !== request.gameType) {
-          throw new Error(
-            `Internal local action gameType ${request.gameType} does not match active ${game.activeGameType}`,
-          );
-        }
-        if (!game.currentHandIds.includes(request.id)) {
-          throw new Error(
-            `Internal local action game id ${request.id} is not a current hand member`,
-          );
-        }
-        if (!game.activeIds.includes(request.id)) {
-          throw new Error(`Internal local action game id ${request.id} is not active`);
-        }
-        const instance = game.instances[request.id];
-        if (!instance) {
-          throw new Error(`Internal local action game id ${request.id} has no game instance`);
-        }
-        if (
-          instance.presentation !== 'off-chain-my-turn' &&
-          instance.presentation !== 'on-chain-my-turn'
-        ) {
-          throw new Error(
-            `Internal local action for game ${request.id} attempted outside our turn`,
-          );
-        }
-        const disposition = this.runLocalGameCommand(request.command, request.id);
-        if (disposition === 'rejected') {
-          this.restoreAndProject(checkpoint, stateCheckpoint);
-          return;
-        }
-        this.dispatch({
-          type: 'local-game-action-committed',
-          id: request.id,
-          handState: this.snapshotActiveHand(),
-        });
-      });
-    } catch (error) {
-      this.restoreAndProject(checkpoint, stateCheckpoint);
-      throw error;
-    }
+  commitLocalGameAction(request: LocalGameActionRequest): GameActionRejection | void {
+    let rejection: GameActionRejection | undefined;
+    this.runTransaction(() => {
+      const game = this.state.model.game;
+      if (game.activeGameType !== request.gameType) {
+        throw new Error(
+          `Internal local action gameType ${request.gameType} does not match active ${game.activeGameType}`,
+        );
+      }
+      if (!game.currentHandIds.includes(request.id)) {
+        throw new Error(`Internal local action game id ${request.id} is not a current hand member`);
+      }
+      if (!game.activeIds.includes(request.id)) {
+        throw new Error(`Internal local action game id ${request.id} is not active`);
+      }
+      const instance = game.instances[request.id];
+      if (!instance) {
+        throw new Error(`Internal local action game id ${request.id} has no game instance`);
+      }
+      if (
+        instance.presentation !== 'off-chain-my-turn' &&
+        instance.presentation !== 'on-chain-my-turn'
+      ) {
+        throw new Error(`Internal local action for game ${request.id} attempted outside our turn`);
+      }
+      const result = this.runLocalGameCommand(request.command, request.id);
+      if (typeof result === 'object') rejection = result;
+    });
+    return rejection;
   }
 
   private requireActiveHand(): RegisteredGameHand {
@@ -2414,16 +2405,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     }
     const gameType = checkpoint.gameType as RegisteredGameType;
     this.activeHand = restoreRegisteredGameHandState(gameType, checkpoint);
-  }
-
-  private restoreAndProject(
-    checkpoint: ReturnType<typeof this.snapshotActiveHand> | null,
-    stateCheckpoint: SessionMachineState,
-  ): void {
-    this.restoreHandFrom(checkpoint);
-    this.state = stateCheckpoint;
-    this.projectionPending = true;
-    this.scheduleCommit(false);
   }
 
   enqueue(work: () => void): void {
@@ -2990,12 +2971,12 @@ function createResultDeferred<T>(): ResultDeferred<T> {
   return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
 
-export function runWithRuntimeErrorReporting(
-  run: () => void,
+export function runWithRuntimeErrorReporting<T>(
+  run: () => T,
   report: (message: string) => void,
-): void {
+): T {
   try {
-    run();
+    return run();
   } catch (error) {
     if (!wasClientErrorReported(error)) {
       markClientErrorReported(error);

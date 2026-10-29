@@ -68,7 +68,7 @@ class SpacepokerReloadDriver {
         assert.ok(id, `Space Poker player ${index}: invalid member index ${intent.memberIndex}`);
         if (intent.type === 'make-move') this.submittedMoves[index] += 1;
         if (intent.type === 'accept-settlement') this.submittedSettlements[index] += 1;
-        runtime.commitLocalGameAction({
+        return runtime.commitLocalGameAction({
           gameType: 'spacepoker',
           id,
           command:
@@ -238,6 +238,12 @@ class SpacepokerReloadDriver {
     const hand = runtime.getGameHand() as SpacepokerHand;
     const beforeMoves = [...this.submittedMoves];
     const beforeSettlements = [...this.submittedSettlements];
+    const rejection = this.ports[index].dispatch(
+      mode === 'reveal'
+        ? { type: 'make-move', memberIndex: 0, readable: null }
+        : { type: 'accept-settlement', memberIndex: 0 },
+    );
+    assert.equal(rejection, undefined, `${mode}: terminal action must be accepted`);
     hand.update((current) => ({
       ...current,
       gameState: { handler: SpHandler.Showdown, myTurn: false, N: current.gameState.N },
@@ -247,11 +253,7 @@ class SpacepokerReloadDriver {
       ],
       terminalState: mode === 'reveal' ? 'revealed' : 'conceded-by-you',
     }));
-    if (mode === 'reveal') {
-      this.ports[index].dispatch({ type: 'make-move', memberIndex: 0, readable: null });
-    } else {
-      this.ports[index].dispatch({ type: 'accept-settlement', memberIndex: 0 });
-    }
+    this.ports[index].dispatch({ type: 'state-changed' });
     await flushWrapperDrain([this.adapters[index]]);
     await this.reload(index, `${mode} prepared terminal`);
     this.render(index);

@@ -104,12 +104,14 @@ export function useCalpokerHand(
       command: LocalGameCommand,
     ): void => {
       const live = requireLiveGameMount(viewRef.current);
-      live.hand.update(update);
-      live.port.dispatch({
+      const rejected = live.port.dispatch({
         type: 'make-move',
         memberIndex: 0,
         readable: command.readable,
       });
+      if (rejected) return;
+      live.hand.update(update);
+      live.port.dispatch({ type: 'state-changed' });
     },
     [],
   );

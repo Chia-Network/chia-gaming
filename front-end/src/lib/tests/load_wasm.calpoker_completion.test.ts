@@ -88,7 +88,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         assert.ok(Number.isInteger(intent.memberIndex) && intent.memberIndex >= 0);
         const id = game.currentHandIds[intent.memberIndex];
         assert.ok(id, `calpoker completion: invalid member index ${intent.memberIndex}`);
-        runtime.commitLocalGameAction({
+        return runtime.commitLocalGameAction({
           gameType: 'calpoker',
           id,
           command:
@@ -130,29 +130,33 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     return state;
   };
   const submitSelections = (index: number, selections: bigint[]) => {
+    const rejection = ports[index].dispatch({
+      type: 'make-move',
+      memberIndex: 0,
+      readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
+    });
+    assert.equal(rejection, undefined, 'Calpoker selections must be accepted');
     (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
       ...state,
       cardSelections: selections,
       moveNumber: 2n,
       isPlayerTurn: false,
     }));
-    ports[index].dispatch({
-      type: 'make-move',
-      memberIndex: 0,
-      readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
-    });
+    ports[index].dispatch({ type: 'state-changed' });
   };
   const submitNil = (index: number, moveNumber: bigint) => {
+    const rejection = ports[index].dispatch({
+      type: 'make-move',
+      memberIndex: 0,
+      readable: null,
+    });
+    assert.equal(rejection, undefined, 'Calpoker automatic move must be accepted');
     (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
       ...state,
       moveNumber,
       isPlayerTurn: false,
     }));
-    ports[index].dispatch({
-      type: 'make-move',
-      memberIndex: 0,
-      readable: null,
-    });
+    ports[index].dispatch({ type: 'state-changed' });
   };
   const autofireOpening = (index: number) => {
     const state = hand(index);

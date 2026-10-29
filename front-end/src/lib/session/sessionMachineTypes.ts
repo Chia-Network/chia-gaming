@@ -127,11 +127,6 @@ export type SessionMachineEvent =
       type: 'hand-state-changed';
       handState: PersistedGameState;
     }
-  | {
-      type: 'local-game-action-committed';
-      id: string;
-      handState: PersistedGameState;
-    }
   | { type: 'local-action-applied'; id: string; action: LocalActionKind }
   | { type: 'request-accept-proposal'; id: string }
   | { type: 'request-cancel-proposal'; id: string }

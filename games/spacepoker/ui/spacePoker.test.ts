@@ -197,7 +197,10 @@ describe('Space Poker machine-owned hand state', () => {
       renderer = create(React.createElement(Harness));
     });
 
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'make-move',
+      'state-changed',
+    ]);
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
@@ -314,7 +317,7 @@ describe('Space Poker machine-owned hand state', () => {
     });
     act(() => hand?.handleFold());
 
-    expect(committed).toHaveLength(1);
+    expect(committed.map((intent) => intent.type)).toEqual(['accept-settlement', 'state-changed']);
     expect(committed[0]).toMatchObject({ type: 'accept-settlement', memberIndex: 0 });
     expect(isSpacepokerHandState(persisted.state)).toBe(true);
     expect(persisted.state).toMatchObject({

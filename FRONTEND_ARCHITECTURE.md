@@ -512,7 +512,7 @@ The architectural invariants are smaller than the field list:
   complete write cannot mix generations;
 - durable fields are authoritative quiescent residue or unresolved external
   obligations with named restore consumers and retirement events;
-- rollback copies for peer validation, local hand mutation, and batch planning
+- rollback copies for peer validation and batch planning
   are ephemeral and must disappear before capture; notification queues,
   drafts, liveness, derived views, and released effects are reconstructed;
 - incompatible aggregate or cradle schemas reject and preserve the whole root
@@ -576,18 +576,16 @@ commands. `SessionController` drains reducer events, reentrant controller
 events, WASM results, and generated commands to a fixed point. It then persists
 or attempts to persist one combined snapshot, publishes the final authority to
 React once, and releases the staged effects. Games dispatch a `GameIntent`.
-A command result distinguishes rejection, queueing, and actual application. A
-game mutates its concrete hand before requesting an action; the public intent
-carries no state. The runtime keeps the previous canonical
-`handState` only as a temporary synchronous checkpoint while it calls Rust. A
-synchronous command exception or `MoveRejected` restores that checkpoint. If
-Rust accepts the action as queued or already applied, the runtime snapshots the
-mutated complete hand into canonical `handState` and persists it in the same
-session snapshot as the serialized Rust queue. `activeHand` is only a cache
-rebuilt from and snapshotted back into `handState`; shared code does not inspect
-package-owned fields. Rejection restores both cache and model. There is no
-persisted checkpoint or `pendingCandidates` state. `LocalActionApplied` is only
-a host lifecycle fact and does not grant game permission.
+Game hooks submit protocol actions before changing their hand. Immediate tagged
+rejections return to the calling game UI without advancing gameplay or creating
+a shared banner notice. The game owns rejection feedback and local draft cleanup.
+When Rust accepts the request (queued or applied), the hook applies its local
+update and reports `state-changed` in the same synchronous turn. The existing checkpoint scheduler coalesces Rust state, local hand state,
+and UI publication into one batch. `LocalActionApplied` remains the event that
+advances the general backend/banner turn presentation. No applied-input payload,
+TypeScript move queue, optimistic hand mutation, or hand rollback is needed.
+`activeHand` is rebuilt from and snapshotted back into canonical `handState`;
+shared code does not inspect package-owned fields.
 Before starting the asynchronous write, the runtime synchronously freezes
 canonical `handState`, the serialized WASM cradle, and the reliable boundary
 into one immutable save input. Every package
@@ -805,13 +803,12 @@ mutable aggregate current-game fields that can drift across game IDs. A game
 instance's initial turn is constructed by its package from
 `GameHandInitialization.members[index].ourTurn`, Rust's authoritative
 accepted-member turn. Protocol IDs remain host-only. A game hook computes a complete
-next state by mutating its concrete hand, then submits a state-free protocol
-request. `commitLocalGameAction` holds the old canonical state only across that
-synchronous call. Rejection reconstructs the hand from the old checkpoint;
-queueing or immediate application commits the new complete hand directly as
-canonical. Game hooks never write
-controller persistence state, interpret protocol replay, or call persistence
-directly.
+next state, submits a state-free protocol request, and updates its concrete hand
+only after Rust accepts the request. It then reports `state-changed` so the
+controller captures the complete hand with the accepted Rust state. Rejection
+returns to the game for feedback and local draft cleanup without advancing
+gameplay. Game hooks never write controller persistence state, interpret protocol
+replay, or call persistence directly.
 `GameSettled` retires only its own game ID from the slice's active set.
 This allows separate members of an atomic factory group to settle independently
 without removing the still-live member from persistence or presentation. Krunk's
@@ -1978,11 +1975,13 @@ Only Space Poker currently exposes the optional shared `cheat` intent, with its
 `cheat^` listener implemented inside that package.
 
 Each hook reads its concrete game-owned hand on every render. Local actions
-mutate that package-private hand first, then submit a no-state `GameIntent`
-through the shared Rust-first boundary; local-only durable changes emit
-`state-changed`. Automatic moves use the same path and have no separate retry
-journal. Browser restoration calls the package's `restoreHand` directly with
-canonical saved state. The package's ordinary state-driven effect fires only
+submit a no-state `GameIntent` first, then update the hand only if Rust accepts
+the request. Both accepted local updates and local-only durable changes emit
+`state-changed`. Krunk displays dictionary rejections beside the relevant board
+and retains a manually entered word for correction. A rejected queued guess clears
+the remaining guess queue, preserving the accepted moves and current turn.
+Automatic moves use the same path and have no separate retry journal. Browser
+restoration calls the package's `restoreHand` directly with canonical saved state. The package's ordinary state-driven effect fires only
 when that restored handler/turn still requires the automatic action. Because an
 accepted queued command and the serialized Rust prepared queue are persisted
 together, autoplay retries only when the last durable state predates queue
@@ -1994,8 +1993,8 @@ a revealed showdown remain distinct displays. The hook attributes a terminal
 opponent action only when the current readable handler proves it; a
 `GameSettled` notification alone does not imply that either player folded.
 Terminal reveal, concession, and fold state commits when Rust accepts the intent
-as queued or applied; a synchronous `MoveRejected` restores the temporary
-checkpoint and leaves gameplay state unchanged. There is no game-owned rollback,
+as queued or applied; a synchronous `MoveRejected` returns to the game UI and
+leaves gameplay state unchanged. There is no game-owned rollback,
 retry-recovery, or protocol-redo subsystem; unexpected infrastructure failures
 are shown by shared host error UX, and the game never observes the chain itself.
 
@@ -2094,9 +2093,10 @@ outcome and terminal/member activity it needs in its complete hand state.
 
 There is no separate game-status event or action echo. Turn, replay, timeout,
 on-chain, proposal, rejection, removal, abandonment, and freezing transitions
-remain in the host model. Synchronous `MoveRejected` and controller exceptions
-restore the temporary checkpoint; later `ActionFailed` notifications go to
-shared error UX but cannot roll back already committed canonical game state.
+remain in the host model. Synchronous `MoveRejected` returns to the calling game
+UI; controller exceptions use shared error reporting. Neither advances the hand.
+Later `ActionFailed` notifications go to shared error UX but cannot roll back
+already committed canonical game state.
 
 ## Single-Hand Enforcement
 
