@@ -1,22 +1,27 @@
-import type { WalletFeeSource } from '../../../../wasm/contract';
-import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
-import { restorePeerState } from './peer_protocol.harness';
-import { expectConsoleError } from '../../../scripts/testSetup';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
+import type { WalletFeeSource } from '../../../../wasm/contract';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import type {
   NeedCoinSpendRequest,
   TransactionSubmission,
   WasmResult,
 } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
+import {
+  _resetGameIdentityWarmupForTests,
+  protocolIdentitiesReady,
+  setProtocolIds,
+} from '../gameIdentities';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { createSessionModel } from '../session/model';
+import { sessionReceivePolicy } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
-import { createSessionModel } from '../session/model';
-import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
 import {
   channelStatus,
   createReadyBlob,
@@ -32,6 +37,8 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
+import { restorePeerState } from './peer_protocol.harness';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
 import {
   createCoordinatorOnlySessionMachineRuntime,
   reduceSessionMachineForTest,
@@ -42,13 +49,6 @@ async function waitForCall(mock: jest.Mock, count: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
-import {
-  protocolIdentitiesReady,
-  setProtocolIds,
-  _resetGameIdentityWarmupForTests,
-} from '../gameIdentities';
-import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
-import { sessionReceivePolicy } from '../session/receivePolicy';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(

@@ -496,14 +496,13 @@ policy. Durability follows fixed-point durable residue and a named restore
 consumer; rehydrating the latest successful boundary supplies implicit crash
 rollback. Importance alone does not admit a field to the aggregate.
 
-`SessionMachineRuntime` construction is inert. The committed React layout
-effect installs its render callback and calls `activate()`; only then does it
-become the controller's exclusive committed runtime. Layout-effect cleanup calls
-only `clearRender()`. It does not retire the runtime or protocol. Replacement of
-the committed runtime and `SessionController` cleanup—including terminal
-cleanup—own retirement. The controller retains the committed runtime while no
-renderer is mounted; a later renderer reads and reattaches that same runtime
-without changing protocol ownership during render.
+`SessionMachineRuntime` construction is inert. Backend session setup activates it
+and installs it as the controller's committed runtime; no React lifecycle drives
+execution. Application consumes ordered batch/readiness events and exposes data
+plus session-bound intents to the GUI. Unsubscribing a view leaves the runtime
+running. Controller cleanup, terminal cleanup, and runtime replacement own
+retirement. The snapshot assembler receives captured values and the current
+aggregate; runtime/terminal callers own root installation and exact writes.
 
 Local restore and external recovery are separate. A valid IndexedDB envelope
 and WASM cradle may project the restored shell/game/dashboard immediately,
@@ -624,7 +623,7 @@ Both WalletConnect uncertainty and pre-ID Cloud uncertainty persist across
 reload and automatically get exactly one new attempt on each later
 `WalletProviderRegistry` readiness epoch, with no timer or immediate loop.
 
-`BootRecoveryBoundary` owns pending wipe, read-only inspection, atomic
+`Recovery` (`lib/application/Recovery.ts`) owns pending wipe, read-only inspection, atomic
 claim-and-read, one strict rehydrate, takeover, malformed evidence, reset
 retry, and authority loss. The winning claim returns the exact aggregate;
 pending common identity, preference, and history changes are folded into that

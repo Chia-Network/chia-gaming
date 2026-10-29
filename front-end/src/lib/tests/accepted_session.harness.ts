@@ -2,12 +2,12 @@
 import * as fs from 'fs';
 // @ts-expect-error Node.js types are not included in the frontend configuration.
 import { resolve } from 'path';
-import { PRESET_FILES } from '../../generated/gamePresets';
 import * as wasm from '../../../node-pkg/chia_gaming_wasm';
-import { type WasmConnection } from '../../types/ChiaGaming';
-import { SessionController } from '../../hooks/SessionController';
+import { PRESET_FILES } from '../../generated/gamePresets';
 import { createPeerProtocol } from '../../services/peerProtocol';
+import { type WasmConnection } from '../../types/ChiaGaming';
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
 import {
   attachTestCommitCoordinator,
   makePeerConn,

@@ -1,20 +1,20 @@
+import type { PersistedGameState } from '@games/host';
+import type { Program } from 'clvm-lib';
 import type { ChannelStatus, GameConnectionState, WasmNotification } from '../../types/ChiaGaming';
 import type { GameSliceAction } from './gameSlice';
+import type { NonTerminalGameStatusPayload } from './presentation';
+import type { RestoreStatus } from './SessionController';
 import type {
   BetweenHandModeModel,
   GameTerminalModel,
   HandProposal,
   LocalActionKind,
-  PendingProposalModel,
   PendingProposalLifecycle,
+  PendingProposalModel,
   QueuedNotificationModel,
   RegisteredGameType,
   SessionModel,
 } from './types';
-import type { NonTerminalGameStatusPayload } from './presentation';
-import type { RestoreStatus } from '../../hooks/SessionController';
-import type { Program } from 'clvm-lib';
-import type { PersistedGameState } from '@games/host';
 
 export interface SessionMachineCoordination {
   firstGameAccepted: boolean;

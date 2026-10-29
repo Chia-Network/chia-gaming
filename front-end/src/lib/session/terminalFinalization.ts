@@ -1,18 +1,25 @@
 import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
-import type { SessionController } from '../../hooks/SessionController';
-import { markSavedSession } from '../../hooks/saveCoordination';
-import { destroyFlushedTerminalSessionController } from '../../hooks/blobSingleton';
-import { selectDashboardCoins } from './selectors';
-import type { SessionModel } from './types';
-import { buildDurableApplicationState, type TerminalCapture } from './sessionMachinePersist';
-import { storageRepository } from './storageRepository';
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
+import { markSavedSession } from './saveCoordination';
+import { selectDashboardCoins } from './selectors';
+import type { SessionController } from './SessionController';
+import { destroyFlushedTerminalSessionController } from './sessionHost';
+import {
+  buildDurableApplicationState,
+  type TerminalCapture as TerminalSnapshotInput,
+} from './sessionMachinePersist';
+import { storageRepository } from './storageRepository';
+import type { SessionModel } from './types';
 
 export interface TerminalSessionIdentity {
   myName: string;
   opponentName?: string;
   iStarted: boolean;
 }
+
+export type TerminalCapture = Omit<TerminalSnapshotInput, 'walletProviderScope'> & {
+  controller: SessionController;
+};
 
 export interface TerminalFinalizationDependencies {
   persistTerminal(capture: TerminalCapture): Promise<void>;
@@ -22,7 +29,14 @@ export interface TerminalFinalizationDependencies {
 
 const defaultDependencies: TerminalFinalizationDependencies = {
   persistTerminal: async (capture) => {
-    await storageRepository.write(buildDurableApplicationState(capture)!);
+    const input: TerminalSnapshotInput = {
+      ...capture,
+      walletProviderScope: capture.controller.getWalletProviderScope(),
+    };
+    const snapshot = storageRepository.patchApplicationState(
+      (root) => buildDurableApplicationState(root, input)!,
+    );
+    await storageRepository.write(snapshot);
   },
   updateMarker: markSavedSession,
   teardown: destroyFlushedTerminalSessionController,

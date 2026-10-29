@@ -1,8 +1,8 @@
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { readApplicationState } from '../session/indexedDb';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { storageRepository } from '../session/storageRepository';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
   createActivePair,
   flushWrapperDrain,

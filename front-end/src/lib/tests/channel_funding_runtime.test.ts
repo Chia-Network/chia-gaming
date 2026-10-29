@@ -1,13 +1,16 @@
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { createSessionModel } from '../session/model';
-import { activeSave } from './session_save_envelope.fixtures';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { SessionController } from '../../hooks/SessionController';
-import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { SessionController } from '../session/SessionController';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { entriesForOwner } from '../session/channelFundingSelectors';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
+import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
+import { createSessionModel } from '../session/model';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 import {
   makeMockCradle,
   makePeerConn,
@@ -23,10 +26,7 @@ import {
   recoverableWalletRpc,
   setup,
 } from './runtime_capability.harness';
-import { storageRepository } from '../session/storageRepository';
-import type { ChannelFundingEntry } from '../session/channelFundingStore';
-import { entriesForOwner } from '../session/channelFundingSelectors';
-import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
+import { activeSave } from './session_save_envelope.fixtures';
 
 describe('durable channel funding record', () => {
   const owner = {

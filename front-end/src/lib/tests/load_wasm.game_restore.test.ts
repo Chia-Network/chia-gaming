@@ -1,10 +1,5 @@
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { SessionController } from '../../hooks/SessionController';
-import { restoreSession } from '../../hooks/blobSingleton';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { storageRepository } from '../session/storageRepository';
-import { decodePersistedGameState } from '../gameRegistry';
 import { protocolIdForCatalog } from '../gameIdentities';
+import { decodePersistedGameState } from '../gameRegistry';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import {
   channelStatusModelFromPayload,
@@ -12,8 +7,13 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   snapshotFromSessionModel,
 } from '../session/model';
-import { krunkStateCodec } from './game_state_helpers';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { restoreSession } from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
 import type { HandProposal } from '../session/types';
+import { WasmStateInit } from '../session/WasmStateInit';
+import { krunkStateCodec } from './game_state_helpers';
 import {
   createActivePair,
   exchangeUntilIdle,

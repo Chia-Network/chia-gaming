@@ -1,23 +1,22 @@
-import { SessionController } from './SessionController';
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
-import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
-import { PeerConnectionResult } from '../types/ChiaGaming';
-import { BlockchainPoller } from './BlockchainPoller';
-import { type RehydratedDurableApplicationState } from '../lib/session/persistence';
-import { storageRepository } from '../lib/session/storageRepository';
-import { clearGameSessionState } from '../lib/session/sessionStateTransitions';
-import { coerceToBytes } from '../util';
-import { getGenesisChallenge } from '../constants/wallet-connect';
-import { log } from '../services/log';
-import { ReliablePeerTransport } from '../services/PeerSession';
+import { getGenesisChallenge } from '../../constants/wallet-connect';
+import { log } from '../../services/log';
+import { ReliablePeerTransport } from '../../services/PeerSession';
+import { PeerConnectionResult } from '../../types/ChiaGaming';
+import { coerceToBytes } from '../../util';
+import type { SessionWallet } from '../wallet/sessionWallet';
+import { channelFundingRuntime } from './channelFundingRuntime';
 import {
   recentDiagnosticEntries,
   recentEntries,
   WASM_NOTIFICATION_HISTORY_LIMIT,
-} from '../lib/session/historyLimits';
+} from './historyLimits';
+import { type RehydratedDurableApplicationState } from './persistence';
+import { SessionController } from './SessionController';
+import { clearGameSessionState } from './sessionStateTransitions';
+import { storageRepository } from './storageRepository';
+import { fetchDeployPreset, WasmStateInit } from './WasmStateInit';
 
 export let sessionController: SessionController | null = null;
-export let initStarted = false;
 let transactionPublishNerfed = false;
 const transactionPublishNerfListeners = new Set<(nerfed: boolean) => void>();
 
@@ -55,16 +54,11 @@ function requireString(value: unknown, label: string): string {
   throw new Error(`restoreSession: missing or invalid ${label}`);
 }
 
-export function setInitStarted(value: boolean) {
-  initStarted = value;
-}
-
 export function destroySessionController(): void {
   if (sessionController) {
     sessionController.cleanup();
     sessionController = null;
   }
-  initStarted = false;
 }
 
 export function destroyFlushedTerminalSessionController(controller: SessionController): void {
@@ -73,13 +67,12 @@ export function destroyFlushedTerminalSessionController(controller: SessionContr
   }
   controller.cleanupAfterTerminalFlush();
   sessionController = null;
-  initStarted = false;
 }
 export async function configSessionController(
   sc: SessionController,
   iStarted: boolean,
   wasmStateInit: WasmStateInit,
-  blockchain: BlockchainPoller,
+  blockchain: SessionWallet,
   _uniqueId: string,
   channelTimeout?: number,
   unrollTimeout?: number,
@@ -176,7 +169,7 @@ export async function restoreSession(
 }
 
 export function getOrCreateSessionController(
-  blockchain: BlockchainPoller | null,
+  blockchain: SessionWallet | null,
   peerConn: PeerConnectionResult,
   registerMessageHandler: (
     handler: (msgno: number, msg: Uint8Array) => void,
@@ -241,6 +234,10 @@ export function getOrCreateSessionController(
     );
   }
 
+  sessionController.initializeFrontend(
+    sessionBootstrap?.state.session?.phase === 'live',
+    sessionBootstrap,
+  );
   sessionController.kickSystem(2);
 
   // Only cradle restores go through restoreSession. pairingToken-only saves are
@@ -256,7 +253,6 @@ export function getOrCreateSessionController(
         if (sessionController === restoringObject) {
           restoringObject.cleanup();
           sessionController = null;
-          initStarted = false;
         }
         throw e;
       }

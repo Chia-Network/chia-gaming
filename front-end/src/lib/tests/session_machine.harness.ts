@@ -1,4 +1,10 @@
-import type { SessionController } from '../../hooks/SessionController';
+import {
+  createRegisteredGameHand,
+  restoreRegisteredGameHandState,
+  snapshotRegisteredGameHand,
+  type RegisteredGameHand,
+} from '../gameRegistry';
+import type { SessionController } from '../session/SessionController';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
@@ -9,12 +15,6 @@ import type {
   SessionMachineTransition,
 } from '../session/sessionMachineTypes';
 import type { HandProposal, ProposalOrigin } from '../session/types';
-import {
-  createRegisteredGameHand,
-  restoreRegisteredGameHandState,
-  snapshotRegisteredGameHand,
-  type RegisteredGameHand,
-} from '../gameRegistry';
 
 export function reduceSessionMachineForTest(
   state: SessionMachineState,

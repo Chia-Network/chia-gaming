@@ -1,19 +1,16 @@
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
-import { markSavedSession } from '../../hooks/saveCoordination';
-import {
-  buildDurableApplicationState,
-  type TerminalCapture,
-} from '../session/sessionMachinePersist';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { isTerminalChannelSnapshot } from '../session/selectors';
-import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { coinRecordToName } from '../../util/coinWatch';
+import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { markSavedSession } from '../session/saveCoordination';
+import { isTerminalChannelSnapshot } from '../session/selectors';
+import { storageRepository } from '../session/storageRepository';
+import { finalizeTerminalSession } from '../session/terminalFinalization';
 import type { HandProposal } from '../session/types';
+import { WasmStateInit } from '../session/WasmStateInit';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
+import { installCapturedState, type TerminalCapture } from './checkpoint_capture.harness';
 import {
   action_with_messages,
   addActiveCradle,
@@ -34,7 +31,7 @@ import { createHash } from 'crypto';
 
 const harnessTerminalDependencies = {
   persistTerminal: async (capture: TerminalCapture) => {
-    const snapshot = buildDurableApplicationState(capture);
+    const snapshot = installCapturedState(capture);
     if (!snapshot) throw new Error('expected terminal snapshot');
     await storageRepository.write(snapshot);
   },

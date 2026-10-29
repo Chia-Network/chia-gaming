@@ -1,12 +1,28 @@
+import { diagStack } from '../../services/log';
+import type { ChannelFundingEntry } from './channelFundingStore';
+import type { FeeAttachment } from './feeAttachmentStore';
 import {
-  type ClaimedStorageSnapshot,
-  type DurableStorageAuthority,
-  inspectApplicationState,
   indexedDbStoragePort,
+  inspectApplicationState,
   InvalidApplicationStateError,
   StorageAuthorityLostError,
   StorageAuthorityRequiredError,
+  type ClaimedStorageSnapshot,
+  type DurableStorageAuthority,
 } from './indexedDb';
+import { decodeDurableApplicationState } from './persistence';
+import { providerScopeKey } from './providerKeys';
+import {
+  clearSavedSessionMarker,
+  getStorageTabId,
+  hasWalletConnectStorage,
+  installStorageCoordination,
+  markLeaseClaimed,
+  markSavedSession,
+  randomHex,
+  resetStorageCoordinationForTests,
+  type StorageAuthorityLossReason,
+} from './saveCoordination';
 import {
   DURABLE_APPLICATION_STATE_SCHEMA,
   DURABLE_APPLICATION_STATE_VERSION,
@@ -15,25 +31,9 @@ import {
   type DurableRejectionTransport,
   type SessionTransportSave,
 } from './saveEnvelope';
-import { decodeDurableApplicationState } from './persistence';
+import type { HardResetResult } from './saveHardReset';
 import * as sessionPreferences from './sessionPreferences';
 import * as sessionState from './sessionStateTransitions';
-import type { HardResetResult } from '../../hooks/saveHardReset';
-import {
-  markLeaseClaimed,
-  clearSavedSessionMarker,
-  getStorageTabId,
-  hasWalletConnectStorage,
-  installStorageCoordination,
-  type StorageAuthorityLossReason,
-  markSavedSession,
-  randomHex,
-  resetStorageCoordinationForTests,
-} from '../../hooks/saveCoordination';
-import type { ChannelFundingEntry } from './channelFundingStore';
-import type { FeeAttachment } from './feeAttachmentStore';
-import { diagStack } from '../../services/log';
-import { providerScopeKey } from './providerKeys';
 import { retireWalletReservations } from './walletReservationRetirement';
 
 type StorageLifecycleEvent = 'claim' | 'authority-lost' | 'hard-reset';
@@ -660,9 +660,7 @@ class StorageRepository {
   }
 
   async hardReset(): Promise<HardResetResult> {
-    const { hardResetStorage, hardResetUnclaimedStorage } = await import(
-      '../../hooks/saveHardReset'
-    );
+    const { hardResetStorage, hardResetUnclaimedStorage } = await import('./saveHardReset');
     if (!this.hasAuthority()) {
       this.root = newApplicationState();
       this.activeRuntime = null;

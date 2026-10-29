@@ -5,13 +5,13 @@
  * window.__CLOUD_WALLET_* / process.env overrides (via constants/env) ->
  * hardcoded per-network default.
  */
-import { isTestnet } from '../constants/currency';
+import { isTestnet } from '../../constants/currency';
 import {
   CLOUD_WALLET_OVERRIDE,
   MAINNET_CLOUD_WALLET,
   TESTNET_CLOUD_WALLET,
   type CloudWalletEndpoints,
-} from '../constants/env';
+} from '../../constants/env';
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/$/, '');

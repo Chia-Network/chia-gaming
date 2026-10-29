@@ -3,12 +3,14 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { Subject } from 'rxjs';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { useGameSession } from '../../hooks/useGameSession';
-import type { SessionController } from '../../hooks/SessionController';
-import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { GameSessionParams, WasmEvent } from '../../types/ChiaGaming';
-import { SessionController as ConcreteSessionController } from '../../hooks/SessionController';
+import type { SessionController } from '../session/SessionController';
+import { SessionController as ConcreteSessionController } from '../session/SessionController';
+import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { createOwnedSessionRuntime } from '../session/sessionMachineRuntime';
 import { storageRepository } from '../session/storageRepository';
 import { makeMockCradle, mockWasmConnection } from './message_protocol.harness';
+import { useTestSessionPresentation } from './session_frontend.harness';
 
 class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -34,6 +36,8 @@ describe('useGameSession committed runtime', () => {
     const events = new Subject<WasmEvent>();
     const controller = {
       cleanShutdownCalled: false,
+      getCoinsOfInterest: () => [],
+      perGameAmount: 10n,
       iStarted: false,
       wasmNotificationHistory: [],
       diagnosticLog: [],
@@ -62,8 +66,10 @@ describe('useGameSession committed runtime', () => {
       perGameAmount: 10n,
       pairingToken: 'pairing',
     } as GameSessionParams;
+    const frontend = createOwnedSessionRuntime(controller, false).frontend;
     return {
       controller,
+      frontend,
       params,
       getRuntime: () => runtime,
       events,
@@ -72,9 +78,9 @@ describe('useGameSession committed runtime', () => {
   }
 
   it('keeps the committed runtime active when the hook unmounts', () => {
-    const { controller, params, getRuntime } = setup();
+    const { frontend, params, getRuntime } = setup();
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
 
@@ -107,8 +113,9 @@ describe('useGameSession committed runtime', () => {
       perGameAmount: 10n,
       pairingToken: 'pairing',
     } as GameSessionParams;
+    const frontend = controller.initializeFrontend(false);
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
 
@@ -135,9 +142,9 @@ describe('useGameSession committed runtime', () => {
   });
 
   it('keeps the same runtime through Strict Effects setup-cleanup-setup replay', () => {
-    const { controller, params, getRuntime, commitSessionRuntime } = setup();
+    const { frontend, params, getRuntime, commitSessionRuntime } = setup();
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
 
@@ -154,10 +161,16 @@ describe('useGameSession committed runtime', () => {
   });
 
   it('keeps reducing controller events while unmounted and projects them on remount', () => {
-    const { controller, params, events, getRuntime } = setup();
+    const { frontend, params, events, getRuntime } = setup();
     let latestQueue: readonly unknown[] = [];
     function Harness() {
-      const session = useGameSession(params, controller, () => {});
+      const session = useGameSession(
+        params,
+        frontend,
+        () => {},
+        undefined,
+        useTestSessionPresentation(frontend),
+      );
       latestQueue = session.channelQueue;
       return null;
     }
@@ -186,13 +199,13 @@ describe('useGameSession committed runtime', () => {
 
   it('reattaches the committed runtime after a renderer crash and remount', () => {
     expectConsoleError('renderer crashed');
-    const { controller, params, getRuntime } = setup();
+    const { frontend, params, getRuntime } = setup();
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
     function CrashingHarness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       throw new Error('renderer crashed');
     }
 

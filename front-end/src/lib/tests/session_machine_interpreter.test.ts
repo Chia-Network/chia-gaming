@@ -1,26 +1,29 @@
+import { type CalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
+import { KrunkHandler, type KrunkHand } from '@games/krunk/ui/serialize';
+import type { SpacepokerHand } from '@games/spacepoker/ui/serialize';
 import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
-import { runWithRuntimeErrorReporting } from '../../hooks/useGameSession';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame } from '../../types/ChiaGaming';
 import { wasClientErrorReported } from '../clientError';
 import { resetProtocolIds, setProtocolIds } from '../gameIdentities';
-import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import {
   createSessionModel,
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
 } from '../session/model';
+import { SessionController } from '../session/SessionController';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { SessionMachineInterpreter } from '../session/sessionMachineInterpreter';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import {
+  runWithRuntimeErrorReporting,
+  SessionMachineRuntime,
+} from '../session/sessionMachineRuntime';
 import type { SessionMachineEvent } from '../session/sessionMachineTypes';
-import { KrunkHandler, type KrunkHand } from '@games/krunk/ui/serialize';
-import { type CalpokerHand, type CalpokerHandState } from '@games/calpoker/ui/serialize';
-import type { SpacepokerHand } from '@games/spacepoker/ui/serialize';
 import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
-import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
 import { wasmResult } from './message_protocol.harness';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { observeSessionProjection } from './session_frontend.harness';
 
 const TERMS = {
   gameType: 'calpoker' as const,
@@ -65,6 +68,8 @@ function stateWithProposals(
 
 function fakeController(overrides: Partial<SessionController> = {}): SessionController {
   return {
+    getCoinsOfInterest: () => [],
+    isChannelReady: () => true,
     isOffChainActive: () => true,
     proposeGame: () => '7',
     acceptProposal: jest.fn(),
@@ -726,7 +731,7 @@ describe('session machine controller command failures', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender((state) => rendered.push(state));
+    observeSessionProjection(runtime, (state) => rendered.push(state));
     return { controller, initial, persisted, rendered, runtime };
   }
 
@@ -743,7 +748,7 @@ describe('session machine controller command failures', () => {
       kind: 'action-failed',
       message: expect.stringContaining('wallet refused proposal'),
     });
-    expect(rendered.at(-1)).toBe(runtime.getState());
+    expect(rendered.at(-1)?.model).toBe(runtime.getState().model);
     expect(persisted).toHaveLength(1);
     expect(persisted[0].model.betweenHand.compose.proposalSent).toBe(false);
 
@@ -762,6 +767,7 @@ describe('session machine controller command failures', () => {
       close: () => {},
     });
     controller.setGameSession({
+      coins_of_interest: () => [],
       snapshot_watched_coins: () => [],
       drain_submissions: () => ({ submissions: [], retired_submission_ids: [], failures: [] }),
       configure_submission_fee: () => {},
@@ -841,7 +847,7 @@ describe('session machine controller command failures', () => {
     ]);
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toBe(runtime.getState());
-    expect(rendered.at(-1)).toBe(runtime.getState());
+    expect(rendered.at(-1)?.model).toBe(runtime.getState().model);
   });
 
   it.each([
@@ -885,7 +891,7 @@ describe('session machine controller command failures', () => {
       message: expect.stringContaining('failed'),
     });
     expect(persisted).toHaveLength(1);
-    expect(rendered.at(-1)).toBe(runtime.getState());
+    expect(rendered.at(-1)?.model).toBe(runtime.getState().model);
   });
 
   it.each([
@@ -924,7 +930,7 @@ describe('session machine controller command failures', () => {
     }
     expect(persisted).toHaveLength(1);
     expect(persisted[0]).toBe(runtime.getState());
-    expect(rendered.at(-1)).toBe(runtime.getState());
+    expect(rendered.at(-1)?.model).toBe(runtime.getState().model);
   });
 
   it('queues an actionable error and renders authority when go-on-chain throws', async () => {
@@ -943,7 +949,7 @@ describe('session machine controller command failures', () => {
       message: expect.stringContaining('chain failed'),
     });
     expect(persisted).toHaveLength(1);
-    expect(rendered.at(-1)).toBe(runtime.getState());
+    expect(rendered.at(-1)?.model).toBe(runtime.getState().model);
   });
 
   it('does not confirm clean shutdown on throw and persists success exactly once', async () => {
@@ -957,7 +963,7 @@ describe('session machine controller command failures', () => {
     expect(failed.runtime.getState().model.channel.cleanShutdownStarted).toBe(false);
     expect(failed.persisted).toHaveLength(1);
     expect(failed.persisted[0].model.channel.cleanShutdownStarted).toBe(false);
-    expect(failed.rendered.at(-1)).toBe(failed.runtime.getState());
+    expect(failed.rendered.at(-1)?.model).toBe(failed.runtime.getState().model);
 
     const succeeded = runtimeHarness({ cleanShutdown: jest.fn() });
     succeeded.runtime.dispatch({ type: 'start-clean-shutdown' });
@@ -965,7 +971,7 @@ describe('session machine controller command failures', () => {
     expect(succeeded.runtime.getState().model.channel.cleanShutdownStarted).toBe(true);
     expect(succeeded.persisted).toHaveLength(1);
     expect(succeeded.persisted[0].model.channel.cleanShutdownStarted).toBe(true);
-    expect(succeeded.rendered.at(-1)).toBe(succeeded.runtime.getState());
+    expect(succeeded.rendered.at(-1)?.model).toBe(succeeded.runtime.getState().model);
   });
 });
 
@@ -993,7 +999,7 @@ describe('session machine local game action boundary', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender((state) => rendered.push(state));
+    observeSessionProjection(runtime, (state) => rendered.push(state));
     runtime.dispatch({
       type: 'notification-accepted-group',
       proposalId: '7',
@@ -1310,7 +1316,7 @@ describe('session machine local game action boundary', () => {
     expect(runtime.getState().model.game.instances['7'].presentation).toBe('off-chain-my-turn');
     expect(persisted).toHaveLength(0);
     expect(rendered).toHaveLength(1);
-    expect(rendered[0]).toBe(before);
+    expect(rendered[0].model).toBe(before.model);
     expect(runtime.getGameHand()?.getState()).toEqual(current);
   });
 

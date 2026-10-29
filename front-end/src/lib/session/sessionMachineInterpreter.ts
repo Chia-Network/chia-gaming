@@ -1,12 +1,12 @@
-import type { GameCommandDisposition, SessionController } from '../../hooks/SessionController';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { coinIdHex } from './gameSessionEvents';
+import type { GameCommandDisposition, SessionController } from './SessionController';
 import type {
+  LocalGameCommand,
+  SessionControllerCommand,
   SessionMachineEffect,
   SessionMachineEvent,
   SessionMachineState,
-  SessionControllerCommand,
-  LocalGameCommand,
 } from './sessionMachineTypes';
 
 type CommandEffect = SessionMachineEffect;

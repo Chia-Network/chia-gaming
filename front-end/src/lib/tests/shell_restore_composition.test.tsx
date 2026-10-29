@@ -1,53 +1,44 @@
 import 'fake-indexeddb/auto';
+import { createApplication } from '../application/Application';
+import type { HubEvent } from '../../services/HubConnection';
+import { stubApplicationSession } from './session_frontend.harness';
 
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
-import * as wasmInit from '../../hooks/WasmStateInit';
-import * as blobSingleton from '../../hooks/blobSingleton';
-import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
-import { storageRepository } from '../session/storageRepository';
-import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
-import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
 import { SESSION_DB_NAME } from '../session/indexedDb';
-import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
+import { markSavedSession, releaseLeaseIfOwner } from '../session/saveCoordination';
+import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset';
+import * as blobSingleton from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
+import * as wasmInit from '../session/WasmStateInit';
+import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
+import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
 
+import { expectConsoleError } from '../../../scripts/testSetup';
 import type { HubConnection } from '../../services/HubConnection';
 import { PeerSession, encodePeerAppMessage } from '../../services/PeerSession';
-import { expectConsoleError } from '../../../scripts/testSetup';
-import type { GameSessionProps } from '../../components/GameSession';
-import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
+import { INITIAL_CHANNEL_STATUS_MODEL, createSessionModel } from '../session/model';
 
 jest.mock('../../components/GameSession', () => {
   const actual = jest.requireActual('../../components/GameSession');
-  return {
-    ...actual,
-    __esModule: true,
-    default: function MockRestoredHandshake({ onSessionModelChange }: GameSessionProps) {
-      const React = jest.requireActual<typeof import('react')>('react');
-      React.useEffect(() => {
-        onSessionModelChange?.(
-          createSessionModel({
-            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
-          }),
-        );
-      }, [onSessionModelChange]);
-      return null;
-    },
-  };
+  return { ...actual, __esModule: true, default: () => null };
 });
 
-let mockHubCallbacks: ConstructorParameters<typeof HubConnection>[2] | null = null;
+let mockHub: {
+  emit: (event: HubEvent) => void;
+  getPresence: () => import('../hubPresence').HubPresence;
+} | null = null;
 const mockSetBusy = jest.fn();
 const mockSendToPeer = jest.fn(() => true);
 jest.mock('../../services/HubConnection', () => {
   const actual = jest.requireActual('../../services/HubConnection');
   return {
     ...actual,
-    HubConnection: jest.fn((_origin, _sessionId, callbacks) => {
-      mockHubCallbacks = callbacks;
+    HubConnection: jest.fn((_origin, _sessionId, emit, getPresence) => {
+      mockHub = { emit, getPresence };
       return {
         disconnect: jest.fn(),
         setBusy: mockSetBusy,
@@ -117,8 +108,18 @@ describe('Shell production restore composition', () => {
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
+  let stop: (() => void) | undefined;
   beforeEach(async () => {
-    mockHubCallbacks = null;
+    const session = stubApplicationSession(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+        restore: { status: 'restored', error: null },
+      }),
+    );
+    jest
+      .spyOn(blobSingleton, 'getOrCreateSessionController')
+      .mockReturnValue({ sessionController: session.controller });
+    mockHub = null;
     mockSetBusy.mockClear();
     mockSendToPeer.mockClear();
     globalThis.requestAnimationFrame = () => 0;
@@ -172,7 +173,10 @@ describe('Shell production restore composition', () => {
 
   afterEach(async () => {
     if (renderer) {
-      act(() => renderer?.unmount());
+      act(() => {
+        renderer?.unmount();
+        stop?.();
+      });
       renderer = null;
     }
     jest.restoreAllMocks();
@@ -218,7 +222,9 @@ describe('Shell production restore composition', () => {
     storageRepository._resetForTests();
 
     act(() => {
-      renderer = create(React.createElement(Shell));
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     expect(renderer!.root.findByProps({ children: 'Loading Chia Gaming…' })).toBeDefined();
 
@@ -291,19 +297,21 @@ describe('Shell production restore composition', () => {
       releaseLeaseIfOwner();
       storageRepository._resetForTests();
       act(() => {
-        renderer = create(React.createElement(Shell));
+        const application = createApplication();
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
       });
       await waitForText(renderer!, 'You have previously saved state.');
       await act(async () => {
         await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
-      for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+      for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
       await flushEffects();
-      expect(mockHubCallbacks).not.toBeNull();
-      expect(mockHubCallbacks!.getPresence()).toEqual(presence);
+      expect(mockHub).not.toBeNull();
+      expect(mockHub!.getPresence()).toEqual(presence);
       mockSetBusy.mockClear();
       act(() => {
-        mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
+        mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
       });
       expect(mockSetBusy).toHaveBeenLastCalledWith(presence);
     },
@@ -342,7 +350,9 @@ describe('Shell production restore composition', () => {
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     act(() => {
-      renderer = create(React.createElement(Shell));
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
     let finishPeerLoad!: () => void;
@@ -363,10 +373,10 @@ describe('Shell production restore composition', () => {
       finishPeerLoad();
     });
     await waitForText(renderer!, 'Handshaking');
-    for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+    for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     act(() => {
-      mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
-      mockHubCallbacks!.onPeerUnavailable('p_' + '22'.repeat(16));
+      mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
+      mockHub!.emit({ type: 'peer-unavailable', playerId: 'p_' + '22'.repeat(16) });
     });
     expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
     expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');
@@ -422,15 +432,17 @@ describe('Shell production restore composition', () => {
       releaseLeaseIfOwner();
       storageRepository._resetForTests();
       act(() => {
-        renderer = create(React.createElement(Shell));
+        const application = createApplication();
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
       });
       await waitForText(renderer!, 'You have previously saved state.');
       await act(async () => {
         await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
       await waitForText(renderer!, 'Resolved Clean');
-      for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
-      expect(mockHubCallbacks).not.toBeNull();
+      for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
+      expect(mockHub).not.toBeNull();
       const frames: Uint8Array[] = [];
       const carrier = {
         sendToPeer: (_peerId: string, frame: Uint8Array) => {
@@ -451,7 +463,12 @@ describe('Shell production restore composition', () => {
         secondAttempt.sendMessage(1, proposal);
       });
       await act(async () => {
-        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[0]);
+        mockHub!.emit({
+          type: 'peer-message',
+          fromId: '22'.repeat(16),
+          fromAlias: 'Clyde',
+          payload: frames[0],
+        });
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
@@ -475,20 +492,30 @@ describe('Shell production restore composition', () => {
       }
       expectConsoleError('[Shell] invalid provisional reliable session');
       await act(async () => {
-        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[1]);
+        mockHub!.emit({
+          type: 'peer-message',
+          fromId: '22'.repeat(16),
+          fromAlias: 'Clyde',
+          payload: frames[1],
+        });
         releaseCheckpoint();
         await storageRepository.inspect();
       });
       expect(renderer!.root.findAllByProps({ children: 'Accept' })).toHaveLength(0);
       await waitForText(renderer!, 'Resolved Clean');
       // Cancellation keeps the lobby busy until the pending checkpoint drains.
-      for (let attempt = 0; attempt < 30 && mockHubCallbacks!.getPresence().busy; attempt++) {
+      for (let attempt = 0; attempt < 30 && mockHub!.getPresence().busy; attempt++) {
         await flushEffects();
       }
-      expect(mockHubCallbacks!.getPresence().busy).toBe(false);
+      expect(mockHub!.getPresence().busy).toBe(false);
       expect(storageRepository.loadState().session).toBeNull();
       await act(async () => {
-        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[1]);
+        mockHub!.emit({
+          type: 'peer-message',
+          fromId: '22'.repeat(16),
+          fromAlias: 'Clyde',
+          payload: frames[1],
+        });
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
@@ -529,7 +556,9 @@ describe('Shell production restore composition', () => {
     });
 
     act(() => {
-      renderer = create(React.createElement(Shell));
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
 

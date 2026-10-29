@@ -20,13 +20,13 @@ setTestGlobal('localStorage', makeStorage());
 setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
 
+import { CloudBlockchainInterface } from '../wallet/CloudBlockchainInterface';
+import { loadCloudWalletAuth } from '../wallet/cloudWalletAuth';
 import {
   beginOAuthLogin,
   CLOUD_WALLET_LOGIN_CANCELLED,
   signatureRequestApproveUrl,
-} from '../../hooks/cloudWalletOAuth';
-import { loadCloudWalletAuth } from '../../hooks/cloudWalletAuth';
-import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
+} from '../wallet/cloudWalletOAuth';
 
 const REDIRECT_URI = 'http://127.0.0.1:5555/oauth/callback';
 

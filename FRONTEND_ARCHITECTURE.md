@@ -14,6 +14,65 @@ For the backend/WASM architecture, see `OVERVIEW.md`. For the connectivity
 model (wallet, hub, peer, session interactions and rollover), see
 `CONNECTIVITY.md`.
 
+## TypeScript execution and presentation boundaries
+
+React components and hooks render published state and send typed intents. The
+non-React application lives in `lib/application/Application.ts`; `App.tsx` starts
+it and attaches `Shell` as a view. Removing or replacing a view only removes its
+subscription. Wallet, hub, recovery, and session execution continue independently
+of the game component's render lifetime.
+
+```mermaid
+flowchart LR
+  GUI[React GUI] -->|ApplicationIntent / session-bound intents| App[Application lifecycle]
+  App -->|ordered ApplicationEvent batches| GUI
+  App -->|connection commands| Wallet[WalletConnection and queued wallet operations]
+  Wallet -->|WalletEvent| App
+  App -->|presence / opaque sends| Hub[HubConnection]
+  Hub -->|HubEvent| App
+  App <--> Host[Session execution and checkpoint ordering]
+  Host <--> Rust[One accepted Rust session]
+  Host <--> Wallet
+  Host -->|PeerCarrier.sendToPeer| Hub
+  App --> Store[Storage authority and aggregate repository]
+  Host --> Store
+```
+
+The GUI API is `ApplicationFrontend`: `snapshot`, `subscribe`, and `dispatch`.
+Its view contains presentation data and commands bound to the current session;
+it contains no controller, poller, peer transport, provider callback, or recovery
+bootstrap. A retired session's commands remain bound to that retired session.
+`useGameSession` and `sessionView` only adapt this data for React and retain local
+terminal-notification dismissals.
+
+`WalletConnection` owns provider setup, reconnect notifications, balance interest,
+readiness subscriptions, and recovery notices. Its setup view omits `finalize`;
+field values return through a wallet intent. Session execution receives the
+`SessionWallet` facet: queued address/solution/spend operations, readiness,
+provider ownership, and coin interest. Provider credentials and connection
+controls stay within the wallet module. WalletConnect normalization and silent
+recovery remain TypeScript responsibilities. Existing terminal polling pause and
+resume ordering is preserved.
+
+`HubConnection` emits tagged `HubEvent` values and reads current presence through
+one supplied function. Peer/rejection transport receives only `PeerCarrier`'s
+`sendToPeer`, which returns actual carrier acceptance. Rust owns reliable replay;
+TypeScript adds no second message queue.
+
+Persistence and takeover cross these owners deliberately. `Recovery` owns boot,
+claim/takeover and authority-loss coordination; the repository owns the aggregate
+and generation-fenced storage. Session execution owns drain/capture/write/release
+ordering. `buildDurableApplicationState(root, capture)` is a pure assembler: its
+callers install the captured root before the exact write, preserving wallet
+notifications and both ordinary-failure and authority-loss behavior.
+
+The runtime emits `batch-complete` at the existing projection point. Application
+consumes it, performs lifecycle coordination, and publishes one coherent view
+batch. Immediate channel readiness uses an ordered `readiness` event so it keeps
+its existing timing without exposing a mutable controller getter. Both streams
+preserve listener order under synchronous reentry. View attachment does not
+activate a runtime, take authority, replay alerts, or start a checkpoint.
+
 ## System-Level View
 
 The system consists of two separate deployable artifacts:
@@ -31,8 +90,8 @@ The system consists of two separate deployable artifacts:
 
 The player app is static code and does not fetch a hub list from its own
 server. The user enters a hub URL in `HubPicker` (or uses the local dev
-shortcut), and Shell creates both the hub iframe and game relay connection from
-that origin. The selected hub URL may be remembered in localStorage so the
+shortcut). Application creates the game relay connection and Shell renders the
+hub iframe for that origin. The selected hub URL may be remembered in localStorage so the
 app can reconnect on reload, but the current UI does not maintain or display a
 history/list of previously used hubs. A richer local hub list is future
 work.
@@ -47,9 +106,8 @@ but it means the hub must stay connected for the duration of the session.
 Per-session peer state is encapsulated in a **`PeerSession`** object
 (`front-end/src/services/PeerSession.ts`). Each game session gets one
 `PeerSession`; it owns the session ID, peer ID, liveness tracking, message
-buffering/routing, and outbound send methods. Shell holds a single
-`peerSessionRef` (`PeerSession | null`) rather than the five individual refs
-previously used for peer state. Destroying the PeerSession makes the object
+routing and outbound send methods. Application holds the selected adapter; its
+Rust session owns the reliable journal and replay. Destroying PeerSession makes the object
 inert — all further calls are no-ops.
 
 A future option is to upgrade to WebRTC for peer-to-peer messaging after the
@@ -104,10 +162,10 @@ the backend behind `InternalBlockchainInterface.isReadyForPlay()` /
 connected. WalletConnect polls privately for a verified full-node peer when
 the wallet grants that optional RPC; otherwise connectivity implies readiness.
 The app still connects to the hub normally while a backend
-is not ready; it just advertises busy. Shell mirrors the backend's readiness into
-`blockchainReadyRef` via `onPlayReadinessChange`, and a wallet disconnect clears
+is not ready; it just advertises busy. Application consumes the wallet's readiness events into
+its current presence state, and a wallet disconnect clears
 it (the backend can no longer vouch for readiness). The `HubConnection` uses a
-`getPresence` callback — provided by Shell — to derive the authoritative busy
+`getPresence` callback — provided by Application — to derive the authoritative busy
 state at connect and reconnect time for the `identify` message; it reads
 `blockchainReadyRef` synchronously so a reconnect never reports a stale
 not-busy. Aliases originate on the hub's internal interface and reach the
@@ -120,7 +178,7 @@ Presence is a `HubPresence` (`lib/hubPresence.ts`): `{ busy: false }` or
 bit and the reasons; `shouldReportHubBusy` / `shouldReportHubBusyPresence`
 return its `busy`. The restore reason follows a non-terminal live or
 pre-handshake save, not the transient `restoring` flag, so a reconnect
-`identify` cannot clear busy that registration just set. Shell has two
+`identify` cannot clear busy that registration just set. Application has two
 readers over it: `hubPresenceNow` (save, Accept transition, and persist
 flight included) for `getPresence`, wallet reconnect, play readiness,
 registration, and the busy report when a session starts; and `presenceBusy`
@@ -475,7 +533,7 @@ authoritative sources:
    compose values, unresolved proposal intent, and between-hand mode.
 
 The two timer timestamps have one dedicated durable owner in
-`SessionController`. Shell schedules the browser timers, but changes enter the
+`SessionController`. Application schedules the browser timers, but changes enter the
 runtime coordinator and aggregate capture reads the controller-owned facts
 synchronously with the cradle boundary; no cache patch may compete with a
 machine checkpoint.
@@ -552,12 +610,12 @@ result-bearing companion to `enqueue`: it runs typed controller work inside the
 same serialized runtime transaction and resolves or rejects its promise when
 that work executes, including when an active commit temporarily queues it.
 
-Runtime construction itself is inert. The committed React layout effect first
-installs the render callback and then calls `activate()`. The controller attaches
-that committed, retire-aware `SessionMachineRuntime` as the persistence and
-reliable-commit owner only after serializable WASM fields are available; before
-then explicit pre-runtime boundaries persist reliable work. React cleanup only
-calls `clearRender()` and therefore cannot retire protocol ownership.
+Runtime construction itself is inert. Backend session construction installs and
+activates its runtime before asynchronous setup/restore completes. The controller
+attaches persistence and reliable-commit ownership only after serializable WASM
+fields are available; explicit pre-runtime boundaries persist earlier reliable
+work. The application consumes its event pipe. React only receives presentation
+and typed commands, and unsubscribing a view cannot retire protocol ownership.
 Replacement of the committed runtime and `SessionController` cleanup—including
 terminal cleanup—own retirement. Retirement discards queued events and
 fire-and-forget controller work, rejects queued result promises and
@@ -854,24 +912,15 @@ Development builds log the raw cradle byte count, an estimated total IndexedDB
 record size, the compact historical-unroll count when available, and all three
 history counts. The record-size walk is skipped in production.
 
-#### Prop-safe session values
+#### Presentation and binary session values
 
-`DurableApplicationState` contains raw `Uint8Array` cradles and message payloads plus
-`bigint` fields. React props cannot safely deep-enumerate those values:
+`DurableApplicationState` contains raw `Uint8Array` cradles and message payloads.
+Recovery/bootstrap captures stay within Application and session execution; they
+are never passed through React props or re-cloned on render. Persistence bencodex
+encodes the complete aggregate, masks the salt-prefixed bytes, and stores a single
+`Uint8Array` as the IndexedDB value. Frozen game presentation still uses
+`reactPropSafeValue` where needed; it preserves typed arrays and dense byte objects.
 
-- Expanding a typed array into `{0:n,1:n,...}` destroys the cradle and makes
-  WASM restore fail with bencodex `unexpected end of input`.
-- Deep-cloning a degraded numeric-keyed byte object (or cloning the full
-  session every render) can OOM the tab.
-
-`reactPropSafeValue` / `sessionSaveForReactProps` leave `ArrayBuffer` views and
-dense byte-objects alone, hide bigints as non-enumerable properties, and Shell
-keeps a stable `sessionSavePropRef` so GameSession does not re-walk the save on
-every parent render. Persistence never routes cradle bytes through this
-React-prop path: it bencodex-encodes the complete aggregate, masks the
-salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
-
-This helper is an opaque persistence bridge, not a numeric conversion API.
 Game hand instances, reducers, refs, and hook-local state retain canonical
 `bigint` values, including through game-component props. React 19.3.1 includes
 the upstream fix for development Performance Tracks incorrectly passing
@@ -964,7 +1013,7 @@ cooperative close until it has supplied the peer with the completed close
 spend. That zero-payout responder does not submit the transaction itself. Its
 drain reports one typed terminal-handoff command; `SessionController` durably
 persists, sends, and replays its complete-close message until the peer ACKs it,
-while Rust reports `session_disposition: AwaitOutboundTerminal` so React keeps
+while Rust reports `session_disposition: AwaitOutboundTerminal` so session execution keeps
 the controller alive even if the channel snapshot becomes resolved. After the
 ACK, Rust sets `session_disposition: Abandoned` while retaining the actual channel status.
 The live transport envelope binds that command to its exact frame bytes,
@@ -980,7 +1029,7 @@ the enforcement point. A failed inbound `deliver_message` is also deliberately
 routed through that Go On-Chain entry point: Rust abandons a zero-payout session
 there, while a session with value remaining starts normal on-chain resolution.
 `SessionController.goOnChain()` returns whether Rust actually began on-chain
-resolution; Shell applies the peer-disconnect, phase, and dashboard on-chain
+resolution; Application applies the peer-disconnect, phase, and dashboard on-chain
 effects only for that successful result. Timer-gated abandon actions in other
 waiting states remain separate stalled-flow escapes. See
 [Abandonment and Zero-Payout Shutdown](UX_NOTIFICATIONS.md#abandonment-and-zero-payout-shutdown)
@@ -1018,8 +1067,8 @@ hub relay and mounting a restored live session await that module; neither waits
 for game presets. The restore wait retains the storage-generation fence, so
 losing authority while WASM loads cannot resurrect the obsolete session.
 
-On page load, Shell delegates storage/recovery ownership to
-`BootRecoveryBoundary`. It completes a pending origin-wide storage wipe and visible
+On page load, Application starts its non-React
+`Recovery` (`lib/application/Recovery.ts`) owner. It completes a pending origin-wide storage wipe and visible
 read-only IndexedDB inspection before choosing recovery UI. Hub and wallet
 promises are not part of this local boundary. Resume/takeover use one atomic
 claim-and-read transaction over coordination plus `application-state/current`,
@@ -1134,11 +1183,10 @@ and actions, not visibility of a valid local restore.
 
 #### Cleanup
 
-React and protocol cleanup are intentionally different. The committed layout
-effect in `useGameSession` activates the runtime, while its cleanup only
-clears the render callback. `SessionController.cleanup()` and
-`cleanupAfterTerminalFlush()` own protocol retirement, including retirement of
-the active runtime and detachment of controller resources.
+React and protocol cleanup are intentionally different. `Shell` unsubscribes
+from Application; game views contain no runtime installation or resource
+attachment effects. `SessionController.cleanup()` and `cleanupAfterTerminalFlush()`
+own protocol retirement, including the active runtime and controller resources.
 
 There are two different reset paths:
 
@@ -1193,7 +1241,7 @@ player app wraps each body in the peer reliability header before handing it to
 The proposer selects the random session ID and sends `session_proposal` as data
 message 1. `session_reject`, Handshake A-D, batches, and shutdown messages
 continue in the same sequence. Acceptance changes the ordered-body consumer
-from Shell negotiation to `SessionController`; it does not replace the
+from application negotiation to `SessionController`; it does not replace the
 transport. Host messages such as `session_reject` are recognized only after
 the reliability owner has selected the next contiguous body, so an
 out-of-order rejection cannot bypass an earlier WASM message.
@@ -1215,7 +1263,7 @@ inbound receipts share a global cap of eight.
 #### Inbound
 
 The shared peer reliability owner enforces strict ordering before dispatching
-an admitted body to Shell negotiation or `SessionController`:
+an admitted body to application negotiation or `SessionController`:
 
 - `msgno <= remoteNumber`: duplicate, dropped. An ack is re-sent in case the
   original ack was lost. If another message
@@ -1351,7 +1399,8 @@ changes — which should be rare once the protocol is stable.
 
 The player app is a single-page React application with one real iframe (the
 hub). Game session and game UI are React components within the same
-window, separated by hook boundaries rather than iframe boundaries. The design
+window. Their backend execution is separate from React, with typed intents and
+an ordered presentation event stream. The design
 supports future extension to multiple game types and multiple simultaneous games,
 but the MVP presents one logical hand at a time.
 
@@ -1360,7 +1409,7 @@ but the MVP presents one logical hand at a time.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  Shell (top-level React component)                              │
-│  Wallet, blockchain, hub connection, tabs, logs             │
+│  Published wallet/hub/session views, tabs, logs                  │
 │                                                                 │
 │  Wallet tab (initial landing — QR code / simulator setup)       │
 │                                                                 │
@@ -1371,7 +1420,7 @@ but the MVP presents one logical hand at a time.
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
 │  │  GameSession component (TRUSTED)                         │   │
-│  │  useGameSession hook: WASM cradle, notifications, state  │   │
+│  │  useGameSession: selectors and session-bound intents     │   │
 │  │  Shown as the "Game" tab                                 │   │
 │  │                                                          │   │
 │  │  ┌────────────────────────────────────────────────────┐  │   │
@@ -1388,37 +1437,24 @@ but the MVP presents one logical hand at a time.
 
 ### Shell (`Shell.tsx`)
 
-The Shell is the top-level React component. It owns:
+Shell renders wallet setup, the hub iframe, the dashboard, recovery dialogs,
+tabs, and logs. It owns DOM interactions, fee-form editing, theme application,
+QR rendering, and iframe authentication. Application owns persisted preferences,
+IDs, wallet/hub connections, admission, and session lifecycle. A locally accepted
+challenge creates the perspective-correct `GameSessionParams` in Application;
+Rust owns accepted setup and subsequent protocol state.
 
-- **Wallet connection** (WalletConnect or simulator) — the Wallet tab presents
-  a QR code for WalletConnect and a simulator option via `SimulatorSetupModal`
-- **Hub connection** — accepts the selected hub URL, creates the
-  `HubConnection` client for the game channel, and sets up the hub iframe
-- **Tab navigation** — five tabs: Wallet, Hub, Game, History, Log
-- **Unique ID and session ID** — persisted in localStorage, stable across reloads
-- **Session lifecycle and Accept presentation** — `useShellSessionState` fields
-  plus `useAcceptLifecycle` / `acceptLifecycle` for Accept abort, persist, and
-  session-pane setup covers
-
-The Shell does not know about game protocol details. When the hub challenge
-flow completes, Shell creates `GameSessionParams` with the total channel amount
-and the perspective-correct `myContribution` / `theirContribution`, then renders
-the `GameSession` component. Specific game types and per-hand terms are chosen
-later inside the session through game proposals.
-
-Session-end side effects (hub busy state, balance polling, peer relay teardown,
-and clearing session refs) are driven by Shell's
-`handleSessionPhaseChange('resolved')`. `SessionModel` reaches that phase only
-after Rust's final `ChannelStatus` snapshot has been projected into React, so
-Shell preserves the final dashboard snapshot before tearing down the live
-controller.
+Application consumes the runtime's published session phase directly. Terminal
+completion quiesces, captures and persists the final state before teardown and
+publishes the frozen display. GameSession does not report phase, restore status,
+coins or models back to its parent to drive this work.
 
 #### Session transition ownership
 
-Accept ownership lives in `front-end/src/lib/session/acceptLifecycle.ts` and
-`useAcceptLifecycle`, composed by Shell. Session fields and the Accept
-session-pane transition bookkeeping live in `useShellSessionState` /
-`shellSessionState.ts`.
+Accept bookkeeping lives in non-React `lib/application/applicationSession.ts`,
+using the existing `acceptLifecycle` helpers and `shellSessionState` reducer.
+Application owns cancellation, persist-flight state, and the session-pane
+transition; Shell only renders its presentation.
 
 Accept session setup is always `session-pane` scope: tabs and `GameDashboard`
 stay mounted while `SessionTransitionSurface` covers only the game-content
@@ -1430,7 +1466,7 @@ so overlays remain clickable.
 transition, keyed by the same `pairingToken` that identifies the new
 controller instance. Completion for a different instance is ignored.
 
-Shell releases the transition via `shouldCompleteAcceptTransition`: true once
+Application releases the transition via `shouldCompleteAcceptTransition`: true once
 the projected `ChannelStatus` leaves Cancel-only setup states. The core remains
 authoritative for that commitment boundary.
 
@@ -1448,8 +1484,8 @@ blocked so hub re-identify cannot advertise available mid-Accept.
 
 ### Blockchain Connection Flow
 
-Shell manages wallet connections through two abstractions defined in
-`ChiaGaming.ts`:
+`WalletConnection` in `lib/wallet` manages providers through two abstractions
+defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
 
 - **`InternalBlockchainInterface`** — the backend-specific implementation
   (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
@@ -1571,55 +1607,36 @@ Shell manages wallet connections through two abstractions defined in
   retiring it. No adapter owns a timer retry loop, so an unavailable submission
   cannot block a later urgent transaction.
 
-**Design principle:** Shell must not branch on `blockchainType` for connection
-logic. All differences between backends live behind the interface. A single
-`getInterface(bcType)` helper maps the type string to the concrete instance
-and poll interval; the rest of the flow is generic.
+**Connection lifecycle:** `WalletConnection` selects the provider and polling
+interval, then handles its generic `ConnectionSetup`. Shell receives only the
+setup fields/QR data and sends connection intents; it never receives the
+provider or the setup's `finalize` callback.
 
-**Connection lifecycle:**
+1. A wallet-connect intent calls `WalletConnection.connect`, which awaits
+   `provider.beginConnect(playerId)`.
+2. Setups with fields display `ConnectionSetupModal`. The user's finalize intent
+   supplies field values to `WalletConnection.finalize`.
+3. A restored WC/Cloud session with `skipQr` and no fields finalizes without a
+   QR panel or modal. Cloud Wallet credentials are discarded only for
+   `CloudWalletAuthError` (a revoked or expired grant); network/server errors
+   retain the refresh token so a retry can resume.
+4. Cloud Wallet without stored auth returns `skipQr` plus fields. Silent connect
+   and resume display the setup prompt with a wallet alert and wait for a user
+   gesture before opening OAuth.
+5. WalletConnect pairing displays the QR code. An explicit connect awaits
+   finalization; silent connect/resume raises wallet attention and waits.
+6. Completion activates polling and publishes connection/readiness events.
+   Explicit connect/finalize switches to the Hub tab. Failures retain the
+   existing chooser/modal error presentation.
 
-1. User picks "Simulator", "Link Wallet", or "Cloud Wallet" →
-   `handleConnect(bcType)`.
-2. `handleConnect` calls `iface.beginConnect(uniqueId)`, which returns a
-   `ConnectionSetup`.
-3. If `setup.fields` is present, Shell shows the generic `ConnectionSetupModal`
-   overlay so the user can provide the required values, then `handleFinalize(values)`
-   calls `setup.finalize(values)`. This path is used by both the simulator and
-   Cloud Wallet (the latter is `skipQr` with no fields, and still asks the user to confirm sign-in first).
-4. If `setup.skipQr` is set with no fields (a restored WC/Cloud session), Shell
-   awaits `setup.finalize()` without showing a QR panel or modal. A failed
-   restore discards the stored Cloud Wallet tokens only for
-   `CloudWalletAuthError` — a revoked or expired grant, signalled by an
-   `invalid_grant`/`invalid_client` token response or a 401 that survives a
-   forced refresh. Network and server errors leave the refresh token in place so
-   a retry can resume, rather than demoting a momentary outage into a full popup
-   login.
-5. If `setup.skipQr` is set _with_ fields (Cloud Wallet, no stored auth), Shell
-   shows `ConnectionSetupModal` and does **not** call `finalize()` from silent
-   `handleConnect` or `performResume`. Auto-finalize would open an OAuth popup
-   without a user gesture; the user must click Connect (or use an explicit
-   Reconnect).
-6. If `setup.fields` is absent and QR is required (WalletConnect pairing), Shell
-   renders the QR code and awaits `setup.finalize()`, which resolves when the
-   wallet scans.
-7. After finalize resolves, `completeConnection()` activates polling and
-   switches to the Hub tab. Connect/finalize failures are surfaced on the Choose
-   Connection screen and inside the setup modal via `connectError`, rather than
-   silently resetting the chooser.
-
-**Auto-reconnect:** Both backends implement their own WebSocket reconnect
-following the shared connection discipline described in
-[WebSocket Connection Discipline](#websocket-connection-discipline).
-Shell's `onConnectionChange` callback handles UI state
-transitions (connected ↔ disconnected) generically. On page load, if the
-user chooses to resume a pre-game save (one with `blockchainType` but no
-`serializedGameSession`), Shell calls `handleConnect(bcType, true)` (silent mode)
-to re-establish the connection automatically — no QR codes are shown, and the
-simulator balance modal is skipped, consistent with the principle that a reload
-should be invisible to the user. Cloud Wallet without stored auth is the
-exception: `beginConnect` returns `skipQr` plus `fields`, so silent reconnect
-and `performResume` keep `ConnectionSetupModal` (with a wallet alert) rather
-than calling `finalize()` without a user click.
+**Auto-reconnect:** Providers retain their existing WebSocket recovery discipline
+(see [WebSocket Connection Discipline](#websocket-connection-discipline)).
+`WalletConnection` observes connection/readiness changes and publishes events to
+Application. It owns the provider subscriptions and balance interest independently
+of any peer session. Application resumes a pre-game save through silent connect;
+this skips the simulator balance modal and avoids a new WalletConnect pairing
+prompt when the existing connection can resume. Live saves use the same wallet
+owner's resume path while local session restoration proceeds independently.
 
 **Session persistence:** Wallet connection updates
 `DurableApplicationState.preferences.blockchainType` through
@@ -1706,7 +1723,7 @@ outcome decides host lifetime. `SessionController` durably sends and replays
 its Rust-issued command until the peer ACKs it, then asks Rust to finalize.
 Only `terminal` discards queued protocol work and watch-coin updates and stops
 the `BlockchainPoller` and keepalive timer. Its retained `ChannelStatus`
-presentation event updates the `SessionModel`. Shell then stages one terminal
+presentation event updates the `SessionModel`. Application then stages one terminal
 snapshot only after terminal quiescence repeatedly drains controller events,
 persistence, reliable transport, and end-to-end transaction submission
 promises. Those promises cover persistence-gated launch, ordered wallet
@@ -1883,24 +1900,21 @@ matches. The player app never reads from or writes to the iframe's DOM.
 
 ### GameSession Component (`GameSession.tsx` + `useGameSession`)
 
-The `GameSession` component manages one game session (a channel with a series of
-individual hands). `useGameSession` is a thin React interpreter boundary: it
-obtains the `SessionController` and constructs one inert
-`SessionMachineRuntime`. Its committed layout effect installs the render
-callback and activates the lease; layout-effect cleanup clears only that
-callback. The hook also subscribes to host events, dispatches typed machine
-events, attaches/detaches the blockchain poller, and returns selector-derived
-view data plus dispatch callbacks. Controller cleanup, not React cleanup, owns
-protocol retirement. The hook does not contain notification policy, command
-interpretation, durable game reduction, or persistence assembly.
+`GameSession` renders the current session presentation and sends session-bound
+intents. `useGameSession` derives selectors and keeps local terminal-notification
+dismissals. It does not obtain a controller, construct a runtime, attach wallet
+services, or drive backend work from a React effect. Application subscribes to
+the runtime, coordinates lifecycle, and sends the resulting view through its
+ordered event pipe. Session execution owns activation, checkpoint ordering,
+and protocol retirement.
 
 When Shell supplies a finalized terminal presentation, `useGameSession`
 atomically projects every model-derived field from that model, replaces the live
 hand with the finalized model, and the mount registry supplies the frozen
 `GameMountView` branch, which has no intent port. The existing feature mount
 remains in place under
-the same hand key; effects that subscribe, attach blockchain services, autoplay,
-or install command-producing keyboard handlers are disabled by the generic
+the same hand key; game effects that autoplay or install command-producing
+keyboard handlers are disabled by the generic
 frozen mount discriminant rather than by inspecting protocol phases.
 
 The cohesive session modules own those responsibilities:
@@ -1913,7 +1927,7 @@ The cohesive session modules own those responsibilities:
   captured effects.
 - `sessionMachineInterpreter.ts` performs controller calls, timers,
   persistence, and async enrichment.
-- `sessionMachinePersist.ts` synchronously assembles whole-root snapshots.
+- `sessionMachinePersist.ts` purely assembles whole-root snapshots from captured data.
 - `gameSessionEvents.ts` parses session-owned terminal and coin payloads from WASM notifications.
 - `session/incomingProposal.ts` validates the generic `ProposalMade` bridge,
   retains its exact opaque Bencodex parameters, and assembles
@@ -2157,9 +2171,13 @@ removes competing state owners or duplicate lifecycle mechanisms.
 
 | File                                                 | Purpose                                                                                                                                      |
 | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `front-end/src/lib/application/Application.ts` | Non-React application lifecycle; GUI intent/event boundary; wallet/hub/session/recovery composition |
+| `front-end/src/lib/application/Recovery.ts` | Boot, atomic claim/read, takeover, reset, authority loss |
+| `front-end/src/lib/wallet/WalletConnection.ts` | Provider lifetime, normalized wallet views, connection commands, readiness and balance subscriptions |
+| `front-end/src/lib/session/sessionFrontend.ts` | Narrow session presentation events and user/game intents |
 | `front-end/src/components/Shell.tsx`                 | Top-level component: boot dialogs, wallet, hub, GameDashboard banner, tabs, logs                                                             |
 | `front-end/src/components/GameSession.tsx`           | Game session UI: header, coin status, game area, overlays                                                                                    |
-| `front-end/src/hooks/useGameSession.ts`              | Thin React boundary: controller/runtime setup, host subscription, typed dispatch, selector projection                                        |
+| `front-end/src/hooks/useGameSession.ts`              | React selector projection and session-bound intents; no execution or resource ownership                                        |
 | `front-end/src/lib/session/sessionMachine*.ts`       | Root dispatcher plus cohesive channel, between-hand, proposal, durable-game, notification, command, effect, runtime, and persistence modules |
 | `front-end/src/lib/session/persistence*.ts`          | Canonical strict aggregate-v5 decoder plus primitive and payload validators; accepted roots always produce a normalized `SessionModel`       |
 | `front-end/src/lib/session/sessionSnapshot.ts`       | Canonical `SessionModel` → aggregate presentation snapshot encoder                                                                           |
@@ -2167,24 +2185,24 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/lib/session/incomingProposal.ts`      | Generic opaque `ProposalMade` bridge validation and scalar pending-proposal assembly                                                         |
 | `front-end/src/lib/gameMountRegistry.tsx`            | One frozen/live discriminated mount dispatched through the selected package                                                                  |
 | `games/calpoker/ui/useCalpokerHand.ts`               | Calpoker hook: five-step protocol, card parsing, move submission                                                                             |
-| `front-end/src/hooks/SessionController.ts`           | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence                        |
-| `front-end/src/hooks/WasmStateInit.ts`               | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                                                        |
+| `front-end/src/lib/session/SessionController.ts`           | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence                        |
+| `front-end/src/lib/session/WasmStateInit.ts`               | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                                                        |
 | `front-end/src/lib/gameIdentities.ts`                | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                                          |
-| `front-end/src/hooks/blobSingleton.ts`               | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                      |
+| `front-end/src/lib/session/sessionHost.ts`               | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                      |
 | `front-end/src/services/PeerSession.ts`              | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                               |
 | `front-end/src/lib/session/storageRepository.ts`     | Aggregate and authority owner: atomic claim/read, generation-fenced root mutation, serialized exact write, and reset                         |
 | `front-end/src/lib/session/channelFundingRuntime.ts` | Channel-funding-only provider orchestration, material delivery, confirmation/timeout retirement, recovery, and exact cleanup                 |
 | `front-end/src/lib/session/feeAttachmentRuntime.ts`  | Fee-attachment-only reservation, replay retention, Rust-retirement handling, recovery, and exact cleanup                                     |
-| `front-end/src/hooks/saveCoordination.ts`            | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                          |
-| `front-end/src/hooks/saveHardReset.ts`               | Hard-reset and WalletConnect browser-storage cleanup                                                                                         |
+| `front-end/src/lib/session/saveCoordination.ts`            | Resume markers, active-tab lease, and cross-tab persistence fencing                                                                          |
+| `front-end/src/lib/session/saveHardReset.ts`               | Hard-reset and WalletConnect browser-storage cleanup                                                                                         |
 | `front-end/src/lib/session/indexedDb.ts`             | IndexedDB v5 coordination and strict aggregate record transactions                                                                           |
 | `front-end/src/lib/session/model.ts`                 | Session model + `selectGameDashboardView` / `selectStatusBarBalances`                                                                        |
 | `front-end/src/lib/reactPropSafe.ts`                 | Prop-safe cloning that preserves typed arrays / dense byte objects                                                                           |
-| `front-end/src/hooks/BlockchainPoller.ts`            | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots                                                 |
+| `front-end/src/lib/wallet/BlockchainPoller.ts`            | Chain polling coordinator: height ticks, coin-state reports, watch deltas, restore snapshots                                                 |
 | `front-end/src/lib/AsyncScheduler.ts`                | Generic serialized async queue and repeating polling loop                                                                                    |
-| `front-end/src/hooks/FakeBlockchainInterface.ts`     | Simulator blockchain backend: WebSocket to local sim, auto-reconnect                                                                         |
-| `front-end/src/hooks/RealBlockchainInterface.ts`     | WalletConnect blockchain backend: RPC via WalletConnect sessions                                                                             |
-| `front-end/src/hooks/WalletConnectRpc.ts`            | WalletConnect RPC formatting/normalization helpers                                                                                           |
+| `front-end/src/lib/wallet/FakeBlockchainInterface.ts`     | Simulator blockchain backend: WebSocket to local sim, auto-reconnect                                                                         |
+| `front-end/src/lib/wallet/RealBlockchainInterface.ts`     | WalletConnect blockchain backend: RPC via WalletConnect sessions                                                                             |
+| `front-end/src/lib/wallet/WalletConnectRpc.ts`            | WalletConnect RPC formatting/normalization helpers                                                                                           |
 | `front-end/src/services/HubConnection.ts`            | Game relay WebSocket client (`/ws/game`)                                                                                                     |
 | `front-end/src/types/ChiaGaming.ts`                  | TypeScript types for WASM interface and game data                                                                                            |
 | `hub/hub-frontend/src/hub.tsx`                       | Hub UI; reports the chosen alias through the hub's internal WebSocket interface                                                              |

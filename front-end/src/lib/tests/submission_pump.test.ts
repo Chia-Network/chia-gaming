@@ -1,8 +1,8 @@
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { SessionController } from '../../hooks/SessionController';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
 import type { InternalBlockchainInterface, TransactionSubmission } from '../../types/ChiaGaming';
+import { SessionController } from '../session/SessionController';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { mockRpc, submissionDrain, wasmResult } from './message_protocol.harness';
 import {
   bestEffortWalletRpc,

@@ -1,28 +1,27 @@
-import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
-import type { CoinOfInterestEntry } from '../../types/ChiaGaming';
-import { type DurableApplicationState, type TerminalSessionSave } from './saveEnvelope';
-import { storageRepository } from './storageRepository';
+import type { CoinOfInterestEntry, WalletProviderScope } from '../../types/ChiaGaming';
+import { recentDiagnosticEntries } from './historyLimits';
 import {
   channelStatusModelFromPayload,
   channelStatusPayloadFromModel,
   normalizeSessionPresentation,
 } from './normalization';
-import { recentDiagnosticEntries } from './historyLimits';
+import { type DurableApplicationState, type TerminalSessionSave } from './saveEnvelope';
+import type { RestoreStatus, WasmFields } from './SessionController';
 import { snapshotFromSessionModel } from './sessionSnapshot';
-import type { SessionMachineState } from './sessionMachineTypes';
 import type { SessionModel } from './types';
 
 export interface SessionPersistDependencies {
-  controller: SessionController;
-  state: SessionMachineState;
+  wasm: WasmFields | null;
+  model: SessionModel;
+  walletProviderScope: WalletProviderScope;
   restoring: boolean;
-  getRestoreStatus(): RestoreStatus;
-  getRestoreError(): string | null;
+  restoreStatus: RestoreStatus;
+  restoreError: string | null;
 }
 
 export interface TerminalCapture {
   kind: 'terminal';
-  controller: SessionController;
+  walletProviderScope: WalletProviderScope;
   model: SessionModel;
   identity: {
     iStarted: boolean;
@@ -37,10 +36,11 @@ export interface TerminalCapture {
  * work and generated durable obligations must drain before this call.
  */
 export function buildDurableApplicationState(
+  root: DurableApplicationState,
   capture: ({ kind: 'live' } & SessionPersistDependencies) | TerminalCapture,
 ): DurableApplicationState | null {
   if (capture.kind === 'terminal') {
-    const walletProviderScope = capture.controller.getWalletProviderScope();
+    const walletProviderScope = capture.walletProviderScope;
     const terminal: TerminalSessionSave['terminal'] = {
       iStarted: capture.identity.iStarted,
       coinsOfInterest: structuredClone(capture.coinsOfInterest),
@@ -52,7 +52,7 @@ export function buildDurableApplicationState(
       waitingStateEnteredAt: null,
       cleanShutdownGraceStartedAt: null,
     });
-    return storageRepository.patchApplicationState((root) => ({
+    return {
       ...root,
       walletContext: structuredClone(walletProviderScope),
       session: {
@@ -60,26 +60,25 @@ export function buildDurableApplicationState(
         terminal,
         presentation,
       },
-    }));
+    };
   }
 
-  const wasm = capture.controller.getWasmFields();
+  const wasm = capture.wasm;
   if (!wasm) return null;
-  const state = capture.state;
   const authoritativeStatus = wasm.channelStatus
     ? channelStatusModelFromPayload(wasm.channelStatus)
-    : state.model.channel.status;
-  const restoreStatus = capture.getRestoreStatus();
+    : capture.model.channel.status;
+  const restoreStatus = capture.restoreStatus;
   const model = normalizeSessionPresentation({
-    ...state.model,
+    ...capture.model,
     restore: {
       restoring: capture.restoring,
       status: restoreStatus,
-      error: capture.getRestoreError(),
+      error: capture.restoreError,
     },
-    channel: { ...state.model.channel, status: authoritativeStatus },
+    channel: { ...capture.model.channel, status: authoritativeStatus },
     history: {
-      ...state.model.history,
+      ...capture.model.history,
       wasmNotificationHistory: wasm.wasmNotificationHistory,
       diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
     },
@@ -93,47 +92,45 @@ export function buildDurableApplicationState(
     waitingStateEnteredAt: wasm.waitingStateEnteredAt,
     cleanShutdownGraceStartedAt: wasm.cleanShutdownGraceStartedAt,
   });
-  const walletProviderScope = capture.controller.getWalletProviderScope();
-  return storageRepository.patchApplicationState((root) => {
-    const currentPairing =
-      root.session?.phase === 'pre-handshake' || root.session?.phase === 'live'
-        ? root.session.pairing
-        : undefined;
-    return {
-      ...root,
-      walletContext: structuredClone(walletProviderScope),
-      session: {
-        phase: 'live',
-        pairing: {
-          token: wasm.pairingToken,
-          peerId: currentPairing?.peerId,
-          gameSessionId: wasm.gameSessionId,
-          iStarted: wasm.iStarted,
-          myContribution: wasm.myContribution,
-          theirContribution: wasm.theirContribution,
-          perGameAmount: wasm.perGameAmount,
-          channelTimeout: currentPairing?.channelTimeout,
-          unrollTimeout: currentPairing?.unrollTimeout,
-          myAlias: wasm.myAlias,
-          opponentAlias: wasm.opponentAlias,
-        },
-        live: {
-          serializedGameSession: wasm.serializedGameSession,
-          gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
-          messageNumber: wasm.messageNumber,
-          remoteNumber: wasm.remoteNumber,
-          rewardPuzzleHash,
-          unackedMessages: wasm.unackedMessages,
-          terminalHandoff: wasm.terminalHandoff,
-          disposition: wasm.transportDisposition,
-        },
-        presentation,
+  const walletProviderScope = capture.walletProviderScope;
+  const currentPairing =
+    root.session?.phase === 'pre-handshake' || root.session?.phase === 'live'
+      ? root.session.pairing
+      : undefined;
+  return {
+    ...root,
+    walletContext: structuredClone(walletProviderScope),
+    session: {
+      phase: 'live',
+      pairing: {
+        token: wasm.pairingToken,
+        peerId: currentPairing?.peerId,
+        gameSessionId: wasm.gameSessionId,
+        iStarted: wasm.iStarted,
+        myContribution: wasm.myContribution,
+        theirContribution: wasm.theirContribution,
+        perGameAmount: wasm.perGameAmount,
+        channelTimeout: currentPairing?.channelTimeout,
+        unrollTimeout: currentPairing?.unrollTimeout,
+        myAlias: wasm.myAlias,
+        opponentAlias: wasm.opponentAlias,
       },
-      history: {
-        ...root.history,
-        wasmNotificationHistory: wasm.wasmNotificationHistory,
-        diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
+      live: {
+        serializedGameSession: wasm.serializedGameSession,
+        gameSessionSchemaVersion: wasm.gameSessionSchemaVersion,
+        messageNumber: wasm.messageNumber,
+        remoteNumber: wasm.remoteNumber,
+        rewardPuzzleHash,
+        unackedMessages: wasm.unackedMessages,
+        terminalHandoff: wasm.terminalHandoff,
+        disposition: wasm.transportDisposition,
       },
-    };
-  });
+      presentation,
+    },
+    history: {
+      ...root.history,
+      wasmNotificationHistory: wasm.wasmNotificationHistory,
+      diagnosticLog: recentDiagnosticEntries(wasm.diagnosticLog),
+    },
+  };
 }

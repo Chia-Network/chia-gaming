@@ -1,14 +1,14 @@
-import type { PeerProtocolApi } from '../../../wasm/contract';
-import { WasmConnection, WasmInitFn, ChiaGame } from '../types/ChiaGaming';
 import { Observable, Subject } from 'rxjs';
-import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../lib/deployFreshness';
-import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../lib/gameIdentities';
-import { PRESET_FILES } from '../generated/gamePresets';
+import type { PeerProtocolApi } from '../../../../wasm/contract';
+import { PRESET_FILES } from '../../generated/gamePresets';
 import {
   installPeerProtocol,
   isPeerProtocolInstalled,
   resetPeerProtocolForTests,
-} from '../services/peerProtocol';
+} from '../../services/peerProtocol';
+import { ChiaGame, WasmConnection, WasmInitFn } from '../../types/ChiaGaming';
+import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../deployFreshness';
+import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../gameIdentities';
 
 let chia_gaming_init: WasmInitFn | undefined = undefined;
 let cg: WasmConnection | undefined = undefined;

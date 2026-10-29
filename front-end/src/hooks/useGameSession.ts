@@ -1,237 +1,39 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback } from 'react';
+import type { GameHandSource } from '../lib/gameHandSource';
 import {
-  createComposeDraftState,
-  createSessionModel,
-  DEFAULT_CHANNEL_TIMEOUT_BLOCKS,
-  DEFAULT_GAME_TIMEOUT_BLOCKS,
-  DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   selectGameSessionView,
   selectGameSpecificView,
   selectIProposedHand,
-  selectSessionPhase,
   type HandProposal,
 } from '../lib/session/model';
-import type { GameIntent } from '@games/host';
-import { createSessionMachineState } from '../lib/session/sessionMachine';
-import { SessionMachineRuntime } from '../lib/session/sessionMachineRuntime';
+import type { SessionFrontend } from '../lib/session/sessionFrontend';
+import type { GameSessionParams } from '../types/ChiaGaming';
 import {
   projectTerminalSessionResult,
+  useTerminalSessionPresentation,
   type TerminalSessionPresentation,
   type UseGameSessionResult,
-  useTerminalSessionPresentation,
-} from '../lib/session/sessionResult';
-import type {
-  LocalGameActionRequest,
-  SessionMachineEvent,
-} from '../lib/session/sessionMachineTypes';
-import type { RegisteredGameType } from '../lib/session/types';
-import { DEFAULT_CATALOG_GAME_TYPE } from '../lib/gameRegistry';
-import { markClientErrorReported, wasClientErrorReported } from '../lib/clientError';
-import type { GameHandSource } from '../lib/gameHandSource';
-import type { GameSessionParams, PeerConnectionResult } from '../types/ChiaGaming';
-import type { BlockchainPoller } from './BlockchainPoller';
-import { getOrCreateSessionController, initStarted, setInitStarted } from './blobSingleton';
-import type { SessionController } from './SessionController';
-import type { RehydratedDurableApplicationState } from '../lib/session/persistence';
-import { storageRepository } from '../lib/session/storageRepository';
+} from './sessionView';
 
 export type { GameTerminalInfo, QueuedNotification } from '../lib/session/gameSessionEvents';
-export type { UseGameSessionResult } from '../lib/session/sessionResult';
-
-export function runWithRuntimeErrorReporting(
-  run: () => void,
-  report: (message: string) => void,
-): void {
-  try {
-    run();
-  } catch (error) {
-    if (!wasClientErrorReported(error)) {
-      markClientErrorReported(error);
-      report(error instanceof Error ? error.message : String(error));
-    }
-    throw error;
-  }
-}
-
-export function useSessionControllerAfterCommit(
-  params: GameSessionParams,
-  peerConn: PeerConnectionResult,
-  registerMessageHandler: (
-    handler: (msgno: number, msg: Uint8Array) => void,
-    ackHandler: (ack: number) => void,
-    keepaliveHandler: () => void,
-    failureHandler: (reason: string) => void,
-  ) => void,
-  sessionBootstrap?: RehydratedDurableApplicationState,
-  blockchain: BlockchainPoller | null = null,
-  terminalMode = false,
-): SessionController | null {
-  const [controller, setController] = useState<SessionController | null>(null);
-  useEffect(() => {
-    if (terminalMode) return;
-    const next = getOrCreateSessionController(
-      blockchain,
-      peerConn,
-      registerMessageHandler,
-      storageRepository.getPlayerId(),
-      params.myContribution,
-      params.theirContribution,
-      params.iStarted,
-      sessionBootstrap,
-      params.pairingToken,
-      params.perGameAmount,
-      () => storageRepository.query('defaultFee'),
-      Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
-      Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
-    ).sessionController;
-    if (params.myAlias) next.myAlias = params.myAlias;
-    if (params.opponentAlias) next.opponentAlias = params.opponentAlias;
-    setController((current) => (current === next ? current : next));
-  }, [
-    blockchain,
-    params.channelTimeout,
-    params.iStarted,
-    params.myAlias,
-    params.myContribution,
-    params.opponentAlias,
-    params.pairingToken,
-    params.perGameAmount,
-    params.theirContribution,
-    params.unrollTimeout,
-    peerConn,
-    registerMessageHandler,
-    sessionBootstrap,
-    terminalMode,
-  ]);
-  return controller;
-}
+export type { UseGameSessionResult } from './sessionView';
 
 export function useGameSession(
   params: GameSessionParams,
-  controller: SessionController,
+  frontend: Pick<SessionFrontend, 'dispatch' | 'game'>,
   appendGameLog: (line: string) => void,
-  sessionBootstrap?: RehydratedDurableApplicationState,
-  blockchain: BlockchainPoller | null = null,
-  terminalPresentation?: TerminalSessionPresentation | null,
+  terminalPresentation: TerminalSessionPresentation | null | undefined,
+  presentation: import('../lib/session/sessionFrontend').SessionPresentation,
 ): UseGameSessionResult {
   const { iStarted, perGameAmount } = params;
   const terminalState = useTerminalSessionPresentation(terminalPresentation);
-  const terminalMode = terminalState.presentation != null;
 
-  const restoredModel = useMemo(
-    () => (sessionBootstrap ? structuredClone(sessionBootstrap.model) : null),
-    [sessionBootstrap],
-  );
-  const initialState = useMemo(() => {
-    const handProposal: HandProposal = {
-      gameType: DEFAULT_CATALOG_GAME_TYPE,
-      senderIsPlayerA: !iStarted,
-      gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
-      parameters: perGameAmount,
-    };
-    return createSessionMachineState(
-      restoredModel ??
-        createSessionModel({
-          channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
-          betweenHand: {
-            lastHandProposal: null,
-            compose: createComposeDraftState(handProposal),
-          },
-        }),
-      {
-        firstGameAccepted:
-          sessionBootstrap?.state.session?.phase === 'live' &&
-          sessionBootstrap.state.session.presentation.channelStatus?.state === 'Active',
-      },
-    );
-  }, [controller, iStarted, perGameAmount, restoredModel, sessionBootstrap]);
-  const runtimeRef = useRef<{
-    controller: SessionController;
-    runtime: SessionMachineRuntime;
-  } | null>(null);
-  const committedRuntime = controller.getCommittedSessionRuntime();
-  if (
-    runtimeRef.current?.controller !== controller ||
-    (committedRuntime !== null && runtimeRef.current.runtime !== committedRuntime)
-  ) {
-    runtimeRef.current = {
-      controller,
-      runtime:
-        committedRuntime ??
-        new SessionMachineRuntime(initialState, {
-          controller,
-          iStarted,
-          restoring: params.restoring ?? false,
-          getRestoreStatus: () => controller.getRestoreStatus(),
-          getRestoreError: () => controller.getRestoreError(),
-          onError: (error) => controller.reportRuntimeError(error),
-          bindControllerEvents: true,
-        }),
-    };
-  }
-  const runtime = runtimeRef.current.runtime;
-  const [machineState, setMachineState] = useState(runtime.getState());
-  const dispatch = useCallback((event: SessionMachineEvent) => runtime.dispatch(event), [runtime]);
-  const liveGamePort = useMemo(
-    () => ({
-      isChannelReady: () => controller.isChannelReady(),
-      dispatch: (intent: GameIntent) => {
-        const game = runtime.getState().model.game;
-        const gameType = game.activeGameType as RegisteredGameType;
-        if (intent.type === 'state-changed') {
-          runtime.commitHandStateChanged(gameType);
-          return;
-        }
-        if (!Number.isInteger(intent.memberIndex) || intent.memberIndex < 0) {
-          throw new Error(
-            `Internal game action member index must be a nonnegative integer: ${intent.memberIndex}`,
-          );
-        }
-        const id = game.currentHandIds[intent.memberIndex];
-        if (id === undefined) {
-          throw new Error(
-            `Internal game action member index ${intent.memberIndex} is outside the current hand`,
-          );
-        }
-        const request: LocalGameActionRequest = {
-          gameType,
-          id,
-          command:
-            intent.type === 'make-move'
-              ? { type: 'make-move', readable: intent.readable }
-              : intent.type === 'accept-settlement'
-                ? { type: 'accept-settlement' }
-                : { type: 'cheat', moverShare: intent.moverShare },
-        };
-        runWithRuntimeErrorReporting(
-          () => runtime.commitLocalGameAction(request),
-          (message) => dispatch({ type: 'enqueue-error', kind: 'infra-error', message }),
-        );
-      },
-    }),
-    [controller, dispatch, runtime],
-  );
+  const dispatch = frontend.dispatch;
   const liveHandSource: GameHandSource = {
     frozen: false,
-    hand: runtime.getGameHand(),
-    port: liveGamePort,
+    hand: presentation.hand,
+    port: frontend.game,
   };
-  useLayoutEffect(() => {
-    runtime.setRender(setMachineState);
-    runtime.activate();
-    if (!initStarted) setInitStarted(true);
-    return () => {
-      runtime.clearRender();
-    };
-  }, [runtime]);
-  useLayoutEffect(() => {
-    // Shell publishes terminal presentation only after finalization tears down the controller.
-    // Its effect cleanup is therefore a no-op; never attach a backend to the retained result.
-    if (!blockchain || terminalMode) return;
-    controller.attachBlockchain(blockchain);
-    return () => controller.detachBlockchain(blockchain);
-  }, [blockchain, controller, terminalMode]);
-
   const setComposeGameTimeout = useCallback(
     (timeout: bigint) => dispatch({ type: 'set-compose-timeout', timeout }),
     [dispatch],
@@ -240,11 +42,11 @@ export function useGameSession(
     (gameType: HandProposal['gameType']) => dispatch({ type: 'select-compose-game', gameType }),
     [dispatch],
   );
-  const { model, coordination } = machineState;
+  const { model } = presentation;
   const view = selectGameSessionView(model);
   const gameSpecificView = selectGameSpecificView(model);
   const compose = model.betweenHand.compose;
-  const sessionPhase = selectSessionPhase(model, coordination.hostOnChain);
+  const sessionPhase = presentation.phase;
 
   const liveResult: UseGameSessionResult = {
     sessionModel: model,

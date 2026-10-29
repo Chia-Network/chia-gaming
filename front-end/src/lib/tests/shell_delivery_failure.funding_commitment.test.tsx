@@ -1,56 +1,56 @@
 import 'fake-indexeddb/auto';
+import { createApplication, type Application } from '../application/Application';
+import * as blobSingleton from '../session/sessionHost';
+import type { HubEvent } from '../../services/HubConnection';
+import { observeSessionProjection, stubApplicationSession } from './session_frontend.harness';
 
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
-import Shell from '../../components/Shell';
-import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { deactivate } from '../../hooks/activeBlockchain';
-import { storageRepository } from '../session/storageRepository';
-import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
-import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
-import { SESSION_DB_NAME } from '../session/indexedDb';
-import { liveSave } from './session_save_envelope.fixtures';
-import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import type { ComponentProps } from 'react';
 import type GameSession from '../../components/GameSession';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { createSessionMachineState } from '../session/sessionMachine';
+import Shell from '../../components/Shell';
 import { ReliablePeerTransport } from '../../services/PeerSession';
+import { SESSION_DB_NAME } from '../session/indexedDb';
+import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { sessionReceivePolicy } from '../session/receivePolicy';
-import type { SessionController } from '../../hooks/SessionController';
-import type { HubConnection } from '../../services/HubConnection';
+import { markSavedSession, releaseLeaseIfOwner } from '../session/saveCoordination';
+import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset';
+import type { SessionController } from '../session/SessionController';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { storageRepository } from '../session/storageRepository';
+import { deactivate } from '../wallet/activeBlockchain';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
+import { liveSave } from './session_save_envelope.fixtures';
 
 let mockGameProps: ComponentProps<typeof GameSession> | null = null;
 let mockProjectFundingOffer: (() => void) | null = null;
-let mockHubCallbacks: ConstructorParameters<typeof HubConnection>[2] | null = null;
+let mockHub: {
+  emit: (event: HubEvent) => void;
+  getPresence: () => import('../hubPresence').HubPresence;
+} | null = null;
 const mockSendToPeer = jest.fn((_peerId: string, _payload: Uint8Array) => true);
 
 jest.mock('../../components/GameSession', () => ({
   __esModule: true,
   default: function MockGameSession(props: ComponentProps<typeof GameSession>) {
-    const React = jest.requireActual<typeof import('react')>('react');
-    const [state, setState] = React.useState<'OurWalletMakingOfferAcceptance' | 'OfferSent'>(
-      'OurWalletMakingOfferAcceptance',
-    );
     mockGameProps = props;
-    mockProjectFundingOffer = () => setState('OfferSent');
-    React.useEffect(() => {
-      props.onSessionModelChange!(channelModel(state));
-    }, [state, props.onSessionModelChange]);
     return null;
   },
   GameSessionErrorBoundary: ({ children }: { children: React.ReactNode }) => children,
   UncaughtClientErrorReporter: () => null,
 }));
+let mockSession: ReturnType<typeof stubApplicationSession>;
+let mockPeer: import('../../types/ChiaGaming').PeerConnectionResult;
 
 jest.mock('../../services/HubConnection', () => {
   const actual = jest.requireActual('../../services/HubConnection');
   return {
     ...actual,
-    HubConnection: jest.fn((_origin, _sessionId, callbacks) => {
-      mockHubCallbacks = callbacks;
+    HubConnection: jest.fn((_origin, _sessionId, emit, getPresence) => {
+      mockHub = { emit, getPresence };
       return {
         disconnect: jest.fn(),
         setBusy: jest.fn(),
@@ -64,6 +64,7 @@ jest.mock('../../services/HubConnection', () => {
 function channelModel(state: 'OurWalletMakingOfferAcceptance' | 'OfferSent') {
   return createSessionModel({
     channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+    restore: { status: 'restored', error: null },
   });
 }
 
@@ -120,6 +121,8 @@ async function waitForText(renderer: ReactTestRenderer, text: string): Promise<v
 
 describe('Shell delivery failure at the funding commitment boundary', () => {
   let renderer: ReactTestRenderer | null = null;
+  let application: Application;
+  let stop: (() => void) | undefined;
   let requestTrust: jest.Mock;
   let unhandledRejections: unknown[];
   let onUnhandledRejection: (reason: unknown) => void;
@@ -139,8 +142,15 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     });
     requestTrust = jest.fn(async () => 'trusted');
     mockGameProps = null;
-    mockProjectFundingOffer = null;
-    mockHubCallbacks = null;
+    mockSession = stubApplicationSession(channelModel('OurWalletMakingOfferAcceptance'));
+    mockProjectFundingOffer = () => mockSession.publish(channelModel('OfferSent'));
+    jest
+      .spyOn(blobSingleton, 'getOrCreateSessionController')
+      .mockImplementation((_wallet, peer) => {
+        mockPeer = peer;
+        return { sessionController: mockSession.controller };
+      });
+    mockHub = null;
     mockSendToPeer.mockClear();
     unhandledRejections = [];
     onUnhandledRejection = (reason) => unhandledRejections.push(reason);
@@ -184,6 +194,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await act(async () => {
       await storageRepository.inspect();
       renderer?.unmount();
+      stop?.();
     });
     renderer = null;
     await storageRepository.inspect();
@@ -214,22 +225,22 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     act(() => {
-      renderer = create(React.createElement(Shell));
+      application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
     });
-    for (let attempt = 0; attempt < 30 && (!mockHubCallbacks || !mockGameProps); attempt++) {
+    for (let attempt = 0; attempt < 30 && (!mockHub || !mockGameProps); attempt++) {
       await flushEffects();
     }
-    expect(mockHubCallbacks).not.toBeNull();
+    expect(mockHub).not.toBeNull();
     expect(mockGameProps).not.toBeNull();
     act(() => {
-      mockHubCallbacks!.onRegistered('11'.repeat(32));
-      mockGameProps!.onRestoreStatusChange!('restored', null);
-      mockGameProps!.onSessionPhaseChange!('off-chain', false);
-      mockGameProps!.onSessionModelChange!(channelModel('OurWalletMakingOfferAcceptance'));
+      mockHub!.emit({ type: 'registered', playerId: '11'.repeat(32) });
+      mockSession.publish(channelModel('OurWalletMakingOfferAcceptance'));
     });
     await act(async () => {
       await storageRepository.inspect();
@@ -240,7 +251,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
   // WASM/funding is stubbed at the completed-offer boundary. Shell, PeerSession,
   // the delivery-failure handler, and saved-session teardown are production code.
   async function sendFundingOffer(): Promise<void> {
-    const connection = mockGameProps!.peerConn;
+    const connection = mockPeer;
     const transport = new ReliablePeerTransport(
       connection.reliableState!,
       sessionReceivePolicy(),
@@ -249,6 +260,8 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     );
     const order: string[] = [];
     const controller = {
+      getCoinsOfInterest: () => [],
+      isChannelReady: () => false,
       commitSessionRuntime: jest.fn(),
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: () => transport.prepareCommit(),
@@ -295,7 +308,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
         },
       },
     );
-    runtime.setRender(() => {
+    observeSessionProjection(runtime, () => {
       order.push('projection');
       mockProjectFundingOffer!();
     });
@@ -331,9 +344,61 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     }
   }
 
+  it('continues publishing session state with the GUI detached and reattaches without restarting it', async () => {
+    await mountHandshake();
+    act(() => renderer!.unmount());
+    renderer = null;
+    const source = application.snapshot().sessionFrontend;
+    const published = jest.fn();
+    const detachObserver = application.subscribe(published);
+    mockSession.publish(channelModel('OfferSent'));
+    expect(published).toHaveBeenCalledTimes(1);
+    detachObserver();
+    expect(application.snapshot().dashboardSessionModel?.channel.status.state).toBe('OfferSent');
+    act(() => {
+      renderer = create(<Shell application={application} />);
+    });
+    expect(application.snapshot().sessionFrontend?.dispatch).toBe(source?.dispatch);
+    expect(mockGameProps!.presentation.model.channel.status.state).toBe('OfferSent');
+  });
+
+  it('orders reentrant application events for every observer', async () => {
+    await mountHandshake();
+    const first: bigint[] = [],
+      second: bigint[] = [];
+    const stopFirst = application.subscribe((event) => {
+      first.push(event.view.defaultFee);
+      if (event.view.defaultFee === 11n) application.dispatch({ type: 'fee', fee: 12n });
+    });
+    const stopSecond = application.subscribe((event) => second.push(event.view.defaultFee));
+    act(() => {
+      application.dispatch({ type: 'fee', fee: 11n });
+    });
+    stopFirst();
+    stopSecond();
+    expect(first).toEqual([11n, 12n]);
+    expect(second).toEqual(first);
+  });
+
+  it('fences queued session startup and detached session events after takeover', async () => {
+    await mountHandshake();
+    await flushEffects();
+    const calls = jest.mocked(blobSingleton.getOrCreateSessionController).mock.calls.length;
+    await act(async () => {
+      storageRepository.loseAuthority('takeover');
+      await Promise.resolve();
+    });
+    expect(application.snapshot().bootState.kind).toBe('tabConflict');
+    mockSession.publish(channelModel('OfferSent'));
+    expect(application.snapshot().dashboardSessionModel?.channel.status.state).toBe(
+      'OurWalletMakingOfferAcceptance',
+    );
+    expect(jest.mocked(blobSingleton.getOrCreateSessionController).mock.calls).toHaveLength(calls);
+  });
+
   it('cancels an unreachable peer before any funding offer is sent', async () => {
     await mountHandshake();
-    act(() => mockHubCallbacks!.onDeliveryFailure('22'.repeat(32)));
+    act(() => mockHub!.emit({ type: 'delivery-failure', to: '22'.repeat(32) }));
     await act(async () => {
       await storageRepository.inspect();
     });
@@ -349,7 +414,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await act(async () => {
       await sendFundingOffer();
     });
-    act(() => mockHubCallbacks!.onDeliveryFailure('22'.repeat(32)));
+    act(() => mockHub!.emit({ type: 'delivery-failure', to: '22'.repeat(32) }));
     await act(async () => {
       await storageRepository.inspect();
     });
@@ -453,7 +518,9 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     act(() => {
-      renderer = create(<Shell />);
+      application = createApplication();
+      renderer = create(<Shell application={application} />);
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
     await act(async () =>
@@ -461,10 +528,11 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     );
     await waitForText(renderer!, 'Connected');
     await waitForText(renderer!, 'Accept');
-    for (let attempt = 0; attempt < 30 && !readinessChange; attempt++) {
+    for (let attempt = 0; attempt < 30 && (!readinessChange || !mockHub); attempt++) {
       await flushEffects();
     }
     expect(readinessChange).toBeDefined();
+    expect(mockHub).not.toBeNull();
     const accept = () => renderer!.root.findByProps({ children: 'Accept' });
     expect(accept().props.disabled).toBe(true);
     act(() => readinessChange!(true));
@@ -479,7 +547,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await act(async () => {
       await sendFundingOffer();
       // Deliver failure before the queued React projection/effect can run.
-      mockHubCallbacks!.onDeliveryFailure('22'.repeat(32));
+      mockHub!.emit({ type: 'delivery-failure', to: '22'.repeat(32) });
     });
     await act(async () => {
       await storageRepository.inspect();

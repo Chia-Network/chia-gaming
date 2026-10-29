@@ -1,11 +1,14 @@
-import { SessionController } from '../../hooks/SessionController';
+import { Subject } from 'rxjs';
+import { SessionController } from '../session/SessionController';
+import { StorageAuthorityLostError } from '../session/indexedDb';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { SessionRuntimeRetiredError } from '../session/sessionMachineRuntime';
-import { StorageAuthorityLostError } from '../session/indexedDb';
+import {
+  SessionMachineRuntime,
+  SessionRuntimeRetiredError,
+} from '../session/sessionMachineRuntime';
+import { observeSessionProjection } from './session_frontend.harness';
 import { runSessionMachineTransition, send } from './session_machine.harness';
-import { Subject } from 'rxjs';
 
 function deferred() {
   let resolve!: () => void;
@@ -24,6 +27,8 @@ describe('session machine behavior sequences', () => {
   ) {
     let coordinator: SessionMachineRuntime | undefined;
     const controller = {
+      getCoinsOfInterest: () => [],
+      isChannelReady: () => false,
       commitSessionRuntime: (runtime: SessionMachineRuntime) => {
         coordinator?.retire();
         coordinator = runtime;
@@ -271,6 +276,8 @@ describe('session machine behavior sequences', () => {
   it('keeps reliable durability and external effects pending when an active snapshot is null', async () => {
     const completeReliableCommit = jest.fn();
     const controller = {
+      getCoinsOfInterest: () => [],
+      isChannelReady: () => false,
       commitSessionRuntime: (runtime: SessionMachineRuntime) => runtime.activatePersistence(),
       flushDeferredWork: jest.fn(),
       getWasmFields: () => null,
@@ -458,7 +465,7 @@ describe('session machine behavior sequences', () => {
       const reportDurabilityError = jest.fn();
       (controller as SessionController).completeReliableCommit = complete;
       (controller as SessionController).reportDurabilityError = reportDurabilityError;
-      runtime.setRender(render);
+      observeSessionProjection(runtime, render);
       runtime.dispatch({ type: 'set-first-game-accepted', accepted: true });
       const flush = runtime.persist();
       await Promise.resolve();
@@ -522,6 +529,8 @@ describe('session machine behavior sequences', () => {
   it('queues dispatches requested during a React projection instead of re-entering it', async () => {
     jest.useFakeTimers();
     const controller = {
+      getCoinsOfInterest: () => [],
+      isChannelReady: () => false,
       commitSessionRuntime: jest.fn(),
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: jest.fn(() => ({
@@ -555,7 +564,7 @@ describe('session machine behavior sequences', () => {
 
     let renderCount = 0;
 
-    runtime.setRender(() => {
+    observeSessionProjection(runtime, () => {
       renderDepth += 1;
 
       maxRenderDepth = Math.max(maxRenderDepth, renderDepth);

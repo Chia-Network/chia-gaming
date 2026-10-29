@@ -1,31 +1,31 @@
-import { createPeerProtocol } from '../../services/peerProtocol';
-import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { initialKrunkGameState, KrunkHandler } from '@games/krunk/ui/serialize';
 import { Program } from 'clvm-lib';
+import 'fake-indexeddb/auto';
 import { Subscription } from 'rxjs';
+import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
+import { createPeerProtocol } from '../../services/peerProtocol';
+import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
+import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
+import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
+import { SessionController } from '../session/SessionController';
 import {
-  WasmStateInit,
-  storeInitArgs,
   _resetWasmLoadForTests,
   ensurePeerProtocolLoaded,
-} from '../../hooks/WasmStateInit';
-import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
-import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { storageRepository } from '../session/storageRepository';
+  storeInitArgs,
+  WasmStateInit,
+} from '../session/WasmStateInit';
 import { SESSION_DB_NAME } from '../session/indexedDb';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { configSessionController } from '../../hooks/blobSingleton';
-import { SessionController } from '../../hooks/SessionController';
-import { clearSavedSessionMarker } from '../../hooks/saveCoordination';
-import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { clearSavedSessionMarker } from '../session/saveCoordination';
+import { configSessionController } from '../session/sessionHost';
 import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { initialKrunkGameState, KrunkHandler } from '@games/krunk/ui/serialize';
-import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
+import { storageRepository } from '../session/storageRepository';
 import type { HandProposal, PersistedGameState } from '../session/types';
-import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import { pollOnce } from './blockchain_poller.driver';
-import 'fake-indexeddb/auto';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
+import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.

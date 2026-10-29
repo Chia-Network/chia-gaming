@@ -1,13 +1,13 @@
-import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { CalpokerHand } from '@games/calpoker/ui/serialize';
 import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/useCalpokerHand';
 import type { GameIntent, LiveGamePort } from '@games/host';
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
+import { WasmStateInit } from '../session/WasmStateInit';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
   action_with_messages,
   addActiveCradle,

@@ -1,4 +1,4 @@
-import { encodeU64AsClvmHex, normalizeHexString } from '../util';
+import { encodeU64AsClvmHex, normalizeHexString } from '../../util';
 
 /** JSON-safe GraphQL variables (BigInt → decimal string). */
 export function jsonSafeVariables(value: unknown): unknown {

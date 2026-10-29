@@ -1,12 +1,12 @@
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { SessionController } from '../../hooks/SessionController';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { createSessionModel } from '../session/model';
+import { SessionController } from '../session/SessionController';
 import {
   SessionMachineRuntime,
   SessionRuntimeRetiredError,
 } from '../session/sessionMachineRuntime';
-import { createSessionModel } from '../session/model';
-import { expectConsoleError } from '../../../scripts/testSetup';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   makeMockCradle,
   makePeerConn,
@@ -24,6 +24,9 @@ interface PendingRelease {
 }
 
 class ControlledRuntime {
+  publishReadiness(_ready: boolean): void {}
+  publishFrontend(): void {}
+
   private readonly pending = new Map<string, PendingRelease>();
   private readonly heldMutations: Array<(error: unknown) => void> = [];
   private nextMutationError: unknown;

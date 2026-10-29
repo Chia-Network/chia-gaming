@@ -1,3 +1,5 @@
+import type { WalletFeeSource } from '../../../../wasm/contract';
+import { log } from '../../services/log';
 import type {
   ChiaGame,
   FinalizedSubmission,
@@ -5,12 +7,10 @@ import type {
   TransactionSubmission,
   WalletSubmitOutcome,
 } from '../../types/ChiaGaming';
-import { log } from '../../services/log';
 import { spend_bundle_to_clvm } from '../../util';
-import type { WalletFeeSource } from '../../../../wasm/contract';
-import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
-import type { ProviderOwner } from './providerKeys';
 import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
+import type { ProviderOwner } from './providerKeys';
+import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
 import { storageRepository } from './storageRepository';
 
 type SubmissionOutcome = 'acknowledged' | 'unavailable' | 'rejected' | 'local-failure' | 'skipped';
@@ -38,7 +38,7 @@ interface PumpEntry {
 
 export interface SubmissionPumpPorts {
   getCradle(): ChiaGame | undefined;
-  getBlockchain(): { rpc: InternalBlockchainInterface } | null;
+  getBlockchain(): { rpc: Pick<InternalBlockchainInterface, 'isReadyForPlay' | 'spend'> } | null;
   getRewardPuzzleHash(): string | null;
   getWalletOwner(): ProviderOwner | null;
   getInstallationPlayerId(): string;

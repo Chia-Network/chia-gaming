@@ -1,21 +1,3 @@
-import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
-import { HubConnection } from './HubConnection';
-import { log } from './log';
-import { createPeerProtocol } from './peerProtocol';
-import type {
-  PeerProtocolApi,
-  PeerSessionTerms,
-  PeerHost,
-  PeerPreparedCommit,
-  PeerProtocolSnapshot,
-  PeerReceiveMode,
-  PeerTerminalHandoff,
-  WasmResult,
-} from '../../../wasm/contract';
-import {
-  DEFAULT_SESSION_RECEIVE_POLICY,
-  type ReadonlySessionReceivePolicy,
-} from '../lib/session/receivePolicy';
 import {
   decode as decodeBencodex,
   encode as encodeBencodex,
@@ -23,6 +5,24 @@ import {
   isDictionary,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import type {
+  PeerHost,
+  PeerPreparedCommit,
+  PeerProtocolApi,
+  PeerProtocolSnapshot,
+  PeerReceiveMode,
+  PeerSessionTerms,
+  PeerTerminalHandoff,
+  WasmResult,
+} from '../../../wasm/contract';
+import {
+  DEFAULT_SESSION_RECEIVE_POLICY,
+  type ReadonlySessionReceivePolicy,
+} from '../lib/session/receivePolicy';
+import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
+import { PeerCarrier } from './HubConnection';
+import { log } from './log';
+import { createPeerProtocol } from './peerProtocol';
 export interface ReliableCommitCoordinator {
   requestCommit(): void;
   flush(): Promise<void>;
@@ -399,7 +399,7 @@ export class PeerSession implements PeerConnectionResult {
   readonly sessionId: string;
   readonly peerId: string;
   readonly receivePolicy: ReadonlySessionReceivePolicy;
-  private hubConn: HubConnection;
+  private hubConn: PeerCarrier;
   private _liveness: PeerLiveness = null;
   private _lastActivity: number = 0;
   private messageHandler: MessageHandler | null = null;
@@ -415,7 +415,7 @@ export class PeerSession implements PeerConnectionResult {
   constructor(
     peerId: string,
     sessionId: string,
-    hubConn: HubConnection,
+    hubConn: PeerCarrier,
     receivePolicy: ReadonlySessionReceivePolicy = DEFAULT_SESSION_RECEIVE_POLICY,
     initialState?: Omit<ReliableTransportState, 'sessionId'>,
   ) {

@@ -13,7 +13,7 @@ const mockClient = {
   session: { keys: ['topic-1'] },
 };
 
-jest.mock('../../hooks/useWalletConnect', () => ({
+jest.mock('../wallet/WalletConnectClient', () => ({
   walletConnectState: {
     getClient: () => (mockClientAvailable ? mockClient : undefined),
     getSession: () => (mockSessionAvailable ? { topic: 'topic-1' } : undefined),
@@ -31,7 +31,7 @@ import {
   rpc,
   WalletConnectResponseError,
   WalletConnectTransportError,
-} from '../../hooks/WalletConnectRpc';
+} from '../wallet/WalletConnectRpc';
 
 describe('WalletConnect RPC adapter', () => {
   beforeEach(() => {

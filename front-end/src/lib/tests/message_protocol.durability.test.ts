@@ -1,23 +1,24 @@
+import { expectConsoleError } from '../../../scripts/testSetup';
+import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
+import { SESSION_DB_NAME } from '../session/indexedDb';
+import {
+  decodeDurableApplicationState,
+  rehydrateDurableApplicationState,
+} from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { restoreSession } from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
+import { WasmStateInit } from '../session/WasmStateInit';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   acceptedTerms,
   createAcceptedBlob,
   installAcceptedChannel,
 } from './accepted_session.harness';
 import { restorePeerState } from './peer_protocol.harness';
-import { expectConsoleError } from '../../../scripts/testSetup';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { SessionController } from '../../hooks/SessionController';
-import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
-import { restoreSession } from '../../hooks/blobSingleton';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { storageRepository } from '../session/storageRepository';
-import { decodeDurableApplicationState } from '../session/persistence';
-import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
-import { SESSION_DB_NAME } from '../session/indexedDb';
 
-import { liveSave } from './session_save_envelope.fixtures';
 import {
   channelStatus,
   createReadyBlob,
@@ -34,6 +35,7 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { liveSave } from './session_save_envelope.fixtures';
 
 async function readRawApplicationState(): Promise<Uint8Array> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -125,7 +127,9 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     const warnings: string[] = [];
     const retry = jest.fn();
-    const unsubscribeRetry = blob.onTerminalFinalizationRetry(retry);
+    const unsubscribeRetry = blob.getCommittedSessionRuntime()!.frontend.subscribe((event) => {
+      if (event.type === 'terminal-retry') retry();
+    });
     const sub = blob.getObservable().subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });

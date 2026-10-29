@@ -50,38 +50,38 @@ setTestGlobal('localStorage', makeStorage());
 setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
 
+import { encodeU64AsClvmHex } from '../../util';
+import { storageRepository } from '../session/storageRepository';
+import { CloudBlockchainInterface } from '../wallet/CloudBlockchainInterface';
+import {
+  clearCloudWalletAuth,
+  loadCloudWalletAuth,
+  saveCloudWalletAuth,
+} from '../wallet/cloudWalletAuth';
+import {
+  getCloudWalletApiUrl,
+  getCloudWalletClientId,
+  getCloudWalletUiUrl,
+} from '../wallet/cloudWalletConfig';
+import { conditionsForGraphql, jsonSafeVariables } from '../wallet/cloudWalletHelpers';
 import {
   buildAuthorizeUrl,
   CloudWalletAuthError,
   createPkceChallenge,
   encodeRelayGlobalId,
   fetchFirstConsentedWalletId,
+  GAMING_CONSENT_MESSAGE_TYPE,
   graphqlRequest,
   handleOAuthCallbackPage,
   normalizeHex,
+  OAUTH_MESSAGE_TYPE,
   oauthRedirectUri,
   signatureRequestApproveUrl,
   waitForGamingConsentWalletId,
   waitForOAuthCode,
   with0x,
-  GAMING_CONSENT_MESSAGE_TYPE,
-  OAUTH_MESSAGE_TYPE,
   type TokenProvider,
-} from '../../hooks/cloudWalletOAuth';
-import {
-  clearCloudWalletAuth,
-  loadCloudWalletAuth,
-  saveCloudWalletAuth,
-} from '../../hooks/cloudWalletAuth';
-import {
-  getCloudWalletApiUrl,
-  getCloudWalletClientId,
-  getCloudWalletUiUrl,
-} from '../../hooks/cloudWalletConfig';
-import { storageRepository } from '../session/storageRepository';
-import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
-import { conditionsForGraphql, jsonSafeVariables } from '../../hooks/cloudWalletHelpers';
-import { encodeU64AsClvmHex } from '../../util';
+} from '../wallet/cloudWalletOAuth';
 
 describe('cloudWalletOAuth helpers', () => {
   beforeEach(() => {

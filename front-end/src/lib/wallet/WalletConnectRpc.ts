@@ -1,37 +1,43 @@
-import { ChiaMethod } from '../constants/wallet-connect';
-import {
-  CreateOfferForIdsRequest,
-  CreateOfferForIdsResponse,
-} from '../types/rpc/CreateOfferForIds';
-import { GetNextAddressRequest, GetNextAddressResponse } from '../types/rpc/GetNextAddress';
-import { GetWalletBalanceRequest, GetWalletBalanceResponse } from '../types/rpc/GetWalletBalance';
-import { GetHeightInfoRequest, GetHeightInfoResponse } from '../types/rpc/GetHeightInfo';
+import { ChiaMethod } from '../../constants/wallet-connect';
+import { log } from '../../services/log';
 import {
   CreateNewRemoteWalletRequest,
   CreateNewRemoteWalletResponse,
-} from '../types/rpc/CreateNewRemoteWallet';
+} from '../../types/rpc/CreateNewRemoteWallet';
 import {
-  RegisterRemoteCoinsRequest,
-  RegisterRemoteCoinsResponse,
-} from '../types/rpc/RegisterRemoteCoins';
+  CreateOfferForIdsRequest,
+  CreateOfferForIdsResponse,
+} from '../../types/rpc/CreateOfferForIds';
 import {
   GetCoinRecordsByNamesRequest,
   GetCoinRecordsByNamesResponse,
-} from '../types/rpc/GetCoinRecordsByNames';
-import {
-  GetPuzzleAndSolutionRequest,
-  GetPuzzleAndSolutionResponse,
-} from '../types/rpc/GetPuzzleAndSolution';
-import { PushTransactionsRequest, PushTransactionsResponse } from '../types/rpc/PushTransactions';
-import { SelectCoinsRequest, SelectCoinsResponse } from '../types/rpc/SelectCoins';
+} from '../../types/rpc/GetCoinRecordsByNames';
 import {
   GetFullNodePeerCountRequest,
   GetFullNodePeerCountResponse,
-} from '../types/rpc/GetFullNodePeerCount';
-import { log } from '../services/log';
-import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
+} from '../../types/rpc/GetFullNodePeerCount';
+import { GetHeightInfoRequest, GetHeightInfoResponse } from '../../types/rpc/GetHeightInfo';
+import { GetNextAddressRequest, GetNextAddressResponse } from '../../types/rpc/GetNextAddress';
+import {
+  GetPuzzleAndSolutionRequest,
+  GetPuzzleAndSolutionResponse,
+} from '../../types/rpc/GetPuzzleAndSolution';
+import {
+  GetWalletBalanceRequest,
+  GetWalletBalanceResponse,
+} from '../../types/rpc/GetWalletBalance';
+import {
+  PushTransactionsRequest,
+  PushTransactionsResponse,
+} from '../../types/rpc/PushTransactions';
+import {
+  RegisterRemoteCoinsRequest,
+  RegisterRemoteCoinsResponse,
+} from '../../types/rpc/RegisterRemoteCoins';
+import { SelectCoinsRequest, SelectCoinsResponse } from '../../types/rpc/SelectCoins';
+import { integersToBigInt, jsonStringify } from '../../util/jsonSafe';
 
-import { walletConnectState } from './useWalletConnect';
+import { walletConnectState } from './WalletConnectClient';
 
 type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;

@@ -1,9 +1,8 @@
-import React from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { startWasmBootstrap } from './hooks/WasmStateInit';
-import { startPendingWalletConnectWipe } from './hooks/saveHardReset';
 import App from './App';
+import { startWasmBootstrap } from './lib/session/WasmStateInit';
+import { startPendingWalletConnectWipe } from './lib/session/saveHardReset';
 // Install theme-sync listener as early as possible so cross-origin iframes
 // can receive theme updates from the parent. Also request the parent
 // to resend the current theme in case the parent's initial postMessage

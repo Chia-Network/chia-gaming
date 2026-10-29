@@ -1145,7 +1145,7 @@ section 4.2.
   `front-end/src/services/PeerSession.ts`
 - Ordering, persistence, acknowledgement, and replay:
   the peer reliability owner used by
-  `front-end/src/hooks/SessionController.ts`
+  `front-end/src/lib/session/SessionController.ts`
 - Peer transport tests:
   `front-end/src/lib/tests/message_protocol.transport.test.ts`,
   `front-end/src/lib/tests/message_protocol.durability.test.ts`

@@ -15,7 +15,7 @@ jest.mock('@walletconnect/sign-client', () => ({
 
 jest.mock('../../services/log', () => ({ log: jest.fn() }));
 
-jest.mock('../../hooks/saveHardReset', () => ({
+jest.mock('../session/saveHardReset', () => ({
   startPendingWalletConnectWipe: jest.fn(async () => {}),
 }));
 
@@ -43,7 +43,7 @@ jest.mock('../../util/walletConnectMetadata', () => ({
 }));
 
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { walletConnectState } from '../../hooks/useWalletConnect';
+import { walletConnectState } from '../wallet/WalletConnectClient';
 
 describe('WalletConnect pairing teardown', () => {
   beforeEach(async () => {

@@ -1,6 +1,6 @@
-import { InternalBlockchainInterface } from '../types/ChiaGaming';
+import { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { BlockchainPoller } from './BlockchainPoller';
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
 
 let active: BlockchainPoller | null = null;
 

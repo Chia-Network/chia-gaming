@@ -1,16 +1,16 @@
-import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { GameIntent, LiveGamePort } from '@games/host';
 import { type SpacepokerHand, type SpacepokerHandState } from '@games/spacepoker/ui/serialize';
-import { spacepokerStateCodec } from './game_state_helpers';
 import {
   SpHandler,
   useSpacepokerHand,
   type UseSpacepokerHandResult,
 } from '@games/spacepoker/ui/useSpacepokerHand';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { spacepokerStateCodec } from './game_state_helpers';
 import {
   createActivePair,
   exchangeUntilIdle,

@@ -1,17 +1,17 @@
-import { restorePeerState } from './peer_protocol.harness';
-import { encodePeerAppMessage, PeerSession, type MessageHandler } from '../../services/PeerSession';
 import type { HubConnection } from '../../services/HubConnection';
-import { SessionController } from '../../hooks/SessionController';
+import { encodePeerAppMessage, PeerSession, type MessageHandler } from '../../services/PeerSession';
+import { createSessionModel } from '../session/model';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { handshakeA, installAcceptedChannel } from './accepted_session.harness';
 import {
   attachTestCommitCoordinator,
   setTestPersistence,
   trackTestController,
 } from './message_protocol.harness';
-import { handshakeA, installAcceptedChannel } from './accepted_session.harness';
-import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
-import { createSessionModel } from '../session/model';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { restorePeerState } from './peer_protocol.harness';
 
 /** Mirrors Shell's direct-owner bypass for the legacy callback bridge. */
 function bindPeerMessageHandler(

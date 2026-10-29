@@ -1,15 +1,15 @@
-import {
-  WasmStateInit,
-  ensureWasmLoaded,
-  ensurePeerProtocolLoaded,
-  startWasmBootstrap,
-  storeInitArgs,
-  registerWasmLoader,
-  _resetWasmLoadForTests,
-  PRESET_FILES,
-} from '../../hooks/WasmStateInit';
 import { completeRegisteredGames, protocolIdentitiesReady } from '../../lib/gameIdentities';
 import type { WasmConnection } from '../../types/ChiaGaming';
+import {
+  _resetWasmLoadForTests,
+  ensurePeerProtocolLoaded,
+  ensureWasmLoaded,
+  PRESET_FILES,
+  registerWasmLoader,
+  startWasmBootstrap,
+  storeInitArgs,
+  WasmStateInit,
+} from '../session/WasmStateInit';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
 describe('WasmStateInit lazy load', () => {

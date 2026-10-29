@@ -95,7 +95,7 @@ dumb pipe — it delivers messages to the target peer if connected and reports
 `delivery_failure` if not. It also tells recent correspondents when one of them
 connects (`peer_available`) or actually disconnects (`peer_unavailable`).
 
-Shell holds the selected browser peer adapter (`front-end/src/services/PeerSession.ts`),
+Application holds the selected browser peer adapter (`front-end/src/services/PeerSession.ts`),
 which owns routing, framing, and liveness presentation. Its Rust delivery owner
 (`src/peer_session.rs` and `src/peer_session/session.rs`) owns counters, queue draining,
 acknowledgements, and replay. TypeScript reports hub/peer connection events;
@@ -301,10 +301,10 @@ state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`) and
 any pending hand obligations have finished:
 
 1. The session is done.
-2. Shell is notified (via callback from `useGameSession`).
+2. Application consumes the runtime's ordered session batch and resolved phase.
 3. Live protocol interaction stops: the WASM cradle is no longer used for new
    game actions, the `PeerSession` is destroyed (making it inert), keepalives
-   stop, `sessionStartedRef` is reset, and the finished session is treated as a
+   stop, `sessionStarted` is reset, and the finished session is treated as a
    read-only display.
 4. The resolved dashboard is intentionally preserved (channel label such as
    Resolved Clean, final Me/Opp balances, and related status detritus). Shell
@@ -313,7 +313,7 @@ any pending hand obligations have finished:
 5. That finished snapshot is persisted with the boot Resume/Start Over marker
    (live cradle/pairing cleared). Reload must show Resume/Start Over — not
    silently auto-connect the hub with an empty game tab.
-6. Shell tells the hub/hub that the player is not busy.
+6. Application tells the hub that the player is not busy.
 7. The player can accept new challenges. This is intentional: terminal sessions
    no longer impose a protocol obligation, so the UI should encourage continued
    play instead of making the user manually clear the finished game.
@@ -472,7 +472,7 @@ The hub does not create a session. It can only advise and relay:
   WASM consumer to that same transport after consent without resetting its
   counters.
 - **Peer liveness**: 30-second degradation threshold (no dead-from-timeout)
-  with 5-second polling interval managed by Shell. Yellow when the hub
+  with 5-second liveness interval managed by Application. Yellow when the hub
   reports the peer disconnected (`delivery_failure` / `peer_unavailable`) or
   no matching peer frame has arrived for 30 seconds. Either is reversible on
   inbound traffic or `peer_available`. Dead state only from explicit go-on-chain
@@ -501,7 +501,7 @@ The hub does not create a session. It can only advise and relay:
   suppresses pending effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the
   2,000-entry cap secondary.
-- **Resume on reload**: `BootRecoveryBoundary` owns pending wipe, visible local
+- **Resume on reload**: `Recovery` (`lib/application/Recovery.ts`) owns pending wipe, visible local
   loading, read-only inspection, atomic claim-and-read, one strict aggregate
   rehydrate, takeover, malformed evidence, reset retry, and authority loss.
   Any malformed nested field rejects the whole root and displays Retry Hard
@@ -531,7 +531,7 @@ The hub does not create a session. It can only advise and relay:
   restore cradle (phase alone is often still `none` mid-resume). The Choose
   Connection network toggle is locked while a session binds a genesis
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
-  chain id than the existing WASM cradle. (`Shell.tsx`)
+  chain id than the existing WASM cradle. (`lib/application/Application.ts`)
 
 - **Provider reservation recovery**: the aggregate has exactly two owners.
   `ChannelFundingRuntime` owns channel funding; `SubmissionPump` and
@@ -576,15 +576,15 @@ The hub does not create a session. It can only advise and relay:
   for a coherent snapshot, a newer fee-bearing successor may replace the base
   immediately, and unrelated IDs remain independent.
 
-- **Session state surfaced to Shell**: `GameSession` reports coarse session
-  phase (`off-chain | on-chain | resolved`) and an error flag to Shell via
-  the `onSessionPhaseChange` callback. Shell tracks this as `sessionPhase`
-  and `sessionError` state. (`GameSession.tsx`, `Shell.tsx`)
+- **Session state surfaced to the GUI**: Application consumes the runtime's
+  coarse phase (`off-chain | on-chain | resolved`), model, coins and restore status
+  directly, computes lifecycle effects, and publishes ordered presentation batches.
+  GameSession renders snapshots and sends typed session/game intents.
 
 - **Terminal session detection and resolved display preservation**: When `sessionPhase`
   becomes `'resolved'` (derived from terminal channel states plus the absence of
-  pending hand obligations), Shell stops live protocol interaction, destroys the
-  `PeerSession`, resets `sessionStartedRef`, and marks the player as not busy. The game UI stays visible as a read-only resolved display
+  pending hand obligations), Application stops live protocol interaction, destroys the
+  `PeerSession`, resets `sessionStarted`, and marks the player as not busy. The game UI stays visible as a read-only resolved display
   until a new match replaces it, and a reload may restore that finished view.
   Terminal error or suspect outcomes are carried separately via
   `sessionError`.
@@ -597,7 +597,7 @@ The hub does not create a session. It can only advise and relay:
 - **Hub busy signaling**: `HubConnection.setBusy(presence)`
   sends a bencodex `{ type: "set_busy", busy, busy_reasons? }` dictionary over
   the game WebSocket, with reasons only when busy.
-  The `identify` message includes the current presence. Shell computes presence
+  The `identify` message includes the current presence. Application computes presence
   with `computeHubPresence` (`lib/hubPresence.ts`) and reports it whenever the
   broader session phase changes. Local game presentation depends only on
   the local restoring flag and WASM restore status; independent hub, wallet,

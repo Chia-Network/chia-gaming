@@ -902,15 +902,20 @@ one-shot execution of Rust-issued opaque attempts, and its fee-specific
 owners. They share provider adapters and readiness epochs, but there is no
 generic wallet-operation, settlement, or session cancellation owner.
 
-`SessionMachineRuntime` is constructed inert, so render-time construction
-cannot claim protocol ownership. Its committed React layout effect installs the
-render callback and activates runtime processing; the controller attaches
-persistence and reliable-commit ownership only after serializable WASM fields
-exist. React cleanup clears only that render callback. Protocol retirement belongs to `SessionController`
-cleanup, including terminal cleanup and replacement of the committed runtime.
-The controller retains the committed runtime across presentation unmounts, so a
-renderer remount resumes the same accumulated model rather than reconstructing
-one from an older checkpoint.
+The TypeScript backend lives in `lib/application`, `lib/wallet`, and
+`lib/session`; React presentation lives in components and hooks. Application
+composes wallet, hub, recovery and Rust session execution and publishes ordered
+view batches. Its GUI surface is snapshot/subscription/typed intent dispatch;
+views receive no provider, controller, transport or persistence bootstrap.
+`HubConnection` emits tagged events; peer reliability receives only the carrier's
+send capability. WalletConnect normalization remains in the wallet adapter.
+
+`SessionMachineRuntime` is constructed and activated by backend session setup.
+Persistence and reliable-commit ownership attach when serializable WASM fields
+exist. View unsubscribe/remount only changes presentation subscriptions; protocol
+retirement remains with controller cleanup and runtime replacement. Checkpoint
+assembly is pure, while runtime and terminal completion install the captured root
+before writing, retaining existing notification and failure ordering.
 
 Once activated, `SessionMachineRuntime` is the sole active browser commit
 coordinator. It drains every consequence of a stimulus to a fixed point:
@@ -1019,7 +1024,7 @@ pre-ID Cloud or WalletConnect uncertainty launches exactly one automatic new
 attempt on each later provider-readiness epoch, including after reload, with no
 timer or immediate loop.
 
-`BootRecoveryBoundary` owns pending wipe, read-only preclaim inspection,
+`Recovery` (`lib/application/Recovery.ts`) owns pending wipe, read-only preclaim inspection,
 atomic claim-and-read, one strict rehydrate, takeover, reset retry, and
 authority loss. Takeover is the old owner's death, not a handoff. The winning
 claim returns the exact durable aggregate read in the claim transaction; only
@@ -1042,7 +1047,7 @@ deletion remains on recovery UI with Retry.
 Ordinary IndexedDB I/O failure never gates use, transaction release, or
 cancellation; the in-memory aggregate remains pending for a later checkpoint.
 `StorageAuthorityLostError` and `StorageAuthorityRequiredError` instead mean
-the old owner is dead: Shell destroys its controller and suppresses its pending
+the old owner is dead: Application destroys its controller and suppresses its pending
 writes/effects. A new claimant independently rehydrates the latest flushed
 durable whole root; no controller snapshot or transient work crosses the
 authority generation. Failed cancellation may leave an optional retry hint while the session remains

@@ -1,9 +1,10 @@
 import { Program } from 'clvm-lib';
-import type { SessionController } from '../../hooks/SessionController';
+import type { SessionController } from '../session/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { storageRepository } from '../session/storageRepository';
+import { observeSessionProjection } from './session_frontend.harness';
 import { baseSave } from './session_save_envelope.fixtures';
 
 const proposal = {
@@ -19,6 +20,8 @@ const proposal = {
 
 function controller(acceptProposal: (id: string) => void): SessionController {
   return {
+    getCoinsOfInterest: () => [],
+    isChannelReady: () => true,
     acceptProposal,
     commitSessionRuntime: jest.fn(),
     flushDeferredWork: jest.fn(),
@@ -49,6 +52,35 @@ describe('SessionMachineRuntime quiescent projection', () => {
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('delivers readiness synchronously and preserves event order under observer reentry', () => {
+    const runtime = new SessionMachineRuntime(initialState(), {
+      controller: controller(() => {}),
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: (error) => {
+        throw error;
+      },
+      persist: async () => {},
+    });
+    const seen: string[] = [];
+    runtime.frontend.subscribe((event) => {
+      seen.push('first:' + event.type);
+      if (event.type === 'readiness') runtime.publishFrontend({ type: 'terminal-retry' });
+    });
+    runtime.frontend.subscribe((event) => seen.push('second:' + event.type));
+    runtime.publishReadiness(false);
+    expect(runtime.frontend.game.isChannelReady()).toBe(false);
+    expect(runtime.frontend.snapshot().channelReady).toBe(false);
+    expect(seen).toEqual([
+      'first:readiness',
+      'second:readiness',
+      'first:terminal-retry',
+      'second:terminal-retry',
+    ]);
   });
 
   it('coalesces reentrant local-potato acceptance into one accepted render', async () => {
@@ -93,8 +125,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
         });
       }
     });
-    const rendered: ReturnType<typeof initialState>[] = [];
-    runtime.setRender((state) => rendered.push(state));
+    const rendered: import('../session/sessionFrontend').SessionPresentation[] = [];
+    observeSessionProjection(runtime, (state) => rendered.push(state));
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
     expect(rendered).toEqual([]);
@@ -120,8 +152,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    const rendered: ReturnType<typeof initialState>[] = [];
-    runtime.setRender((state) => rendered.push(state));
+    const rendered: import('../session/sessionFrontend').SessionPresentation[] = [];
+    observeSessionProjection(runtime, (state) => rendered.push(state));
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
     await runtime.persist();
@@ -146,9 +178,9 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.activate();
     runtime.activatePersistence();
     const render = jest.fn();
-    runtime.setRender(render);
+    const detachView = observeSessionProjection(runtime, render);
     runtime.dispatch({ type: 'accept-review', id: '7' });
-    runtime.clearRender();
+    detachView();
     jest.runOnlyPendingTimers();
     expect(render).not.toHaveBeenCalled();
   });
@@ -189,7 +221,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       });
       runtime.activate();
       runtime.activatePersistence();
-      runtime.setRender(() => order.push('render'));
+      observeSessionProjection(runtime, () => order.push('render'));
       runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
       expect(order).toEqual([]);
       expect(messageTask).not.toBeNull();
@@ -226,7 +258,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender(() => order.push('render'));
+    observeSessionProjection(runtime, () => order.push('render'));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await runtime.persist();
@@ -253,7 +285,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender(render);
+    observeSessionProjection(runtime, render);
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await expect(runtime.persist()).rejects.toThrow('disk full');
@@ -296,7 +328,9 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender((state) => renders.push(state.model.betweenHand.compose.gameTimeout));
+    observeSessionProjection(runtime, (state) =>
+      renders.push(state.model.betweenHand.compose.gameTimeout),
+    );
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     jest.runOnlyPendingTimers();
@@ -413,8 +447,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    const rendered: ReturnType<typeof initialState>[] = [];
-    runtime.setRender((state) => rendered.push(state));
+    const rendered: import('../session/sessionFrontend').SessionPresentation[] = [];
+    observeSessionProjection(runtime, (state) => rendered.push(state));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await jest.advanceTimersByTimeAsync(0);
@@ -481,7 +515,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.activate();
     runtime.activatePersistence();
     const rendered: Array<{ timeout: bigint; warningVisible: boolean }> = [];
-    runtime.setRender((state) =>
+    observeSessionProjection(runtime, (state) =>
       rendered.push({
         timeout: state.model.betweenHand.compose.gameTimeout,
         warningVisible: state.model.channel.queue.some(

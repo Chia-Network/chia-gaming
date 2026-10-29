@@ -1,27 +1,39 @@
-import type { SessionController, RestoreStatus } from '../../hooks/SessionController';
+import type { GameIntent } from '@games/host';
 import { log } from '../../services/log';
 import type { ReliableCommitCoordinator } from '../../services/PeerSession';
 import type { WasmEvent } from '../../types/ChiaGaming';
-import { dispatchWasmNotification } from './gameSessionEvents';
-import { SessionMachineInterpreter } from './sessionMachineInterpreter';
-import { buildDurableApplicationState } from './sessionMachinePersist';
-import { reduceSessionMachine } from './sessionMachine';
-import { storageRepository } from './storageRepository';
-import type { ActiveGameHandContext } from './sessionMachineGame';
-import type {
-  LocalGameActionRequest,
-  SessionMachineEvent,
-  SessionMachineState,
-} from './sessionMachineTypes';
-import type { RegisteredGameType } from './types';
-import type { coinIdHex } from './gameSessionEvents';
-import { StorageAuthorityLostError } from './indexedDb';
+import { markClientErrorReported, wasClientErrorReported } from '../clientError';
 import {
+  DEFAULT_CATALOG_GAME_TYPE,
   packageFor,
   restoreRegisteredGameHandState,
   snapshotRegisteredGameHand,
   type RegisteredGameHand,
 } from '../gameRegistry';
+import type { coinIdHex } from './gameSessionEvents';
+import { dispatchWasmNotification } from './gameSessionEvents';
+import { StorageAuthorityLostError } from './indexedDb';
+import {
+  createComposeDraftState,
+  createSessionModel,
+  DEFAULT_GAME_TIMEOUT_BLOCKS,
+  selectSessionPhase,
+  type HandProposal,
+} from './model';
+import type { RehydratedDurableApplicationState } from './persistence';
+import type { RestoreStatus, SessionController } from './SessionController';
+import type { SessionFrontend, SessionFrontendEvent, SessionPresentation } from './sessionFrontend';
+import { createSessionMachineState, reduceSessionMachine } from './sessionMachine';
+import type { ActiveGameHandContext } from './sessionMachineGame';
+import { SessionMachineInterpreter } from './sessionMachineInterpreter';
+import { buildDurableApplicationState } from './sessionMachinePersist';
+import type {
+  LocalGameActionRequest,
+  SessionMachineEvent,
+  SessionMachineState,
+} from './sessionMachineTypes';
+import { storageRepository } from './storageRepository';
+import type { RegisteredGameType } from './types';
 
 // Preserve task-level batching, but avoid timer throttling in browser tabs.
 function scheduleCommitTask(task: () => void): () => void {
@@ -134,7 +146,22 @@ function createResultDeferred<T>(): ResultDeferred<T> {
 
 export class SessionMachineRuntime implements ReliableCommitCoordinator {
   private state: SessionMachineState;
-  private render: (state: SessionMachineState) => void = () => {};
+  private published: SessionPresentation;
+  private readonly frontendListeners = new Set<(event: SessionFrontendEvent) => void>();
+  readonly frontend: SessionFrontend = {
+    snapshot: () => this.published,
+    subscribe: (listener) => {
+      this.frontendListeners.add(listener);
+      return () => {
+        this.frontendListeners.delete(listener);
+      };
+    },
+    dispatch: (intent) => this.dispatch(intent),
+    game: {
+      isChannelReady: () => this.published.channelReady,
+      dispatch: (intent) => this.dispatchGameIntent(intent),
+    },
+  };
   private readonly interpreter: SessionMachineInterpreter;
   private readonly controller: SessionController;
   private readonly iStarted: boolean;
@@ -186,6 +213,7 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.bindControllerEvents = dependencies.bindControllerEvents ?? false;
     this.onError = dependencies.onError;
     this.restoreHandFrom(initial.model.game.handState);
+    this.published = this.presentation(initial);
     this.persistOverride = dependencies.persist;
     this.interpreter = new SessionMachineInterpreter({
       controller: dependencies.controller,
@@ -229,12 +257,74 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     this.scheduleCommit(false);
   }
 
-  setRender(render: (state: SessionMachineState) => void): void {
-    this.render = render;
+  private presentation(state: SessionMachineState): SessionPresentation {
+    return {
+      model: state.model,
+      phase: selectSessionPhase(state.model, state.coordination.hostOnChain),
+      hand: this.activeHand,
+      coins: this.controller.getCoinsOfInterest(),
+      channelReady: this.controller.isChannelReady(),
+    };
   }
 
-  clearRender(): void {
-    this.render = () => {};
+  private render(state: SessionMachineState): void {
+    this.published = this.presentation(state);
+    this.publishFrontend({ type: 'batch-complete', presentation: this.published });
+  }
+
+  publishReadiness(ready: boolean): void {
+    this.published = { ...this.published, channelReady: ready };
+    this.publishFrontend({ type: 'readiness', ready });
+  }
+
+  private readonly frontendEvents: SessionFrontendEvent[] = [];
+  private publishingFrontend = false;
+  publishFrontend(event: SessionFrontendEvent): void {
+    this.frontendEvents.push(event);
+    if (this.publishingFrontend) return;
+    this.publishingFrontend = true;
+    try {
+      while (this.frontendEvents.length) {
+        const next = this.frontendEvents.shift()!;
+        for (const listener of this.frontendListeners) listener(next);
+      }
+    } finally {
+      this.publishingFrontend = false;
+    }
+  }
+
+  private dispatchGameIntent(intent: GameIntent): void {
+    const game = this.state.model.game;
+    const gameType = game.activeGameType as RegisteredGameType;
+    if (intent.type === 'state-changed') {
+      this.commitHandStateChanged(gameType);
+      return;
+    }
+    if (!Number.isInteger(intent.memberIndex) || intent.memberIndex < 0) {
+      throw new Error(
+        `Internal game action member index must be a nonnegative integer: ${intent.memberIndex}`,
+      );
+    }
+    const id = game.currentHandIds[intent.memberIndex];
+    if (id === undefined) {
+      throw new Error(
+        `Internal game action member index ${intent.memberIndex} is outside the current hand`,
+      );
+    }
+    runWithRuntimeErrorReporting(
+      () =>
+        this.commitLocalGameAction({
+          gameType,
+          id,
+          command:
+            intent.type === 'make-move'
+              ? { type: 'make-move', readable: intent.readable }
+              : intent.type === 'accept-settlement'
+                ? { type: 'accept-settlement' }
+                : { type: 'cheat', moverShare: intent.moverShare },
+        }),
+      (message) => this.dispatch({ type: 'enqueue-error', kind: 'infra-error', message }),
+    );
   }
 
   retire(): void {
@@ -605,15 +695,20 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
       } else if (this.persistOverride) {
         write = this.persistOverride(persistenceState);
       } else {
-        const snapshot = buildDurableApplicationState({
-          kind: 'live',
-          controller: this.controller,
-          state: persistenceState,
+        const wasm = this.controller.getWasmFields();
+        if (!wasm) throw new SessionSnapshotUnavailableError();
+        const capture = {
+          kind: 'live' as const,
+          wasm,
+          model: persistenceState.model,
+          walletProviderScope: this.controller.getWalletProviderScope(),
           restoring: this.restoring,
-          getRestoreStatus: this.getRestoreStatus,
-          getRestoreError: this.getRestoreError,
-        });
-        if (!snapshot) throw new SessionSnapshotUnavailableError();
+          restoreStatus: this.getRestoreStatus(),
+          restoreError: this.getRestoreError(),
+        };
+        const snapshot = storageRepository.patchApplicationState(
+          (root) => buildDurableApplicationState(root, capture)!,
+        );
         write = storageRepository.write(snapshot);
       }
     } catch (error) {
@@ -760,5 +855,58 @@ export class SessionMachineRuntime implements ReliableCommitCoordinator {
     ) {
       return this.flush();
     }
+  }
+}
+
+/** Composition belongs to the accepted session, never to a renderer. */
+export function createOwnedSessionRuntime(
+  controller: SessionController,
+  restoring: boolean,
+  bootstrap?: RehydratedDurableApplicationState,
+): SessionMachineRuntime {
+  const handProposal: HandProposal = {
+    gameType: DEFAULT_CATALOG_GAME_TYPE,
+    senderIsPlayerA: !controller.iStarted,
+    gameTimeout: DEFAULT_GAME_TIMEOUT_BLOCKS,
+    parameters: controller.perGameAmount,
+  };
+  const initial = createSessionMachineState(
+    bootstrap
+      ? structuredClone(bootstrap.model)
+      : createSessionModel({
+          channel: { cleanShutdownStarted: controller.cleanShutdownCalled },
+          betweenHand: { lastHandProposal: null, compose: createComposeDraftState(handProposal) },
+        }),
+    {
+      firstGameAccepted:
+        bootstrap?.state.session?.phase === 'live' &&
+        bootstrap.state.session.presentation.channelStatus?.state === 'Active',
+    },
+  );
+  const runtime = new SessionMachineRuntime(initial, {
+    controller,
+    iStarted: controller.iStarted,
+    restoring,
+    getRestoreStatus: () => controller.getRestoreStatus(),
+    getRestoreError: () => controller.getRestoreError(),
+    onError: (error) => controller.reportRuntimeError(error),
+    bindControllerEvents: true,
+  });
+  runtime.activate();
+  return runtime;
+}
+
+export function runWithRuntimeErrorReporting(
+  run: () => void,
+  report: (message: string) => void,
+): void {
+  try {
+    run();
+  } catch (error) {
+    if (!wasClientErrorReported(error)) {
+      markClientErrorReported(error);
+      report(error instanceof Error ? error.message : String(error));
+    }
+    throw error;
   }
 }

@@ -1,8 +1,8 @@
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
-import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
+import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
   createActivePair,
   flushWrapperDrain,

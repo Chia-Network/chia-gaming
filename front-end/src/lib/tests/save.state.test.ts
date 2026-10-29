@@ -1,11 +1,10 @@
-import { DURABLE_APPLICATION_STATE_VERSION as CURRENT_VERSION } from '../session/saveEnvelope';
-import { storageRepository } from '../session/storageRepository';
-import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
+import { applyFreshStartCheckpoint } from '../session/acceptLifecycle';
 import { readApplicationState, SESSION_DB_NAME } from '../session/indexedDb';
 import { decodeDurableApplicationState } from '../session/model';
-import { preHandshakeReplacement } from './session_save_envelope.fixtures';
-import { applyFreshStartCheckpoint } from '../session/acceptLifecycle';
+import { hasSavedSessionMarker, markSavedSession } from '../session/saveCoordination';
+import { DURABLE_APPLICATION_STATE_VERSION as CURRENT_VERSION } from '../session/saveEnvelope';
 import { clearGameSessionState } from '../session/sessionStateTransitions';
+import { storageRepository } from '../session/storageRepository';
 import {
   makeStorage,
   requireLive,
@@ -15,7 +14,7 @@ import {
   savePreferences,
   setTestGlobal,
 } from './save.harness';
-import { storageRepository } from '../session/storageRepository';
+import { preHandshakeReplacement } from './session_save_envelope.fixtures';
 
 async function capturePreHandshake(
   checkpoint: ReturnType<typeof preHandshakeReplacement>,

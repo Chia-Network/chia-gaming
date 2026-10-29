@@ -1,17 +1,18 @@
-import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
-import { storageRepository } from '../session/storageRepository';
-import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
-import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import type { KrunkGameState } from '@games/krunk/ui/serialize';
-import { krunkStateCodec } from './game_state_helpers';
+import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
+import { Program } from 'clvm-lib';
+import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { buildDurableApplicationState } from '../session/sessionMachinePersist';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { decodeDurableApplicationState } from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { createSessionMachineState } from '../session/sessionMachine';
+import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { storageRepository } from '../session/storageRepository';
 import type { GameTerminalModel, HandProposal } from '../session/types';
+import { installCapturedState } from './checkpoint_capture.harness';
+import { krunkStateCodec } from './game_state_helpers';
+import { runKrunkReloadCoverage } from './krunk_reload.scenario';
 import {
   addActiveSubscription,
   createActivePair,
@@ -20,7 +21,6 @@ import {
   LONG_WASM_TEST_TIMEOUT,
   startSimulator,
 } from './load_wasm.harness';
-import { runKrunkReloadCoverage } from './krunk_reload.scenario';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
@@ -100,7 +100,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         payloadMemberCount: hand?.members.length ?? 0,
         activeIds: [...machine.model.game.activeIds],
       });
-      const snapshot = buildDurableApplicationState({
+      const snapshot = installCapturedState({
         kind: 'live',
         controller,
         state: runtime.getState(),

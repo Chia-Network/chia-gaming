@@ -1,15 +1,15 @@
 import 'fake-indexeddb/auto';
 
-import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoller';
-import { activate, deactivate } from '../../hooks/activeBlockchain';
 import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
-import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { ChannelFundingRuntime, channelFundingRuntime } from '../session/channelFundingRuntime';
 import { entriesForOwner, recoveryReadiness } from '../session/channelFundingSelectors';
-import { storageRepository } from '../session/storageRepository';
 import { providerScopeKey } from '../session/providerKeys';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller, PollingGameSession } from '../wallet/BlockchainPoller';
+import { activate, deactivate } from '../wallet/activeBlockchain';
+import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 
 const fundingOperation = {

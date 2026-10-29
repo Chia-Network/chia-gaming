@@ -1,25 +1,25 @@
 import 'fake-indexeddb/auto';
 import type { WalletFeeSource } from '../../../../wasm/contract';
-import { SessionController } from '../../hooks/SessionController';
 import type {
+  ChannelStatusPayload,
   ChiaGame,
-  WasmConnection,
-  WasmResult,
   InternalBlockchainInterface,
   PeerConnectionResult,
   SpendBundle,
-  TransactionSubmission,
   SubmissionDrainFailure,
-  ChannelStatusPayload,
+  TransactionSubmission,
+  WasmConnection,
+  WasmResult,
 } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
-import { liveSave } from './session_save_envelope.fixtures';
-import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import { liveSave } from './session_save_envelope.fixtures';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
   {

@@ -1,24 +1,24 @@
+import { diagStack, log } from '../../services/log';
 import {
-  InternalBlockchainInterface,
   CoinStateRecord,
+  InternalBlockchainInterface,
   type WalletOfferProvider,
-} from '../types/ChiaGaming';
-import { CoinRecord } from '../types/rpc/CoinRecord';
-import { coinRecordToName } from '../util/coinWatch';
-import { log, diagStack } from '../services/log';
+} from '../../types/ChiaGaming';
+import { CoinRecord } from '../../types/rpc/CoinRecord';
+import { coinRecordToName } from '../../util/coinWatch';
 import {
   AsyncJobQueue,
   AsyncJobQueueOptions,
-  AsyncQueueJob,
   AsyncPollingScheduler,
   AsyncPollingTarget,
+  AsyncQueueJob,
   AsyncRequestStartGate,
-} from '../lib/AsyncScheduler';
+} from '../AsyncScheduler';
 import {
   channelFundingRuntime as defaultChannelFundingRuntime,
   type ChannelFundingRuntime,
-} from '../lib/session/channelFundingRuntime';
-import { providerScopeKey, type ProviderOwner } from '../lib/session/providerKeys';
+} from '../session/channelFundingRuntime';
+import { providerScopeKey, type ProviderOwner } from '../session/providerKeys';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;

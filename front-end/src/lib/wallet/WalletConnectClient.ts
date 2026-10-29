@@ -2,15 +2,15 @@ import Client from '@walletconnect/sign-client';
 import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
-import { PROJECT_ID, RELAY_URL } from '../constants/env';
+import { PROJECT_ID, RELAY_URL } from '../../constants/env';
 import {
   getChainId,
   getOptionalNamespaces,
   getRequiredNamespaces,
-} from '../constants/wallet-connect';
-import { log } from '../services/log';
-import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
-import { startPendingWalletConnectWipe } from './saveHardReset';
+} from '../../constants/wallet-connect';
+import { log } from '../../services/log';
+import { walletConnectDappMetadata } from '../../util/walletConnectMetadata';
+import { startPendingWalletConnectWipe } from '../session/saveHardReset';
 
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;

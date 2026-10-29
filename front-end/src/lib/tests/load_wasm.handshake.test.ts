@@ -1,23 +1,23 @@
-import { WasmStateInit, storeInitArgs } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import { WasmStateInit, storeInitArgs } from '../session/WasmStateInit';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+import { hasSavedSessionMarker } from '../session/saveCoordination';
 import { storageRepository } from '../session/storageRepository';
-import { hasSavedSessionMarker } from '../../hooks/saveCoordination';
 import {
+  LONG_WASM_TEST_TIMEOUT,
   SessionControllerAdapter,
   action_with_messages,
   addActiveCradle,
   assertCradleRoundTrip,
-  restoreTestSession,
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
-  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   pollOnce,
+  restoreTestSession,
   startSimulator,
 } from './load_wasm.harness';
 import { liveSave } from './session_save_envelope.fixtures';

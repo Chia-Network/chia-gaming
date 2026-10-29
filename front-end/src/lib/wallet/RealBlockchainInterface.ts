@@ -1,37 +1,41 @@
 import {
-  rpc,
-  WC_INTER_REQUEST_MS,
-  WalletConnectResponseError,
-  WalletConnectTransportError,
-} from '../hooks/WalletConnectRpc';
-import {
-  InternalBlockchainInterface,
   BlockchainInboundAddressResult,
   ConnectionSetup,
-  WalletOfferCompletion,
-  WalletOfferProvider,
-  WalletOfferOperation,
-  WalletOfferRequest,
+  InternalBlockchainInterface,
   WalletOfferCancellationOutcome,
+  WalletOfferCompletion,
+  WalletOfferOperation,
+  WalletOfferProvider,
+  WalletOfferRequest,
   WalletSubmitOutcome,
-} from '../types/ChiaGaming';
-import { WalletType } from '../types/WalletType';
-import { CoinRecord } from '../types/rpc/CoinRecord';
-import { isExactDuplicateTransaction } from '../util/walletSubmit';
+} from '../../types/ChiaGaming';
+import { WalletType } from '../../types/WalletType';
+import { CoinRecord } from '../../types/rpc/CoinRecord';
+import { isExactDuplicateTransaction } from '../../util/walletSubmit';
+import {
+  rpc,
+  WalletConnectResponseError,
+  WalletConnectTransportError,
+  WC_INTER_REQUEST_MS,
+} from './WalletConnectRpc';
 
-import { log } from '../services/log';
+import { ChiaMethod, getChainId } from '../../constants/wallet-connect';
+import { log } from '../../services/log';
+import {
+  CoinsetCoin,
+  TransactionRecord,
+  WalletSpendBundle,
+} from '../../types/rpc/PushTransactions';
 import {
   coinIdFromBytes,
   encodeU64AsClvmHex,
   normalizeHexString,
-  toUint8,
   toHexString,
-} from '../util';
-import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../util/bech32m';
-import { ChiaMethod, getChainId } from '../constants/wallet-connect';
-import { CoinsetCoin, TransactionRecord, WalletSpendBundle } from '../types/rpc/PushTransactions';
-import { walletConnectState } from './useWalletConnect';
-import { jsonStringify } from '../util/jsonSafe';
+  toUint8,
+} from '../../util';
+import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../../util/bech32m';
+import { jsonStringify } from '../../util/jsonSafe';
+import { walletConnectState } from './WalletConnectClient';
 
 const PEER_READINESS_POLL_MS = 5000;
 const PEER_READINESS_RPC_TIMEOUT_MS = 7_000;

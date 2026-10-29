@@ -1,15 +1,16 @@
-import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
-import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { expectConsoleError } from '../../../scripts/testSetup';
+import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { rewriteFeeRateRejection, SessionController } from '../session/SessionController';
 import {
   destroySessionController,
   getOrCreateSessionController,
   isTransactionPublishNerfed,
   setTransactionPublishNerfed,
   subscribeTransactionPublishNerfed,
-} from '../../hooks/blobSingleton';
+} from '../session/sessionHost';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { pollOnce } from './blockchain_poller.driver';
 import {
   attachTestCommitCoordinator,
   channelStatus,
@@ -26,7 +27,6 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
-import { pollOnce } from './blockchain_poller.driver';
 
 describe('terminal protocol cleanup', () => {
   // Reliable terminal handoff permutations are covered by peer_session::session::tests.

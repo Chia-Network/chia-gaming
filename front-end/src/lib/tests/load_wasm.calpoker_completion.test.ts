@@ -1,19 +1,19 @@
-import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
 import type { CalpokerHand } from '@games/calpoker/ui/serialize';
-import { calpokerStateCodec } from './game_state_helpers';
 import {
   shouldAutoFireCalpokerMove,
   useCalpokerHand,
   type UseCalpokerHandResult,
 } from '@games/calpoker/ui/useCalpokerHand';
+import type { GameIntent, LiveGamePort } from '@games/host';
+import { Program } from 'clvm-lib';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { SessionController } from '../session/SessionController';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { HandProposal } from '../session/types';
-import type { GameIntent, LiveGamePort } from '@games/host';
+import { calpokerStateCodec } from './game_state_helpers';
 import {
   addActiveSubscription,
   createActivePair,
@@ -22,6 +22,7 @@ import {
   LONG_WASM_TEST_TIMEOUT,
   startSimulator,
 } from './load_wasm.harness';
+import { observeSessionProjection } from './session_frontend.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
@@ -67,7 +68,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         persist: async () => {},
       },
     );
-    runtime.setRender((state) => {
+    observeSessionProjection(runtime, (state) => {
       const runtimeHand = calpokerStateCodec.decode(state.model.game.handState);
       if (runtimeHand) stageTrace[index].push(runtimeHand.moveNumber);
     });

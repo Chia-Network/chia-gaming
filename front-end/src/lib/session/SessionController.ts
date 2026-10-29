@@ -1,78 +1,75 @@
-import { Subject, NextObserver } from 'rxjs';
 import { Program } from 'clvm-lib';
+import { NextObserver, Subject } from 'rxjs';
+import type { SessionWallet } from '../wallet/sessionWallet';
+import type { RehydratedDurableApplicationState } from './persistence';
+import type { SessionFrontend } from './sessionFrontend';
 
-import {
-  GameSessionEvent,
-  NeedCoinSpendRequest,
-  PeerConnectionResult,
-  WasmConnection,
-  ChiaGame,
-  CoinOfInterestEntry,
-  CoinStateRecord,
-  WasmResult,
-  TransactionSubmission,
-  SubmissionDrainFailure,
-  ProposeGameParams,
-  WasmEvent,
-  WasmNotification,
-  WalletProviderScope,
-  WalletOfferCompletion,
-  requireWasmResult,
-} from '../types/ChiaGaming';
-import { BlockchainPoller, PollingGameSession } from './BlockchainPoller';
-import { coerceToBytes } from '../util';
-import { log, diagStack } from '../services/log';
-import { MIN_NONZERO_FEE_MOJOS } from '../constants/fees';
-import { jsonStringify } from '../util/jsonSafe';
-import { storageRepository } from '../lib/session/storageRepository';
-import { cancelRetiredWalletReservations } from '../lib/session/walletReservationRetirement';
-import { channelFundingKey } from '../lib/session/channelFundingStore';
-import type { ChannelStatusPayload } from '../types/ChiaGaming';
-import {
-  appendDiagnosticEntry,
-  appendRecent,
-  recentDiagnosticEntries,
-  recentEntries,
-  WASM_NOTIFICATION_HISTORY_LIMIT,
-} from '../lib/session/historyLimits';
-import { validateChannelStatus } from '../lib/session/persistencePayloads';
-import { completeRegisteredGames } from '../lib/gameIdentities';
-import { catalogGameTypeFromWire } from '../lib/gameIdentities';
-import { markClientErrorReported } from '../lib/clientError';
-import {
-  DEFAULT_SESSION_RECEIVE_POLICY,
-  type ReadonlySessionReceivePolicy,
-} from '../lib/session/receivePolicy';
+import { MIN_NONZERO_FEE_MOJOS } from '../../constants/fees';
+import { diagStack, log } from '../../services/log';
 import {
   ReliablePeerTransport,
   type PreparedReliableCommit,
   type ReliableMessageConsumer,
-} from '../services/PeerSession';
-import type { SessionModel } from '../lib/session/types';
-import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
+} from '../../services/PeerSession';
+import type { ChannelStatusPayload } from '../../types/ChiaGaming';
 import {
-  SessionRuntimeRetiredError,
-  type SessionMachineRuntime,
-} from '../lib/session/sessionMachineRuntime';
-import type {
-  ChannelFundingOwner,
-  ChannelFundingPurpose,
-} from '../lib/session/channelFundingStore';
-import { providerScopeKey, type ProviderOwner } from '../lib/session/providerKeys';
-import type { ChannelFundingRuntime } from '../lib/session/channelFundingRuntime';
+  ChiaGame,
+  CoinOfInterestEntry,
+  CoinStateRecord,
+  GameSessionEvent,
+  NeedCoinSpendRequest,
+  PeerConnectionResult,
+  ProposeGameParams,
+  SubmissionDrainFailure,
+  TransactionSubmission,
+  WalletOfferCompletion,
+  WalletProviderScope,
+  WasmConnection,
+  WasmEvent,
+  WasmNotification,
+  WasmResult,
+  requireWasmResult,
+} from '../../types/ChiaGaming';
+import { coerceToBytes } from '../../util';
+import { jsonStringify } from '../../util/jsonSafe';
+import { markClientErrorReported } from '../clientError';
+import { catalogGameTypeFromWire, completeRegisteredGames } from '../gameIdentities';
+import { PollingGameSession } from '../wallet/BlockchainPoller';
+import type { ChannelFundingRuntime } from './channelFundingRuntime';
 import {
   entryForOperation,
   providerRequestFromRecovery,
   restoredFundingForSink,
   walletSessionKey,
-} from '../lib/session/channelFundingSelectors';
+} from './channelFundingSelectors';
+import type { ChannelFundingOwner, ChannelFundingPurpose } from './channelFundingStore';
+import { channelFundingKey } from './channelFundingStore';
 import {
   canonicalizeFundingRequest,
   fundingRequestKey,
   type CanonicalFundingRequest,
-} from '../lib/session/fundingRequest';
-import type { SessionTerminalHandoffSave, SessionTransportSave } from '../lib/session/saveEnvelope';
-import { SubmissionPump } from '../lib/session/submissionPump';
+} from './fundingRequest';
+import {
+  WASM_NOTIFICATION_HISTORY_LIMIT,
+  appendDiagnosticEntry,
+  appendRecent,
+  recentDiagnosticEntries,
+  recentEntries,
+} from './historyLimits';
+import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
+import { validateChannelStatus } from './persistencePayloads';
+import { providerScopeKey, type ProviderOwner } from './providerKeys';
+import { DEFAULT_SESSION_RECEIVE_POLICY, type ReadonlySessionReceivePolicy } from './receivePolicy';
+import type { SessionTerminalHandoffSave, SessionTransportSave } from './saveEnvelope';
+import {
+  SessionRuntimeRetiredError,
+  createOwnedSessionRuntime,
+  type SessionMachineRuntime,
+} from './sessionMachineRuntime';
+import { storageRepository } from './storageRepository';
+import { SubmissionPump } from './submissionPump';
+import type { SessionModel } from './types';
+import { cancelRetiredWalletReservations } from './walletReservationRetirement';
 
 export type GameCommandDisposition = 'rejected' | 'queued' | 'applied';
 
@@ -234,7 +231,7 @@ export class SessionController implements PollingGameSession {
   onChain: boolean;
   reloading: boolean;
   qualifyingEvents: number;
-  blockchain: BlockchainPoller | null;
+  private blockchain: SessionWallet | null;
   private blockchainAttached = false;
   rxjsMessageSingleton: Subject<WasmEvent>;
   rxjsEmitter: NextObserver<WasmEvent> | undefined;
@@ -249,13 +246,13 @@ export class SessionController implements PollingGameSession {
   diagnosticLog: string[] = [];
   private readonly receivePolicy: ReadonlySessionReceivePolicy;
   private pendingPeerFailure: string | null = null;
+  private sessionFrontend: SessionFrontend | null = null;
   private committedSessionRuntime: SessionMachineRuntime | null = null;
   private persistenceSessionRuntime: SessionMachineRuntime | null = null;
   private restoreStatus: RestoreStatus = 'idle';
   private restoreError: string | null = null;
   private restorePromise: Promise<void> | null = null;
   private restoreListeners = new Set<(status: RestoreStatus, error: string | null) => void>();
-  private terminalFinalizationRetryListeners = new Set<() => void>();
   private terminalSealed = false;
   private readonly submissionPump: SubmissionPump;
   private readonly pendingCoinSolutionDeliveries = new Map<string, PendingCoinSolutionDelivery>();
@@ -296,7 +293,7 @@ export class SessionController implements PollingGameSession {
   }
 
   constructor(
-    blockchain: BlockchainPoller | null,
+    blockchain: SessionWallet | null,
     uniqueId: string,
     myContribution: bigint,
     theirContribution: bigint,
@@ -421,6 +418,21 @@ export class SessionController implements PollingGameSession {
     if (this.persistenceSessionRuntime) {
       this.reliableTransport.attachCommitCoordinator(this.persistenceSessionRuntime);
     }
+  }
+
+  initializeFrontend(
+    restoring: boolean,
+    bootstrap?: RehydratedDurableApplicationState,
+  ): SessionFrontend {
+    this.sessionFrontend = (
+      this.committedSessionRuntime ?? createOwnedSessionRuntime(this, restoring, bootstrap)
+    ).frontend;
+    return this.sessionFrontend;
+  }
+
+  get frontend(): SessionFrontend {
+    if (!this.sessionFrontend) throw new Error('Session frontend has not been initialized');
+    return this.sessionFrontend;
   }
 
   getCommittedSessionRuntime(): SessionMachineRuntime | null {
@@ -736,7 +748,7 @@ export class SessionController implements PollingGameSession {
     this.reloading = true;
   }
 
-  attachBlockchain(blockchain: BlockchainPoller) {
+  attachBlockchain(blockchain: SessionWallet) {
     if (this.blockchain && this.blockchain !== blockchain) {
       this.blockchain.detachGameSession(this);
       this.blockchainAttached = false;
@@ -782,7 +794,7 @@ export class SessionController implements PollingGameSession {
     this.notifyTerminalFinalizationRetry();
   }
 
-  detachBlockchain(blockchain: BlockchainPoller) {
+  detachBlockchain(blockchain: SessionWallet) {
     if (this.blockchain !== blockchain) return;
     blockchain.detachGameSession(this);
     this.blockchainAttached = false;
@@ -811,7 +823,6 @@ export class SessionController implements PollingGameSession {
     this.retired = true;
     this.channelFundingUnsubscribe?.();
     this.channelFundingUnsubscribe = null;
-    this.terminalFinalizationRetryListeners.clear();
     this.submissionPump.retireAll();
     for (const delivery of [...this.pendingCoinSolutionDeliveries.values()]) {
       this.completeCoinSolutionDelivery(delivery);
@@ -936,6 +947,7 @@ export class SessionController implements PollingGameSession {
   restoreChannelStatus(status: ChannelStatusPayload | null): void {
     this.lastChannelStatus = status;
     this.channelReady = status !== null && isActivatedChannelStatus(status.state);
+    this.committedSessionRuntime?.publishReadiness(this.channelReady);
     if (this.channelReady && this.wc) {
       this.ensureProtocolIdentities();
     }
@@ -963,15 +975,8 @@ export class SessionController implements PollingGameSession {
     };
   }
 
-  onTerminalFinalizationRetry(listener: () => void): () => void {
-    this.terminalFinalizationRetryListeners.add(listener);
-    return () => {
-      this.terminalFinalizationRetryListeners.delete(listener);
-    };
-  }
-
   private notifyTerminalFinalizationRetry(): void {
-    for (const listener of this.terminalFinalizationRetryListeners) listener();
+    this.committedSessionRuntime?.publishFrontend({ type: 'terminal-retry' });
   }
 
   beginRestore(promise: Promise<void>): Promise<void> {
@@ -1544,6 +1549,7 @@ export class SessionController implements PollingGameSession {
         notification = { ChannelStatus: channelStatus };
         if (channelStatus.state === 'Active') {
           this.channelReady = true;
+          this.committedSessionRuntime?.publishReadiness(true);
           this.ensureProtocolIdentities();
         }
       }
