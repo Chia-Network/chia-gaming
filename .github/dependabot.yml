@@ -1,6 +1,5 @@
 # This file is managed by the repo-content-updater project. Manual changes here will result in a PR to bring back
 # inline with the upstream template, unless you add !dependabot to the repo's managed-files property
-# repo-content-updater:dependabot
 
 version: 2
 updates:
@@ -34,7 +33,7 @@ updates:
       - javascript
       - "Changed"
   - package-ecosystem: cargo
-    directories: ["/"]
+    directories: ["/", "/wasm"]
     schedule:
       interval: "weekly"
       day: "tuesday"
