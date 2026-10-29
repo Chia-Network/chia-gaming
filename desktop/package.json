@@ -21,7 +21,7 @@
     "package": "pnpm run build && node scripts/package-app.mjs"
   },
   "devDependencies": {
-    "@types/node": "24.6.2",
+    "@types/node": "26.6.5",
     "electron": "43.8.1",
     "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
