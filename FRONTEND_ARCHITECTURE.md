@@ -875,7 +875,8 @@ calls and results deliver inbound messages, journal channel output, and complete
 terminal acknowledgements without internal JavaScript conversions or callback
 routing. TypeScript receives the resulting UI/wallet effects
 without forwarding peer bodies or channel commands between Rust objects.
-Replacing the carrier transfers the existing owner, and retirement releases its
+The accepted Rust session and its host adapter stay fixed across carrier changes;
+late hub attachment reuses that adapter, and retirement releases its
 channel. Host notifications can request rejection retirement. The three host
 callbacks send frames, report consumer availability, and handle notifications. IndexedDB and commit scheduling remain
 host work. Rust's `open_channel` awaits the existing TypeScript address provider

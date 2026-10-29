@@ -43,7 +43,6 @@ export function stubApplicationSession(model: import('../session/model').Session
       beginRestore: jest.fn((promise) => promise),
       getRestoreStatus: () => presentation.model.restore.status,
       getRestoreError: () => presentation.model.restore.error,
-      attachReliableTransport: jest.fn(),
       reportPeerConnectivity: jest.fn(() => true),
       sendPeerKeepalive: jest.fn(),
       attachBlockchain: jest.fn(),

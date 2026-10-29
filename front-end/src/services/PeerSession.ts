@@ -76,7 +76,7 @@ export type PreparedReliableCommit = PeerPreparedCommit;
 /** The host persists snapshots and supplies carrier/application callbacks.
  * Rust owns every receive, send, ACK and replay turn. */
 export class ReliablePeerTransport {
-  protocol: PeerProtocolApi;
+  readonly protocol: PeerProtocolApi;
   private readonly host: PeerHost;
   private consumer: ReliableMessageConsumer | null = null;
   private flushScheduled = false;
@@ -225,12 +225,6 @@ export class ReliablePeerTransport {
   }
   rejectSession(): void {
     this.protocol.reject_session(this.host);
-  }
-  takeSession(from: ReliablePeerTransport): void {
-    // A carrier replacement transfers the existing Rust owner, including its channel.
-    // Give the detached carrier our unused negotiation object so its later cleanup
-    // cannot retire the live session.
-    [this.protocol, from.protocol] = [from.protocol, this.protocol];
   }
 
   clearRuntime(retainRejection = false): void {
@@ -408,32 +402,40 @@ export class PeerSession implements PeerConnectionResult {
     sessionId: string,
     hubConn: PeerCarrier,
     receivePolicy: ReadonlySessionReceivePolicy = DEFAULT_SESSION_RECEIVE_POLICY,
-    initialState?: Omit<ReliableTransportState, 'sessionId'>,
+    initialState?: Omit<ReliableTransportState, 'sessionId'> | ReliablePeerTransport,
   ) {
     this.peerId = peerId;
     this.sessionId = sessionId;
     this.hubConn = hubConn;
     this.receivePolicy = receivePolicy;
-    const reliableState: ReliableTransportState = {
-      sessionId,
-      messageNumber: 1n,
-      remoteNumber: 0n,
-      unackedMessages: [],
-      disposition: 'active',
-      ...initialState,
-    };
-    this.reliableTransport = new ReliablePeerTransport(
-      reliableState,
-      receivePolicy,
-      (msgno, body) => this.sendMessage(Number(msgno), body),
-      (msgno) => this.sendAck(Number(msgno)),
-    );
-    this.reliableTransport.attachConsumer({
-      isReady: () => false,
-      deliver: () => {},
-      persist: () => Promise.reject(new Error('Reliable transport consumer is not attached')),
-      failure: (reason) => this.failBufferedPeer(reason),
-    });
+    this.reliableTransport =
+      initialState instanceof ReliablePeerTransport
+        ? initialState
+        : new ReliablePeerTransport(
+            {
+              sessionId,
+              messageNumber: 1n,
+              remoteNumber: 0n,
+              unackedMessages: [],
+              disposition: 'active',
+              ...initialState,
+            },
+            receivePolicy,
+            (msgno, body) => this.sendMessage(Number(msgno), body),
+            (msgno) => this.sendAck(Number(msgno)),
+          );
+    if (!(initialState instanceof ReliablePeerTransport)) {
+      this.reliableTransport.attachConsumer({
+        isReady: () => false,
+        deliver: () => {},
+        persist: () => Promise.reject(new Error('Reliable transport consumer is not attached')),
+        failure: (reason) => this.failBufferedPeer(reason),
+      });
+    }
+  }
+
+  attachCarrier(carrier: PeerCarrier): void {
+    this.hubConn = carrier;
   }
 
   // --- PeerConnectionResult interface ---

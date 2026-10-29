@@ -241,7 +241,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
-  private reliableTransport: ReliablePeerTransport;
+  readonly reliableTransport: ReliablePeerTransport;
   private readonly reliableConsumer: ReliableMessageConsumer;
   private inboundSessionRejectCommitted = false;
   private persistInboundSessionReject:
@@ -470,20 +470,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     };
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
-    }
-  }
-
-  attachReliableTransport(transport: ReliablePeerTransport): void {
-    if (this.reliableTransport === transport) return;
-    this.reliableTransport.detachConsumer(this.reliableConsumer);
-    if (this.persistenceActivated && !this.executionRetired) {
-      this.reliableTransport.detachCommitCoordinator(this);
-    }
-    transport.takeSession(this.reliableTransport);
-    this.reliableTransport = transport;
-    this.reliableTransport.attachConsumer(this.reliableConsumer);
-    if (this.persistenceActivated && !this.executionRetired) {
-      this.reliableTransport.attachCommitCoordinator(this);
     }
   }
 

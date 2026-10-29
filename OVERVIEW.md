@@ -114,7 +114,8 @@ Delivery operations are methods on that owning session, with the host passed per
 call. State and channel borrows end before any host callback.
 TypeScript invokes gameplay, chain observations and serialization as methods
 on that same exported object, with no numeric channel lookup or forwarding wrapper.
-Retirement releases the channel; a carrier replacement preserves the same owner.
+Retirement releases the channel; a carrier replacement preserves the same Rust
+owner, TypeScript host adapter, consumer callbacks, and checkpoint coordinator.
 The constructor receives fresh seed material directly. The channel owns its RNG;
 seed and RNG are excluded from persistence. Wallet bundles and fee-source results
 cross as structured values with exact `BigInt` amounts.

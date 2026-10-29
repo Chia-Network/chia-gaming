@@ -399,10 +399,6 @@ export function createApplication() {
       update('peerLiveness', null);
     },
   });
-  const bindPeerMessageHandler = (ps: PeerSession | null) => {
-    if (!ps || !sessionController) return;
-    sessionController.attachReliableTransport(ps.reliableTransport);
-  };
   const handleCoinsChange = (next: CoinOfInterestEntry[]) => {
     const remaining = new Map(next.map((coin) => [coin.id, coin]));
     const ordered = state.coins.flatMap((coin) => {
@@ -779,7 +775,6 @@ export function createApplication() {
       } else {
         existing?.destroy();
         peerSession = new PeerSession(request.peerId, sessionId, conn);
-        bindPeerMessageHandler(peerSession);
       }
       peerSession!.reliableTransport.acceptSession(
         {
@@ -913,7 +908,6 @@ export function createApplication() {
         // proposal can cancel the attempt (PeerSession must already exist).
         peerSession?.destroy();
         peerSession = new PeerSession(advisory.peer_id, gameSessionId, conn);
-        bindPeerMessageHandler(peerSession);
         await startFreshSessionWithPeer({
           peerId: advisory.peer_id,
           opponentAlias: advisory.peer_alias,
@@ -1337,21 +1331,20 @@ export function createApplication() {
                     pairing.gameSessionId,
                     conn,
                     undefined,
-                    save?.session?.phase === 'live'
-                      ? {
-                          messageNumber: save.session.live.messageNumber,
-                          remoteNumber: save.session.live.remoteNumber,
-                          unackedMessages: structuredClone(save.session.live.unackedMessages),
-                          disposition: save.session.live.disposition,
-                        }
-                      : save?.session?.phase === 'pre-handshake'
-                        ? structuredClone(save.session.transport)
-                        : undefined,
+                    sessionController?.reliableTransport ??
+                      (save?.session?.phase === 'live'
+                        ? {
+                            messageNumber: save.session.live.messageNumber,
+                            remoteNumber: save.session.live.remoteNumber,
+                            unackedMessages: structuredClone(save.session.live.unackedMessages),
+                            disposition: save.session.live.disposition,
+                          }
+                        : save?.session?.phase === 'pre-handshake'
+                          ? structuredClone(save.session.transport)
+                          : undefined),
                   );
                   if (peerSession.reliableState.disposition === 'outbound-reject') {
                     bindOutboundRejectRetirement(peerSession);
-                  } else {
-                    bindPeerMessageHandler(peerSession);
                   }
                   // Restore does not pass through the fresh-session busy update.
                   conn.setBusy(restoreBusy);
@@ -1434,6 +1427,7 @@ export function createApplication() {
       return;
     }
     hubConn = conn;
+    peerSession?.attachCarrier(conn);
     void restoreRejections(conn, bootRejectionDescriptors).catch((error) => {
       console.error('[Shell] failed to restore rejection tombstones', error);
     });
