@@ -13,8 +13,8 @@ import {
   _resetWasmLoadForTests,
   ensurePeerProtocolLoaded,
   storeInitArgs,
-  WasmStateInit,
-} from '../session/WasmStateInit';
+  ensureWasmLoaded,
+} from '../session/wasmLoader';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
 import { clearSavedSessionMarker } from '../session/saveCoordination';
@@ -142,7 +142,7 @@ async function cleanupActiveResources() {
   while (activeCradles.length > 0) {
     await activeCradles.pop()?.shutdown();
   }
-  testPoller?.stop();
+  testPoller?.pauseChainPolling();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
   await storageRepository.checkpointDomainMutations();
@@ -183,8 +183,6 @@ export class SessionControllerAdapter {
       },
       sendAck: () => true,
       sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
     };
   }
 
@@ -466,14 +464,14 @@ export async function createActivePair(
     `cafe000${index}`,
     true,
     cradles[0].peerConnection,
-    new WasmStateInit(fetchPreset),
+    await ensureWasmLoaded(fetchPreset),
   );
   const second = await initSessionController(
     poller,
     `dead000${index}`,
     false,
     cradles[1].peerConnection,
-    new WasmStateInit(fetchPreset),
+    await ensureWasmLoaded(fetchPreset),
   );
   first.pairingToken = `restore-games-${index}-first`;
   second.pairingToken = `restore-games-${index}-second`;
@@ -574,7 +572,7 @@ export async function initSessionController(
   uniqueId: string,
   iStarted: boolean,
   peer_conn: PeerConnectionResult,
-  wasmStateInit: WasmStateInit,
+  wasmConnection: import('../../types/ChiaGaming').WasmConnection,
   myContribution = 100n,
   theirContribution = 100n,
   simulator: SimulatorControllerBehavior = fakeBlockchainInfo,
@@ -594,9 +592,8 @@ export async function initSessionController(
   await configSessionController(
     gameObject,
     iStarted,
-    wasmStateInit,
+    wasmConnection,
     blockchain,
-    uniqueId,
     undefined,
     undefined,
     rewardPuzzleHash,

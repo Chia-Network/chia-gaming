@@ -34,6 +34,7 @@ export interface SessionPresentation {
 export type SessionFrontendEvent =
   | { type: 'batch-complete'; presentation: SessionPresentation }
   | { type: 'terminal-retry' }
+  | { type: 'publishing-policy'; nerfed: boolean }
   | { type: 'readiness'; ready: boolean };
 
 /** View attachment has no ownership of the running session or its resources. */

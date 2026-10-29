@@ -13,7 +13,7 @@ import { SessionController } from '../session/SessionController';
 import { restoreSession } from '../session/sessionHost';
 import { storageRepository } from '../session/storageRepository';
 import type { HandProposal } from '../session/types';
-import { WasmStateInit } from '../session/WasmStateInit';
+import { ensureWasmLoaded } from '../session/wasmLoader';
 import { krunkStateCodec } from './game_state_helpers';
 import {
   createActivePair,
@@ -163,13 +163,11 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       sendMessage: () => true,
       sendAck: () => true,
       sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
     });
     try {
       const bootstrap = rehydrateDurableApplicationState(reloaded);
       await restored.beginRestore(
-        restoreSession(restored, bootstrap, new WasmStateInit(fetchPreset)),
+        restoreSession(restored, bootstrap, await ensureWasmLoaded(fetchPreset)),
       );
       assert.equal(restored.getRestoreStatus(), 'restored');
       assert.deepEqual(

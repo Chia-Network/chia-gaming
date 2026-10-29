@@ -6,18 +6,16 @@ import type { BlockchainPoller } from './BlockchainPoller';
 export type SessionWallet = Pick<
   BlockchainPoller,
   | 'resolveProviderOwner'
-  | 'notifyProviderReadiness'
+  | 'onSessionReadiness'
   | 'attachGameSession'
   | 'detachGameSession'
-  | 'snapshotGameSessionCoinInterest'
-  | 'watchCoin'
-  | 'unwatchCoin'
-  | 'stop'
+  | 'updateCoinInterest'
+  | 'pauseChainPolling'
 > & {
   readonly channelFundingRuntime: SessionFunding;
   readonly rpc: Pick<
     InternalBlockchainInterface,
-    'getAddress' | 'getPuzzleAndSolution' | 'isReadyForPlay' | 'onPlayReadinessChange' | 'spend'
+    'getAddress' | 'getPuzzleAndSolution' | 'isReadyForPlay' | 'spend'
   >;
 };
 

@@ -233,8 +233,7 @@ export function makePeerConn(
       return true;
     },
     sendKeepalive: () => true,
-    hostLog: () => {},
-    close: () => {},
+
     receivePolicy,
   };
 }

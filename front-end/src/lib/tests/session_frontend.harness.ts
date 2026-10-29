@@ -37,6 +37,15 @@ export function stubApplicationSession(model: import('../session/model').Session
   return {
     controller: {
       frontend,
+      cleanup: jest.fn(),
+      setPresentationTiming: jest.fn(),
+      setTransactionPublishNerfed: jest.fn(),
+      beginRestore: jest.fn((promise) => promise),
+      getRestoreStatus: () => presentation.model.restore.status,
+      getRestoreError: () => presentation.model.restore.error,
+      attachReliableTransport: jest.fn(),
+      reportPeerConnectivity: jest.fn(() => true),
+      sendPeerKeepalive: jest.fn(),
       attachBlockchain: jest.fn(),
       detachBlockchain: jest.fn(),
     } as unknown as import('../session/SessionController').SessionController,

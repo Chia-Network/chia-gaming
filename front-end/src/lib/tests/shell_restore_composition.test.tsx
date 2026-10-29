@@ -1,3 +1,4 @@
+import { mockWasmConnection } from './message_protocol.harness';
 import 'fake-indexeddb/auto';
 import { createApplication } from '../application/Application';
 import type { HubEvent } from '../../services/HubConnection';
@@ -10,12 +11,12 @@ import Shell from '../../components/Shell';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import { markSavedSession, releaseLeaseIfOwner } from '../session/saveCoordination';
 import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset';
-import * as blobSingleton from '../session/sessionHost';
+import * as sessionHost from '../session/sessionHost';
 import { storageRepository } from '../session/storageRepository';
-import * as wasmInit from '../session/WasmStateInit';
+import * as wasmInit from '../session/wasmLoader';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
-import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
+import { TERMINAL_INSTANCE, activeSave, baseSave } from './session_save_envelope.fixtures';
 
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { HubConnection } from '../../services/HubConnection';
@@ -116,7 +117,12 @@ describe('Shell production restore composition', () => {
         restore: { status: 'restored', error: null },
       }),
     );
-    jest.spyOn(blobSingleton, 'getOrCreateSessionController').mockReturnValue(session.controller);
+    jest.spyOn(sessionHost, 'createSessionController').mockReturnValue(session.controller);
+    jest.spyOn(wasmInit, 'ensureWasmLoaded').mockResolvedValue(mockWasmConnection);
+    jest.spyOn(sessionHost, 'restoreSession').mockResolvedValue();
+    jest
+      .spyOn(sessionHost, 'configSessionController')
+      .mockImplementation(async (controller) => controller);
     mockHub = null;
     mockSetBusy.mockClear();
     mockSendToPeer.mockClear();
@@ -529,11 +535,64 @@ describe('Shell production restore composition', () => {
     },
   );
 
+  it.each(['cancel', 'failure'] as const)(
+    'keeps a restored session when wallet reconnect ends in %s',
+    async (outcome) => {
+      await storageRepository.claimApplicationState();
+      const save = activeSave({
+        blockchainType: 'walletconnect',
+        pairingToken: 'survives-wallet-setup',
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      jest.spyOn(realBlockchainInfo, 'disconnect').mockResolvedValue();
+      const application = createApplication();
+      act(() => {
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await application.dispatch({ type: 'resume' });
+      });
+      await flushEffects();
+      const controller = jest.mocked(sessionHost.createSessionController).mock.results[0].value;
+      const session = application.snapshot().sessionPresentation;
+      expect(session).not.toBeNull();
+      await act(async () => {
+        await application.dispatch({ type: 'wallet-disconnect' });
+      });
+      if (outcome === 'failure') {
+        jest
+          .mocked(realBlockchainInfo.beginConnect)
+          .mockRejectedValueOnce(new Error('reconnect failed'));
+        expectConsoleError('reconnect failed');
+      } else {
+        jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValueOnce({
+          skipQr: true,
+          fields: [{ key: 'wallet', label: 'Wallet', type: 'text' }],
+          finalize: jest.fn(),
+        } as any);
+      }
+      await act(async () => {
+        await application.dispatch({ type: 'wallet-connect', wallet: 'walletconnect' });
+        if (outcome === 'cancel') await application.dispatch({ type: 'wallet-cancel' });
+      });
+      await flushEffects();
+      expect(controller.cleanup).not.toHaveBeenCalled();
+      expect(sessionHost.createSessionController).toHaveBeenCalledTimes(1);
+      expect(application.snapshot().sessionPresentation).toBe(session);
+      expect(storageRepository.loadState().session).toEqual(save.session);
+    },
+  );
+
   it('retires the live protocol owner before starting destructive storage reset', async () => {
     await storageRepository.claimApplicationState();
     await storageRepository.write(
       storageRepository.patchApplicationState(() =>
-        baseSave({
+        activeSave({
           blockchainType: 'walletconnect',
         }),
       ),
@@ -543,28 +602,30 @@ describe('Shell production restore composition', () => {
     storageRepository._resetForTests();
 
     const order: string[] = [];
-    const destroyController = jest
-      .spyOn(blobSingleton, 'destroySessionController')
-      .mockImplementation(() => {
-        order.push('controller');
-      });
+    const controller = jest.mocked(sessionHost.createSessionController).getMockImplementation()!();
+    jest.mocked(controller.cleanup).mockImplementation(() => {
+      order.push('controller');
+    });
     const hardReset = jest.spyOn(storageRepository, 'hardReset').mockImplementation(async () => {
       order.push('storage');
       return { success: true };
     });
 
+    const application = createApplication();
     act(() => {
-      const application = createApplication();
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
-
     await act(async () => {
-      await renderer!.root.findByProps({ children: 'Start over' }).props.onClick();
+      await application.dispatch({ type: 'resume' });
+    });
+    await flushEffects();
+    await act(async () => {
+      await application.dispatch({ type: 'reset' });
     });
 
-    expect(destroyController).toHaveBeenCalledTimes(1);
+    expect(controller.cleanup).toHaveBeenCalledTimes(1);
     expect(hardReset).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['controller', 'storage']);
   });

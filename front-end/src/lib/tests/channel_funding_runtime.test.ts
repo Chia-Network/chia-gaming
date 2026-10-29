@@ -130,7 +130,7 @@ describe('durable channel funding record', () => {
       60_000,
     );
     replacement.refreshProviderReadiness();
-    const snapshot = jest.spyOn(replacement, 'snapshotGameSessionCoinInterest');
+    const snapshot = jest.spyOn(replacement, 'updateCoinInterest');
     try {
       controller.attachBlockchain(replacement);
       await controller.flushPendingWork();

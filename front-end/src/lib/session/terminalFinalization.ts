@@ -3,7 +3,6 @@ import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './inde
 import { markSavedSession } from './saveCoordination';
 import { selectDashboardCoins } from './selectors';
 import type { SessionController } from './SessionController';
-import { destroyFlushedTerminalSessionController } from './sessionHost';
 import {
   buildDurableApplicationState,
   type TerminalCapture as TerminalSnapshotInput,
@@ -39,7 +38,7 @@ const defaultDependencies: TerminalFinalizationDependencies = {
     await storageRepository.write(snapshot);
   },
   updateMarker: markSavedSession,
-  teardown: destroyFlushedTerminalSessionController,
+  teardown: (controller) => controller.cleanup(),
 };
 
 const pendingFinalizations = new WeakMap<SessionController, Promise<TerminalFinalizationResult>>();
@@ -55,8 +54,9 @@ export function finalizeTerminalSession(
     controller: SessionController;
     identity: TerminalSessionIdentity;
   },
-  dependencies: TerminalFinalizationDependencies = defaultDependencies,
+  overrides: Partial<TerminalFinalizationDependencies> = {},
 ): Promise<TerminalFinalizationResult> {
+  const dependencies = { ...defaultDependencies, ...overrides };
   const existing = pendingFinalizations.get(args.controller);
   if (existing) return existing;
 

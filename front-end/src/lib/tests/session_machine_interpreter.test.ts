@@ -763,8 +763,6 @@ describe('session machine controller command failures', () => {
       sendMessage: () => true,
       sendAck: () => true,
       sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
     });
     controller.setGameSession({
       coins_of_interest: () => [],

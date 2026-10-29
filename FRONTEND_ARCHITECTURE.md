@@ -20,7 +20,10 @@ React components and hooks render published state and send typed intents. The
 non-React application lives in `lib/application/Application.ts`; `App.tsx` starts
 it and attaches `Shell` as a view. Removing or replacing a view only removes its
 subscription. Wallet, hub, recovery, and session execution continue independently
-of the game component's render lifetime.
+of the game component's render lifetime. Application owns the session reference,
+asynchronous startup, retirement, and transaction-publishing policy. The helpers
+in `sessionHost.ts` construct, configure, and restore a supplied session; they
+hold no global session or publishing-policy state.
 
 ```mermaid
 flowchart LR
@@ -49,13 +52,19 @@ terminal-notification dismissals.
 readiness subscriptions, its sole poller, and recovery notices. Its setup view omits `finalize`;
 field values return through a wallet intent. Session execution receives the
 `SessionWallet` facet: queued address/solution/spend operations, readiness,
-provider ownership, coin interest, and a `SessionFunding` facet containing only
+provider ownership, batched coin-interest changes, and a `SessionFunding` facet containing only
 funding commands and observations. Provider registration, recovery controls, and
-credentials stay within the wallet module. There is no second global poller.
+credentials stay within the wallet module. A session readiness subscription also
+notifies wallet recovery internally. `updateCoinInterest` applies a complete Rust
+watch/unwatch batch or refreshes the authoritative watch snapshot. A terminal
+session can pause chain polling without stopping wallet balance monitoring or
+disconnecting the provider. There is no second global poller.
 Connect/finalize return their outcome; Application decides when to select the
 hub tab, so wallet events contain no tab-selection policy. WalletConnect normalization and silent
 recovery remain TypeScript responsibilities. Existing terminal polling pause and
-resume ordering is preserved.
+resume ordering is preserved. Canceling or failing wallet setup leaves an existing
+session intact. Simulator resume establishes its local poller even if connection
+setup fails, matching the silent-connect fallback.
 
 `HubConnection` emits tagged `HubEvent` values and reads current presence through
 one supplied function. Peer/rejection transport receives only `PeerCarrier`'s
@@ -74,7 +83,9 @@ notifications and both ordinary-failure and authority-loss behavior.
 The runtime emits `batch-complete` at the existing projection point. Application
 consumes it, performs lifecycle coordination, and publishes one coherent view
 batch. Immediate channel readiness uses an ordered `readiness` event so it keeps
-its existing timing without exposing a mutable controller getter. Both streams
+its existing timing without exposing a mutable controller getter. Publishing-policy
+changes use that same event pipe, with Application retaining the policy across
+session replacement. Both streams
 preserve listener order under synchronous reentry. View attachment does not
 activate a runtime, take authority, replay alerts, or start a checkpoint.
 
@@ -2187,9 +2198,9 @@ removes competing state owners or duplicate lifecycle mechanisms.
 | `front-end/src/lib/gameMountRegistry.tsx`            | One frozen/live discriminated mount dispatched through the selected package                                                                  |
 | `games/calpoker/ui/useCalpokerHand.ts`               | Calpoker hook: five-step protocol, card parsing, move submission                                                                             |
 | `front-end/src/lib/session/SessionController.ts`           | WASM bridge (`SessionController` class): message delivery, block data, event queue, `getWasmFields()` for persistence                        |
-| `front-end/src/lib/session/WasmStateInit.ts`               | WASM bootstrap: page-load binary/preset fetch, background factory warm, create cradle                                                        |
+| `front-end/src/lib/session/wasmLoader.ts`               | Shared WASM/preset loader; construction and restore use the loaded module directly                                                        |
 | `front-end/src/lib/gameIdentities.ts`                | Factory warmup and the catalog↔hash table used at the WASM propose/notify boundary                                                          |
-| `front-end/src/lib/session/sessionHost.ts`               | Singleton management: `getOrCreateSessionController` / `destroySessionController`; restore path for session persistence                      |
+| `front-end/src/lib/session/sessionHost.ts`               | Stateless session construction, configuration, and restore helpers; Application owns the instance                      |
 | `front-end/src/services/PeerSession.ts`              | Per-session peer state: session ID, peer ID, liveness, message buffering/routing, send methods                                               |
 | `front-end/src/lib/session/storageRepository.ts`     | Aggregate and authority owner: atomic claim/read, generation-fenced root mutation, serialized exact write, and reset                         |
 | `front-end/src/lib/session/channelFundingRuntime.ts` | Channel-funding-only provider orchestration, material delivery, confirmation/timeout retirement, recovery, and exact cleanup                 |

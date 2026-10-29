@@ -1,7 +1,9 @@
+import * as wasmInit from '../session/wasmLoader';
+import { mockWasmConnection } from './message_protocol.harness';
 import { configureSessionExecution } from './session_execution.harness';
 import 'fake-indexeddb/auto';
 import { createApplication, type Application } from '../application/Application';
-import * as blobSingleton from '../session/sessionHost';
+import * as sessionHost from '../session/sessionHost';
 import type { HubEvent } from '../../services/HubConnection';
 import { observeSessionProjection, stubApplicationSession } from './session_frontend.harness';
 
@@ -153,12 +155,15 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     mockGameProps = null;
     mockSession = stubApplicationSession(channelModel('OurWalletMakingOfferAcceptance'));
     mockProjectFundingOffer = () => mockSession.publish(channelModel('OfferSent'));
+    jest.spyOn(sessionHost, 'createSessionController').mockImplementation((_wallet, peer) => {
+      mockPeer = peer;
+      return mockSession.controller;
+    });
+    jest.spyOn(wasmInit, 'ensureWasmLoaded').mockResolvedValue(mockWasmConnection);
+    jest.spyOn(sessionHost, 'restoreSession').mockResolvedValue();
     jest
-      .spyOn(blobSingleton, 'getOrCreateSessionController')
-      .mockImplementation((_wallet, peer) => {
-        mockPeer = peer;
-        return mockSession.controller;
-      });
+      .spyOn(sessionHost, 'configSessionController')
+      .mockImplementation(async (controller) => controller);
     mockHub = null;
     mockSendToPeer.mockClear();
     unhandledRejections = [];
@@ -393,7 +398,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
   it('fences queued session startup and detached session events after takeover', async () => {
     await mountHandshake();
     await flushEffects();
-    const calls = jest.mocked(blobSingleton.getOrCreateSessionController).mock.calls.length;
+    const calls = jest.mocked(sessionHost.createSessionController).mock.calls.length;
     await act(async () => {
       storageRepository.loseAuthority('takeover');
       await Promise.resolve();
@@ -403,7 +408,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     expect(application.snapshot().dashboardSessionModel?.channel.status.state).toBe(
       'OurWalletMakingOfferAcceptance',
     );
-    expect(jest.mocked(blobSingleton.getOrCreateSessionController).mock.calls).toHaveLength(calls);
+    expect(jest.mocked(sessionHost.createSessionController).mock.calls).toHaveLength(calls);
   });
 
   it('cancels an unreachable peer before any funding offer is sent', async () => {

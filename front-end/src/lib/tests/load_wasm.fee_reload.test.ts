@@ -20,7 +20,7 @@ it(
   async () => {
     const poller = await startSimulator(['cafe00014', 'dead00014']);
     if (!poller) return;
-    poller.stop();
+    poller.pauseChainPolling();
     await pollOnce(poller);
     const provider = fakeBlockchainInfo.getWalletOfferProvider();
     if (provider) channelFundingRuntime.attachProvider(provider);
@@ -195,7 +195,7 @@ it(
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);
       }
-      poller.stop();
+      poller.pauseChainPolling();
       for (const adapter of adapters) adapter.blob?.cleanup();
       errorSubscription.unsubscribe();
       fakeBlockchainInfo.spend = originalSpend;
@@ -231,7 +231,7 @@ it(
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);
       }
-      poller.stop();
+      poller.pauseChainPolling();
       for (const adapter of adapters) adapter.blob?.cleanup();
     }
   },

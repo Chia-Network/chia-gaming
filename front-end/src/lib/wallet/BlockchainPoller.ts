@@ -354,17 +354,26 @@ export class BlockchainPoller {
     this.attachedWalletProvider = null;
   }
 
-  notifyProviderReadiness(
+  onSessionReadiness(
     owner: Pick<ProviderOwner, 'installationPlayerId' | 'peerSessionId'>,
-  ): void {
-    const provider = this.rpc.getWalletOfferProvider(owner);
-    if (provider) this.channelFundingRuntime.providerReconnectReady(provider);
+    listener: (ready: boolean) => void,
+  ): () => void {
+    const notifyProvider = () => {
+      const provider = this.rpc.getWalletOfferProvider(owner);
+      if (provider) this.channelFundingRuntime.providerReconnectReady(provider);
+    };
+    const unsubscribe = this.rpc.onPlayReadinessChange((ready) => {
+      if (ready) notifyProvider();
+      listener(ready);
+    });
+    notifyProvider();
+    return unsubscribe;
   }
 
   attachGameSession(cradle: PollingGameSession) {
     this.sessions.add(cradle);
     this.sessionInterestGeneration.set(cradle, 0);
-    this.snapshotGameSessionCoinInterest(cradle);
+    this.updateCoinInterest(cradle);
   }
 
   detachGameSession(cradle: PollingGameSession) {
@@ -375,34 +384,24 @@ export class BlockchainPoller {
     this.refreshCoinInterest();
   }
 
-  snapshotGameSessionCoinInterest(
+  updateCoinInterest(
     cradle: PollingGameSession,
-    watchedCoins?: CoinPollInterest[],
+    changes?: { watchCoins: CoinPollInterest[]; unwatchCoins: CoinPollInterest[] },
   ): void {
     if (!this.sessions.has(cradle)) return;
-    const snapshot = watchedCoins ?? cradle.snapshotWatchedCoins();
-    this.sessionCoins.set(cradle, snapshot);
-    this.markSnapshotPending(cradle);
-    this.refreshCoinInterest();
-  }
-
-  watchCoin(cradle: PollingGameSession, coin: CoinPollInterest): void {
-    if (!this.sessions.has(cradle)) return;
-    const byName = new Map(
-      (this.sessionCoins.get(cradle) ?? []).map((existing) => [existing.coin_name, existing]),
-    );
-    byName.set(coin.coin_name, coin);
-    this.sessionCoins.set(cradle, [...byName.values()]);
-    this.markSnapshotPending(cradle);
-    this.refreshCoinInterest();
-  }
-
-  unwatchCoin(cradle: PollingGameSession, coin: CoinPollInterest): void {
-    if (!this.sessions.has(cradle)) return;
-    const remaining = (this.sessionCoins.get(cradle) ?? []).filter(
-      (existing) => existing.coin_name !== coin.coin_name,
-    );
-    this.sessionCoins.set(cradle, remaining);
+    let coins: CoinPollInterest[];
+    if (changes) {
+      if (!changes.watchCoins.length && !changes.unwatchCoins.length) return;
+      const byName = new Map(
+        (this.sessionCoins.get(cradle) ?? []).map((coin) => [coin.coin_name, coin]),
+      );
+      for (const coin of changes.watchCoins) byName.set(coin.coin_name, coin);
+      for (const coin of changes.unwatchCoins) byName.delete(coin.coin_name);
+      coins = [...byName.values()];
+    } else {
+      coins = cradle.snapshotWatchedCoins();
+    }
+    this.sessionCoins.set(cradle, coins);
     this.markSnapshotPending(cradle);
     this.refreshCoinInterest();
   }
@@ -504,9 +503,9 @@ export class BlockchainPoller {
 
   /**
    * Stop game-session height/coin watching. Does not stop wallet balance
-   * interest — that is wallet-lifetime (`stopBalanceInterest` / deactivate).
+   * interest — that is wallet-lifetime (`stopBalanceInterest`).
    */
-  stop() {
+  pauseChainPolling() {
     this.running = false;
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();

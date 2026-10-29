@@ -239,9 +239,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   wc: WasmConnection | undefined;
   private peerSendKeepalive: (() => void) | null = null;
   private transactionPublishNerfed = false;
-  private transactionPublishNerfPolicy:
-    | ((nerfed: boolean, apply: (nerfed: boolean) => void) => void)
-    | null = null;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private reliableTransport: ReliablePeerTransport;
@@ -786,17 +783,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       this.blockchainAttached = false;
     }
     this.puzzleSolutionReadinessUnsubscribe?.();
-    const readinessUnsubscribe = blockchain.rpc.onPlayReadinessChange((ready) => {
-      this.submissionPump.providerReady(ready);
-      if (ready) {
-        blockchain.notifyProviderReadiness(this.walletProviderOwnerSelector());
-        this.syncPendingCoinSolutionRequests();
-        this.retryPendingCoinSolutionDeliveries();
-        this.requestFeeUpgrades();
-      }
-    });
-    this.puzzleSolutionReadinessUnsubscribe =
-      typeof readinessUnsubscribe === 'function' ? readinessUnsubscribe : null;
     const alreadyAttached = this.blockchain === blockchain && this.blockchainAttached;
     this.blockchain = blockchain;
     const owner = this.currentProviderOwner();
@@ -811,7 +797,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     }
     this.scheduleFunding();
     if (alreadyAttached) {
-      blockchain.snapshotGameSessionCoinInterest(this);
+      blockchain.updateCoinInterest(this);
     } else {
       blockchain.attachGameSession(this);
       this.blockchainAttached = true;
@@ -819,10 +805,21 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     this.syncPendingCoinSolutionRequests();
     this.retryPendingCoinSolutionDeliveries();
     this.flushPendingCoinStates();
-    if (blockchain.resolveProviderOwner(this.walletProviderOwnerSelector())) {
-      blockchain.notifyProviderReadiness(this.walletProviderOwnerSelector());
+    const readinessUnsubscribe = blockchain.onSessionReadiness(
+      this.walletProviderOwnerSelector(),
+      (ready) => {
+        this.submissionPump.providerReady(ready);
+        if (ready) {
+          this.syncPendingCoinSolutionRequests();
+          this.retryPendingCoinSolutionDeliveries();
+          this.requestFeeUpgrades();
+        }
+      },
+    );
+    this.puzzleSolutionReadinessUnsubscribe =
+      typeof readinessUnsubscribe === 'function' ? readinessUnsubscribe : null;
+    if (blockchain.resolveProviderOwner(this.walletProviderOwnerSelector()))
       this.requestFeeUpgrades();
-    }
     this.notifyTerminalFinalizationRetry();
   }
 
@@ -1030,7 +1027,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       this.escalatePeerFailure();
       return;
     }
-    this.blockchain?.snapshotGameSessionCoinInterest(this);
+    this.blockchain?.updateCoinInterest(this);
     this.flushPendingCoinStates();
     this.spillStoredMessages();
   }
@@ -1208,7 +1205,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
 
   private requestFreshChainSnapshot(): void {
     if (!this.blockchain || !this.cradle || this.protocolStopped) return;
-    this.blockchain.snapshotGameSessionCoinInterest(this, this.snapshotWatchedCoins());
+    this.blockchain.updateCoinInterest(this);
   }
 
   /**
@@ -1259,12 +1256,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
 
     const blockchain = this.blockchain;
     if (!terminal) {
-      for (const coin of result.watchCoins) {
-        blockchain?.watchCoin(this, coin);
-      }
-      for (const coin of result.unwatchCoins) {
-        blockchain?.unwatchCoin(this, coin);
-      }
+      blockchain?.updateCoinInterest(this, result);
     }
     for (const event of result.events) {
       if (!terminal || this.isTerminalPresentationEvent(event)) {
@@ -1357,7 +1349,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
 
   private stopProtocolWork(): void {
     this.protocolStopped = true;
-    this.blockchain?.stop();
+    this.blockchain?.pauseChainPolling();
     this.stopKeepaliveTimer();
     // A terminal drain is a replacement boundary, not an append-only update:
     // stale status/protocol work must not render after it. Per-game terminal
@@ -1751,10 +1743,6 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     return this.reliableTransport.connectivity(event);
   }
 
-  resendUnacked(): boolean {
-    return this.reportPeerConnectivity('registered');
-  }
-
   getPeerProtocol() {
     return this.reliableTransport.protocol;
   }
@@ -2121,25 +2109,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     return this.transactionPublishNerfed;
   }
 
-  setTransactionPublishNerfPolicy(
-    policy: (nerfed: boolean, apply: (nerfed: boolean) => void) => void,
-  ): void {
-    this.transactionPublishNerfPolicy = policy;
-  }
-
   setTransactionPublishNerfed(nerfed: boolean): void {
-    if (this.transactionPublishNerfPolicy) {
-      this.transactionPublishNerfPolicy(nerfed, (value) =>
-        this.applyTransactionPublishNerfed(value),
-      );
-      return;
-    }
-    this.applyTransactionPublishNerfed(nerfed);
-  }
-
-  private applyTransactionPublishNerfed(nerfed: boolean): void {
     this.transactionPublishNerfed = nerfed;
     log(`[wasm] transaction publish ${nerfed ? 'nerfed' : 'enabled'}`);
+    this.publishFrontend({ type: 'publishing-policy', nerfed });
   }
 
   nerf(): void {

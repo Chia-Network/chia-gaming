@@ -3,13 +3,7 @@ import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { rewriteFeeRateRejection, SessionController } from '../session/SessionController';
-import {
-  destroySessionController,
-  getOrCreateSessionController,
-  isTransactionPublishNerfed,
-  setTransactionPublishNerfed,
-  subscribeTransactionPublishNerfed,
-} from '../session/sessionHost';
+import { createSessionController } from '../session/sessionHost';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { pollOnce } from './blockchain_poller.driver';
 import {
@@ -110,13 +104,11 @@ describe('terminal protocol cleanup', () => {
 });
 
 describe('transaction submission', () => {
-  it('routes controller nerfs through the singleton policy and notifies subscribers', () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  it('publishes controller nerfs through the ordered session event pipe', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const updates: boolean[] = [];
-    const unsubscribe = subscribeTransactionPublishNerfed((nerfed) => updates.push(nerfed));
-    const blob = getOrCreateSessionController(
+    const blob = createSessionController(
       null,
       makePeerConn(sentMessages, sentAcks),
       'test',
@@ -125,18 +117,17 @@ describe('transaction submission', () => {
       true,
     );
 
-    expect(isTransactionPublishNerfed()).toBe(false);
+    const unsubscribe = blob.frontend.subscribe((event) => {
+      if (event.type === 'publishing-policy') updates.push(event.nerfed);
+    });
     blob.nerf();
-    expect(isTransactionPublishNerfed()).toBe(true);
     expect(blob.isTransactionPublishNerfed()).toBe(true);
-    setTransactionPublishNerfed(false);
-    expect(isTransactionPublishNerfed()).toBe(false);
+    blob.setTransactionPublishNerfed(false);
     expect(blob.isTransactionPublishNerfed()).toBe(false);
-    expect(updates).toEqual([false, true, false]);
+    expect(updates).toEqual([true, false]);
 
     unsubscribe();
-    destroySessionController();
-    errorSpy.mockRestore();
+    blob.cleanup();
   });
 
   it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {

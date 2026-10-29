@@ -2,7 +2,7 @@ import { observeWasmEvents } from './session_execution.harness';
 import { configureSessionExecution } from './session_execution.harness';
 import type { Subscription } from 'rxjs';
 import { SessionController } from '../session/SessionController';
-import { WasmStateInit } from '../session/WasmStateInit';
+import { ensureWasmLoaded } from '../session/wasmLoader';
 import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { rehydrateDurableApplicationState } from '../session/persistence';
 import { type DurableApplicationState, type LiveSessionSave } from '../session/saveEnvelope';
@@ -115,7 +115,7 @@ export function createReloadableSessionLane(
 export async function injectSessionReload(
   lane: ReloadableSessionLane,
   poller: BlockchainPoller,
-  wasmStateInit = new WasmStateInit(fetchPreset),
+  wasmConnection?: import('../../types/ChiaGaming').WasmConnection,
   whileReloaded?: () => Promise<void>,
 ): Promise<{
   lane: ReloadableSessionLane;
@@ -174,7 +174,9 @@ export async function injectSessionReload(
   );
   controller.attachBlockchain(poller);
   controller.kickSystem(2);
-  await controller.beginRestore(restoreSession(controller, bootstrap, wasmStateInit));
+  await controller.beginRestore(
+    restoreSession(controller, bootstrap, wasmConnection ?? (await ensureWasmLoaded(fetchPreset))),
+  );
 
   return {
     lane: restoredLane,

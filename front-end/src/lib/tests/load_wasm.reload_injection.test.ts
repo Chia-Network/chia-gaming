@@ -5,7 +5,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
-import { WasmStateInit } from '../session/WasmStateInit';
+import { ensureWasmLoaded } from '../session/wasmLoader';
 import type { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
@@ -183,7 +183,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       0,
       'restore alone must wait for reconnect or peer availability before replay',
     );
-    lanes[0].controller.resendUnacked();
+    lanes[0].controller.reportPeerConnectivity('registered');
     assert.ok(
       adapters[0].waiting_messages.length > 0,
       'reconnected transport must replay its unacknowledged proposal',
@@ -404,14 +404,14 @@ async function runHandshakeRoleReload(
       `a11ce00${suffix}`,
       true,
       adapters[0].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
     ),
     initSessionController(
       poller,
       `b0b7000${suffix}`,
       false,
       adapters[1].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
     ),
   ]);
   controllers.forEach((controller, index) => {
@@ -422,7 +422,7 @@ async function runHandshakeRoleReload(
   await flushWrapperDrain(adapters);
   // This test owns every chain observation so the checkpoint cannot advance
   // between the pre-reload snapshot and the post-restore comparison.
-  poller.stop();
+  poller.pauseChainPolling();
 
   const deliverNext = async (sender: 0 | 1): Promise<void> => {
     const outbound = adapters[sender].outbound_messages();
@@ -516,7 +516,7 @@ it(
       'b0b70010',
       false,
       adapters[1].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
       100n,
       100n,
       delayedBehavior,
@@ -527,7 +527,7 @@ it(
       'a11ce010',
       true,
       adapters[0].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
       100n,
       100n,
       immediateBehavior,

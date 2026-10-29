@@ -1,6 +1,6 @@
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
-import { WasmStateInit, storeInitArgs } from '../session/WasmStateInit';
+import { ensureWasmLoaded, storeInitArgs } from '../session/wasmLoader';
 import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
@@ -45,11 +45,9 @@ it(
         },
         sendAck: (_ackMsgno: number) => true,
         sendKeepalive: () => true,
-        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
-        close: () => {},
       };
-      const wasm_init1 = new WasmStateInit(fetchPreset);
       storeInitArgs(async () => {}, WholeWasmObject);
+      const wasm_init1 = await ensureWasmLoaded(fetchPreset);
       const wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
@@ -68,10 +66,8 @@ it(
         },
         sendAck: (_ackMsgno: number) => true,
         sendKeepalive: () => true,
-        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
-        close: () => {},
       };
-      const wasm_init2 = new WasmStateInit(fetchPreset);
+      const wasm_init2 = await ensureWasmLoaded(fetchPreset);
       const wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',

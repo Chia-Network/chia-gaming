@@ -1,12 +1,11 @@
 import { Observable, Subject } from 'rxjs';
-import type { PeerProtocolApi } from '../../../../wasm/contract';
 import { PRESET_FILES } from '../../generated/gamePresets';
 import {
   installPeerProtocol,
   isPeerProtocolInstalled,
   resetPeerProtocolForTests,
 } from '../../services/peerProtocol';
-import { ChiaGame, WasmConnection, WasmInitFn } from '../../types/ChiaGaming';
+import { WasmConnection, WasmInitFn } from '../../types/ChiaGaming';
 import { recoverFromMissingDeployAsset, resolveDeployAssetUrl } from '../deployFreshness';
 import { _resetGameIdentityWarmupForTests, completeRegisteredGames } from '../gameIdentities';
 
@@ -27,7 +26,6 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
   return new Uint8Array(await resp.arrayBuffer());
 }
 
-let presetFetcher: (key: string) => Promise<Uint8Array> = fetchDeployPreset;
 let loadPromise: Promise<WasmConnection> | null = null;
 let moduleLoadPromise: Promise<WasmConnection> | null = null;
 
@@ -105,9 +103,9 @@ export async function ensurePeerProtocolLoaded(): Promise<void> {
   await ensureWasmModuleLoaded();
 }
 
-async function runWasmLoad(): Promise<WasmConnection> {
+async function runWasmLoad(fetchPreset: typeof fetchDeployPreset): Promise<WasmConnection> {
   const presetFetches = Promise.all(
-    PRESET_FILES.map(async (name) => ({ name, content: await presetFetcher(name) })),
+    PRESET_FILES.map(async (name) => ({ name, content: await fetchPreset(name) })),
   );
   const [wasmConn, presets] = await Promise.all([ensureWasmModuleLoaded(), presetFetches]);
   for (const { name, content } of presets) wasmConn.cache_file(name, content);
@@ -128,15 +126,15 @@ export function startWasmBootstrap(): void {
 
 /**
  * Idempotent while in flight or after success: reuses the same promise.
- * On failure, clears so a later getWasmConnection / Accept can retry.
+ * On failure, clears so a later session startup can retry.
  * Requires storeInitArgs to have run (or waits for it).
  */
-export function ensureWasmLoaded(): Promise<WasmConnection> {
+export function ensureWasmLoaded(fetchPreset = fetchDeployPreset): Promise<WasmConnection> {
   if (!loadPromise) {
     loadPromise = (async () => {
       try {
         await waitForInitArgs();
-        return await runWasmLoad();
+        return await runWasmLoad(fetchPreset);
       } catch (err) {
         loadPromise = null;
         throw err;
@@ -154,28 +152,5 @@ export function _resetWasmLoadForTests(): void {
   logInitialized = false;
   chia_gaming_init = undefined;
   cg = undefined;
-  presetFetcher = fetchDeployPreset;
   _resetGameIdentityWarmupForTests();
-}
-
-export class WasmStateInit {
-  wasmConnection: WasmConnection | undefined;
-  fetchPreset: (key: string) => Promise<Uint8Array>;
-
-  constructor(fetchPreset: (key: string) => Promise<Uint8Array>) {
-    this.fetchPreset = fetchPreset;
-    presetFetcher = fetchPreset;
-  }
-
-  getWasmConnection(): Promise<WasmConnection> {
-    return ensureWasmLoaded().then((wasmConn) => {
-      this.wasmConnection = wasmConn;
-      return wasmConn;
-    });
-  }
-
-  deserializeGame(serializedGame: Uint8Array, peer: PeerProtocolApi): ChiaGame {
-    peer.restore_channel(serializedGame);
-    return peer;
-  }
 }

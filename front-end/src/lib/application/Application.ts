@@ -87,19 +87,16 @@ import {
   type DurableRejectionTransport,
 } from '../session/saveEnvelope';
 import { selectGameSessionView } from '../session/selectors';
-import { RestoreStatus } from '../session/SessionController';
+import { SessionController, RestoreStatus } from '../session/SessionController';
 import type {
   SessionFrontend,
   SessionPresentation,
   TerminalSessionPresentation,
 } from '../session/sessionFrontend';
 import {
-  destroySessionController,
-  getOrCreateSessionController,
-  isTransactionPublishNerfed,
-  sessionController,
-  setTransactionPublishNerfed as setTransactionPublishNerf,
-  subscribeTransactionPublishNerfed,
+  createSessionController,
+  configSessionController,
+  restoreSession,
 } from '../session/sessionHost';
 import { clearGameSessionState } from '../session/sessionStateTransitions';
 import {
@@ -110,7 +107,7 @@ import {
 } from '../session/shellSessionState';
 import { storageRepository } from '../session/storageRepository';
 import { finalizeTerminalSession } from '../session/terminalFinalization';
-import { ensurePeerProtocolLoaded } from '../session/WasmStateInit';
+import { ensurePeerProtocolLoaded, ensureWasmLoaded } from '../session/wasmLoader';
 import { isErrorSettlementOutcome } from '../settlement';
 import type { SessionWallet } from '../wallet/sessionWallet';
 import { WalletConnection, type WalletEvent, type WalletView } from '../wallet/WalletConnection';
@@ -133,8 +130,6 @@ const IDLE_PEER_CONNECTION: PeerConnectionResult = {
   sendMessage: () => false,
   sendAck: () => false,
   sendKeepalive: () => false,
-  hostLog: () => {},
-  close: () => {},
 };
 function isAbandonWaitingState(
   state: SessionModel['channel']['status']['state'] | null | undefined,
@@ -285,6 +280,15 @@ export function createApplication() {
     if (Object.is(state[key], next)) return;
     state[key] = next;
     publish();
+  }
+  let sessionController: SessionController | null = null;
+  function destroySessionController() {
+    sessionController?.cleanup();
+    sessionController = null;
+  }
+  function setTransactionPublishNerf(nerfed: boolean) {
+    sessionController?.setTransactionPublishNerfed(nerfed);
+    update('transactionPublishNerfed', nerfed);
   }
   let started = false;
   const listeners = new Set<(event: ApplicationEvent) => void>();
@@ -456,8 +460,6 @@ export function createApplication() {
     sendMessage: (n, m) => (peerSession ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
     sendAck: (n) => (peerSession ?? IDLE_PEER_CONNECTION).sendAck(n),
     sendKeepalive: () => (peerSession ?? IDLE_PEER_CONNECTION).sendKeepalive(),
-    hostLog: (m) => (peerSession ?? IDLE_PEER_CONNECTION).hostLog(m),
-    close: () => (peerSession ?? IDLE_PEER_CONNECTION).close(),
   };
   let walletEvents: (event: WalletEvent) => void = () => {};
   const setWalletView = (view: WalletView) => {
@@ -466,9 +468,8 @@ export function createApplication() {
     if (changed) updateReadiness();
   };
   const toggleTransactionPublishNerf = () => {
-    if (isTransactionPublishNerfed()) {
+    if (state.transactionPublishNerfed) {
       setTransactionPublishNerf(false);
-      update('transactionPublishNerfed', false);
       return;
     }
     update('confirmDialog', {
@@ -477,7 +478,6 @@ export function createApplication() {
       confirmLabel: 'Enable nerfing',
       onConfirm: () => {
         setTransactionPublishNerf(true);
-        update('transactionPublishNerfed', true);
         update('confirmDialog', null);
       },
     });
@@ -1362,7 +1362,7 @@ export function createApplication() {
                   conn.setBusy(restoreBusy);
                 }
                 if (peerSession && (!prevMine || prevMine === playerId)) {
-                  if (sessionController) sessionController.resendUnacked();
+                  if (sessionController) sessionController.reportPeerConnectivity('registered');
                   else replayPeerUnacked();
                 }
                 replayRejectionPeers();
@@ -1512,9 +1512,6 @@ export function createApplication() {
       case 'fee-changed':
         update('defaultFee', storageRepository.query('defaultFee'));
         break;
-      case 'reset-session':
-        clearSessionPreservingHistory();
-        break;
       case 'detaching': {
         const poller = walletOwner.sessionAccess();
         if (poller && sessionController) sessionController.detachBlockchain(poller);
@@ -1628,10 +1625,17 @@ export function createApplication() {
     };
     let terminal;
     try {
-      terminal = await finalizeTerminalSession({
-        controller,
-        identity,
-      });
+      terminal = await finalizeTerminalSession(
+        { controller, identity },
+        {
+          teardown: (finished) => {
+            if (sessionController !== finished) {
+              throw new Error('Terminal finalization lost ownership of its session');
+            }
+            destroySessionController();
+          },
+        },
+      );
     } catch (error) {
       if (
         error instanceof StorageAuthorityLostError ||
@@ -2270,7 +2274,8 @@ export function createApplication() {
     if (!mount.keepSession) return;
     if (mount.startSession) sessionStarted = true;
     const wallet = walletOwner.sessionAccess();
-    const controller = getOrCreateSessionController(
+    const created = sessionController === null;
+    const controller = (sessionController ??= createSessionController(
       wallet,
       peer,
       uniqueId,
@@ -2281,9 +2286,7 @@ export function createApplication() {
       params.pairingToken,
       params.perGameAmount,
       () => storageRepository.query('defaultFee'),
-      Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
-      Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
-    );
+    ));
     if (params.myAlias) controller.myAlias = params.myAlias;
     if (params.opponentAlias) controller.opponentAlias = params.opponentAlias;
     if (frontend !== controller.frontend) {
@@ -2291,6 +2294,10 @@ export function createApplication() {
       frontend = controller.frontend;
       resolvedPhaseReported = false;
       resolving = null;
+      if (created) {
+        controller.setTransactionPublishNerfed(state.transactionPublishNerfed);
+        startSession(controller, wallet, params);
+      }
       const source = frontend;
       detachSessionEvents = source.subscribe((event) => {
         if (frontend !== source) return;
@@ -2300,6 +2307,8 @@ export function createApplication() {
             sessionPresentation = { ...sessionPresentation, channelReady: event.ready };
             publish();
           }
+        } else if (event.type === 'publishing-policy') {
+          update('transactionPublishNerfed', event.nerfed);
         } else if (sessionPresentation) reportSessionPhase(sessionPresentation);
       });
       batch(() => presentSession(source.snapshot()));
@@ -2309,6 +2318,59 @@ export function createApplication() {
       attachedWallet = wallet;
       if (wallet) controller.attachBlockchain(wallet);
     }
+  }
+  function startSession(
+    controller: SessionController,
+    wallet: SessionWallet | null,
+    params: GameSessionParams,
+  ) {
+    if (sessionBootstrap?.state.session?.phase === 'live') {
+      const bootstrap = sessionBootstrap;
+      const restore = async () => {
+        try {
+          await restoreSession(controller, bootstrap, await ensureWasmLoaded());
+        } catch (error) {
+          console.error('[sessionController] restoreSession error:', error);
+          log(`[sessionController] restoreSession error: ${String(error)}`);
+          if (sessionController === controller) destroySessionController();
+          throw error;
+        }
+      };
+      void controller.beginRestore(restore()).catch(() => {});
+      return;
+    }
+    void (async () => {
+      try {
+        if (!wallet) throw new Error('Cannot start a new session without a blockchain connection');
+        // Preserve the accepted checkpoint before an asset fetch can trigger a deploy reload.
+        await storageRepository.checkpointDomainMutations();
+        if (sessionController !== controller) return;
+        const snapshot = storageRepository.patchApplicationState(clearGameSessionState);
+        await storageRepository.write(snapshot);
+        if (sessionController !== controller) return;
+        const wasm = await ensureWasmLoaded();
+        if (sessionController !== controller) return;
+        await configSessionController(
+          controller,
+          params.iStarted,
+          wasm,
+          wallet,
+          Number(params.channelTimeout ?? DEFAULT_CHANNEL_TIMEOUT_BLOCKS),
+          Number(params.unrollTimeout ?? DEFAULT_UNROLL_TIMEOUT_BLOCKS),
+        );
+      } catch (error) {
+        if (sessionController !== controller) return;
+        const message =
+          error instanceof Error
+            ? error.stack || error.message
+            : typeof error === 'object' && error !== null && 'data' in error
+              ? ((error as any).data?.error ?? String(error))
+              : String(error);
+        console.error('[sessionController] newSession error:', message);
+        log(`[sessionController] newSession error: ${message}`);
+        controller.receiveEvent({ type: 'error', error: message });
+      }
+    })();
   }
   function reportSessionPhase(presentation: SessionPresentation) {
     const { model, phase } = presentation;
@@ -2505,12 +2567,6 @@ export function createApplication() {
             storageRepository.updateCommon({ history: { diagnosticLog: next } });
           }),
         ),
-        (() => {
-          update('transactionPublishNerfed', isTransactionPublishNerfed());
-          return subscribeTransactionPublishNerfed((value) =>
-            update('transactionPublishNerfed', value),
-          );
-        })(),
         (() => {
           const onBeforeUnload = (event: BeforeUnloadEvent) => {
             if (!shouldWarnOnSessionUnload(sessions.state.sessionPhase)) return;

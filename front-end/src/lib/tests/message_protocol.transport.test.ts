@@ -726,7 +726,7 @@ describe('keepalive activity', () => {
         const close = enc('signed close completion');
         restorePeerState(blob, { messageNumber: 2n });
         restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: close }] });
-        blob.resendUnacked();
+        blob.reportPeerConnectivity('registered');
         expect(sentMessages).toContainEqual({ msgno: 1, msg: close });
         blob.deliverMessage(1n, body);
         await blob.flushPendingWork();

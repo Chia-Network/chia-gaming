@@ -133,6 +133,9 @@ fail while the process continues—such as untrusted peer validation, a chain
 observation, or synchronous game-hand mutation—and its temporary working copy
 must disappear before capture.
 
+Application owns the TypeScript session instance and its startup/retirement;
+wallet connection attempts do not own or clear that session. WASM initialization
+uses a shared loader, and restore invokes the existing Rust session directly.
 The live `SessionController` is the only dirty/coalescing scheduler. It owns
 protocol/controller/UI/transport drains and folds preference, history, funding,
 fee, and rejection mutations into the same quiescent snapshot. Channel-funding

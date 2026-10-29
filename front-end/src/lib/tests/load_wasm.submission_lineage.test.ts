@@ -48,7 +48,7 @@ it(
   async () => {
     const poller = await startSimulator(['cafe00021', 'dead00021']);
     if (!poller) return;
-    poller.stop();
+    poller.pauseChainPolling();
     await pollOnce(poller);
     const provider = fakeBlockchainInfo.getWalletOfferProvider();
     if (provider) channelFundingRuntime.attachProvider(provider);
@@ -138,7 +138,7 @@ it(
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);
       }
-      poller.stop();
+      poller.pauseChainPolling();
       for (const adapter of adapters) adapter.blob?.cleanup();
       fakeBlockchainInfo.spend = originalSpend;
       fakeBlockchainInfo.beginWalletOffer = originalBeginWalletOffer;

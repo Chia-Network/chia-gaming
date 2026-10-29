@@ -462,13 +462,6 @@ export class PeerSession implements PeerConnectionResult {
     return sent;
   }
 
-  hostLog(_msg: string): void {
-    /* no-op */
-  }
-  close(): void {
-    /* no-op; destroy() handles real cleanup */
-  }
-
   // --- Liveness ---
 
   get liveness(): PeerLiveness {

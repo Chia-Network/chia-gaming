@@ -36,7 +36,7 @@ export type WalletEvent =
   | { type: 'connected' }
   | { type: 'connection'; connected: boolean }
   | { type: 'readiness'; ready: boolean }
-  | { type: 'attention' | 'reset-session' | 'fee-changed' | 'detaching' };
+  | { type: 'attention' | 'fee-changed' | 'detaching' };
 
 function providerFor(type: BlockchainType) {
   return type === 'walletconnect'
@@ -101,7 +101,7 @@ export class WalletConnection {
   }
   setSessionPolling(active: boolean): void {
     if (active) this.poller?.start();
-    else this.poller?.stop();
+    else this.poller?.pauseChainPolling();
   }
   providerScope() {
     return this.provider?.getWalletOfferProvider()?.scope;
@@ -202,7 +202,6 @@ export class WalletConnection {
       } else {
         if (!this.provider) {
           this.update({ walletType: undefined });
-          this.emit({ type: 'reset-session' });
         }
         this.presentSetup(null);
         this.update({ connecting: false });
@@ -259,13 +258,14 @@ export class WalletConnection {
       this.complete(provider, type, interval);
     } catch (error) {
       console.warn('[wallet] resume connect failed, falling back', error);
-      if (!this.provider && type === 'simulator') this.complete(provider, type, interval);
+      if (!this.poller && type === 'simulator') this.complete(provider, type, interval);
       else this.update({ connecting: false });
     }
   }
 
   async cancel(): Promise<void> {
     this.aborted = true;
+    this.emit({ type: 'detaching' });
     this.poller?.stopBalanceInterest();
     const provider =
       this.provider ?? (this.view.walletType ? providerFor(this.view.walletType).provider : null);
@@ -283,7 +283,6 @@ export class WalletConnection {
       showSetup: false,
       error: null,
     });
-    this.emit({ type: 'reset-session' });
   }
 
   async disconnect(): Promise<void> {
@@ -302,7 +301,7 @@ export class WalletConnection {
   private stopPoller(): void {
     this.poller?.detachProvider();
     this.poller?.stopBalanceInterest();
-    this.poller?.stop();
+    this.poller?.pauseChainPolling();
     this.poller = null;
   }
 

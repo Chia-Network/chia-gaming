@@ -11,7 +11,6 @@ import {
 import { SessionController } from '../session/SessionController';
 import { restoreSession } from '../session/sessionHost';
 import { storageRepository } from '../session/storageRepository';
-import { WasmStateInit } from '../session/WasmStateInit';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   acceptedTerms,
@@ -361,7 +360,7 @@ describe('durability failures', () => {
   });
 });
 
-describe('resendUnacked', () => {
+describe('peer reconnection', () => {
   it('re-sends all un-acked messages via sendMessage', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
@@ -374,7 +373,7 @@ describe('resendUnacked', () => {
         { msgno: 2n, msg: enc('b') },
       ],
     });
-    blob.resendUnacked();
+    blob.reportPeerConnectivity('registered');
 
     expect(sentMessages).toEqual([
       { msgno: 1, msg: enc('a') },
@@ -429,10 +428,7 @@ describe('restore ordering', () => {
       game_session_serialization_schema: () => 4,
       registered_game_packages: () => [...TEST_PROTOCOL_IDS],
     } as unknown as WasmConnection;
-    const wasmStateInit = {
-      getWasmConnection: jest.fn(async () => restoreWasmConnection),
-      deserializeGame: jest.fn(() => cradle),
-    } as unknown as WasmStateInit;
+    Object.assign(blob.getPeerProtocol(), cradle, { restore_channel: jest.fn() });
 
     blob.kickSystem(2);
     blob.deliverMessage(1n, enc('already-processed'));
@@ -468,7 +464,7 @@ describe('restore ordering', () => {
     });
     expect(() => decodeDurableApplicationState(save)).not.toThrow();
     await blob.beginRestore(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), restoreWasmConnection),
     );
     unsubscribe();
 
@@ -548,23 +544,18 @@ describe('restore ordering', () => {
 describe('cradle serialization schema restore guard', () => {
   function makeRestoreHarness(deserializeGame: () => ChiaGame): {
     blob: SessionController;
-    wasmStateInit: WasmStateInit;
+    wasmConnection: WasmConnection;
     deserializeMock: jest.Mock;
   } {
     const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn([], []));
     setActiveBlob(blob);
-    const deserializeMock = jest.fn(deserializeGame);
-    const wasmStateInit = {
-      getWasmConnection: jest.fn(
-        async () =>
-          ({
-            game_session_serialization_schema: () => 4,
-            registered_game_packages: () => [...TEST_PROTOCOL_IDS],
-          }) as unknown as WasmConnection,
-      ),
-      deserializeGame: deserializeMock,
-    } as unknown as WasmStateInit;
-    return { blob, wasmStateInit, deserializeMock };
+    const deserializeMock = jest.fn(() => Object.assign(blob.getPeerProtocol(), deserializeGame()));
+    blob.getPeerProtocol().restore_channel = deserializeMock;
+    const wasmConnection = {
+      game_session_serialization_schema: () => 4,
+      registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+    } as unknown as WasmConnection;
+    return { blob, wasmConnection, deserializeMock };
   }
 
   it('rejects a whole aggregate with a missing cradle schema', async () => {
@@ -605,10 +596,10 @@ describe('cradle serialization schema restore guard', () => {
     await storageRepository.write(storageRepository.patchApplicationState(() => save));
     const memoryBefore = structuredClone(storageRepository.loadState());
     const durableBytesBefore = await readRawApplicationState();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+    const { blob, wasmConnection, deserializeMock } = makeRestoreHarness(makeMockCradle);
 
     await expect(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmConnection),
     ).rejects.toThrow('Unsupported saved game format: cradle schema 3; current schema is 4');
 
     expect(deserializeMock).not.toHaveBeenCalled();
@@ -632,13 +623,13 @@ describe('cradle serialization schema restore guard', () => {
       rewardPuzzleHash: '11'.repeat(32),
     });
     await storageRepository.checkpointDomainMutations();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
+    const { blob, wasmConnection, deserializeMock } = makeRestoreHarness(() => {
       throw new Error('corrupt current-schema cradle');
     });
     const save = (await storageRepository.readCurrentState())!;
 
     await expect(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmConnection),
     ).rejects.toThrow('corrupt current-schema cradle');
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);

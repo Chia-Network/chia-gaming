@@ -8,11 +8,10 @@ import {
   registerWasmLoader,
   startWasmBootstrap,
   storeInitArgs,
-  WasmStateInit,
-} from '../session/WasmStateInit';
+} from '../session/wasmLoader';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
 
-describe('WasmStateInit lazy load', () => {
+describe('WASM lazy load', () => {
   beforeEach(() => {
     _resetWasmLoadForTests();
   });
@@ -35,7 +34,6 @@ describe('WasmStateInit lazy load', () => {
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([1, 2, 3]));
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
 
     expect(initFn).not.toHaveBeenCalled();
@@ -69,11 +67,10 @@ describe('WasmStateInit lazy load', () => {
 
     const fetchPreset = jest.fn(async (_key: string) => new Uint8Array([1, 2, 3]));
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
 
-    const p1 = ensureWasmLoaded();
-    const p2 = ensureWasmLoaded();
+    const p1 = ensureWasmLoaded(fetchPreset);
+    const p2 = ensureWasmLoaded(fetchPreset);
     expect(p1).toBe(p2);
 
     const conn = await p1;
@@ -86,19 +83,18 @@ describe('WasmStateInit lazy load', () => {
       expect(wasm.cache_file).toHaveBeenCalledWith(name, expect.any(Uint8Array));
     }
 
-    const again = await new WasmStateInit(fetchPreset).getWasmConnection();
+    const again = await ensureWasmLoaded(fetchPreset);
     expect(again).toBe(wasm);
     expect(initCalls).toBe(1);
     expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length);
   });
 
-  it('getWasmConnection waits for storeInitArgs when called first', async () => {
+  it('ensureWasmLoaded waits for storeInitArgs when called first', async () => {
     const wasm = mockWasm();
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([9]));
 
-    const wsi = new WasmStateInit(fetchPreset);
-    const pending = wsi.getWasmConnection();
+    const pending = ensureWasmLoaded(fetchPreset);
 
     // Allow the wait subscription to attach before wiring init args.
     await Promise.resolve();
@@ -121,11 +117,10 @@ describe('WasmStateInit lazy load', () => {
       return new Uint8Array([1]);
     });
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
 
-    await expect(ensureWasmLoaded()).rejects.toThrow('transient preset fetch');
-    await expect(ensureWasmLoaded()).resolves.toBe(wasm);
+    await expect(ensureWasmLoaded(fetchPreset)).rejects.toThrow('transient preset fetch');
+    await expect(ensureWasmLoaded(fetchPreset)).resolves.toBe(wasm);
     // The peer engine is now independently usable while game assets retry.
     // Retrying a preset must not replace an initialized protocol module.
     expect(initFn).toHaveBeenCalledTimes(1);
@@ -137,11 +132,11 @@ describe('WasmStateInit lazy load', () => {
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([1, 2, 3]));
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
+    void ensureWasmLoaded(fetchPreset);
     startWasmBootstrap();
 
-    await ensureWasmLoaded();
+    await ensureWasmLoaded(fetchPreset);
     completeRegisteredGames(wasm);
 
     expect(initFn).toHaveBeenCalledTimes(1);
@@ -160,9 +155,8 @@ describe('WasmStateInit lazy load', () => {
       finishPresets = resolve;
     });
     const fetchPreset = jest.fn(() => pendingPreset);
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
-    const gamesReady = ensureWasmLoaded();
+    const gamesReady = ensureWasmLoaded(fetchPreset);
     await ensurePeerProtocolLoaded();
     expect(initFn).toHaveBeenCalledTimes(1);
     expect(wasm.cache_file).not.toHaveBeenCalled();

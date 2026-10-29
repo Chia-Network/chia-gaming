@@ -2,7 +2,6 @@ import type { LiveGamePort } from '@games/host';
 import { Program } from 'clvm-lib';
 import { createElement, StrictMode } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { expectConsoleError } from '../../../scripts/testSetup';
 import {
   projectTerminalSessionResult,
   useTerminalSessionPresentation,
@@ -12,19 +11,18 @@ import { useGameSession } from '../../hooks/useGameSession';
 import type { PeerConnectionResult } from '../../types/ChiaGaming';
 import { createRegisteredGameHand } from '../gameRegistry';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
-import { destroySessionController, getOrCreateSessionController } from '../session/sessionHost';
+import { createSessionController } from '../session/sessionHost';
 import { useTestSessionPresentation } from './session_frontend.harness';
 
 const peerConnection: PeerConnectionResult = {
   sendMessage: () => true,
   sendAck: () => true,
   sendKeepalive: () => true,
-  hostLog: () => {},
-  close: () => {},
 };
 
 describe('GameSession render boundary', () => {
   let renderer: ReactTestRenderer | null = null;
+  let controller: import('../session/SessionController').SessionController | undefined;
   const originalActEnvironment = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
 
@@ -37,7 +35,8 @@ describe('GameSession render boundary', () => {
       act(() => renderer?.unmount());
       renderer = null;
     }
-    destroySessionController();
+    controller?.cleanup();
+    controller = undefined;
   });
 
   afterAll(() => {
@@ -46,21 +45,13 @@ describe('GameSession render boundary', () => {
   });
 
   it('keeps session construction outside StrictMode view attachment', () => {
-    expectConsoleError('Cannot start a new session without a blockchain connection');
     const params = {
       iStarted: true,
       myContribution: 1000n,
       theirContribution: 1000n,
       perGameAmount: 100n,
     };
-    const controller = getOrCreateSessionController(
-      null,
-      peerConnection,
-      'test',
-      1000n,
-      1000n,
-      true,
-    );
+    controller = createSessionController(null, peerConnection, 'test', 1000n, 1000n, true);
     const frontend = controller.frontend;
     function View() {
       useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
@@ -69,8 +60,8 @@ describe('GameSession render boundary', () => {
     act(() => {
       renderer = create(createElement(StrictMode, null, createElement(View)));
     });
-    expect(controller.initializeExecution(false)).toBe(frontend);
-    expect(controller.getPeerProtocol().snapshot().remoteNumber).toBe(0n);
+    expect(controller!.initializeExecution(false)).toBe(frontend);
+    expect(controller!.getPeerProtocol().snapshot().remoteNumber).toBe(0n);
   });
 
   it('dismisses terminal errors locally while protocol controls stay frozen', () => {
