@@ -39,5 +39,4 @@ export type CloudWalletLoginResult = { code: string; state: string } | { error: 
 export const CLOUD_WALLET_TOKEN_CHANNEL = 'chia-gaming:cloud-wallet-token';
 
 export type CloudWalletTokenResponse =
-  | { status: number; text: string }
-  | { transportError: string };
+  { status: number; text: string } | { transportError: string };

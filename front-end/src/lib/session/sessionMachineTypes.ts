@@ -41,11 +41,7 @@ export interface LocalGameActionRequest {
 }
 
 export type SessionControllerCommand =
-  | 'accept-proposal'
-  | 'cancel-proposal'
-  | 'propose-game'
-  | 'clean-shutdown'
-  | 'go-on-chain';
+  'accept-proposal' | 'cancel-proposal' | 'propose-game' | 'clean-shutdown' | 'go-on-chain';
 
 export type SessionMachineEffect =
   | { type: 'controller-accept-proposal'; id: string }
