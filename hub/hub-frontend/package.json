@@ -14,7 +14,7 @@
     "@radix-ui/react-slot": "1.5.0",
     "class-variance-authority": "0.7.1",
     "chia-gaming-protocol-constants": "workspace:*",
-    "lucide-react": "0.554.0",
+    "lucide-react": "1.61.0",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
