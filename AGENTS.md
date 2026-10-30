@@ -22,6 +22,14 @@ to debugging sub-agents; do not assume they inherit the parent's instructions.
 These skills are required for debugging even if your agent does not automatically
 discover `.agents/skills/`. Read the linked files directly in that case.
 
+## Required modularization skill
+
+For initial architecture and API design, modularization, or refactoring ownership
+and module boundaries, read and follow
+[Architecture, Modularization, and API Design](.agents/skills/modularization/SKILL.md).
+Read it directly if your agent does not discover repository skills. It guides
+the requested work; it does not authorize unrelated architectural changes.
+
 ---
 
 # Read Project Overview First
