@@ -16,7 +16,7 @@
   "dependencies": {
     "@radix-ui/react-dialog": "1.1.23",
     "@radix-ui/react-scroll-area": "1.4.0",
-    "@radix-ui/react-separator": "1.1.15",
+    "@radix-ui/react-separator": "1.2.0",
     "@radix-ui/react-slot": "1.5.0",
     "@radix-ui/react-tooltip": "1.4.1",
     "@walletconnect/sign-client": "2.23.10",
