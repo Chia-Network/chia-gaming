@@ -27,7 +27,7 @@ export function installCapturedState(
           restoreError: capture.getRestoreError(),
         };
   if (input.kind === 'live' && !input.wasm) return null;
-  return storageRepository.patchApplicationState(
-    (root) => buildDurableApplicationState(root, input)!,
+  return storageRepository.patchApplicationState((root) =>
+    buildDurableApplicationState(root, input)!,
   );
 }

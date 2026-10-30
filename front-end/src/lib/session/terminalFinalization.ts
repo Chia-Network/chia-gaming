@@ -32,8 +32,8 @@ const defaultDependencies: TerminalFinalizationDependencies = {
       ...capture,
       walletProviderScope: capture.controller.getWalletProviderScope(),
     };
-    const snapshot = storageRepository.patchApplicationState(
-      (root) => buildDurableApplicationState(root, input)!,
+    const snapshot = storageRepository.patchApplicationState((root) =>
+      buildDurableApplicationState(root, input)!,
     );
     await storageRepository.write(snapshot);
   },

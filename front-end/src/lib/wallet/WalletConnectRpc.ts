@@ -36,6 +36,7 @@ import {
 } from '../../types/rpc/RegisterRemoteCoins';
 import { SelectCoinsRequest, SelectCoinsResponse } from '../../types/rpc/SelectCoins';
 import { integersToBigInt, jsonStringify } from '../../util/jsonSafe';
+import { AsyncJobQueue } from '../AsyncScheduler';
 
 import { walletConnectState } from './WalletConnectClient';
 
@@ -43,6 +44,7 @@ type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
 const WC_RELAY_CONNECT_TIMEOUT_MS = 15000;
+const WC_RETRYABLE_REQUEST_TIMEOUT_MS = 30000;
 export const WC_INTER_REQUEST_MS = 50;
 
 function getErrorText(err: unknown): string {
@@ -186,6 +188,10 @@ async function waitForRelayerConnected(): Promise<void> {
 }
 
 type PreparedRpc = {
+  client: NonNullable<ReturnType<typeof walletConnectState.getClient>>;
+  topic: string;
+  chainId: string;
+  epoch: number;
   method: ChiaMethod;
   params: Record<string, unknown>;
   data: object;
@@ -193,7 +199,29 @@ type PreparedRpc = {
   enqueuedAt: number;
 };
 
+function isReadOnlyRpc(method: ChiaMethod): boolean {
+  return (
+    method === ChiaMethod.GetWallets ||
+    method === ChiaMethod.GetWalletBalance ||
+    method === ChiaMethod.GetHeightInfo ||
+    method === ChiaMethod.GetCoinRecordsByNames ||
+    method === ChiaMethod.GetPuzzleAndSolution ||
+    method === ChiaMethod.GetFullNodePeerCount
+  );
+}
+
+function supportsTimeoutRecovery(method: ChiaMethod): boolean {
+  // Registering the same coin IDs again is idempotent and reserves no funds.
+  return (
+    isReadOnlyRpc(method) ||
+    method === ChiaMethod.PushTransactions ||
+    method === ChiaMethod.RegisterRemoteCoins
+  );
+}
+
 class WalletConnectRpcClient {
+  private requestQueue = new AsyncJobQueue({ gapMs: WC_INTER_REQUEST_MS });
+
   request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
     let prepared: PreparedRpc;
     try {
@@ -202,7 +230,24 @@ class WalletConnectRpcClient {
       if (e instanceof WalletConnectTransportError) return Promise.reject(e);
       return Promise.reject(responseError(method, getErrorText(e), e));
     }
-    return this.runPreparedRpc<T>(prepared).catch((e) => {
+    // WalletConnect cannot reliably handle overlapping requests.
+    // Keep ownership until the SDK request settles or a retryable request's relay
+    // replacement finishes. Reservation mutations retain their SDK completion lifetime.
+    const response = new Promise<T>((resolve, reject) => {
+      const job = {
+        label: prepared.method,
+        run: async () => {
+          try {
+            resolve(await this.runPreparedRpc<T>(prepared));
+          } catch (error) {
+            reject(error);
+          }
+        },
+      };
+      if (isReadOnlyRpc(prepared.method)) this.requestQueue.enqueue(job);
+      else this.requestQueue.enqueueFront(job);
+    });
+    return response.catch((e) => {
       this.logRpcError(prepared, e);
       if (e instanceof WalletConnectTransportError || e instanceof WalletConnectResponseError) {
         throw e;
@@ -212,10 +257,12 @@ class WalletConnectRpcClient {
   }
 
   private prepareRpc<D extends object>(method: ChiaMethod, data: D): PreparedRpc {
-    if (!walletConnectState.getClient()) {
+    const client = walletConnectState.getClient();
+    const session = walletConnectState.getSession();
+    if (!client) {
       throw transportError(method, 'WalletConnect is not initialized');
     }
-    if (!walletConnectState.getSession()) {
+    if (!session) {
       throw transportError(method, 'Session is not connected');
     }
 
@@ -236,6 +283,10 @@ class WalletConnectRpcClient {
     const enqueuedAt = Date.now();
 
     return {
+      client,
+      topic: session.topic,
+      chainId: walletConnectState.getChainId(),
+      epoch: walletConnectState.getRequestEpoch(),
       method,
       params,
       data,
@@ -245,16 +296,26 @@ class WalletConnectRpcClient {
   }
 
   private async runPreparedRpc<T>(prepared: PreparedRpc): Promise<T> {
-    const session = walletConnectState.getSession();
-    const client = walletConnectState.getClient();
-    if (!session) throw transportError(prepared.method, 'Session is not connected');
-    if (!client) throw transportError(prepared.method, 'WalletConnect is not initialized');
+    const { client, topic, chainId } = prepared;
+    const assertCurrentContext = () => {
+      if (
+        walletConnectState.getClient() !== client ||
+        walletConnectState.getSession()?.topic !== topic ||
+        walletConnectState.getChainId() !== chainId ||
+        walletConnectState.getRequestEpoch() !== prepared.epoch ||
+        Number.parseInt(walletConnectState.getAddress() ?? '', 10) !== prepared.params.fingerprint
+      ) {
+        throw transportError(prepared.method, 'Wallet context changed before request could start');
+      }
+    };
+    assertCurrentContext();
 
     try {
       await waitForRelayerConnected();
     } catch (error) {
       throw transportError(prepared.method, getErrorText(error), error);
     }
+    assertCurrentContext();
 
     if (shouldLogRpcTraffic(prepared.method)) {
       log(
@@ -263,21 +324,52 @@ class WalletConnectRpcClient {
     }
 
     let raw: unknown;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let requestTimedOut = false;
     try {
-      raw = await client.request({
-        topic: session.topic,
-        chainId: walletConnectState.getChainId(),
+      const response = client.request({
+        topic,
+        chainId,
         request: { method: prepared.method, params: prepared.params },
       });
+      raw = supportsTimeoutRecovery(prepared.method)
+        ? await Promise.race([
+            response,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                log(
+                  `[WC RPC timeout] ${prepared.method} after ${WC_RETRYABLE_REQUEST_TIMEOUT_MS}ms; restarting relay`,
+                );
+                requestTimedOut = true;
+                reject(transportError(prepared.method, 'Request timed out'));
+              }, WC_RETRYABLE_REQUEST_TIMEOUT_MS);
+            }),
+          ])
+        : await response;
     } catch (error) {
+      if (requestTimedOut) {
+        try {
+          await walletConnectState.recoverRelay(client, topic, prepared.method);
+        } catch (recoveryError) {
+          throw transportError(
+            prepared.method,
+            'Request timed out; relay recovery failed',
+            recoveryError,
+          );
+        }
+        throw transportError(prepared.method, 'Request timed out; relay restarted');
+      }
+      if (error instanceof WalletConnectTransportError) throw error;
       const connected =
         walletConnectState.getClient() === client &&
-        walletConnectState.getSession()?.topic === session.topic &&
+        walletConnectState.getSession()?.topic === topic &&
         client.core.relayer.connected;
       if (!connected || isNarrowWalletConnectTransportFailure(error)) {
         throw transportError(prepared.method, getErrorText(error), error);
       }
       throw responseError(prepared.method, getErrorText(error), error);
+    } finally {
+      clearTimeout(timer);
     }
     const result = this.normalizeResult<T>(prepared, raw);
     if (shouldLogRpcTraffic(prepared.method)) {

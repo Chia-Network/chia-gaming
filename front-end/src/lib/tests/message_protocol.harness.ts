@@ -47,8 +47,7 @@ export function saveLiveSession(fields: Record<string, unknown>): Promise<void> 
   const save = liveSave(fields);
   if (save.session?.phase !== 'live') throw new Error('expected live save fixture');
   const walletProviderScope = (fields.walletProviderScope as
-    | NonNullable<typeof save.walletContext>
-    | undefined) ?? {
+    NonNullable<typeof save.walletContext> | undefined) ?? {
     provider: 'simulator',
     identity: 'submission-handoff',
   };

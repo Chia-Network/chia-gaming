@@ -25,11 +25,7 @@ export type RegisteredGameType = CatalogGameType;
 export type LocalActionKind = 'make_move' | 'accept_settlement' | 'cheat';
 
 export type GameTerminalType =
-  | 'none'
-  | 'settled'
-  | 'insufficient-balance'
-  | 'ended-cancelled'
-  | 'game-error';
+  'none' | 'settled' | 'insufficient-balance' | 'ended-cancelled' | 'game-error';
 
 export interface GameTerminalModel {
   type: GameTerminalType;
@@ -233,19 +229,9 @@ export interface SessionModelInput {
 }
 
 export type GameDashboardActionKind =
-  | 'none'
-  | 'cancel'
-  | 'clean-shutdown'
-  | 'go-on-chain'
-  | 'abandon';
+  'none' | 'cancel' | 'clean-shutdown' | 'go-on-chain' | 'abandon';
 export type GameDashboardActionLabel =
-  | 'No Session'
-  | 'Cancel'
-  | 'Waiting'
-  | 'Clean Shutdown'
-  | 'Go On-Chain'
-  | 'Abandon'
-  | 'Done';
+  'No Session' | 'Cancel' | 'Waiting' | 'Clean Shutdown' | 'Go On-Chain' | 'Abandon' | 'Done';
 
 export type BannerTone = 'idle' | 'playing' | 'pings-bad' | 'on-chain' | 'ended';
 

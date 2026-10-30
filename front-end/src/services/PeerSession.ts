@@ -61,7 +61,8 @@ export interface ReliableMessageConsumer {
   isReady: () => boolean;
   mode?: PeerReceiveMode;
   deliver: (msgno: bigint, body: Uint8Array) => void;
-  persist: () => Promise<void>;
+  /** Null until a durability owner is attached; absence is not a failed checkpoint. */
+  persist: (() => Promise<void>) | null;
   failure: (reason: string) => void;
   acknowledged?: (ack: bigint) => void;
   rejectionAcknowledged?: () => void;
@@ -151,9 +152,9 @@ export class ReliablePeerTransport {
     this.protocol.restore(state, terminal);
   }
 
+  /** Prepare acceptance for the caller-owned first checkpoint before mounting a controller. */
   acceptSession(terms: PeerSessionTerms, initiator: boolean): void {
     this.protocol.accept_session(terms, initiator);
-    if (this.hasPendingDurability()) this.scheduleFlush();
   }
 
   attachConsumer(consumer: ReliableMessageConsumer): void {
@@ -246,7 +247,7 @@ export class ReliablePeerTransport {
   private async drainDurabilityWork(): Promise<void> {
     while (this.hasPendingDurability()) {
       const consumer = this.consumer;
-      if (!consumer) throw new Error('Reliable transport has no durability consumer');
+      if (!consumer?.persist) throw new Error('Reliable transport has no durability consumer');
       const commit = this.prepareCommit();
       try {
         await consumer.persist();
@@ -424,7 +425,7 @@ export class PeerSession implements PeerConnectionResult {
       this.reliableTransport.attachConsumer({
         isReady: () => false,
         deliver: () => {},
-        persist: () => Promise.reject(new Error('Reliable transport consumer is not attached')),
+        persist: null,
         failure: (reason) => this.failBufferedPeer(reason),
       });
     }

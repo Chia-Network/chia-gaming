@@ -22,7 +22,6 @@ import { providerScopeKey, type ProviderOwner } from '../session/providerKeys';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
-const MAX_COIN_SNAPSHOT_ATTEMPTS = 3;
 
 class BlockchainRpcUnavailableError extends Error {
   constructor(label: string) {
@@ -74,6 +73,7 @@ export class BlockchainPoller {
   private startedAt = 0;
   private consecutiveFailures = 0;
   private peak = 0n;
+  private heightKnown = false;
   private previousPeakForCoinReport = 0n;
   private registrationScopeKey: string | undefined;
   private balanceCallbacks: BalanceCallbacks | null = null;
@@ -469,6 +469,7 @@ export class BlockchainPoller {
 
   private pausePollingForDisconnect(): void {
     this.connectionEpoch++;
+    this.heightKnown = false;
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();
     this.balancePollingScheduler.stop();
@@ -583,6 +584,7 @@ export class BlockchainPoller {
       if (!this.isConnectionEpochActive(connectionEpoch)) return;
       this.previousPeakForCoinReport = previousPeak;
       this.peak = height;
+      this.heightKnown = true;
       // Advance every session as soon as a height is available, independently
       // of the slower watched-coin lookup. This is deliberately a
       // manager-owned height-only observation, not an empty coin snapshot.
@@ -619,7 +621,7 @@ export class BlockchainPoller {
 
   private async runCoinPoll(): Promise<void> {
     const connectionEpoch = this.connectionEpoch;
-    if (!this.isConnectionEpochActive(connectionEpoch)) return;
+    if (!this.heightKnown || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const perSession = this.collectGameSessionCoins();
 
@@ -636,59 +638,33 @@ export class BlockchainPoller {
       // tick, so the coin gets picked up once it registers.
       const namesToQuery = names.filter((n) => this.registeredNames.has(n));
 
-      let openingPeak = this.peak;
-      for (let attempt = 1; attempt <= MAX_COIN_SNAPSHOT_ATTEMPTS; attempt++) {
-        const records =
-          namesToQuery.length > 0
-            ? await this.runAdapterRpc(connectionEpoch, 'getCoinRecordsByNames', () =>
-                this.adapter.getCoinRecordsByNames(namesToQuery),
-              )
-            : [];
-        if (!this.isConnectionEpochActive(connectionEpoch)) return;
-        // None of the current providers offers an atomic peak-and-records read.
-        // Close the window immediately after the records query and retry if the
-        // tip moved or the provider returned a record from above that boundary.
-        const closingPeak = await this.runAdapterRpc(connectionEpoch, 'getHeightInfo', () =>
-          this.adapter.getHeightInfo(),
+      // Serial wallet reads can span many blocks. Project their records back to
+      // the latest observed height instead of requiring the tip to stand still.
+      const height = this.peak;
+      const records =
+        namesToQuery.length > 0
+          ? await this.runAdapterRpc(connectionEpoch, 'getCoinRecordsByNames', () =>
+              this.adapter.getCoinRecordsByNames(namesToQuery),
+            )
+          : [];
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
+      const recordByName = await this.recordMap(records, connectionEpoch);
+      if (!this.isConnectionEpochActive(connectionEpoch)) return;
+      if (recordByName) {
+        await this.reportToCradles(
+          perSession,
+          recordByName,
+          height,
+          this.previousPeakForCoinReport,
         );
-        if (!this.isConnectionEpochActive(connectionEpoch)) return;
-        const coherent = openingPeak === closingPeak && this.recordsFitPeak(records, closingPeak);
-        if (!coherent) {
-          openingPeak = closingPeak;
-          if (attempt < MAX_COIN_SNAPSHOT_ATTEMPTS) continue;
-          throw new Error(
-            `coin snapshot remained incoherent after ${MAX_COIN_SNAPSHOT_ATTEMPTS} attempts`,
-          );
-        }
-
-        const recordByName = await this.recordMap(records, connectionEpoch);
-        if (!this.isConnectionEpochActive(connectionEpoch)) return;
-        if (recordByName) {
-          this.peak = closingPeak;
-          await this.reportToCradles(
-            perSession,
-            recordByName,
-            closingPeak,
-            this.previousPeakForCoinReport,
-          );
-        }
-        this.consecutiveFailures = 0;
-        return;
       }
+      this.consecutiveFailures = 0;
     } catch (e) {
       if (!this.running || !this.isConnectionEpochActive(connectionEpoch)) return;
       this.consecutiveFailures++;
       diagStack('blockchain-poller coin poll failed', e);
       log(`[blockchain-poller] coin poll failed: ${String(e)}`);
     }
-  }
-
-  private recordsFitPeak(records: CoinRecord[], peak: bigint): boolean {
-    return records.every(
-      (record) =>
-        record.confirmedBlockIndex <= peak &&
-        (record.spentBlockIndex === 0n || record.spentBlockIndex <= peak),
-    );
   }
 
   private async runBalancePoll(): Promise<void> {
@@ -764,7 +740,7 @@ export class BlockchainPoller {
       const csr: CoinStateRecord[] = [];
       for (const { coin_name, coin_string } of coins) {
         const rec = recordByName.get(coin_name);
-        if (!rec) {
+        if (!rec || rec.confirmedBlockIndex > height) {
           csr.push({ coin: coin_string, created_height: null, spent_height: null });
           continue;
         }
@@ -779,7 +755,10 @@ export class BlockchainPoller {
         // Relying on `spent` alone silently misses every channel/unroll/stale
         // spend, which is how clean-shutdown completion stopped being detected.
         const created = rec.confirmedBlockIndex;
-        const spent = rec.spent || rec.spentBlockIndex > 0n ? rec.spentBlockIndex : null;
+        const spent =
+          (rec.spent || rec.spentBlockIndex > 0n) && rec.spentBlockIndex <= height
+            ? rec.spentBlockIndex
+            : null;
         csr.push({ coin: coin_string, created_height: created, spent_height: spent });
       }
       csr.sort((a, b) => a.coin.localeCompare(b.coin));

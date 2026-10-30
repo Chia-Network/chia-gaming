@@ -1679,9 +1679,10 @@ host-side coordinator for chain observations. It separates three concerns:
    WASM interest set, not the per-sweep source of truth.
 2. **Scheduling** — `BlockchainPoller` owns two independent serialized
    `AsyncJobQueue` lanes per active backend: one for reads and background polls,
-   and one for wallet mutations. A hung provider read therefore cannot block a
-   spend, offer, selection, or other mutation. Both lanes pass every adapter
-   request through one global request-start gate, which applies the backend's
+   and one for wallet mutations. These adapter lanes run independently;
+   WalletConnect additionally serializes its transport as described below.
+   Both lanes pass every adapter request through one global request-start gate,
+   which applies the backend's
    requested gap between starts without waiting for prior requests to finish.
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
    work on the read lane. On disconnect, active reads are abandoned and queued
@@ -1699,11 +1700,53 @@ host-side coordinator for chain observations. It separates three concerns:
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
-   registration shape, but it does not own scheduling or coin lifecycle
-   semantics.
+   registration shape, but it does not own polling interest or coin lifecycle
+   semantics. WalletConnect can garble or lose responses when more than one
+   request is pending. Only one request may be outstanding per connection;
+   serialization is a correctness requirement, not merely rate limiting.
+   Its transport has one consumer for separate mutation and read
+   queues: a queued mutation runs before queued reads, without interrupting the
+   active request. This serializes all actual WalletConnect calls, including
+   direct setup and peer-readiness queries, and preserves 50ms between requests.
+   A read, coin registration, or exact-transaction post that takes 30 seconds
+   replaces the relay connection before the next request can run, retaining the
+   approved session and pairing. Relay recovery fences queued work and late
+   results from the old connection; a failed recovery leaves the wallet unavailable.
+   Coin registration is safe to repeat: the wallet ignores duplicate coin IDs.
+   Bounding it prevents a lost registration response from blocking channel
+   discovery.
+   Reservation mutations such as offer creation
+   retain their SDK completion lifetime. The optional peer-count fallback uses
+   this active-query deadline, excluding time spent queued behind wallet work.
 
-Coin polling reports raw height and coin-state observations upward every
-successful sweep. The transaction manager computes ordered semantic
+Relay replacement has its own 30-second deadline. A stuck SDK close or open
+fails recovery and leaves the wallet unavailable. The underlying operation
+continues to hold a shared lifecycle consumer until it actually settles, so a
+late close cannot damage a replacement session. Pairing creation, session
+installation, and disconnect work use this same consumer. Connection attempts
+whose queued wait expires never start; teardown remains queued even after its
+caller stops waiting. Active pairing creation retains its actual completion
+lifetime. Disconnect and retry invalidate older attempts: a late URI is
+cancelled, and a late approved session is removed instead of installed.
+Connection setup rechecks the session after recovery, reusing it without a new QR.
+If recovery failed, connection setup preserves the retained session and asks for
+a reload instead of starting a new pairing. Explicit disconnect or fresh setup
+can still revoke that session.
+
+`WalletState` records restoration authority separately from SDK session storage.
+Disconnect durably blocks restoration before changing local connection state;
+storage failure is reported instead of acknowledging a durable disconnect.
+Only the explicitly accepted session topic can subsequently restore, so a
+stalled teardown or abandoned approval in SDK storage cannot resurrect a session
+after reload. Accepting a new session replaces this authority. If the SDK
+lifecycle never returns, reload the app to establish a new connection.
+
+Coin polling reports coin-state observations at the latest height obtained by
+the regular height poll. Each sweep uses that opening height as its boundary:
+creations and spends above it wait for the next sweep. Individual wallet reads
+can therefore span new blocks without restarting the sweep or requiring another
+height request. No coin snapshot is reported before a height has been obtained
+for the current connection. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
 Inside Rust, each height or coin-state observation is transactional over a deep

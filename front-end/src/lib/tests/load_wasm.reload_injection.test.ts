@@ -67,26 +67,24 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       if (active) durableStages[index].push(hand(index).moveNumber);
     }
   };
-  const ports = lanes.map(
-    (_, index): LiveGamePort => ({
-      isChannelReady: () => lanes[index].controller.isChannelReady(),
-      dispatch: (intent: GameIntent) => {
-        if (intent.type === 'state-changed') {
-          lanes[index].runtime.commitHandStateChanged('calpoker');
-          return;
-        }
-        assert.equal(intent.type, 'make-move', 'Calpoker reload only submits game moves');
-        const id = lanes[index].runtime.getState().model.game.currentHandIds[intent.memberIndex];
-        assert.ok(id, `Calpoker reload player ${index}: invalid member ${intent.memberIndex}`);
-        submittedMoves[index] += 1;
-        return lanes[index].runtime.commitLocalGameAction({
-          gameType: 'calpoker',
-          id,
-          command: { type: 'make-move', readable: intent.readable },
-        });
-      },
-    }),
-  );
+  const ports = lanes.map((_, index): LiveGamePort => ({
+    isChannelReady: () => lanes[index].controller.isChannelReady(),
+    dispatch: (intent: GameIntent) => {
+      if (intent.type === 'state-changed') {
+        lanes[index].runtime.commitHandStateChanged('calpoker');
+        return;
+      }
+      assert.equal(intent.type, 'make-move', 'Calpoker reload only submits game moves');
+      const id = lanes[index].runtime.getState().model.game.currentHandIds[intent.memberIndex];
+      assert.ok(id, `Calpoker reload player ${index}: invalid member ${intent.memberIndex}`);
+      submittedMoves[index] += 1;
+      return lanes[index].runtime.commitLocalGameAction({
+        gameType: 'calpoker',
+        id,
+        command: { type: 'make-move', readable: intent.readable },
+      });
+    },
+  }));
   function HookHarness({ index }: { index: number }) {
     hookHands[index] = useCalpokerHand({
       frozen: false,
@@ -384,10 +382,7 @@ function laneForHandshakeAdapter(adapter: SessionControllerAdapter): ReloadableS
 }
 
 type HandshakeReloadCheckpoint =
-  | 'initiator-sent-a'
-  | 'initiator-sent-c'
-  | 'receiver-waiting-for-a'
-  | 'receiver-sent-d';
+  'initiator-sent-a' | 'initiator-sent-c' | 'receiver-waiting-for-a' | 'receiver-sent-d';
 
 async function runHandshakeRoleReload(
   poller: BlockchainPoller,

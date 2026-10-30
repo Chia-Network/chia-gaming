@@ -1,6 +1,5 @@
 # This file is managed by the repo-content-updater project. Manual changes here will result in a PR to bring back
 # inline with the upstream template, unless you add !dependabot to the repo's managed-files property
-# repo-content-updater:dependabot
 
 version: 2
 updates:
@@ -33,8 +32,12 @@ updates:
       - dependencies
       - javascript
       - "Changed"
+    # @types/node tracks the Node runtime in use; take its major bumps with the runtime.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: cargo
-    directories: ["/"]
+    directories: ["/", "/wasm"]
     schedule:
       interval: "weekly"
       day: "tuesday"
@@ -46,3 +49,7 @@ updates:
       - dependencies
       - rust
       - "Changed"
+    groups:
+      global:
+        patterns:
+          - "*"

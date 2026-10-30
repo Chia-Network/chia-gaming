@@ -392,6 +392,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
   const {
     setup: connectionSetup,
     connected: walletConnected,
+    recovering: walletRecovering,
     showSetup: showConnectionSetupModal,
     connecting,
     error: connectError,
@@ -808,7 +809,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             let pipeConnected: boolean | null = null;
             switch (tab.id) {
               case 'wallet':
-                pipeConnected = walletConnected;
+                pipeConnected = walletConnected || walletRecovering;
                 break;
               case 'hub':
                 pipeConnected = hubLiveness === 'connected';
@@ -817,7 +818,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
                 break;
             }
-            const walletDisconnected = tab.id === 'wallet' && !walletConnected;
+            const walletDisconnected = tab.id === 'wallet' && !walletConnected && !walletRecovering;
             const pipeLabel =
               pipeConnected === null
                 ? tab.label
@@ -927,7 +928,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               connecting={connecting}
               error={connectError}
             />
-            {walletConnected ? (
+            {walletConnected || walletRecovering ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />

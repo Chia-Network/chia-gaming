@@ -903,10 +903,6 @@ export function createApplication() {
     void beginAcceptTransition('accept-advisory', pairingToken, async () => {
       try {
         const gameSessionId = generateSessionId();
-        // Reserve the peer relay before sending so a delivery_failure for this
-        // proposal can cancel the attempt (PeerSession must already exist).
-        peerSession?.destroy();
-        peerSession = new PeerSession(advisory.peer_id, gameSessionId, conn);
         await startFreshSessionWithPeer({
           peerId: advisory.peer_id,
           opponentAlias: advisory.peer_alias,
@@ -919,8 +915,8 @@ export function createApplication() {
           pairingToken,
         });
       } catch (error) {
-        // Setup threw before startFreshSessionWithPeer could clean up (e.g.
-        // after PeerSession was reserved). Do not leave the lobby stuck.
+        // Setup threw before startFreshSessionWithPeer could clean up.
+        // Do not leave the lobby stuck.
         console.error('[Shell] accept-advisory failed', error);
         log(
           `[Shell] accept-advisory failed peer=${advisory.peer_id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1487,7 +1483,7 @@ export function createApplication() {
           setWalletAlert(false);
           hubConn?.setBusy(hubPresenceNow(sessions.state.sessionPhase, true));
         } else {
-          if (state.activeTab !== 'wallet') setWalletAlert(true);
+          if (!event.recovering && state.activeTab !== 'wallet') setWalletAlert(true);
           hubConn?.setBusy(presenceBusy(sessions.state.sessionPhase, false));
         }
         break;

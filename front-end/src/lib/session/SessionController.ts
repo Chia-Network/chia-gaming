@@ -243,8 +243,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   readonly reliableTransport: ReliablePeerTransport;
   private inboundSessionRejectCommitted = false;
   private persistInboundSessionReject:
-    | ((sessionId: string, remoteNumber: bigint) => Promise<void>)
-    | null = null;
+    ((sessionId: string, remoteNumber: bigint) => Promise<void>) | null = null;
   private inboundSessionRejectHandler: ((sessionId: string, remoteNumber: bigint) => void) | null =
     null;
   cradle: ChiaGame | undefined;
@@ -2484,8 +2483,8 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       restoreStatus: this.getRestoreStatus(),
       restoreError: this.getRestoreError(),
     };
-    const snapshot = storageRepository.patchApplicationState(
-      (root) => buildDurableApplicationState(root, capture)!,
+    const snapshot = storageRepository.patchApplicationState((root) =>
+      buildDurableApplicationState(root, capture)!,
     );
     return storageRepository.write(snapshot);
   }

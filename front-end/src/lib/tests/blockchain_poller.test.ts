@@ -96,7 +96,7 @@ describe('BlockchainPoller', () => {
   it('reports a decreased height to the cradle (reorg signal not clamped)', async () => {
     // Height goes up then drops: a reorg.  The poller must forward the lower
     // height so the transaction manager can detect the rollback.
-    const rpc = makeRpc([100n, 100n, 90n, 90n]);
+    const rpc = makeRpc([100n, 90n]);
     const reportedPeaks: bigint[] = [];
     const cradle: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'aabb', coin_string: 'coin-1' }],
@@ -118,7 +118,7 @@ describe('BlockchainPoller', () => {
   });
 
   it('isolates a failing session from healthy height and snapshot delivery', async () => {
-    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const rpc = makeRpc([100n, 101n]);
     const failing: PollingGameSession = {
       snapshotWatchedCoins: () => [{ coin_name: 'bad', coin_string: 'bad-coin' }],
       reportNewBlock: () => Promise.reject(new Error('session-owned height failure')),
@@ -224,7 +224,7 @@ describe('BlockchainPoller', () => {
     expect(reportNewBlock).toHaveBeenCalledWith(100n);
   });
 
-  it('retries when the chain advances between the coin and closing-peak reads', async () => {
+  it('projects advancing-tip records back to the opening height', async () => {
     const record = makeCoinRecord(3);
     record.confirmedBlockIndex = 101n;
     const name = await coinRecordToName(record);
@@ -254,14 +254,15 @@ describe('BlockchainPoller', () => {
 
     await pollOnce(poller);
 
-    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(2);
-    expect(reportCoinStates).toHaveBeenCalledWith(101n, [
-      { coin: 'coin-advanced', created_height: 101n, spent_height: null },
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(reportCoinStates).toHaveBeenCalledWith(100n, [
+      { coin: 'coin-advanced', created_height: null, spent_height: null },
     ]);
-    expect(poller.getPeak()).toBe(101n);
+    expect(poller.getPeak()).toBe(100n);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
   });
 
-  it('never reports a record whose confirmed or spent height exceeds the snapshot peak', async () => {
+  it('withholds coin creation newer than the latest observed height', async () => {
     const record = makeCoinRecord(4);
     record.confirmedBlockIndex = 101n;
     record.spentBlockIndex = 102n;
@@ -293,11 +294,13 @@ describe('BlockchainPoller', () => {
 
     await pollOnce(poller);
 
-    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(3);
-    expect(reportCoinStates).not.toHaveBeenCalled();
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(reportCoinStates).toHaveBeenCalledWith(100n, [
+      { coin: 'coin-future', created_height: null, spent_height: null },
+    ]);
   });
 
-  it('does not report records when the closing peak request fails', async () => {
+  it('waits for a successful height observation before querying coins', async () => {
     const record = makeCoinRecord(5);
     const name = await coinRecordToName(record);
     if (!name) {
@@ -305,13 +308,14 @@ describe('BlockchainPoller', () => {
     }
     const getHeightInfo = jest
       .fn()
-      .mockResolvedValueOnce(100n)
-      .mockRejectedValueOnce(new Error('peak unavailable'));
+      .mockRejectedValueOnce(new Error('peak unavailable'))
+      .mockResolvedValue(100n);
+    const getCoinRecordsByNames = jest.fn().mockResolvedValue([record]);
     const rpc = new Proxy(
       {
         getHeightInfo,
         registerCoins: () => Promise.resolve(),
-        getCoinRecordsByNames: () => Promise.resolve([record]),
+        getCoinRecordsByNames,
       } as unknown as InternalBlockchainInterface,
       {
         get: (target, prop) =>
@@ -329,8 +333,16 @@ describe('BlockchainPoller', () => {
 
     await pollOnce(poller);
 
-    expect(getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(getHeightInfo).toHaveBeenCalledTimes(1);
+    expect(getCoinRecordsByNames).not.toHaveBeenCalled();
     expect(reportCoinStates).not.toHaveBeenCalled();
+
+    await pollOnce(poller);
+    expect(getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    expect(reportCoinStates).toHaveBeenCalledWith(100n, [
+      { coin: 'coin-provider-failure', created_height: 10n, spent_height: null },
+    ]);
   });
 
   it('reports coherent lower and equal-tip replacement snapshots without clamping', async () => {
@@ -343,13 +355,7 @@ describe('BlockchainPoller', () => {
     const responses: CoinRecord[][] = [[initial], [replacement], []];
     const rpc = new Proxy(
       {
-        getHeightInfo: jest
-          .fn()
-          .mockResolvedValueOnce(100n)
-          .mockResolvedValueOnce(100n)
-          .mockResolvedValueOnce(90n)
-          .mockResolvedValueOnce(90n)
-          .mockResolvedValue(90n),
+        getHeightInfo: jest.fn().mockResolvedValueOnce(100n).mockResolvedValue(90n),
         registerCoins: () => Promise.resolve(),
         getCoinRecordsByNames: () => Promise.resolve(responses.shift() ?? []),
       } as unknown as InternalBlockchainInterface,
@@ -451,7 +457,7 @@ describe('BlockchainPoller', () => {
   });
 
   it('does not mark a stale snapshot ready when reporting adds a watch', async () => {
-    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const rpc = makeRpc([100n, 101n]);
     const readyPeaks: bigint[] = [];
     let addWatch = () => {};
     let reports = 0;
@@ -487,7 +493,7 @@ describe('BlockchainPoller', () => {
   });
 
   it('does not clear a newer pending generation when reporting removes a watch', async () => {
-    const rpc = makeRpc([100n, 100n, 101n, 101n]);
+    const rpc = makeRpc([100n, 101n]);
     const readyPeaks: bigint[] = [];
     let removeWatch = () => {};
     let reports = 0;
@@ -663,7 +669,7 @@ describe('BlockchainPoller', () => {
     activeRead.resolve(6n);
     await expect(read).resolves.toBe(6n);
     await expect(explicitPoll).resolves.toBeUndefined();
-    expect(calls).toEqual(['height', 'height', 'height']);
+    expect(calls).toEqual(['height', 'height']);
     jest.useRealTimers();
   });
 
@@ -924,7 +930,7 @@ describe('BlockchainPoller', () => {
     poller.startBalanceInterest(1000, { onBalance: () => {} });
 
     await jest.advanceTimersByTimeAsync(0);
-    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(1);
     expect(rpc.getBalance).toHaveBeenCalledTimes(1);
@@ -932,7 +938,7 @@ describe('BlockchainPoller', () => {
     connected = false;
     onConnectionChange?.(false);
     await jest.advanceTimersByTimeAsync(5000);
-    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(1);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(1);
     expect(rpc.getBalance).toHaveBeenCalledTimes(1);
@@ -940,7 +946,7 @@ describe('BlockchainPoller', () => {
     connected = true;
     onConnectionChange?.(true);
     await jest.advanceTimersByTimeAsync(0);
-    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(4);
+    expect(rpc.getHeightInfo).toHaveBeenCalledTimes(2);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(2);
     expect(rpc.getCoinRecordsByNames).toHaveBeenCalledTimes(2);
     expect(rpc.getBalance).toHaveBeenCalledTimes(2);
@@ -993,7 +999,7 @@ describe('BlockchainPoller', () => {
     const spendResult = poller.rpc.spend('blob', {}, '11'.repeat(32), 'submitTransaction', 0n);
 
     await advanceLane(0);
-    expect(getHeightInfo).toHaveBeenCalledTimes(3);
+    expect(getHeightInfo).toHaveBeenCalledTimes(2);
     expect(registerCoins).toHaveBeenCalledTimes(1);
     expect(getCoinRecordsByNames).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);

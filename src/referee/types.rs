@@ -18,7 +18,6 @@ use crate::common::types::{
     IntoErr, Node, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256Input, Sha256tree,
     Timeout, MAX_BLOCK_COST_CLVM,
 };
-use crate::utils::proper_list;
 
 // =============================================================================
 // SHARED TYPES
@@ -163,62 +162,60 @@ pub struct RefereeFixedContext {
 /// the solution rather than from REMARK conditions in the output.
 #[derive(Debug, Clone)]
 pub enum ParsedRefereeSolution {
-    /// `(mover_payout_ph waiter_payout_ph)` — 2 elements
+    /// `(mover_payout_ph . waiter_payout_ph)` — two atoms
     Timeout,
-    /// `(new_move infohash_c new_mover_share new_max_move_size)` — 4 atom elements
+    /// `#(new_move infohash_c new_mover_share new_max_move_size)` — 4 atom elements
     Move {
         new_move: Vec<u8>,
         validation_info_hash_raw: Vec<u8>,
         new_mover_share_raw: Vec<u8>,
         max_move_size: u32,
     },
-    /// `(previous_state previous_validation_program evidence mover_payout_ph)` —
-    /// second element is a pair (a program)
+    /// `((previous_state previous_validation_program . evidence) . mover_payout_ph)` —
+    /// left is a payload pair, right is a payout atom
     Slash,
 }
 
 impl ParsedRefereeSolution {
-    /// Parse a referee solution using the same dispatch logic as `referee.clsp`:
-    /// - exactly 2 elements -> Timeout
-    /// - otherwise, a pair in the second element -> Slash; do not traverse its tail
-    /// - otherwise, exactly 4 atom elements -> Move
+    /// Parse the layouts declared in `clsp/referee/onchain/shapes.clinc`.
+    /// Slash classification does not inspect the payload or optional evidence.
     pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
-        let mut tail = solution.to_nodeptr(allocator)?;
-        let mut elements = Vec::with_capacity(4);
-        for _ in 0..2 {
-            let clvmr::allocator::SExp::Pair(first, rest) = allocator.allocator().sexp(tail) else {
-                return Err(Error::StrErr(
-                    "referee solution has fewer than 2 elements".to_string(),
-                ));
-            };
-            elements.push(first);
-            tail = rest;
-        }
-
-        if !crate::utils::non_nil(allocator.allocator(), tail) {
-            return Ok(ParsedRefereeSolution::Timeout);
-        }
-
-        if matches!(
-            allocator.allocator().sexp(elements[1]),
+        let node = solution.to_nodeptr(allocator)?;
+        let pair = |node| match allocator.allocator_ref().sexp(node) {
+            clvmr::allocator::SExp::Pair(left, right) => Ok((left, right)),
+            _ => Err(Error::StrErr(
+                "referee solution requires a pair".to_string(),
+            )),
+        };
+        let (left, right) = pair(node)?;
+        // Match referee.onchain.shapes: timeout is two atoms; slash is a payload pair
+        // and payout atom; move is a balanced tree of four atoms.
+        if !matches!(
+            allocator.allocator_ref().sexp(right),
             clvmr::allocator::SExp::Pair(_, _)
         ) {
-            return Ok(ParsedRefereeSolution::Slash);
+            return Ok(
+                if matches!(
+                    allocator.allocator_ref().sexp(left),
+                    clvmr::allocator::SExp::Pair(_, _)
+                ) {
+                    ParsedRefereeSolution::Slash
+                } else {
+                    ParsedRefereeSolution::Timeout
+                },
+            );
         }
-
-        for _ in 2..4 {
-            let clvmr::allocator::SExp::Pair(first, rest) = allocator.allocator().sexp(tail) else {
-                return Err(Error::StrErr(
-                    "referee solution has fewer than 4 elements".to_string(),
-                ));
-            };
-            elements.push(first);
-            tail = rest;
-        }
-
-        if crate::utils::non_nil(allocator.allocator(), tail) {
+        let (move_node, infohash) = pair(left)?;
+        let (share, max_size) = pair(right)?;
+        let elements = [move_node, infohash, share, max_size];
+        if elements.iter().any(|node| {
+            matches!(
+                allocator.allocator_ref().sexp(*node),
+                clvmr::allocator::SExp::Pair(_, _)
+            )
+        }) {
             return Err(Error::StrErr(
-                "move referee solution has a trailing tail".to_string(),
+                "referee move fields must be atoms".to_string(),
             ));
         }
         let mut get_atom = |idx: usize| allocator.allocator().atom(elements[idx]).to_vec();
@@ -245,52 +242,56 @@ pub struct ParsedValidatorResult {
     pub next_max_move_size: u32,
 }
 
+/// Decode `referee-result`: ((next hash . state) . (size . conditions)).
+/// Nil is a slash result; the conditions remain a proper, variable-length list.
+pub(crate) fn validator_result_fields(
+    allocator: &clvmr::Allocator,
+    node: NodePtr,
+) -> Result<Option<[NodePtr; 4]>, Error> {
+    if node == NodePtr::NIL {
+        return Ok(None);
+    }
+    let pair = |node| match allocator.sexp(node) {
+        clvmr::allocator::SExp::Pair(left, right) => Ok((left, right)),
+        _ => Err(Error::StrErr("invalid validator result tree".to_string())),
+    };
+    let (transition, effects) = pair(node)?;
+    let (hash, state) = pair(transition)?;
+    let (size, conditions) = pair(effects)?;
+    if crate::utils::proper_list(allocator, conditions, true).is_none() {
+        return Err(Error::StrErr(
+            "validator conditions must be a list".to_string(),
+        ));
+    }
+    Ok(Some([hash, state, size, conditions]))
+}
+
 pub fn parse_validator_result(
     allocator: &mut AllocEncoder,
     node: NodePtr,
 ) -> Result<ParsedValidatorResult, Error> {
-    let lst = if let Some(p) = proper_list(allocator.allocator(), node, true) {
-        p
-    } else {
-        return Err(Error::StrErr("non-list in validator result".to_string()));
-    };
-
-    if lst.is_empty() {
+    let Some([hash_node, state_node, size_node, _conditions]) =
+        validator_result_fields(allocator.allocator_ref(), node)?
+    else {
         return Ok(ParsedValidatorResult {
             new_state: None,
             next_validator_hash: None,
             next_max_move_size: 0,
         });
-    }
-
-    if lst.len() == 2 {
-        return Err(Error::StrErr(
-            "validator returned 2 elements; expected 1 (terminal) or at least 3".to_string(),
-        ));
-    }
-
-    // Mirror referee.clsp destructuring of
-    // (next_validator_hash new_state max_move_size . extra_conditions):
-    // a one-element list is terminal, and trailing slash conditions do not
-    // change the transition fields extracted here.
-    let next_validator_hash = if Program::from_nodeptr(allocator, lst[0])?.is_nil() {
+    };
+    let next_validator_hash = if Program::from_nodeptr(allocator, hash_node)?.is_nil() {
         None
     } else {
-        Some(Hash::from_nodeptr(allocator, lst[0])?)
+        Some(Hash::from_nodeptr(allocator, hash_node)?)
     };
-    let state_node = if lst.len() > 1 { lst[1] } else { NodePtr::NIL };
-    let next_max_move_size = if lst.len() > 2 {
-        let clvmr::allocator::SExp::Atom = allocator.allocator().sexp(lst[2]) else {
-            return Err(Error::StrErr(
-                "validator max move size is not an atom".to_string(),
-            ));
-        };
-        u64_from_atom(allocator.allocator().atom(lst[2]).as_ref())
-            .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| Error::StrErr("validator max move size exceeds u32".to_string()))?
-    } else {
-        0
+    let clvmr::allocator::SExp::Atom = allocator.allocator_ref().sexp(size_node) else {
+        return Err(Error::StrErr(
+            "validator max move size is not an atom".to_string(),
+        ));
     };
+    let next_max_move_size = u64_from_atom(allocator.allocator_ref().atom(size_node).as_ref())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| Error::StrErr("validator max move size exceeds u32".to_string()))?;
     Ok(ParsedValidatorResult {
         new_state: Some(Rc::new(Program::from_nodeptr(allocator, state_node)?)),
         next_validator_hash,
@@ -315,13 +316,13 @@ pub fn parse_validator_result(
 /// MOD_HASH should be the shatree of referee itself.
 /// NONCE is for anti-replay prevention.
 ///
-/// If action is timeout, args is (mover_payout_ph waiter_payout_ph).
+/// If action is timeout, args is (mover_payout_ph . waiter_payout_ph).
 ///   Authorized via AGG_SIG_UNSAFE with pre-signed payout signatures.
 ///
-/// If action is slash, args is (state validation_program evidence mover_payout_ph).
+/// If action is slash, args is ((state validation_program . evidence) . mover_payout_ph).
 ///   Authorized via AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph).
 ///
-/// If action is move, args is (new_move infohash_c new_mover_share new_max_move_size).
+/// If action is move, args is #(new_move infohash_c new_mover_share new_max_move_size).
 ///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RefereePuzzleArgs {
@@ -371,7 +372,7 @@ where
     NodePtr: ToClvm<E>,
 {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
-        [
+        let fields = [
             self.mover_pubkey.to_clvm(encoder)?,
             self.waiter_pubkey.to_clvm(encoder)?,
             self.timeout.to_clvm(encoder)?,
@@ -383,9 +384,30 @@ where
             self.game_move.validation_info_hash.to_clvm(encoder)?,
             self.game_move.basic.mover_share.to_clvm(encoder)?,
             self.previous_validation_info_hash.to_clvm(encoder)?,
-        ]
-        .to_clvm(encoder)
+        ];
+        encode_referee_args(encoder, fields)
     }
+}
+
+/// Encode the referee fields using Chialisp's `#(...)` tree-list layout.
+pub(crate) fn encode_referee_args<E: ClvmEncoder<Node = NodePtr>>(
+    encoder: &mut E,
+    fields: [NodePtr; 11],
+) -> Result<NodePtr, ToClvmError> {
+    fn tree<E: ClvmEncoder<Node = NodePtr>>(
+        encoder: &mut E,
+        fields: &[NodePtr],
+    ) -> Result<NodePtr, ToClvmError> {
+        if let [field] = fields {
+            return Ok(*field);
+        }
+        // Match the language reader: split at len / 2, with no nil list tail.
+        let (left, right) = fields.split_at(fields.len() / 2);
+        let left = tree(encoder, left)?;
+        let right = tree(encoder, right)?;
+        encoder.encode_pair(left, right)
+    }
+    tree(encoder, &fields)
 }
 
 pub fn curry_referee_puzzle_hash(
@@ -429,7 +451,7 @@ impl StateUpdateMoveArgs {
         allocator: &mut AllocEncoder,
         me: StateUpdateProgram,
     ) -> Result<NodePtr, Error> {
-        (&self.state, (me, (&self.evidence, ())))
+        ((&self.state, (me, &self.evidence)), ())
             .to_clvm(allocator)
             .into_gen()
     }
@@ -516,16 +538,13 @@ impl OnChainRefereeMoveData {
                 .into_gen()?,
         );
         let solution_args_node = (
-            allocator
-                .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
-                .into_gen()?,
             (
+                allocator
+                    .encode_atom(clvm_traits::Atom::Borrowed(&self.new_move.basic.move_made))
+                    .into_gen()?,
                 self.new_move.validation_info_hash.clone(),
-                (
-                    self.new_move.basic.mover_share.clone(),
-                    (max_move_size_node, ()),
-                ),
             ),
+            (self.new_move.basic.mover_share.clone(), max_move_size_node),
         )
             .to_clvm(allocator)
             .into_gen()?;
@@ -583,9 +602,9 @@ pub struct OnChainRefereeSlash {
 
 /// onchain referee solution
 ///
-/// Timeout: (mover_payout_ph waiter_payout_ph)
-/// Move: (new_move infohash_c new_mover_share new_max_move_size)
-/// Slash: (previous_state previous_validation_program evidence mover_payout_ph)
+/// Timeout: (mover_payout_ph . waiter_payout_ph)
+/// Move: #(new_move infohash_c new_mover_share new_max_move_size)
+/// Slash: ((previous_state previous_validation_program . evidence) . mover_payout_ph)
 #[derive(Debug, Clone)]
 pub enum OnChainRefereeSolution {
     Timeout {
@@ -619,7 +638,7 @@ impl OnChainRefereeSolution {
                 mover_payout_ph,
                 waiter_payout_ph,
                 ..
-            } => (mover_payout_ph.as_ref(), (waiter_payout_ph.as_ref(), ()))
+            } => (mover_payout_ph.as_ref(), waiter_payout_ph.as_ref())
                 .to_clvm(encoder)
                 .into_gen(),
             OnChainRefereeSolution::Move(refmove) => {
@@ -637,27 +656,24 @@ impl OnChainRefereeSolution {
                         .into_gen()?,
                 );
                 (
-                    move_atom,
+                    (move_atom, refmove.game_move.validation_info_hash.clone()),
                     (
-                        refmove.game_move.validation_info_hash.clone(),
-                        (
-                            refmove.game_move.basic.mover_share.clone(),
-                            (max_move_size_node, ()),
-                        ),
+                        refmove.game_move.basic.mover_share.clone(),
+                        max_move_size_node,
                     ),
                 )
                     .to_clvm(encoder)
                     .into_gen()
             }
             OnChainRefereeSolution::Slash(refslash) => (
-                refslash.state.clone(),
                 (
-                    refslash.validation_program.clone(),
+                    refslash.state.clone(),
                     (
+                        refslash.validation_program.clone(),
                         refslash.evidence.clone(),
-                        (refslash.reward_puzzle_hash.clone(), ()),
                     ),
                 ),
+                refslash.reward_puzzle_hash.clone(),
             )
                 .to_clvm(encoder)
                 .into_gen(),

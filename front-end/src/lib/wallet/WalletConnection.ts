@@ -24,6 +24,7 @@ export interface WalletView {
   recoveryNotice: ReturnType<typeof walletRecoveryNotice>;
   walletType: BlockchainType | undefined;
   connected: boolean;
+  recovering: boolean;
   connecting: boolean;
   hasProvider: boolean;
   setup: Omit<ConnectionSetup, 'finalize'> | null;
@@ -34,7 +35,7 @@ export interface WalletView {
 export type WalletEvent =
   | { type: 'view'; view: WalletView }
   | { type: 'connected' }
-  | { type: 'connection'; connected: boolean }
+  | { type: 'connection'; connected: boolean; recovering: boolean }
   | { type: 'readiness'; ready: boolean }
   | { type: 'attention' | 'fee-changed' | 'detaching' };
 
@@ -52,6 +53,7 @@ export class WalletConnection {
     recoveryNotice: this.readRecoveryNotice(),
     walletType: storageRepository.query('blockchainType'),
     connected: false,
+    recovering: false,
     connecting: false,
     hasProvider: false,
     setup: null,
@@ -142,12 +144,18 @@ export class WalletConnection {
     this.provider = provider;
     this.select(type);
     this.setup = null;
-    this.update({ hasProvider: true, connected: true, connecting: false, setup: null });
+    this.update({
+      hasProvider: true,
+      connected: true,
+      recovering: false,
+      connecting: false,
+      setup: null,
+    });
     this.emit({ type: 'connected' });
     this.watchBalance();
-    this.detachConnection = provider.onConnectionChange((connected) => {
-      this.update({ connected });
-      this.emit({ type: 'connection', connected });
+    this.detachConnection = provider.onConnectionChange((connected, recovering = false) => {
+      this.update({ connected, recovering });
+      this.emit({ type: 'connection', connected, recovering });
       if (connected) this.watchBalance();
     });
     this.detachReadiness = this.poller.rpc.onPlayReadinessChange((ready) =>
@@ -286,7 +294,7 @@ export class WalletConnection {
 
   async disconnect(): Promise<void> {
     this.stopPoller();
-    this.update({ connected: false });
+    this.update({ connected: false, recovering: false });
     try {
       await this.provider?.disconnect();
     } catch {
@@ -313,7 +321,7 @@ export class WalletConnection {
     this.detachReadiness = null;
     this.stopPoller();
     this.provider = null;
-    this.update({ hasProvider: false });
+    this.update({ hasProvider: false, recovering: false });
   }
   leavePage(): void {
     if (this.view.walletType === 'simulator') void this.provider?.disconnect().catch(() => {});

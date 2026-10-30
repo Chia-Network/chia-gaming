@@ -1,4 +1,7 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
+(import std.shapes)
+(import games.calpoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.calpoker.clsp.onchain.onehandcalc)
 (import games.calpoker.clsp.onchain.arrange_cards)
@@ -11,7 +14,7 @@
 (import std.or)
 
 ; Terminal validator (on-chain only).
-; state is (bob_discards alice_cards bob_cards alice_commit)
+; state is (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards (17 bytes) and alice's card selections (1 byte)
 ; evidence is Bob's card selection bitfield (provided by slasher)
 ;
@@ -35,10 +38,10 @@
     )
 )
 
-(export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections)
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit) previous_validation_program bob_card_selections unused_payout)
     (if (or
             (!= (strlen MOVE) 18)
             (!= (popcount (substr MOVE 16 17)) 4)
@@ -51,7 +54,7 @@
             alice_discards (substr MOVE 16 17)
             alice_card_selections (substr MOVE 17 18)
 
-            (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
+            (calpoker-hands alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
                 alice_cards alice_discards bob_cards bob_discards)
             alice_hand_value (onehandcalc (pull_out_cards
                 alice_card_selections alice_final_cards))
@@ -71,7 +74,7 @@
                     )
                 )
                 0
-                (list 0)
+                (validator-transition 0 0 0)
             )
         )
     )
