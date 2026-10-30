@@ -1,6 +1,6 @@
 
 (mod ()
-    (include *standard-cl-21*)
+    (include *standard-cl-26*)
     (include print.clinc)
     (include sort.clinc)
     (include assert.clinc)

@@ -9,16 +9,18 @@ packages:
 overrides:
   '@tailwindcss/cli>@parcel/watcher': 2.6.0
   '@xmldom/xmldom@0.8.13': 0.8.15
+  body-parser@2.3.0: 2.4.0
   brace-expansion@1.1.18: 1.1.21
   brace-expansion@2.1.4: 2.1.7
   brace-expansion@5.0.8: 5.0.12
   brace-expansion@5.0.9: 5.0.12
-  fast-uri@3.1.5: 3.1.8
-  fast-uri@3.1.6: 3.1.8
+  fast-uri@3.1.5: 3.1.9
+  fast-uri@3.1.6: 3.1.9
   http-cache-semantics@4.2.0: 4.3.0
-  undici@6.28.0: 6.28.1
-  undici@7.29.0: 7.29.1
+  undici@6.28.0: 6.29.1
+  undici@7.29.0: 7.30.1
   source-map-js@1.2.1: 1.2.2
+  qs@6.16.0: 6.16.1
   proxy-addr@2.0.7: 2.0.8
   '@walletconnect/jsonrpc-ws-connection>ws': 8.21.2
   glob: 13.0.6
@@ -40,4 +42,3 @@ patchedDependencies:
   '@electron/asar@3.4.1': patches/@electron__asar@3.4.1.patch
   "@walletconnect/sign-client@2.23.10": front-end/patches/@walletconnect__sign-client@2.23.10.patch
   "@walletconnect/safe-json@1.0.2": front-end/patches/@walletconnect__safe-json@1.0.2.patch
-  react-dom@19.2.8: patches/react-dom@19.2.8.patch

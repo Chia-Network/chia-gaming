@@ -196,11 +196,12 @@ impl SpendBundle {
             constants.max_block_cost_clvm,
             flags,
             &constants,
+            None,
         )
         .map_err(|err| {
             Error::StrErr(format!(
                 "spend bundle consensus validation failed: {:?}",
-                err.1
+                err.error_code()
             ))
         })?;
         if !aggregate_verify_aligned(
@@ -348,7 +349,8 @@ fn validation_consensus_constants(agg_sig_me_additional_data: &Hash) -> Consensu
         max_generator_ref_list_size: 512,
         pool_sub_slot_iters: 37_600_000_000,
         hard_fork_height: 0,
-        hard_fork2_height: 0,
+        // Keep the upcoming cost model and interned spend-list rules disabled.
+        hard_fork2_height: u32::MAX,
         soft_fork8_height: 0,
         plot_v1_phase_out_epoch_bits: 0,
         plot_filter_128_height: u32::MAX,
@@ -356,9 +358,11 @@ fn validation_consensus_constants(agg_sig_me_additional_data: &Hash) -> Consensu
         plot_filter_32_height: u32::MAX,
         min_plot_strength: 0,
         max_plot_strength: 0,
-        plot_filter_v2_first_adjustment_height: 0,
-        plot_filter_v2_second_adjustment_height: 0,
-        plot_filter_v2_third_adjustment_height: 0,
+        soft_fork9_height: u32::MAX,
+        plot_filter_v2_relative_height: [0; 9],
+        filter_window_size: 16,
+        max_effective_plot_filter_bits: 13,
+        testnet: true,
     }
 }
 
@@ -796,6 +800,65 @@ mod consensus_validation_tests {
             },
             fee_target,
         )
+    }
+
+    #[test]
+    fn current_consensus_rules_preserve_spend_and_condition_costs() {
+        let mut allocator = AllocEncoder::new();
+        let output_ph = PuzzleHash::from_bytes([0x77; 32]);
+        let conditions = vec![
+            (51_u8, (output_ph.clone(), (Amount::new(1), ())))
+                .to_clvm(&mut allocator)
+                .expect("first CREATE_COIN"),
+            (51_u8, (output_ph, (Amount::new(2), ())))
+                .to_clvm(&mut allocator)
+                .expect("second CREATE_COIN"),
+            (52_u8, (Amount::new(0), ()))
+                .to_clvm(&mut allocator)
+                .expect("RESERVE_FEE"),
+        ];
+        let spend = quoted_condition_spend(&mut allocator, 0x31, 3, conditions);
+        let puzzle_hash: [u8; 32] = spend
+            .bundle
+            .puzzle
+            .sha256tree(&mut allocator)
+            .bytes()
+            .try_into()
+            .expect("puzzle hash");
+        let protocol_bundle = chia_protocol::SpendBundle {
+            coin_spends: vec![chia_protocol::CoinSpend {
+                coin: chia_protocol::Coin {
+                    parent_coin_info: Bytes32::from([0x31; 32]),
+                    puzzle_hash: Bytes32::from(puzzle_hash),
+                    amount: 3,
+                },
+                puzzle_reveal: Bytes::from(spend.bundle.puzzle.to_program().bytes().to_vec())
+                    .into(),
+                solution: Bytes::from(vec![0x80]).into(),
+            }],
+            aggregated_signature: chia_bls::Signature::default(),
+        };
+        let constants =
+            validation_consensus_constants(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA));
+        let flags = get_flags_for_height_and_constants(1, &constants) | MEMPOOL_MODE;
+        let mut consensus_allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
+        let (result, _) = run_spendbundle(
+            &mut consensus_allocator,
+            &protocol_bundle,
+            constants.max_block_cost_clvm,
+            flags,
+            &constants,
+            None,
+        )
+        .expect("current-rule spend");
+        // Two CREATE_COINs cost 1.8M each; there is no spend surcharge or
+        // generic condition charge before the upcoming hard fork.
+        assert_eq!(result.condition_cost, 3_600_000);
+        let byte_cost = (chia_consensus::solution_generator::calculate_generator_length(
+            &protocol_bundle.coin_spends,
+        ) - 2) as u64
+            * constants.cost_per_byte;
+        assert_eq!(result.cost, byte_cost + result.execution_cost + 3_600_000);
     }
 
     #[test]

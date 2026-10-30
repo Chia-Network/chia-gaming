@@ -2,7 +2,7 @@ use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm};
 use clvm_utils::CurriedProgram;
 use clvmr::{run_program, ChiaDialect};
 
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::common::constants::{AGG_SIG_ME_ADDITIONAL_DATA, DEFAULT_HIDDEN_PUZZLE_HASH, ONE, TWO};

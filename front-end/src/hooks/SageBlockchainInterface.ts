@@ -123,9 +123,10 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
   private readonly chain = new CoinsetClient(coinsetHttpCall, '[sage-blockchain]');
   private readonly ledger = new SageCoinLedger();
   private walletOfferProvider: WalletOfferProvider | null = null;
-  private connectionListeners = new Set<(connected: boolean) => void>();
+  private connectionListeners = new Set<(connected: boolean, recovering?: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
+  private lastRecoveringState = false;
   private wcSubscription: { unsubscribe: () => void } | null = null;
   private monitoringPromise: Promise<void> | null = null;
   private monitoringEpoch = 0;
@@ -175,11 +176,11 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
     this.fireConnectionChange(true);
   }
 
-  private markDisconnected() {
+  private markDisconnected(recovering = false) {
     this.monitoringEpoch++;
     this.monitoringPromise = null;
     this.blockchainAddressData = { puzzleHash: '' };
-    this.fireConnectionChange(false);
+    this.fireConnectionChange(false, recovering);
   }
 
   /**
@@ -457,12 +458,13 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       : { status: 'already-terminal', detail: 'Sage reservation is not held by this page' };
   }
 
-  private fireConnectionChange(connected: boolean) {
-    if (connected === this.lastConnectedState) return;
+  private fireConnectionChange(connected: boolean, recovering = false) {
+    if (connected === this.lastConnectedState && recovering === this.lastRecoveringState) return;
     this.lastConnectedState = connected;
+    this.lastRecoveringState = recovering;
     for (const cb of this.connectionListeners) {
       try {
-        cb(connected);
+        cb(connected, recovering);
       } catch {
         /* ignore */
       }
@@ -488,7 +490,9 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
           return;
         }
         if (evt.stateName === 'connected') {
+          const epoch = this.monitoringEpoch;
           void this.startMonitoring().catch((err) => {
+            if (epoch !== this.monitoringEpoch) return;
             log(`[sage-blockchain] monitoring setup after WalletConnect event failed: ${err}`);
             this.markDisconnected();
           });
@@ -496,7 +500,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
           evt.connected === false ||
           (evt.stateName === 'initialized' && evt.sessions === 0)
         ) {
-          this.markDisconnected();
+          this.markDisconnected(evt.stateName === 'reconnecting');
         }
       },
     });
@@ -504,7 +508,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
     await walletConnectState.init();
-    walletConnectState.selectProfile('sage');
+    await walletConnectState.selectProfile('sage');
     this.subscribeToWcEvents();
     if (fresh) {
       await walletConnectState.forgetSessions();
@@ -523,11 +527,12 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       };
     }
 
-    const { uri, approval } = await walletConnectState.startConnect();
+    const { uri, approval, skipQr } = await walletConnectState.startConnect();
     return {
       qrUri: uri,
+      skipQr,
       finalize: async () => {
-        await walletConnectState.connect(approval);
+        if (!skipQr) await walletConnectState.connect(approval);
         await this.finishConnect();
       },
     };
@@ -548,7 +553,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
     );
   }
 
-  onConnectionChange(cb: (connected: boolean) => void): () => void {
+  onConnectionChange(cb: (connected: boolean, recovering?: boolean) => void): () => void {
     this.connectionListeners.add(cb);
     this.subscribeToWcEvents();
     return () => {

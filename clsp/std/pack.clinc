@@ -1,0 +1,14 @@
+; Keep the inline identity local: generated calls resolve in the importing namespace.
+(defun-inline pack-li VALUES VALUES)
+
+; Construct the written tree without interpreting shape annotations.
+; li returns its complete argument environment. &rest preserves dotted tails.
+(defun pack-build (IDENTITY TREE)
+    (if (l TREE) (c IDENTITY (pack-arguments IDENTITY TREE)) TREE))
+
+(defun pack-arguments (IDENTITY TREE)
+    (if (l TREE)
+        (c (pack-build IDENTITY (f TREE)) (pack-arguments IDENTITY (r TREE)))
+        (if TREE (list (q . &rest) TREE) ())))
+
+(defmac pack (TREE) (pack-build (q . pack-li) TREE))

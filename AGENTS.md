@@ -22,6 +22,14 @@ to debugging sub-agents; do not assume they inherit the parent's instructions.
 These skills are required for debugging even if your agent does not automatically
 discover `.agents/skills/`. Read the linked files directly in that case.
 
+## Required modularization skill
+
+For initial architecture and API design, modularization, or refactoring ownership
+and module boundaries, read and follow
+[Architecture, Modularization, and API Design](.agents/skills/modularization/SKILL.md).
+Read it directly if your agent does not discover repository skills. It guides
+the requested work; it does not authorize unrelated architectural changes.
+
 ---
 
 # Read Project Overview First
@@ -29,6 +37,11 @@ discover `.agents/skills/`. Read the linked files directly in that case.
 At the start of each conversation, read `OVERVIEW.md` in full before diving
 into the task. It provides the conceptual foundation and links to detailed
 docs. Read the linked docs as they become relevant to the task at hand.
+
+Before reading, reviewing, or editing Chialisp (`.clsp` / `.clinc`), read
+[Shapes and pack](clsp/std/shapes.md). It explains the construction, invocation,
+dispatch, and field-access macros used throughout the referee and games,
+including their compile-time checks and runtime assumptions.
 
 **Build/test commands:** Use `./cb.sh` for builds, `./ct.sh` for targeted or
 interactive test runs, and `./ct-automation.sh` for automated/LLM full-suite

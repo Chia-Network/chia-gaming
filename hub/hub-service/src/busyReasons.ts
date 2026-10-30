@@ -5,11 +5,7 @@
  * `PlayerStatus`.
  */
 export type BusyReason =
-  | 'in-session'
-  | 'restoring'
-  | 'starting'
-  | 'wallet-disconnected'
-  | 'blockchain-not-ready';
+  'in-session' | 'restoring' | 'starting' | 'wallet-disconnected' | 'blockchain-not-ready';
 
 export const BUSY_REASON_ORDER: readonly BusyReason[] = [
   'in-session',

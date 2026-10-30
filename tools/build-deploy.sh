@@ -43,8 +43,8 @@ fi
 if ! command -v node &>/dev/null; then
     if [ -f ~/.nvm/nvm.sh ]; then
         source ~/.nvm/nvm.sh
-        nvm install 22.13
-        nvm use 22.13
+        nvm install 24
+        nvm use 24
     else
         echo "Error: node not found and nvm not available"
         exit 1

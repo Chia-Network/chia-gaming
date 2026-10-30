@@ -15,8 +15,14 @@ jest.mock('../../hooks/WalletConnectRpc', () => ({
   },
 }));
 
+let mockWalletEvent: ((event: { stateName: string; connected?: boolean }) => void) | undefined;
 const mockWalletConnectState = {
-  getObservable: () => ({ subscribe: () => ({ unsubscribe: () => {} }) }),
+  getObservable: () => ({
+    subscribe: (observer: { next: NonNullable<typeof mockWalletEvent> }) => {
+      mockWalletEvent = observer.next;
+      return { unsubscribe: () => {} };
+    },
+  }),
   getAddress: jest.fn(() => '424242'),
   getChainId: jest.fn(() => 'chia:mainnet'),
   getSession: jest.fn(() => ({ topic: 'sage-topic' })),
@@ -121,6 +127,17 @@ describe('SageBlockchainInterface', () => {
     mockBuildWalletSpend.mockImplementation(spendFirstOfferedCoin);
     mockSpendableTotal.mockImplementation(sumOfferedCoins);
     jest.mocked(sageRpc.signCoinSpends).mockResolvedValue(SIGNATURE);
+  });
+
+  it('distinguishes relay recovery from a disconnected wallet', async () => {
+    const sage = await connectedSage();
+    const changed = jest.fn();
+    sage.onConnectionChange(changed);
+    mockWalletEvent!({ stateName: 'reconnecting', connected: false });
+    expect(changed).toHaveBeenLastCalledWith(false, true);
+    expect(sage.isReadyForPlay()).toBe(false);
+    mockWalletEvent!({ stateName: 'disconnected', connected: false });
+    expect(changed).toHaveBeenLastCalledWith(false, false);
   });
 
   it('exposes a terminal provider scoped to the Sage fingerprint and chain', async () => {

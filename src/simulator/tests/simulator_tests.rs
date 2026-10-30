@@ -1,4 +1,4 @@
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use clvm_traits::ToClvm;
