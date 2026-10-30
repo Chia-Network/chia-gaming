@@ -18,6 +18,7 @@ pub mod shutdown;
 pub mod simulator;
 pub mod transaction_manager;
 pub mod utils;
+pub mod wallet_spend;
 
 #[cfg(test)]
 mod game_package_key;

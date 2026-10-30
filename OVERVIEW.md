@@ -664,7 +664,10 @@ second fee. Cloud Wallet uses the same persisted-offer settlement shape as
 WalletConnect, including the protocol-provided CLVM conditions. Its wallet and
 offer operations use the Cloud Wallet GraphQL API, while peak, coin, puzzle,
 and transaction-submission traffic is relayed unchanged through that API's
-Coinset proxy.
+Coinset proxy. Sage cannot attach protocol conditions to offers, so Rust
+builds the same funding shape as standard-puzzle spends of Sage's coins, Sage
+signs and broadcasts them over WalletConnect CHIP-0002, and chain reads go
+directly to coinset.org.
 
 **Key code:** `src/session_phases/handshake_initiator.rs`,
 `src/session_phases/handshake_receiver.rs`,
@@ -816,6 +819,12 @@ identifying the exact same transaction as already included is idempotent
 success. Failure to complete communication with the wallet is unavailable; an
 error returned by the wallet is rejected. Adapters preserve that provenance
 instead of deriving retry policy from consensus, mempool, or coin-status text.
+Sage is the one adapter that sends exact bytes twice, and only when its own
+answer is not provenance: Sage records a transaction after its peers accept it,
+so a thrown error can follow a successful broadcast, and a failure without an
+error means no peer answered. Only then does the adapter resubmit the identical
+bundle through Coinset `push_tx`, whose answer (including "already included")
+is the outcome. A mempool status Sage's peers reported is final.
 Fee-bearing wallet outputs from either WalletConnect or Cloud Wallet are
 validated and aggregated by one Rust boundary, including complete aggregate
 signature verification for `AGG_SIG_UNSAFE`. JavaScript does not inspect
