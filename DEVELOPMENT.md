@@ -52,6 +52,12 @@ automatically set `CC_wasm32_unknown_unknown` and `AR_wasm32_unknown_unknown`
 to the Homebrew LLVM paths. Install with `brew install llvm` if WASM builds
 fail with clang errors.
 
+The workspace uses TypeScript 7 for `tsc` builds through the
+`@typescript/native` npm alias. The `typescript` dependency aliases
+`@typescript/typescript6` so ESLint and ts-jest can use the compiler API they
+support. Keep both entries when updating TypeScript; this follows the
+[TypeScript side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0).
+
 ## Building & Testing
 
 ```bash
