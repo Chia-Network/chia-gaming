@@ -49,7 +49,7 @@ futures-util = { version = "=0.3.34", features = ["sink"], optional = true }
 axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [dev-dependencies]
-chialisp = "0.5.0"
+chialisp = "0.6.0"
 
 [build-dependencies]
 chialisp = "0.6.0"
