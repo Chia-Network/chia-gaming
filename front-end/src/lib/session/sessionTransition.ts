@@ -1,12 +1,7 @@
 import type { WasmNotification } from '../../types/ChiaGaming';
 
 export type DurableNotificationKind =
-  | 'accepted-group'
-  | 'game-status'
-  | 'settlement'
-  | 'insufficient-balance'
-  | 'abandoned'
-  | null;
+  'accepted-group' | 'game-status' | 'settlement' | 'insufficient-balance' | 'abandoned' | null;
 
 export function durableNotificationKind(notification: WasmNotification): DurableNotificationKind {
   if (notification.ProposalAcceptedGroup) return 'accepted-group';
