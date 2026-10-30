@@ -55,6 +55,12 @@ protocol, which is project-owned: the game WebSocket control envelopes and
 peer semantic-message bodies use Bencodex, while the hub iframe WebSocket
 remains JSON.
 
+WalletConnect can garble or lose responses when more than one request is
+pending. Only one request may be outstanding per connection; serialization is
+a correctness requirement, not merely rate limiting. See
+[Blockchain Polling Architecture](FRONTEND_ARCHITECTURE.md#blockchain-polling-architecture)
+for mutation priority, stalled-request relay replacement, and reservation rules.
+
 ### Hub
 
 A hub is a specific server. The hub is its matchmaking HTML UX (player list and challenges); the game relay is a separate channel on the same server.

@@ -728,7 +728,8 @@ export interface InternalBlockchainInterface {
   beginConnect(uniqueId: string, fresh?: boolean): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
-  onConnectionChange(cb: (connected: boolean) => void): () => void;
+  // Recovery pauses RPCs without revoking the approved wallet connection.
+  onConnectionChange(cb: (connected: boolean, recovering?: boolean) => void): () => void;
   // True when this backend can fund/resolve channels (hub may advertise
   // not-busy). Simulator and Cloud Wallet: ready whenever connected.
   // WalletConnect: ready once a full-node peer is verified when the wallet
