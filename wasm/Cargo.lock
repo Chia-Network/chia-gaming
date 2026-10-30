@@ -371,11 +371,13 @@ dependencies = [
 [[package]]
 name = "chialisp"
 version = "0.5.0"
-source = "git+https://github.com/Chia-Network/chialisp.git?rev=d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb#d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb"
+source = "git+https://github.com/Chia-Network/chialisp.git?rev=286a343940b50bc6b2d2f8488c53f069c9cff2c8#286a343940b50bc6b2d2f8488c53f069c9cff2c8"
 dependencies = [
  "binascii",
  "chia-bls 0.38.2",
  "clvmr",
+ "crypto-bigint",
+ "ctutils",
  "do-notation",
  "hashlink",
  "hex",
@@ -436,7 +438,7 @@ dependencies = [
 [[package]]
 name = "clvmr"
 version = "0.21.0"
-source = "git+https://github.com/Chia-Network/clvm_rs.git?rev=c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd#c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd"
+source = "git+https://github.com/Chia-Network/clvm_rs.git?rev=05e31346107b7d0defc6c9055f7efd32ac81d498#05e31346107b7d0defc6c9055f7efd32ac81d498"
 dependencies = [
  "bitflags",
  "bitvec",
@@ -496,9 +498,9 @@ dependencies = [
 
 [[package]]
 name = "crypto-bigint"
-version = "0.7.5"
+version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a52aa3fcda4e6302a9f48734f234d35d4721b96f8fe07d073f07ce9df4f0271"
+checksum = "9c035cb64cba03dad2fb921f3e218785e8cf9a41790da5eb3a1400f62fa2be11"
 dependencies = [
  "cpubits",
  "ctutils",
@@ -533,9 +535,9 @@ dependencies = [
 
 [[package]]
 name = "ctutils"
-version = "0.4.2"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+checksum = "a2376ffd6f96d8a9db59875b4b6b0237d6900b5baf64279714e05493ce64828a"
 dependencies = [
  "cmov",
  "subtle",
@@ -1596,7 +1598,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",

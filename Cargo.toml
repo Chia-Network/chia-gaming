@@ -30,10 +30,10 @@ chia-bls = "=0.52.1"
 chia-consensus = "=0.52.1"
 chia-protocol = "=0.52.1"
 chia-puzzles = "=0.20.3"
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "286a343940b50bc6b2d2f8488c53f069c9cff2c8" }
 clvm-traits = "=0.52.1"
 clvm-utils = "=0.52.1"
-clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd", features = ["pre-eval"] }
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.1"
 num-bigint = "=0.5.1"
@@ -56,9 +56,9 @@ getrandom = { version = "=0.4.3", features = ["std"] }
 rand_chacha = "=0.9.0"
 serde = { version = "=1.0.228", features = ["alloc", "rc"] }
 serde_core = "=1.0.228"
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "286a343940b50bc6b2d2f8488c53f069c9cff2c8" }
 clvm-utils = "=0.52.1"
-clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd", features = ["pre-eval"] }
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498", features = ["pre-eval"] }
 hex = "=0.4.3"
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"
@@ -82,4 +82,4 @@ name = "chia_gaming"
 crate-type = ["rlib"]
 
 [patch.crates-io]
-clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd" }
+clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498" }
