@@ -1,5 +1,9 @@
 # Overview: Chia Gaming State Channels
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 This document provides the conceptual foundation for the `chia_gaming`
 codebase — a system for playing two-player games over Chia state channels.
 For detailed coverage of specific areas, see [Further Reading](#further-reading)

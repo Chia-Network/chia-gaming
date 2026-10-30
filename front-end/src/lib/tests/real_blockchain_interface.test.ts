@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import { storageRepository } from '../session/storageRepository';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 
@@ -78,6 +79,9 @@ import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 import { subscribeLog } from '../../services/log';
+import { coinRecordToName } from '../../util/coinWatch';
+import { pollOnce } from './blockchain_poller.driver';
+import type { CoinStateRecord, InternalBlockchainInterface } from '../../types/ChiaGaming';
 
 const offerOperation = {
   owner: {
@@ -236,6 +240,129 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
+  it('distinguishes automatic recovery from actionable wallet loss while readiness stays false', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSupportsPeerCount = false;
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      const blockchain = new RealBlockchainInterface();
+      const events: [boolean, boolean | undefined][] = [];
+      blockchain.onConnectionChange((connected, recovering) =>
+        events.push([connected, recovering]),
+      );
+      await connectAndWait(blockchain);
+      expect(blockchain.isReadyForPlay()).toBe(true);
+
+      mockWalletSession = undefined;
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'reconnecting', connected: false, sessions: 1 });
+      }
+      expect(events).toEqual([
+        [true, false],
+        [false, true],
+      ]);
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      expect(blockchain.isConnected()).toBe(false);
+
+      // Relay open alone does not finish monitoring setup or require user action.
+      let finishSetup!: (wallets: unknown[]) => void;
+      mockGetWallets.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishSetup = resolve;
+          }),
+      );
+      mockWalletSession = { topic: 'wallet-1' };
+      for (const next of mockWalletListeners) {
+        next({ stateName: 'connected', connected: true, sessions: 1 });
+      }
+      await Promise.resolve();
+      expect(events.at(-1)).toEqual([false, true]);
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      finishSetup([{ type: 205, id: 7n }]);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      jest.advanceTimersByTime(500);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(events.at(-1)).toEqual([true, false]);
+      expect(blockchain.isReadyForPlay()).toBe(true);
+
+      for (const next of mockWalletListeners)
+        next({ stateName: 'reconnecting', connected: false, sessions: 1 });
+      for (const next of mockWalletListeners)
+        next({ stateName: 'disconnected', connected: false, sessions: 1 });
+      expect(events.slice(-2)).toEqual([
+        [false, true],
+        [false, false],
+      ]);
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      await connectAndWait(blockchain);
+      for (const next of mockWalletListeners)
+        next({ stateName: 'reconnecting', connected: false, sessions: 1 });
+      mockWalletSession = undefined;
+      for (const next of mockWalletListeners)
+        next({ stateName: 'initialized', connected: false, sessions: 0 });
+      expect(events.slice(-2)).toEqual([
+        [false, true],
+        [false, false],
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('ignores a stale monitoring rejection after a replacement setup has started', async () => {
+    jest.useFakeTimers();
+    try {
+      mockSupportsPeerCount = false;
+      let rejectOldAddress!: (error: Error) => void;
+      let finishNewAddress!: (address: string) => void;
+      mockGetNextAddress
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              rejectOldAddress = reject;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishNewAddress = resolve;
+            }),
+        );
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      const blockchain = new RealBlockchainInterface();
+      const events: [boolean, boolean | undefined][] = [];
+      blockchain.onConnectionChange((connected, recovering) =>
+        events.push([connected, recovering]),
+      );
+      await connectAndWait(blockchain);
+      mockWalletSession = undefined;
+      for (const next of mockWalletListeners)
+        next({ stateName: 'reconnecting', connected: false, sessions: 1 });
+      await connectAndWait(blockchain);
+      expectConsoleError('[wc-blockchain] startMonitoring failed:');
+      rejectOldAddress(new WalletConnectTransportError('old relay closed'));
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(events).toEqual([[false, true]]);
+      // An old finally must not clear the replacement promise and start duplicate setup.
+      for (const next of mockWalletListeners)
+        next({ stateName: 'connected', connected: true, sessions: 1 });
+      expect(mockGetNextAddress).toHaveBeenCalledTimes(2);
+      finishNewAddress(encodePuzzleHashToBech32m('11'.repeat(32)));
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      jest.advanceTimersByTime(500);
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+      expect(events).toEqual([
+        [false, true],
+        [true, false],
+      ]);
+      expect(blockchain.isReadyForPlay()).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('reports ready for play once a full node peer is verified and drops on disconnect', async () => {
     jest.useFakeTimers();
     try {
@@ -288,7 +415,7 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
-  it('assumes enough peers when an advertised peer-count method never responds', async () => {
+  it('waits for query timeout recovery before assuming an unresponsive peer-count method is unsupported', async () => {
     jest.useFakeTimers();
     try {
       mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
@@ -304,7 +431,19 @@ describe('RealBlockchainInterface', () => {
 
       jest.advanceTimersByTime(7_000);
       for (let i = 0; i < 10; i++) await Promise.resolve();
-
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      // Only the active transport query's deadline can identify a timed-out
+      // method; time spent queued behind wallet work is not an unsupported RPC.
+      for (const next of mockWalletListeners) {
+        next({
+          stateName: 'reconnecting',
+          connected: false,
+          timedOutMethod: 'chia_getFullNodePeerCount',
+        });
+      }
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      for (const next of mockWalletListeners) next({ stateName: 'connected', connected: true });
+      await jest.advanceTimersByTimeAsync(1000);
       expect(blockchain.isReadyForPlay()).toBe(true);
       expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
     } finally {
@@ -512,6 +651,90 @@ describe('RealBlockchainInterface', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('observes shutdown across advancing tips with slow serial reads and an unknown coin', async () => {
+    const records: CoinRecord[] = Array.from({ length: 7 }, (_, index) => ({
+      coin: {
+        parentCoinInfo: (index + 1).toString(16).padStart(2, '0').repeat(32),
+        puzzleHash: 'ab'.repeat(32),
+        amount: 200n,
+      },
+      confirmedBlockIndex: index === 1 ? 101n : 10n,
+      spentBlockIndex: index === 0 ? 101n : 0n,
+      spent: index === 0,
+      coinbase: false,
+      timestamp: 0n,
+    }));
+    const names = [...(await Promise.all(records.map(coinRecordToName))), 'cd'.repeat(32)];
+    const byName = new Map(names.map((name, index) => [name, records[index]]));
+    let elapsedSeconds = 0n;
+    mockGetCoinRecordsByNames.mockImplementation(async ({ names: requested }) => {
+      elapsedSeconds += 5n;
+      // The wallet rejects a multi-coin request if even one coin has never existed.
+      const found = requested.map((name: string) => byName.get(name));
+      if (found.some((record: CoinRecord | undefined) => !record)) {
+        throw new Error('Internal Error');
+      }
+      return { coinRecords: found };
+    });
+    const blockchain = new RealBlockchainInterface();
+    const observations: Array<{ height: bigint; records: CoinStateRecord[] }> = [];
+    const heights: bigint[] = [];
+    const poller = new BlockchainPoller(
+      {
+        isConnected: () => true,
+        getHeightInfo: async () => 100n + elapsedSeconds / 18n,
+        registerCoins: async () => {},
+        getCoinRecordsByNames: (requested: string[]) => blockchain.getCoinRecordsByNames(requested),
+      } as unknown as InternalBlockchainInterface,
+      10_000,
+    );
+    poller.attachGameSession({
+      snapshotWatchedCoins: () =>
+        names.map((name, index) => ({ coin_name: name!, coin_string: `coin-${index}` })),
+      reportNewBlock: (height) => {
+        heights.push(height);
+      },
+      reportCoinStates: (height, records) => {
+        observations.push({ height, records });
+      },
+    });
+    await pollOnce(poller);
+    await pollOnce(poller);
+
+    expect(observations.map(({ height }) => height)).toEqual([100n, 102n]);
+    expect(heights).toEqual([100n, 102n]);
+    expect(observations[0].records[0]).toEqual({
+      coin: 'coin-0',
+      created_height: 10n,
+      spent_height: null,
+    });
+    expect(observations[0].records[1]).toEqual({
+      coin: 'coin-1',
+      created_height: null,
+      spent_height: null,
+    });
+    expect(observations[1].records[0]).toEqual({
+      coin: 'coin-0',
+      created_height: 10n,
+      spent_height: 101n,
+    });
+    expect(observations[1].records[1]).toEqual({
+      coin: 'coin-1',
+      created_height: 101n,
+      spent_height: null,
+    });
+    expect(observations[1].records[7]).toEqual({
+      coin: 'coin-7',
+      created_height: null,
+      spent_height: null,
+    });
+    expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(16);
+    expect(
+      mockGetCoinRecordsByNames.mock.calls.every(([request]) => request.names.length === 1),
+    ).toBe(true);
+    expect(poller.getPeak()).toBe(102n);
   });
 
   it('silently treats every wallet coin-record error as absent and continues the batch', async () => {

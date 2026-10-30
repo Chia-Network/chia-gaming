@@ -1,5 +1,10 @@
 (import std.relops)
 (import std.li)
+(import std.shapes)
+
+; These remain proper lists to match the dictionary built by Rust.
+(defun-shape krunk-dictionary-node (left_node right_node word_here))
+(defun-shape krunk-dictionary-gap (left_bound right_bound signature))
 
 ; Balanced BST dictionary lookup with signatures at leaves.
 ;
@@ -20,9 +25,9 @@
     (if (l node)
         ; interior: (left_node right_node word_here)
         (assign
-            left_node (f node)
-            right_node (f (r node))
-            word_here (f (r (r node)))
+            left_node (get-field (krunk-dictionary-node) left_node node)
+            right_node (get-field (krunk-dictionary-node) right_node node)
+            word_here (get-field (krunk-dictionary-node) word_here node)
             (if (= word word_here)
                 ()
                 (if (> word word_here)

@@ -244,8 +244,7 @@ export type WalletOfferRequest =
     };
 
 export type WalletOfferMaterial =
-  | { kind: 'offer'; offer: string }
-  | { kind: 'bundle'; bundle: unknown };
+  { kind: 'offer'; offer: string } | { kind: 'bundle'; bundle: unknown };
 
 export type WalletOfferReservedCompletion = {
   kind: 'created-reserved';
@@ -267,8 +266,7 @@ export type WalletOfferCompletion =
   | { kind: 'unavailable'; reason: string };
 
 export type WalletOfferBeginOutcome =
-  | WalletOfferCompletion
-  | { kind: 'pending'; recoveryId: string };
+  WalletOfferCompletion | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
   create_peer_protocol: import('../services/peerProtocol').PeerProtocolFactory;
@@ -358,8 +356,7 @@ export type WalletOfferCancellationOutcome =
   | { status: 'rejected'; detail: string };
 
 export type WalletOfferCancellationBeginOutcome =
-  | WalletOfferCancellationOutcome
-  | { status: 'pending'; recoveryId: string };
+  WalletOfferCancellationOutcome | { status: 'pending'; recoveryId: string };
 
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
@@ -456,7 +453,8 @@ export interface InternalBlockchainInterface {
   beginConnect(uniqueId: string, fresh?: boolean): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
-  onConnectionChange(cb: (connected: boolean) => void): () => void;
+  // Recovery pauses RPCs without revoking the approved wallet connection.
+  onConnectionChange(cb: (connected: boolean, recovering?: boolean) => void): () => void;
   // True when this backend can fund/resolve channels (hub may advertise
   // not-busy). Simulator and Cloud Wallet: ready whenever connected.
   // WalletConnect: ready once a full-node peer is verified when the wallet

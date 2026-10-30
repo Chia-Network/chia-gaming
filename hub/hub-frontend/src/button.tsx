@@ -121,7 +121,8 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'color'>,
+  extends
+    Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'color'>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
   leadingIcon?: React.ReactElement;

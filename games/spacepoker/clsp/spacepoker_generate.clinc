@@ -1,4 +1,7 @@
-(include *standard-cl-23*)
+(include *standard-cl-26*)
+(import std.shapes)
+(import std.pack)
+(import games.spacepoker.clsp.onchain.shapes)
 
 (import games.spacepoker.clsp.onchain.commitA exposing (program as val_commitA))
 (import games.spacepoker.clsp.onchain.commitB exposing (program as val_commitB))
@@ -72,7 +75,7 @@
         bob_cards   (li bh1 bh2 flop_1 flop_2 flop_3 turn river)
         alice_boost (not (% (sha256 (logxor alice_pre bi4)) 3))
         bob_boost   (not (% (sha256 (logxor bob_pre ai4)) 3))
-        (li alice_cards bob_cards alice_boost bob_boost)
+        (make-space-cards alice_cards bob_cards alice_boost bob_boost)
     )
 )
 
@@ -180,7 +183,7 @@
 ; or show the action bar.
 (defun spacepoker_alice_handler_commitB (CHAIN amount pre_state state move validation_info_hash mover_share)
     (assign
-        (bet_unit _half_pot _alice_i5 bob_i4 _N _mid_hash) state
+        (space-open bet_unit _half_pot _alice_i5 bob_i4 _N _mid_hash) state
         alice_pre (image_at CHAIN 0)
         alice_i4 (image_at CHAIN 4)
         (ah1 ah2) (make_cards_pair alice_pre bob_i4 2)
@@ -203,7 +206,7 @@
 ; ignored.
 (defun spacepoker_alice_begin_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N _mid_hash) state
+        (space-open bet_unit half_pot mover_image_Nplus1 waiter_image_N N _mid_hash) state
         image_N (image_at CHAIN N)
         mover_opens (if (= N 4)
             (= (> image_N waiter_image_N)
@@ -240,14 +243,14 @@
     (if (<= (strlen move) 32)
         ; Bob called — next street or end
         (assign
-            (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
+            (space-raise bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
             new_half_pot (+ half_pot last_raise)
             readable (if (= N 1)
                 ; N=1 call: both preimages known — derive all cards and hands
                 (assign
                     alice_pre (image_at CHAIN 0)
                     bob_pre move
-                    (alice_cards bob_cards alice_boost bob_boost) (derive_all_cards alice_pre bob_pre)
+                    (space-cards alice_cards bob_cards alice_boost bob_boost) (derive_all_cards alice_pre bob_pre)
                     (alice_hand alice_bitfield) (space_hand_calc alice_cards alice_boost)
                     (bob_hand bob_bitfield) (space_hand_calc bob_cards bob_boost)
                     alice_selected (pull_cards alice_cards alice_bitfield)
@@ -263,7 +266,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos (image_at CHAIN (- N 1)) move (- N 1))
-                    (c "call" (c new_half_pot (c N new_cards)))
+                    (pack ("call" new_half_pot N . new_cards))
                 )
             )
             (if (= N 1)
@@ -282,7 +285,7 @@
         )
         ; Bob raised — we need to respond
         (assign
-            (_bet_unit _half_pot _last_raise . _rest) pre_state
+            (space-raise _bet_unit _half_pot _last_raise _mover _waiter _round) pre_state
             new_raise (substr move 32 (strlen move))
             (list
                 (list "raise" new_raise (+ _half_pot _last_raise))
@@ -298,7 +301,7 @@
 ; local_move = raise amount (nil to call)
 (defun spacepoker_alice_mid_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot last_raise mover_image_Nplus1 waiter_image_N N) state
+        (space-raise bet_unit half_pot last_raise mover_image_Nplus1 waiter_image_N N) state
         (if local_move
             ; raise
             (assign
@@ -341,12 +344,14 @@
 ; message so the opener's side can pre-reveal the cards.
 (defun spacepoker_alice_handler_begin_round_their (CHAIN BET_UNIT amount pre_state state move validation_info_hash mover_share)
     (assign
-        (_bet_unit _half_pot _mover_Nplus1 waiter_image_N N _mid_hash) pre_state
+        (space-open _bet_unit _half_pot _mover_Nplus1 waiter_image_N N _mid_hash) pre_state
         mover_image_N (substr move 0 32)
         raise_amount (substr move 32 (strlen move))
         readable (if (= N 4)
             (list "open" raise_amount _half_pot)
-            (c "open" (c raise_amount (c _half_pot (community_cards_for_pos (image_at CHAIN N) mover_image_N N))))
+            (assign
+                new_cards (community_cards_for_pos (image_at CHAIN N) mover_image_N N)
+                (pack ("open" raise_amount _half_pot . new_cards)))
         )
         (list
             readable
@@ -357,13 +362,13 @@
 )
 
 ; my-turn: Alice makes final reveal at end
-; state = (half_pot mover_image waiter_preimage)
+; state = (space-end)
 ; local_move = card selection bitfield (1 byte)
 (defun spacepoker_alice_handler_end (CHAIN local_move amount state mover_share entropy)
     (assign
         pre (image_at CHAIN 0)
-        (half_pot mover_image waiter_preimage) state
-        (alice_cards bob_cards alice_boost bob_boost) (derive_all_cards pre waiter_preimage)
+        (space-end) state
+        (space-cards alice_cards bob_cards alice_boost bob_boost) (derive_all_cards pre waiter_preimage)
         (alice_hand alice_bitfield) (space_hand_calc alice_cards alice_boost)
         (bob_hand bob_bitfield) (space_hand_calc bob_cards bob_boost)
         move_bytes (concat pre alice_bitfield)
@@ -391,7 +396,7 @@
     (assign
         alice_pre (image_at CHAIN 0)
         bob_preimage (substr move 0 16)
-        (bob_cards alice_cards bob_boost alice_boost) (derive_all_cards bob_preimage alice_pre)
+        (space-cards bob_cards alice_cards bob_boost alice_boost) (derive_all_cards bob_preimage alice_pre)
         (alice_hand alice_bitfield) (space_hand_calc alice_cards alice_boost)
         (bob_hand bob_bitfield) (space_hand_calc bob_cards bob_boost)
         alice_selected (pull_cards alice_cards alice_bitfield)
@@ -415,7 +420,7 @@
 ; state = begin_round state = (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash).
 (defun spacepoker_alice_parse_open_message (CHAIN message state amount)
     (assign
-        (_bet_unit _half_pot mover_image_Nplus1 _waiter_image_N N _mid_hash) state
+        (space-open _bet_unit _half_pot mover_image_Nplus1 _waiter_image_N N _mid_hash) state
         (assert (= (strlen message) 32)
             (= (sha256 message) mover_image_Nplus1)
             (c "cards" (community_cards_for_pos (image_at CHAIN N) message N))
@@ -438,7 +443,7 @@
 ; semantics to Alice's "deal" -- the recipient learns whether they open.
 (defun spacepoker_bob_parse_deal_message (CHAIN message state amount)
     (assign
-        (_bet_unit _half_pot alice_i5 _bob_i4 _N _mid_hash) state
+        (space-open _bet_unit _half_pot alice_i5 _bob_i4 _N _mid_hash) state
         alice_i4 message
         (assert (= (sha256 alice_i4) alice_i5)
             (assign
@@ -459,7 +464,7 @@
 ; begin_round message and derives the newly revealed community cards.
 (defun spacepoker_bob_parse_open_message (CHAIN message state amount)
     (assign
-        (_bet_unit _half_pot mover_image_Nplus1 _waiter_image_N N _mid_hash) state
+        (space-open _bet_unit _half_pot mover_image_Nplus1 _waiter_image_N N _mid_hash) state
         (assert (= (strlen message) 32)
             (= (sha256 message) mover_image_Nplus1)
             (c "cards" (community_cards_for_pos (image_at CHAIN N) message N))
@@ -468,13 +473,13 @@
 )
 
 ; my-turn: Bob commits his hash-chain tip
-; state = (bet_unit alice_image_5)
+; state = (space-commit bet_unit alice_image_5)
 (defun spacepoker_bob_commitB (local_move amount state mover_share entropy)
     (assign
         pre (substr entropy 0 16)
         chain (build_image_chain pre)
         image_4 (image_at chain 4)
-        (bet_unit alice_image_5) state
+        (space-commit bet_unit alice_image_5) state
         (list
             "spacepoker_bob_commitB"
             image_4
@@ -490,7 +495,7 @@
 ; (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
 (defun spacepoker_bob_handler_begin_round_their (CHAIN BET_UNIT amount pre_state state move validation_info_hash mover_share)
     (assign
-        (_bet_unit _half_pot _mover_Nplus1 waiter_image_N N _mid_hash) pre_state
+        (space-open _bet_unit _half_pot _mover_Nplus1 waiter_image_N N _mid_hash) pre_state
         mover_image_N (substr move 0 32)
         raise_amount (substr move 32 (strlen move))
         mover_opens (if (= N 4)
@@ -507,7 +512,9 @@
                         bob_boost (not (% (sha256 (logxor bob_pre mover_image_N)) 3))
                         (list "open" raise_amount _half_pot bh1 bh2 bob_boost)
                     )
-                    (c "open" (c raise_amount (c _half_pot (community_cards_for_pos (image_at CHAIN N) mover_image_N N))))
+                    (assign
+                        new_cards (community_cards_for_pos (image_at CHAIN N) mover_image_N N)
+                        (pack ("open" raise_amount _half_pot . new_cards)))
                 )
                 (list
                     readable
@@ -534,7 +541,7 @@
 ; local_move = raise amount (nil to call)
 (defun spacepoker_bob_mid_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot last_raise mover_image_N waiter_image_N N) state
+        (space-raise bet_unit half_pot last_raise mover_image_N waiter_image_N N) state
         (if local_move
             ; raise
             (assign
@@ -576,14 +583,14 @@
     (if (<= (strlen move) 32)
         ; Alice called — next street or end
         (assign
-            (bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
+            (space-raise bet_unit half_pot last_raise waiter_image_N mover_image_N N) pre_state
             new_half_pot (+ half_pot last_raise)
             readable (if (= N 1)
                 ; N=1 call: both preimages known — derive all cards and hands
                 (assign
                     bob_pre (image_at CHAIN 0)
                     alice_pre move
-                    (alice_cards bob_cards alice_boost bob_boost) (derive_all_cards alice_pre bob_pre)
+                    (space-cards alice_cards bob_cards alice_boost bob_boost) (derive_all_cards alice_pre bob_pre)
                     (bob_hand bob_bitfield) (space_hand_calc bob_cards bob_boost)
                     (alice_hand alice_bitfield) (space_hand_calc alice_cards alice_boost)
                     bob_selected (pull_cards bob_cards bob_bitfield)
@@ -599,7 +606,7 @@
                 ; N>1 call: derive newly revealed community cards
                 (assign
                     new_cards (community_cards_for_pos move (image_at CHAIN (- N 1)) (- N 1))
-                    (c "call" (c new_half_pot (c N new_cards)))
+                    (pack ("call" new_half_pot N . new_cards))
                 )
             )
             (if (= N 1)
@@ -618,7 +625,7 @@
         )
         ; Alice raised — we need to respond
         (assign
-            (_bet_unit _half_pot _last_raise . _rest) pre_state
+            (space-raise _bet_unit _half_pot _last_raise _mover _waiter _round) pre_state
             new_raise (substr move 32 (strlen move))
             (list
                 (list "raise" new_raise (+ _half_pot _last_raise))
@@ -636,7 +643,7 @@
 ; emits a pong move, matching the validator.
 (defun spacepoker_bob_begin_round (CHAIN BET_UNIT local_move amount state mover_share entropy)
     (assign
-        (bet_unit half_pot mover_image_Nplus1 waiter_image_N N _mid_hash) state
+        (space-open bet_unit half_pot mover_image_Nplus1 waiter_image_N N _mid_hash) state
         image_N (image_at CHAIN N)
         mover_opens (if (= N 4)
             (= (> image_N waiter_image_N)
@@ -669,13 +676,13 @@
 )
 
 ; my-turn: Bob makes final reveal at end
-; state = (half_pot mover_image waiter_preimage)
+; state = (space-end)
 ; local_move = card selection bitfield (1 byte)
 (defun spacepoker_bob_handler_end (CHAIN local_move amount state mover_share entropy)
     (assign
         pre (image_at CHAIN 0)
-        (half_pot mover_image waiter_preimage) state
-        (mover_cards waiter_cards mover_boost waiter_boost) (derive_all_cards pre waiter_preimage)
+        (space-end) state
+        (space-cards mover_cards waiter_cards mover_boost waiter_boost) (derive_all_cards pre waiter_preimage)
         (mover_hand mover_bitfield) (space_hand_calc mover_cards mover_boost)
         (waiter_hand waiter_bitfield) (space_hand_calc waiter_cards waiter_boost)
         move_bytes (concat pre mover_bitfield)
@@ -703,7 +710,7 @@
     (assign
         bob_pre (image_at CHAIN 0)
         alice_preimage (substr move 0 16)
-        (alice_cards bob_cards alice_boost bob_boost) (derive_all_cards alice_preimage bob_pre)
+        (space-cards alice_cards bob_cards alice_boost bob_boost) (derive_all_cards alice_preimage bob_pre)
         (bob_hand bob_bitfield) (space_hand_calc bob_cards bob_boost)
         (alice_hand alice_bitfield) (space_hand_calc alice_cards alice_boost)
         bob_selected (pull_cards bob_cards bob_bitfield)

@@ -1,5 +1,9 @@
 # How to Add a Game
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 This guide explains the pieces you need to add a game and how they fit
 together. Start with the package layout and the step-by-step checklist. The API
 reference near the end is useful when you are implementing each file.
@@ -149,7 +153,7 @@ Krunk is the reference example for that case.
 `factory.clsp` is normally only an exported entry point. California Poker uses:
 
 ```clojure
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (import games.calpoker.clsp.calpoker_generate exposing calpoker_factory)
 
@@ -349,15 +353,15 @@ tried in order through another slash invocation. These repeated validator runs
 are intentional and must all be safe for bounded adversarial move bytes.
 
 Validators run both off-chain when checking evidence and on-chain during a
-slash. Every validator has this input shape:
+slash. The referee fields use a balanced tree, with the same layout for off-chain
+inspection and on-chain slashing. Every validator has this input shape:
 
 ```clojure
 (export
   (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-     MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE
-     PREVIOUS_VALIDATION_INFO_HASH)
-    previous_state previous_validation_program evidence)
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (previous_state previous_validation_program . evidence) . unused_payout)
   ...)
 ```
 
@@ -367,14 +371,14 @@ referee puzzle. `MOVE`,
 committed by the move being challenged. The final arguments provide the
 previous state, the previous validator program, and the proposed evidence.
 
-Return a nonempty proper list for a valid move:
+Import `referee.onchain.shapes` and return a fixed result tree for a valid move:
 
 ```clojure
-(next_validation_program_hash new_state next_max_move_size optional_conditions...)
+(validator-result next_validation_program_hash new_state next_max_move_size conditions)
 ```
 
 Return nil when the move is illegal for that evidence and should slash.
-`(list 0)` means the next validator hash is nil (no further moves). Check
+`(validator-transition 0 0 0)` means the next validator hash is nil (no further moves). Check
 move shape before operations such as `substr`. A nil-evidence run that
 finds no slash must return a valid payload, including a next state when
 there is one, because the receiver uses that run to derive the transition
@@ -391,10 +395,9 @@ validator is a compact example:
 
 ```clojure
 (export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-     MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE
-     PREVIOUS_VALIDATION_INFO_HASH)
-    previous_state previous_validation_program evidence)
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (previous_state previous_validation_program . evidence) . unused_payout)
   (if (= (strlen MOVE) 32)
       (list bhash MOVE 16)
       0))
@@ -418,7 +421,7 @@ for the proposer and accepter reserves followed by the game parameters.
 Calpoker's current probe is:
 
 ```clojure
-(include *standard-cl-23*)
+(include *standard-cl-26*)
 
 (export () (list 1 1 1))
 ```

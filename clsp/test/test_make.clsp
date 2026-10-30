@@ -1,0 +1,8 @@
+(include *standard-cl-26*)
+(import std.shapes)
+
+(export (A B C D)
+    (list
+        (make (A . B))
+        (make #(A B C D))
+        (make (A B C D))))
