@@ -15,14 +15,14 @@
     "cors": "2.8.6",
     "express": "5.3.0",
     "minimist": "1.2.8",
-    "ws": "8.21.2"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",
     "@types/express": "5.0.6",
     "@types/minimist": "1.2.5",
     "@types/node": "24.6.2",
-    "@types/ws": "8.18.1",
+    "@types/ws": "8.18.2",
     "esbuild": "0.28.2",
     "tsx": "^4.23.15",
     "typescript": "5.9.3"
