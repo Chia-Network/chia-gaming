@@ -25,28 +25,28 @@ used_linker = []
 
 [dependencies]
 bencodex = { path = "bencodex" }
-blst = { version = "=0.3.16", features = ["portable"] }
-chia-bls = "=0.51.0"
-chia-consensus = "=0.51.0"
-chia-protocol = "=0.51.0"
+blst = { version = "=0.3.17", features = ["portable"] }
+chia-bls = "=0.52.1"
+chia-consensus = "=0.52.1"
+chia-protocol = "=0.52.1"
 chia-puzzles = "=0.20.3"
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb" }
-clvm-traits = "=0.51.0"
-clvm-utils = "=0.51.0"
+clvm-traits = "=0.52.1"
+clvm-utils = "=0.52.1"
 clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd", features = ["pre-eval"] }
 hex = "=0.4.3"
-lazy_static = "=1.5.0"
-num-bigint = "=0.4.6"
+lazy_static = "=1.5.1"
+num-bigint = "=0.5.1"
 num-traits = "=0.2.19"
-rand = "=0.9.3"
-rand_chacha = "=0.9.0"
+rand = "=0.10.3"
+rand_chacha = "=0.10.0"
 serde = { version = "=1.0.228", features = ["rc"] }
-serde_json = "=1.0.145"
-sha2 = "=0.10.9"
-typetag = "=0.2.21"
-tokio = { version = "=1.52.3", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "io-util"], optional = true }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+typetag = "=0.2.23"
+tokio = { version = "=1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal", "io-util"], optional = true }
 tokio-tungstenite = { version = "=0.30.0", optional = true }
-futures-util = { version = "=0.3.32", features = ["sink"], optional = true }
+futures-util = { version = "=0.3.34", features = ["sink"], optional = true }
 axum = { version = "=0.8.9", features = ["ws"], optional = true }
 
 [build-dependencies]
@@ -57,12 +57,12 @@ rand_chacha = "=0.9.0"
 serde = { version = "=1.0.228", features = ["alloc", "rc"] }
 serde_core = "=1.0.228"
 chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "d1fd9d2be043cd57a597110e6c2e3ed4e1d6aacb" }
-clvm-utils = "=0.51.0"
+clvm-utils = "=0.52.1"
 clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "c6f211ea7f42af93d3e6df6936ab78c8a8bcb7cd", features = ["pre-eval"] }
 hex = "=0.4.3"
-serde_json = "=1.0.145"
-sha2 = "=0.10.9"
-toml = "=0.8.23"
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+toml = "=1.1.8"
 
 [[bin]]
 name = "chia-gaming-sim"

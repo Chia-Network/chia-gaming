@@ -25,8 +25,8 @@ done
 if ! command -v node &>/dev/null; then
     if [ -f ~/.nvm/nvm.sh ]; then
         source ~/.nvm/nvm.sh
-        nvm install 22.13
-        nvm use 22.13
+        nvm install 24
+        nvm use 24
     else
         echo "Error: node not found and nvm not available"
         exit 1
@@ -52,7 +52,12 @@ echo "=== Building chialisp (.hex files) ==="
 # ── 2. WASM (release, browser target) ────────────────────────────────
 
 echo "=== Building WASM (web target, release) ==="
-(cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web)
+(
+    cd "$WASM_DIR"
+    # wasm-pack runs Cargo metadata before building; validate the lockfile first.
+    cargo metadata --locked --format-version 1 > /dev/null
+    wasm-pack build --out-dir="$FE_DIR/dist" --release --target=web -- --locked
+)
 
 # ── 3. Player app ────────────────────────────────────────────────────
 

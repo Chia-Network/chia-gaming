@@ -836,11 +836,10 @@ salt-prefixed bytes, and stores that single `Uint8Array` as the IndexedDB value.
 
 This helper is an opaque persistence bridge, not a numeric conversion API.
 Game hand instances, reducers, refs, and hook-local state retain canonical
-`bigint` values, including through game-component props. React 19.2.8 or newer is
-required together with the checked-in `react-dom@19.2.8` pnpm patch. The patch
-applies React's upstream fix for development Performance Tracks incorrectly
-passing primitive BigInt arrays to native `JSON.stringify`, which crashed
-otherwise valid renders.
+`bigint` values, including through game-component props. React 19.3.1 includes
+the upstream fix for development Performance Tracks incorrectly passing
+primitive BigInt arrays to native `JSON.stringify`, which crashed otherwise
+valid renders. The previous React DOM pnpm patch is no longer needed.
 
 Synchronous local-action failures are emitted as scoped session errors and then
 rethrow unchanged, preserving fail-fast invariants. Asynchronous runtime
@@ -1403,8 +1402,9 @@ Shell manages wallet connections through two abstractions defined in
 `ChiaGaming.ts`:
 
 - **`InternalBlockchainInterface`** — the backend-specific implementation
-  (`RealBlockchainInterface` for WalletConnect, `FakeBlockchainInterface` for
-  the simulator, `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
+  (`RealBlockchainInterface` for WalletConnect, `SageBlockchainInterface` for
+  Sage over WalletConnect, `FakeBlockchainInterface` for the simulator,
+  `CloudBlockchainInterface` for Cloud Wallet OAuth). Each
   exposes `beginConnect()`, `disconnect()`, `isConnected()`, `spend()`, etc.
 - **`ConnectionSetup`** — returned by `beginConnect()`. Contains a `uri` for
   the QR code and a `finalize(values?)` promise that resolves when the wallet is
@@ -1414,7 +1414,12 @@ Shell manages wallet connections through two abstractions defined in
   `description` for the setup modal. Examples: the simulator's initial balance
   (`bigint`). Cloud Wallet sets `skipQr: true` with an empty `fields` record, so
   the modal is a sign-in prompt whose Connect click opens the OAuth popup from
-  `finalize()`. Its OAuth client id and API/UI URLs are fixed per build and
+  `finalize()`. The desktop app has no passkey support, so there `finalize()`
+  signs in through the system browser instead: the preload's `__chiaCloudWallet`
+  bridge binds a one-time `127.0.0.1` loopback callback (RFC 8252, registered as
+  `http://127.0.0.1/oauth/callback`), and token requests go through the main
+  process because the token endpoint's CORS excludes `chiagaming://app`. The
+  consented wallet then comes from the grant lookup. Its OAuth client id and API/UI URLs are fixed per build and
   chosen by the selected network at call time in `cloudWalletConfig.ts`
   (mainnet: `https://api.vault.chia.net`, `https://vault.chia.net`; testnet:
   `https://api.vault.chiatest.net`, `https://vault.chiatest.net`).
@@ -1441,7 +1446,9 @@ Shell manages wallet connections through two abstractions defined in
   `orphanRisk: 'pre-id-response-lost'` survives both paths and any eventual
   created trade, preserving a typed warning that the unidentified first request
   may still exist. Approval messages must match origin, popup source, and
-  canonical request ID, with exact cleanup. Deployed
+  canonical request ID, with exact cleanup. On desktop, approval opens in the
+  system browser once per signature request per run, and polling alone observes
+  the outcome. Deployed
   WalletConnect is best-effort throughout because it lacks end-to-end create
   idempotency and response-loss reconciliation. For either pre-ID Cloud
   uncertainty or WalletConnect uncertainty, `WalletProviderRegistry` readiness
@@ -1474,8 +1481,36 @@ Shell manages wallet connections through two abstractions defined in
   Cloud's wallet address, balance, consent, and offer operations remain on the
   wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
   Coinset GraphQL proxy and preserve the Coinset request and response shapes:
-  `get_blockchain_state`, `get_coin_record_by_name` /
-  `get_coin_records_by_names`, and `get_puzzle_and_solution`.
+  `get_blockchain_state`, `get_coin_records_by_names` (also for a single coin,
+  since the singular RPC fails for a coin that does not exist yet), and
+  `get_puzzle_and_solution`.
+
+  Sage pairs over the same WalletConnect client under a separate `sage`
+  method profile (`chip0002_getAssetCoins`, `chip0002_getAssetBalance`,
+  `chip0002_signCoinSpends`, `chip0002_sendTransaction`, `chia_getAddress`);
+  `walletConnectState.selectProfile`
+  selects which stored session is active, a fresh pairing forgets only that
+  profile's stored sessions, and each interface treats the other profile
+  holding the client as its own disconnect. Sage cannot build offers with protocol conditions, so
+  its provider is `terminal`: the adapter lists Sage's unlocked XCH coins, Rust
+  (`build_wallet_spend`, `src/wallet_spend.rs`) selects standard-puzzle inputs
+  and builds the unsigned funding or fee spend in the simulator's offer shape,
+  and Sage only signs it. The signed bundle enters the existing `bundle`
+  material path and is validated like any wallet bundle. Coins are listed ten
+  per page (each reply carries puzzle reveals and must fit one relay message)
+  until Rust's `spendable_standard_total` covers the amount. Because Sage locks
+  coins only for transactions it submits, an in-memory `SageCoinLedger`
+  reserves a spend's inputs as soon as Rust builds it, under a synthetic
+  reservation ID the runtime later cancels, and excludes broadcast inputs while
+  they may be spending; a definitive rejection returns them.
+  Every public chain read goes directly to coinset.org (`api.coinset.org`, or
+  `testnet11.api.coinset.org` for the testnet chain id) through the same `CoinsetClient`
+  that Cloud uses over its proxy. Broadcasts go through
+  `chip0002_sendTransaction` so Sage records the pending transaction and locks
+  its inputs. A peer-reported mempool status is final; a thrown error (Sage
+  records the transaction only after peers accept it, so this can follow a
+  successful broadcast) or a failure with no peer answer falls back to Coinset
+  `push_tx` with the exact bytes, where a duplicate is acknowledged.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
@@ -1591,9 +1626,10 @@ host-side coordinator for chain observations. It separates three concerns:
    WASM interest set, not the per-sweep source of truth.
 2. **Scheduling** — `BlockchainPoller` owns two independent serialized
    `AsyncJobQueue` lanes per active backend: one for reads and background polls,
-   and one for wallet mutations. A hung provider read therefore cannot block a
-   spend, offer, selection, or other mutation. Both lanes pass every adapter
-   request through one global request-start gate, which applies the backend's
+   and one for wallet mutations. These adapter lanes run independently;
+   WalletConnect additionally serializes its transport as described below.
+   Both lanes pass every adapter request through one global request-start gate,
+   which applies the backend's
    requested gap between starts without waiting for prior requests to finish.
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
    work on the read lane. On disconnect, active reads are abandoned and queued
@@ -1611,11 +1647,53 @@ host-side coordinator for chain observations. It separates three concerns:
 3. **Connection adapters** — `FakeBlockchainInterface` and
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
-   registration shape, but it does not own scheduling or coin lifecycle
-   semantics.
+   registration shape, but it does not own polling interest or coin lifecycle
+   semantics. WalletConnect can garble or lose responses when more than one
+   request is pending. Only one request may be outstanding per connection;
+   serialization is a correctness requirement, not merely rate limiting.
+   Its transport has one consumer for separate mutation and read
+   queues: a queued mutation runs before queued reads, without interrupting the
+   active request. This serializes all actual WalletConnect calls, including
+   direct setup and peer-readiness queries, and preserves 50ms between requests.
+   A read, coin registration, or exact-transaction post that takes 30 seconds
+   replaces the relay connection before the next request can run, retaining the
+   approved session and pairing. Relay recovery fences queued work and late
+   results from the old connection; a failed recovery leaves the wallet unavailable.
+   Coin registration is safe to repeat: the wallet ignores duplicate coin IDs.
+   Bounding it prevents a lost registration response from blocking channel
+   discovery.
+   Reservation mutations such as offer creation
+   retain their SDK completion lifetime. The optional peer-count fallback uses
+   this active-query deadline, excluding time spent queued behind wallet work.
 
-Coin polling reports raw height and coin-state observations upward every
-successful sweep. The transaction manager computes ordered semantic
+Relay replacement has its own 30-second deadline. A stuck SDK close or open
+fails recovery and leaves the wallet unavailable. The underlying operation
+continues to hold a shared lifecycle consumer until it actually settles, so a
+late close cannot damage a replacement session. Pairing creation, session
+installation, and disconnect work use this same consumer. Connection attempts
+whose queued wait expires never start; teardown remains queued even after its
+caller stops waiting. Active pairing creation retains its actual completion
+lifetime. Disconnect and retry invalidate older attempts: a late URI is
+cancelled, and a late approved session is removed instead of installed.
+Connection setup rechecks the session after recovery, reusing it without a new QR.
+If recovery failed, connection setup preserves the retained session and asks for
+a reload instead of starting a new pairing. Explicit disconnect or fresh setup
+can still revoke that session.
+
+`WalletState` records restoration authority separately from SDK session storage.
+Disconnect durably blocks restoration before changing local connection state;
+storage failure is reported instead of acknowledging a durable disconnect.
+Only the explicitly accepted session topic can subsequently restore, so a
+stalled teardown or abandoned approval in SDK storage cannot resurrect a session
+after reload. Accepting a new session replaces this authority. If the SDK
+lifecycle never returns, reload the app to establish a new connection.
+
+Coin polling reports coin-state observations at the latest height obtained by
+the regular height poll. Each sweep uses that opening height as its boundary:
+creations and spends above it wait for the next sweep. Individual wallet reads
+can therefore span new blocks without restarting the sweep or requiring another
+height request. No coin snapshot is reported before a height has been obtained
+for the current connection. The transaction manager computes ordered semantic
 create/spend/reorg transitions and confirmation-depth retention from those
 observations. The browser never decides that a watch has become terminal.
 Inside Rust, each height or coin-state observation is transactional over a deep

@@ -1,4 +1,7 @@
 (include *standard-cl-26*)
+(import std.shapes)
+(import games.calpoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.calpoker.clsp.onchain.b exposing (program_hash as bhash))
 (import games.game_codes)
@@ -11,14 +14,14 @@
 ; move is alice commit to a salted word
 ; evidence is empty
 ; previous_validation_program below is the object whose hash is mod_hash
-(export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        previous_state previous_validation_program evidence)
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    previous_state previous_validation_program evidence unused_payout)
 
     ;; First their turn for the second player
     (if (= (strlen MOVE) 32)
-        (list bhash MOVE 16)
+        (validator-transition bhash MOVE 16)
         0
     )
 )

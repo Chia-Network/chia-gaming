@@ -30,7 +30,7 @@ jobs:
       fail-fast: true
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set Job Env
         uses: Chia-Network/actions/setjobenv@main
@@ -38,9 +38,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Setup pnpm
         run: |
@@ -62,7 +62,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.15.0
+        run: cargo install wasm-pack --version 0.15.0 --locked
 
       # ── Build (mirrors ct.sh + run-local-demo.sh) ──────────────────
 
@@ -72,11 +72,12 @@ jobs:
       - name: Build WASM (web + nodejs targets)
         run: |
           cd wasm
-          wasm-pack build --out-dir=../front-end/dist --release --target=web
-          wasm-pack build --out-dir=../front-end/node-pkg --release --target=nodejs
+          cargo metadata --locked --format-version 1 > /dev/null
+          wasm-pack build --out-dir=../front-end/dist --release --target=web -- --locked
+          wasm-pack build --out-dir=../front-end/node-pkg --release --target=nodejs -- --locked
 
       - name: Test WASM bindings natively
-        run: cargo test --manifest-path wasm/Cargo.toml --lib
+        run: cargo test --locked --manifest-path wasm/Cargo.toml --lib
 
       - name: Build gaming-fe
         run: pnpm --filter chia-gaming-fe run build
@@ -88,7 +89,7 @@ jobs:
         run: pnpm --filter chia-gaming-hub-service run test
 
       - name: Build simulator
-        run: cargo build --features sim-tests,sim-server --bin chia-gaming-sim
+        run: cargo build --locked --features sim-tests,sim-server --bin chia-gaming-sim
 
       # ── WASM/Jest tests (mirrors tools/local-wasm-tests.sh) ────────
 
@@ -263,13 +264,13 @@ jobs:
           cp hub/hub-service/dist/index-rollup.cjs "${HUB}/service.js"
 
       - name: Archive chia-gaming-frontend
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chia-gaming-frontend
           path: ${{ github.workspace }}/chia-gaming-deploy/g
 
       - name: Archive chia-gaming-hub
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chia-gaming-hub
           path: ${{ github.workspace }}/chia-gaming-deploy/l

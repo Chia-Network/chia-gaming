@@ -1088,7 +1088,7 @@ mod finished_message_tests {
     use crate::common::standard_coin::{private_to_public_key, sign_agg_sig_me};
     use crate::common::types::{Sha256Input, Sha256tree, ToQuotedProgram};
     use clvm_traits::ClvmEncoder;
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     fn spend_for_conditions(

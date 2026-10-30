@@ -1184,21 +1184,28 @@ mod test {
 
     #[test]
     fn current_consensus_costs_match_deployed_rules() {
-        let mut allocator = clvmr::Allocator::new();
-        let source = format!(
-            "(q . ((51 0x{} 1) (51 0x{} 2) (52 0)))",
-            "77".repeat(32),
-            "77".repeat(32)
-        );
-        let puzzle = chialisp::classic::clvm_tools::binutils::assemble(&mut allocator, &source)
+        use crate::common::types::ToQuotedProgram;
+
+        let mut allocator = AllocEncoder::new();
+        let output_ph = PuzzleHash::from_bytes([0x77; 32]);
+        let conditions = vec![
+            (51_u8, (output_ph.clone(), (Amount::new(1), ()))),
+            (51_u8, (output_ph, (Amount::new(2), ()))),
+        ]
+        .to_clvm(&mut allocator)
+        .expect("CREATE_COIN conditions");
+        let puzzle = conditions
+            .to_quoted_program(&mut allocator)
             .expect("quoted conditions");
-        let puzzle_hash = clvm_utils::tree_hash(&allocator, puzzle);
-        let puzzle_bytes = clvmr::serde::node_to_bytes(&allocator, puzzle).expect("puzzle bytes");
+        let puzzle_hash = puzzle.sha256tree(&mut allocator);
+        let puzzle_bytes = puzzle.bytes().to_vec();
         let bundle = chia_protocol::SpendBundle {
             coin_spends: vec![chia_protocol::CoinSpend {
                 coin: chia_protocol::Coin {
                     parent_coin_info: [0x31; 32].into(),
-                    puzzle_hash: puzzle_hash.into(),
+                    puzzle_hash: chia_protocol::Bytes32::from(
+                        <[u8; 32]>::try_from(puzzle_hash.bytes()).unwrap(),
+                    ),
                     amount: 3,
                 },
                 puzzle_reveal: chia_protocol::Bytes::from(puzzle_bytes).into(),

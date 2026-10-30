@@ -15,6 +15,7 @@
 
 (include *standard-cl-26*)
 (import std.assert)
+(import std.shapes)
 (import std.shatree)
 (import std.condition_codes)
 
@@ -24,7 +25,8 @@
         (if (= DEFAULT_CONDITIONS_HASH conditions_hash)
             conditions
             (assign
-                new_sequence_number (f (r (f conditions)))
+                new_sequence_number
+                    (get-field (opcode sequence_number . tail) sequence_number (f conditions))
                 (assert
                     (> new_sequence_number OLD_SEQUENCE_NUMBER)
                     (logand 1 (logxor new_sequence_number OLD_SEQUENCE_NUMBER))

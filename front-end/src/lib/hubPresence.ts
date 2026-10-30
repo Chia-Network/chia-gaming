@@ -6,11 +6,7 @@ import type { SessionPhase } from '../types/ChiaGaming';
  * reasons only explain why the player is busy so the lobby can describe it.
  */
 export type BusyReason =
-  | 'in-session'
-  | 'restoring'
-  | 'starting'
-  | 'wallet-disconnected'
-  | 'blockchain-not-ready';
+  'in-session' | 'restoring' | 'starting' | 'wallet-disconnected' | 'blockchain-not-ready';
 
 /** Canonical display and serialization order for busy reasons. */
 export const BUSY_REASON_ORDER: readonly BusyReason[] = [

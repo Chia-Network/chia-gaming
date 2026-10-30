@@ -1,0 +1,98 @@
+(include *standard-cl-26*)
+(import std.shapes)
+
+(defun-shape left ((a . b) . (atom c)))
+(defun-shape right ((atom d) . (e . f)))
+(defun-shape triple #(a b c))
+(defun-shape quadruple #(a b c d))
+(defun-shape nested #((triple a b c) (quadruple d e f g)))
+
+(defun sum (triple a b c) (+ a b c))
+(defun classify VALUE
+    (if-shape VALUE
+        ((left) (+ a b c))
+        ((right) (- (+ d e) f))))
+
+; The root must be tested before it is safe to inspect a child.
+(defun guarded VALUE
+    (if-shape VALUE
+        ((atom a) a)
+        (((atom b) . (atom c)) (+ b c))
+        ((((atom d) . (atom e)) . (atom f)) (+ d e f))))
+
+; The optional subtree may not exist. The branch only uses the required atom.
+(defun optional-tree VALUE
+    (if-shape VALUE
+        (((atom a) . (optional #(b c d))) a)
+        ((((atom e) . f) . (optional g h)) e)))
+
+(defun nil-or-pair VALUE
+    (if-shape VALUE
+        (nil 17)
+        ((a . b) (+ a b))))
+
+; No position isolates one of these four shapes: split groups, then recurse.
+(defun four-way VALUE
+    (if-shape VALUE
+        (((atom a) . (atom b)) 1)
+        (((a . b) . (atom c)) 2)
+        (((atom a) . (b . c)) 3)
+        (((a . b) . (c . d)) 4)))
+
+; An untested final alternative is assumed, not validated.
+(defun final-assumed VALUE
+    (if-shape VALUE
+        (((atom a) . (b . c)) 1)
+        (((d . e) . (atom f)) 2)))
+
+; Each discriminator is below a parent that is optional in another case.
+; No immediately separating test is safe: a parent guard must come first.
+(defun guarded-groups VALUE
+    (if-shape VALUE
+        (#(((atom a) . b) ((c . d) . e) (optional z)) 1)
+        (#(((a . b) . c) (optional y) ((atom d) . e)) 2)
+        (#((optional x) ((atom a) . b) ((c . d) . e)) 3)))
+
+; Nested dispatch and a caller binding force multiple fresh symbol names.
+(defun nested-dispatch (VALUE shapes-value)
+    (if-shape VALUE
+        ((atom a) (+ a shapes-value))
+        ((a . b)
+            (if-shape b
+                ((atom c) (+ a c shapes-value))
+                ((d . e) (+ a d e shapes-value))))))
+
+(export (A B C D)
+    (list
+        (make (triple A B C))
+        (make (quadruple A B C D))
+        (make #((triple A B C) (quadruple A B C D)))
+        (make (nested A B C A B C D))
+        (invoke sum #(A B C))
+        (invoke sum (triple A B C))
+        (classify &rest (make (left A B C)))
+        (classify &rest (make (right A B C)))
+        (guarded &rest A)
+        (guarded &rest (make (A . B)))
+        (guarded &rest (make ((A . B) . C)))
+        (optional-tree &rest (c A ()))
+        (optional-tree &rest (c (c A B) ()))
+        (nil-or-pair &rest ())
+        (nil-or-pair &rest (make (A . B)))
+        (four-way &rest (make (A . B)))
+        (four-way &rest (make ((A . B) . C)))
+        (four-way &rest (make (A . (B . C))))
+        (four-way &rest (make ((A . B) . (C . D))))
+        (final-assumed &rest (make ((A . B) . (C . D))))
+        (make ((atom A) B C . nil))
+        (make (optional #(A B C)))
+        (make #(A))
+        (make #(A B))
+        (make #(A B C D A))
+        (make #(A B C D A B C D A B C))
+        (guarded-groups &rest (make #((A . B) ((C . D) . A) nil)))
+        (guarded-groups &rest (make #(((A . B) . C) nil (D . A))))
+        (guarded-groups &rest (make #(nil (A . B) ((C . D) . A))))
+        (nested-dispatch A B)
+        (nested-dispatch (make (A . B)) C)
+        (nested-dispatch (make (A . (B . C))) D)))

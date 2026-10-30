@@ -1,4 +1,7 @@
 (include *standard-cl-26*)
+(import std.shapes)
+(import games.krunk.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.krunk.clsp.onchain.guess exposing (program_hash as guess_hash))
 (import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)
@@ -34,15 +37,14 @@
 )
 
 ; Bob challenging Alice's clue or reveal.
-; state is (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
+; state is (krunk-state)
 ; MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
 ; On a continue (clue), we transition back to guess. guess_hash is imported
 ; directly from games.krunk.clsp.onchain.guess.
-(export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (dict_pubkey base_unit bob_guesses alice_clues alice_commit clue_hash)
-    previous_validation_program evidence)
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (krunk-state) previous_validation_program evidence unused_payout)
 
     (if (= (strlen MOVE) 1)
         ; Alice gave a clue for Bob's latest guess.
@@ -51,9 +53,7 @@
             (< (len alice_clues) 4)
             (> 0x72 MOVE)
             0
-            (list guess_hash
-                (li dict_pubkey base_unit bob_guesses (c MOVE alice_clues) alice_commit clue_hash)
-                5)
+            (validator-transition guess_hash (make-krunk-state dict_pubkey base_unit bob_guesses (c MOVE alice_clues) alice_commit clue_hash) 5)
         )
         (!= (strlen MOVE) 21)
         0
@@ -80,10 +80,9 @@
                     (assert
                         (>= revealed_word (substr evidence 0 5))
                         (<= revealed_word (substr evidence 5 10))
-                        (list 0 0 0
-                            (list AGG_SIG_UNSAFE dict_pubkey evidence))
+                        (validator-result 0 0 0 (list (list AGG_SIG_UNSAFE dict_pubkey evidence)))
                     )
-                    (list 0)
+                    (validator-transition 0 0 0)
                 )
             )
         )

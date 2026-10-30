@@ -14,16 +14,18 @@ import {
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
 import { log } from '../services/log';
-import { toUint8, toHexString } from '../util';
 import { jsonStringify } from '../util/jsonSafe';
 import { isExactDuplicateTransaction } from '../util/walletSubmit';
+import { CoinsetClient } from './coinsetClient';
 import {
-  beginOAuthPopupLogin,
+  beginOAuthLogin,
+  CLOUD_WALLET_LOGIN_CANCELLED,
   canonicalSignatureRequestId,
   CloudWalletAuthError,
   CloudWalletResponseError,
   CloudWalletTransportError,
   createAuthTokenProvider,
+  desktopCloudWalletBridge,
   fetchFirstConsentedWalletId,
   graphqlRequest,
   normalizeHex,
@@ -57,57 +59,6 @@ const TERMINAL_CANCELLATION_CODES = new Set([
   'UNKNOWN_OFFER',
 ]);
 const FAILED_SIGNATURE_REQUEST_STATUSES = new Set(['CANCELLED', 'REJECTED', 'FAILED']);
-
-const ACCEPTED_BROADCAST_STATUSES = new Set([
-  'SUCCESS',
-  'SUBMITTED',
-  'PENDING',
-  'PROCESSING',
-  'OK',
-]);
-const REJECTED_BROADCAST_STATUSES = new Set(['FAILED', 'REJECTED', 'REFUSED']);
-
-type CoinsetCoinRecord = {
-  coin?: {
-    parent_coin_info?: unknown;
-    puzzle_hash?: unknown;
-    amount?: unknown;
-  };
-  confirmed_block_index?: unknown;
-  spent_block_index?: unknown;
-  spent?: unknown;
-  coinbase?: unknown;
-  timestamp?: unknown;
-};
-
-function coinRecordFromCoinset(record: CoinsetCoinRecord): CoinRecord {
-  const parentCoinInfo = normalizeHex(record.coin?.parent_coin_info);
-  const puzzleHash = normalizeHex(record.coin?.puzzle_hash);
-  if (
-    parentCoinInfo.length !== 64 ||
-    puzzleHash.length !== 64 ||
-    record.coin?.amount == null ||
-    record.confirmed_block_index == null ||
-    record.spent_block_index == null ||
-    typeof record.spent !== 'boolean' ||
-    typeof record.coinbase !== 'boolean' ||
-    record.timestamp == null
-  ) {
-    throw new Error('Coinset returned an incomplete coin record');
-  }
-  return {
-    coin: {
-      parentCoinInfo,
-      puzzleHash,
-      amount: BigInt(record.coin.amount as string | number | bigint),
-    },
-    confirmedBlockIndex: BigInt(record.confirmed_block_index as string | number | bigint),
-    spentBlockIndex: BigInt(record.spent_block_index as string | number | bigint),
-    spent: record.spent,
-    coinbase: record.coinbase,
-    timestamp: BigInt(record.timestamp as string | number | bigint),
-  };
-}
 
 function cloudErrorDetail(error: unknown): string {
   const parts: string[] = [];
@@ -189,11 +140,18 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   private auth: CloudWalletAuthState | null = null;
   private walletOfferProvider: WalletOfferProvider | null = null;
+  private readonly approvalsOpenedInBrowser = new Set<string>();
   private connectionListeners = new Set<(connected: boolean) => void>();
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private monitoringReady = false;
+  /** The sign-in in progress; `disconnect` (the modal's Cancel) aborts it. */
+  private loginAbort: AbortController | null = null;
   private tokenProvider: TokenProvider;
+  private readonly chain = new CoinsetClient(
+    (endpoint, request) => this.coinset(endpoint, request),
+    '[cloud-blockchain]',
+  );
 
   constructor() {
     this.auth = loadCloudWalletAuth();
@@ -332,7 +290,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     return this.blockchainAddressData;
   }
 
-  async startMonitoring(): Promise<void> {
+  /** `beforeReady` runs once the wallet is fetched and may throw to stop. */
+  async startMonitoring(beforeReady: () => void = () => {}): Promise<void> {
     const walletId = this.requireWalletId();
     const data = await this.gql<{
       wallet: {
@@ -355,6 +314,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (!ph || ph.length !== 64) {
       throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
+    beforeReady();
     this.blockchainAddressData = { puzzleHash: ph };
     this.monitoringReady = true;
     this.fireConnectionChange(true);
@@ -378,62 +338,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async getHeightInfo(): Promise<bigint> {
-    const response = await this.coinset<{
-      success?: boolean;
-      blockchain_state?: { peak?: { height?: unknown } | null };
-    }>('get_blockchain_state', {});
-    const height = response.blockchain_state?.peak?.height;
-    if (response.success !== true || height == null) {
-      throw new Error('Malformed Coinset get_blockchain_state response');
-    }
-    return BigInt(height as string | number | bigint);
+    return this.chain.getHeightInfo();
   }
 
   async getPuzzleAndSolution(coin: string): Promise<string[] | null> {
-    const coinBytes = toUint8(coin);
-    const hashBuf = await crypto.subtle.digest('SHA-256', coinBytes);
-    const coinName = toHexString(new Uint8Array(hashBuf));
-    const [record] = await this.getCoinRecordsByNames([coinName]);
-    if (!record) return null;
-    if (!record.spent || record.spentBlockIndex === 0n) return null;
-
-    const response = await this.coinset<{
-      success?: boolean;
-      coin_solution?: { puzzle_reveal?: unknown; solution?: unknown } | null;
-    }>('get_puzzle_and_solution', {
-      coin_id: coinName,
-      height: Number(record.spentBlockIndex),
-    });
-    if (response.success !== true) {
-      throw new Error('Coinset get_puzzle_and_solution failed');
-    }
-    const payload = response.coin_solution;
-    if (!payload?.puzzle_reveal || !payload.solution) return null;
-    return [normalizeHex(payload.puzzle_reveal), normalizeHex(payload.solution)];
+    return this.chain.getPuzzleAndSolution(coin);
   }
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
-    const uniqueNames = [...new Set(names.map((n) => normalizeHex(n)).filter(Boolean))];
-    if (uniqueNames.length === 0) return [];
-    try {
-      // Watched coins may not exist yet. The singular RPC throws for absence;
-      // the batch RPC returns only existing records, even for a single name.
-      const response = await this.coinset<{
-        success?: boolean;
-        coin_records?: CoinsetCoinRecord[];
-      }>('get_coin_records_by_names', {
-        names: uniqueNames,
-        include_spent_coins: true,
-      });
-      if (response.success !== true || !Array.isArray(response.coin_records)) {
-        throw new Error('Malformed Coinset get_coin_records_by_names response');
-      }
-      return response.coin_records.map(coinRecordFromCoinset);
-    } catch (e) {
-      const message = `Coinset coin-record batch failed: ${String(e)}`;
-      log(`[cloud-blockchain] getCoinRecordsByNames error: ${message}`);
-      throw new Error(message, { cause: e });
-    }
+    return this.chain.getCoinRecordsByNames(names);
   }
 
   async registerCoins(_names: string[]): Promise<void> {
@@ -452,53 +365,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<WalletSubmitOutcome> {
     try {
-      const feeValue = fee || 0n;
-      const bundle = spendBundle as WalletSpendBundle;
-      if (!bundle?.coin_spends?.length) {
-        return { status: 'rejected', detail: 'push_tx: empty spend bundle' };
-      }
-
-      const response = await this.coinset<{
-        success?: unknown;
-        status?: unknown;
-        error?: unknown;
-      }>('push_tx', { spend_bundle: bundle });
-      const status = response.status;
-      log(
-        `[cloud-blockchain] push_tx from=${source ?? 'unknown'} success=${String(response.success)} status=${String(status)} spends=${bundle.coin_spends.length} fee=${feeValue}`,
-      );
-      const detail =
-        typeof response.error === 'string'
-          ? response.error
-          : typeof status === 'string'
-            ? status
-            : jsonStringify(response);
-      if (response.success === true) {
-        return { status: 'acknowledged', detail };
-      }
-      if (isExactDuplicateTransaction(detail)) {
-        return { status: 'acknowledged', detail };
-      }
-      if (response.success !== false) {
-        return {
-          status: 'rejected',
-          detail: 'Malformed Coinset push_tx response',
-        };
-      }
-      const normalizedStatus = typeof status === 'string' ? status.toUpperCase() : '';
-      if (ACCEPTED_BROADCAST_STATUSES.has(normalizedStatus)) {
-        return { status: 'acknowledged', detail: normalizedStatus };
-      }
-      if (REJECTED_BROADCAST_STATUSES.has(normalizedStatus)) {
-        return {
-          status: 'rejected',
-          detail: `Coinset push_tx rejected: status=${detail}`,
-        };
-      }
-      return {
-        status: 'rejected',
-        detail: `Coinset push_tx rejected: ${detail}`,
-      };
+      return await this.chain.pushTx(spendBundle as WalletSpendBundle, source, fee || 0n);
     } catch (error) {
       return classifyCloudWalletSubmitError(error);
     }
@@ -589,6 +456,24 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     source: string,
     poll: () => Promise<T>,
   ): Promise<T> {
+    const desktop = desktopCloudWalletBridge();
+    if (desktop) {
+      // Approval needs a passkey, so it runs in the system browser; polling
+      // observes the outcome, including rejection. Reconciliation retries this
+      // on every readiness epoch, so each request opens a browser tab once per
+      // run rather than on every retry.
+      const id = canonicalSignatureRequestId(signatureRequestId);
+      if (!this.approvalsOpenedInBrowser.has(id)) {
+        const opened = await desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId));
+        if (!opened) {
+          throw new SignatureRequestUnavailableError(
+            `Could not open the browser to approve Cloud Wallet ${source}`,
+          );
+        }
+        this.approvalsOpenedInBrowser.add(id);
+      }
+      return poll();
+    }
     const popup = this.openApprovePopup(signatureRequestId);
     if (!popup) {
       throw new SignatureRequestUnavailableError(
@@ -960,28 +845,46 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       qrUri: 'cloud-wallet://oauth',
       skipQr: true,
       title: 'Cloud Wallet',
-      description: 'Sign in to Cloud Wallet via the popup.',
+      description: desktopCloudWalletBridge()
+        ? 'Sign in to Cloud Wallet in your browser.'
+        : 'Sign in to Cloud Wallet via the popup.',
       // Empty but present: the modal's Connect click is the user gesture that
-      // lets the OAuth popup open, and it keeps silent resume from finalizing.
+      // lets the OAuth popup open (or the browser, on desktop), and it keeps
+      // silent resume from finalizing.
       fields: {},
       finalize: async () => {
-        const tokens = await beginOAuthPopupLogin();
-        this.auth = {
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt,
-          walletId: tokens.walletId,
+        this.loginAbort?.abort();
+        const loginAbort = new AbortController();
+        this.loginAbort = loginAbort;
+        // Cancel can land during any await below; nothing may be stored after it.
+        const throwIfCancelled = () => {
+          if (loginAbort.signal.aborted) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
         };
-        // Persist the id that actually resolved: the consent screen's choice can
-        // differ from what the grant will read back, and monitoring uses this id.
-        const walletId = await this.resolveWalletId();
-        this.persistAuth({ ...tokens, walletId });
-        await this.startMonitoring();
+        try {
+          const tokens = await beginOAuthLogin(loginAbort.signal);
+          throwIfCancelled();
+          this.auth = {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            expiresAt: tokens.expiresAt,
+            walletId: tokens.walletId,
+          };
+          // Persist the id that actually resolved: the consent screen's choice can
+          // differ from what the grant will read back, and monitoring uses this id.
+          const walletId = await this.resolveWalletId();
+          throwIfCancelled();
+          this.persistAuth({ ...tokens, walletId });
+          await this.startMonitoring(throwIfCancelled);
+        } finally {
+          if (this.loginAbort === loginAbort) this.loginAbort = null;
+        }
       },
     };
   }
 
   async disconnect(): Promise<void> {
+    this.loginAbort?.abort();
+    this.loginAbort = null;
     clearCloudWalletAuth();
     this.auth = null;
     this.walletOfferProvider = null;

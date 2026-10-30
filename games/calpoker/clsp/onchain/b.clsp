@@ -1,4 +1,7 @@
 (include *standard-cl-26*)
+(import std.shapes)
+(import games.calpoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.calpoker.clsp.onchain.c exposing (program_hash as chash))
 (import games.game_codes)
@@ -11,12 +14,12 @@
 ; move is bob_seed
 ;; We receive alice's commit, producing a state consisting only of alice' commit.
 ; new state = sliace commit + bob_+seed
-(export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        alice_commit previous_validation_program evidence)
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    alice_commit previous_validation_program evidence unused_payout)
     (if (= (strlen MOVE) 16)
-        (list chash (list alice_commit MOVE) 48)
+        (validator-transition chash (make-calpoker-seeds alice_commit MOVE) 48)
         0
     )
 )

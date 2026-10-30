@@ -6,6 +6,8 @@
 (import std.condition_codes)
 (import std.li)
 (import std.append)
+(import std.shapes)
+(import referee.onchain.shapes)
 
 ;
 ; Adjudicates a two-player turn-based game.
@@ -17,17 +19,17 @@
 ;   sha256(validation_program_hash, shatree(state))
 ;
 ; In slash, this puzzle runs previous_validation_program against all_args.
-; The validator returns (next_validator_hash new_state max_move_size . extra_conditions).
+; The validator returns ((next_validator_hash . new_state) . (max_move_size . extra_conditions)).
 ; Slash succeeds in three cases:
 ;   1. validator_result is nil (0) — unconditional slash.
 ;   2. validator_result is non-nil but its (next_validator_hash, new_state,
 ;      max_move_size) misalign with this coin's commitments — unconditional.
 ;   3. validator_result is non-nil, values align with commitments, AND there
-;      are extra conditions beyond element 3 — conditional slash. The extra
+;      are extra conditions in the conditions field — conditional slash. The extra
 ;      conditions are prepended to payout_conditions (e.g. AGG_SIG_UNSAFE
 ;      for signed dictionary range proofs).
 ; If validator_result is non-nil, values align, and there are no extra
-; conditions (list ends at element 3), the move was valid and the slash
+; conditions (the conditions field is nil), the move was valid and the slash
 ; attempt fails (assert aborts the spend).
 ;
 ; MOVER_SHARE is how much the mover gets if they fold/accept timeout.
@@ -35,19 +37,15 @@
 ; NONCE is for anti-replay prevention.
 ;
 ; Validation programs get (mod_hash . all_args) where all_args is
-; (curried_args . slash_solution_args).  The validator should only
-; destructure the fields it needs; the tail beyond evidence is an
-; artifact of passing all_args for efficiency and should be ignored.
-;
-; timeout args: (mover_payout_ph waiter_payout_ph)
-; slash args: (previous_state previous_validation_program evidence mover_payout_ph)
-; move args: (new_move infohash_c new_mover_share new_max_move_size)
+; (curried_args . slash_solution_args). See referee.onchain.shapes for the shared
+; layouts. Validators ignore the payout field.
 
-(export (@ all_args ((@ curried-args (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)) . args))
-    (if (not (r (r args)))
-        (assign
-            (mover_payout_ph waiter_payout_ph) args
+; The curried argument is a balanced tree; every field is at most four edges
+; deep. Keep this shape aligned with RefereePuzzleArgs::to_clvm and validators.
+(export (@ all_args
+    ((referee-parameters) . args))
+    (if-shape args
+        ((referee-timeout)
             (li (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
                 (if MOVER_SHARE (list CREATE_COIN mover_payout_ph MOVER_SHARE) (assert (not mover_payout_ph) (list 1)))
                 (i MOVER_SHARE (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph)) (list 1))
@@ -60,57 +58,64 @@
                 )
             )
         )
-        (l (f (r args)))
-        (assign
-            (previous_state previous_validation_program evidence mover_payout_ph) args
-            previous_validation_program_hash (shatree previous_validation_program)
-            (@ validator_result (next_validator_hash new_state max_move_size . extra_conditions))
-                (a previous_validation_program (c previous_validation_program_hash all_args))
-            payout_conditions (list
-                (list CREATE_COIN mover_payout_ph AMOUNT)
-                (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
-            )
+        ((referee-slash)
+            (assign
+                previous_validation_program_hash (shatree previous_validation_program)
+                validator_result
+                    (a previous_validation_program (c previous_validation_program_hash all_args))
+                payout_conditions (list
+                    (list CREATE_COIN mover_payout_ph AMOUNT)
+                    (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
+                )
 
-            (assert
-                (= INFOHASH_A (sha256 previous_validation_program_hash (shatree previous_state)))
-                (if (not validator_result)
-                    payout_conditions
-                    (if (not (logand
-                            (= (i next_validator_hash
-                                    (sha256 next_validator_hash (shatree new_state))
-                                    0)
-                                INFOHASH_B)
-                            (= max_move_size MAX_MOVE_SIZE)
-                            (i next_validator_hash 1 (not max_move_size))))
-                        payout_conditions
-                        (assert extra_conditions
-                            (append extra_conditions payout_conditions)
+                (assert
+                    (= INFOHASH_A (sha256 previous_validation_program_hash (shatree previous_state)))
+                    (if-shape validator_result
+                        ; if-shape assumes its closed union; reject other atoms
+                        ; rather than treating a malformed validator result as nil.
+                        (nil (assert (not validator_result) payout_conditions))
+                        ((referee-result)
+                            (if (not (logand
+                                    (= (i next_validator_hash
+                                            (sha256 next_validator_hash (shatree new_state))
+                                            0)
+                                        INFOHASH_B)
+                                    (= max_move_size MAX_MOVE_SIZE)
+                                    (i next_validator_hash 1 (not max_move_size))))
+                                payout_conditions
+                                (assert extra_conditions
+                                    (append extra_conditions payout_conditions)
+                                )
+                            )
                         )
                     )
                 )
             )
         )
-        (assign
-            (new_move infohash_c new_mover_share new_max_move_size . tail) args
-            new_puzzle_hash (curry_hashes MOD_HASH (shatree (list WAITER_PUBKEY MOVER_PUBKEY TIMEOUT
-                    AMOUNT MOD_HASH NONCE new_move new_max_move_size infohash_c new_mover_share
-                    INFOHASH_B)))
-            (assert
-                (not tail)
-                INFOHASH_B
-                (<= (strlen new_move) MAX_MOVE_SIZE)
-                (<= (strlen new_max_move_size) 2)
-                (>= new_max_move_size 0)
-                (= new_max_move_size (+ new_max_move_size 0))
-                (<= new_mover_share AMOUNT)
-                (>= new_mover_share 0)
-                (= new_mover_share (+ new_mover_share 0))
-                (logior (not infohash_c) (= 32 (strlen infohash_c)))
-                (i infohash_c 1 (not new_max_move_size))
-                (list
-                        (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
-                        (list CREATE_COIN new_puzzle_hash AMOUNT)
-                        (list AGG_SIG_ME MOVER_PUBKEY (shatree args)))
+        ((referee-move)
+            (assign
+                new_puzzle_hash (curry_hashes MOD_HASH
+                    (shatree
+                        (make (referee-parameters WAITER_PUBKEY MOVER_PUBKEY
+                                    TIMEOUT AMOUNT MOD_HASH NONCE
+                                    new_move new_max_move_size infohash_c
+                                    new_mover_share INFOHASH_B))))
+                (assert
+                    INFOHASH_B
+                    (<= (strlen new_move) MAX_MOVE_SIZE)
+                    (<= (strlen new_max_move_size) 2)
+                    (>= new_max_move_size 0)
+                    (= new_max_move_size (+ new_max_move_size 0))
+                    (<= new_mover_share AMOUNT)
+                    (>= new_mover_share 0)
+                    (= new_mover_share (+ new_mover_share 0))
+                    (logior (not infohash_c) (= 32 (strlen infohash_c)))
+                    (i infohash_c 1 (not new_max_move_size))
+                    (list
+                            (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
+                            (list CREATE_COIN new_puzzle_hash AMOUNT)
+                            (list AGG_SIG_ME MOVER_PUBKEY (shatree args)))
+                )
             )
         )
     )

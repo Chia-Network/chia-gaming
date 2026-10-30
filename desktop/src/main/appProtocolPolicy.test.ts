@@ -34,7 +34,7 @@ describe('app protocol policy', () => {
     });
   });
 
-  it('allows app requests and only the OAuth cross-site navigation', () => {
+  it('allows same-origin app requests and rejects every cross-site one', () => {
     assert.equal(
       isAppSchemeRequestAllowed(
         request('chiagaming://app/index.js', { 'sec-fetch-site': 'same-origin' }),
@@ -55,7 +55,7 @@ describe('app protocol policy', () => {
           'sec-fetch-dest': 'document',
         }),
       ),
-      true,
+      false,
     );
     assert.equal(
       isAppSchemeRequestAllowed(
@@ -65,7 +65,7 @@ describe('app protocol policy', () => {
           'sec-fetch-dest': 'document',
         }),
       ),
-      true,
+      false,
     );
     assert.equal(
       isAppSchemeRequestAllowed(

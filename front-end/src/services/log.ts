@@ -27,6 +27,10 @@ export function subscribeLog(fn: Listener): () => void {
   };
 }
 
+export function recentLogText(): string {
+  return buffer.slice(-20).join('\n').slice(-8000);
+}
+
 /** Log a single error-context note. */
 export function diagNote(message: string): void {
   console.warn(`[error] ${message}`);

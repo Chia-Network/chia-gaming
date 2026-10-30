@@ -12,19 +12,20 @@
   "dependencies": {
     "chia-gaming-bencodex": "workspace:*",
     "chia-gaming-protocol-constants": "workspace:*",
-    "cors": "2.8.5",
-    "express": "5.2.1",
+    "cors": "2.8.6",
+    "express": "5.3.0",
     "minimist": "1.2.8",
-    "ws": "8.21.2"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",
     "@types/express": "5.0.6",
     "@types/minimist": "1.2.5",
-    "@types/node": "24.6.2",
-    "@types/ws": "8.18.1",
-    "esbuild": "0.28.1",
-    "tsx": "^4.23.5",
-    "typescript": "5.9.3"
+    "@types/node": "24.19.2",
+    "@types/ws": "8.18.2",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "esbuild": "0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "npm:@typescript/typescript6@6.0.2"
   }
 }

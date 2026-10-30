@@ -257,6 +257,7 @@ export type WalletOfferOperation = {
 export type WalletProviderScope =
   | { provider: 'cloud'; walletId: string }
   | { provider: 'walletconnect'; fingerprint: string; chainId: string }
+  | { provider: 'sage'; fingerprint: string; chainId: string }
   | { provider: 'simulator'; identity: string };
 
 export type WalletOfferRequest =
@@ -277,8 +278,7 @@ export type WalletOfferRequest =
     };
 
 export type WalletOfferMaterial =
-  | { kind: 'offer'; offer: string }
-  | { kind: 'bundle'; bundle: unknown };
+  { kind: 'offer'; offer: string } | { kind: 'bundle'; bundle: unknown };
 
 export type WalletOfferReservedCompletion = {
   kind: 'created-reserved';
@@ -300,8 +300,7 @@ export type WalletOfferCompletion =
   | { kind: 'unavailable'; reason: string };
 
 export type WalletOfferBeginOutcome =
-  | WalletOfferCompletion
-  | { kind: 'pending'; recoveryId: string };
+  WalletOfferCompletion | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
   // System
@@ -340,6 +339,8 @@ export interface WasmConnection {
   request_fee_upgrades: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
+  build_wallet_spend: (request_json: string) => string;
+  spendable_standard_total: (coins_json: string) => string;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,
@@ -633,8 +634,7 @@ export type WalletOfferCancellationOutcome =
   | { status: 'rejected'; detail: string };
 
 export type WalletOfferCancellationBeginOutcome =
-  | WalletOfferCancellationOutcome
-  | { status: 'pending'; recoveryId: string };
+  WalletOfferCancellationOutcome | { status: 'pending'; recoveryId: string };
 
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
@@ -731,7 +731,8 @@ export interface InternalBlockchainInterface {
   beginConnect(uniqueId: string, fresh?: boolean): Promise<ConnectionSetup>;
   disconnect(): Promise<void>;
   isConnected(): boolean;
-  onConnectionChange(cb: (connected: boolean) => void): () => void;
+  // Recovery pauses RPCs without revoking the approved wallet connection.
+  onConnectionChange(cb: (connected: boolean, recovering?: boolean) => void): () => void;
   // True when this backend can fund/resolve channels (hub may advertise
   // not-busy). Simulator and Cloud Wallet: ready whenever connected.
   // WalletConnect: ready once a full-node peer is verified when the wallet

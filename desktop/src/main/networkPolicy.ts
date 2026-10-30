@@ -13,6 +13,12 @@ const WALLET_CONNECT_REQUEST_ORIGINS = [
   'https://pulse.walletconnect.org',
 ];
 
+/**
+ * Public full-node API used for Sage chain reads and broadcast fallback.
+ * Matches `coinsetApiUrl()` in `front-end/src/hooks/coinsetClient.ts`.
+ */
+const COINSET_REQUEST_ORIGINS = ['https://api.coinset.org', 'https://testnet11.api.coinset.org'];
+
 /** The Verify API renders an attestation iframe inside the player document. */
 const WALLET_CONNECT_FRAME_ORIGINS = [
   'https://verify.walletconnect.com',
@@ -27,10 +33,11 @@ export type NetworkPolicy = {
   /** Origins allowed to load as a sub-frame of the player document. */
   allowedFrameOrigins: ReadonlySet<string>;
   /**
-   * Origins allowed as `window.open` popups (Cloud Wallet OAuth / funding
-   * approval). These are top-level windows, not sub-frames.
+   * Cloud Wallet origins the player may open in the system browser (sign-in,
+   * signature approval) and relay token requests to. No Cloud Wallet page
+   * renders inside the app.
    */
-  allowedPopupOrigins: ReadonlySet<string>;
+  cloudWalletOrigins: ReadonlySet<string>;
   contentSecurityPolicy: string;
   hubContentSecurityPolicy: string;
   hubConnectionAllowlist: string;
@@ -91,20 +98,19 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
   const requestOrigins = [
     ...hubRequestOrigins,
     ...WALLET_CONNECT_REQUEST_ORIGINS,
+    ...COINSET_REQUEST_ORIGINS,
     ...config.cloudWalletOrigins,
   ];
   const frameOrigins = [...config.hubOrigins, ...WALLET_CONNECT_FRAME_ORIGINS];
-  const popupOrigins = [...config.cloudWalletOrigins];
 
   const uniqueRequestOrigins = [...new Set(requestOrigins)].sort();
   const uniqueFrameOrigins = [...new Set(frameOrigins)].sort();
-  const uniquePopupOrigins = [...new Set(popupOrigins)].sort();
 
   return {
     allowedRequestOrigins: new Set(uniqueRequestOrigins),
     hubOrigins: new Set(uniqueHubOrigins),
     allowedFrameOrigins: new Set(uniqueFrameOrigins),
-    allowedPopupOrigins: new Set(uniquePopupOrigins),
+    cloudWalletOrigins: new Set(config.cloudWalletOrigins),
     contentSecurityPolicy: buildContentSecurityPolicy(uniqueRequestOrigins, uniqueFrameOrigins),
     hubContentSecurityPolicy: [
       "default-src http: https: data: blob: 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",

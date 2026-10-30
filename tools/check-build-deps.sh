@@ -368,7 +368,7 @@ install_dep() {
         if ! need_cmd cargo; then
             install_rustup || return 1
         fi
-        cargo install wasm-pack --locked
+        cargo install wasm-pack --version 0.15.0 --locked
         ;;
     *)
         return 1

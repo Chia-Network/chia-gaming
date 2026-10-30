@@ -1,4 +1,4 @@
-import { ChiaMethod } from '../constants/wallet-connect';
+import { ChiaMethod, SageMethod } from '../constants/wallet-connect';
 import {
   CreateOfferForIdsRequest,
   CreateOfferForIdsResponse,
@@ -30,6 +30,7 @@ import {
 } from '../types/rpc/GetFullNodePeerCount';
 import { log } from '../services/log';
 import { integersToBigInt, jsonStringify } from '../util/jsonSafe';
+import { AsyncJobQueue } from '../lib/AsyncScheduler';
 
 import { walletConnectState } from './useWalletConnect';
 
@@ -37,6 +38,7 @@ type Loose = Record<string, unknown>;
 type GetWalletsRequest = Loose;
 type GetWalletsResponse = Array<{ id: bigint; type: bigint; [key: string]: unknown }>;
 const WC_RELAY_CONNECT_TIMEOUT_MS = 15000;
+const WC_RETRYABLE_REQUEST_TIMEOUT_MS = 30000;
 export const WC_INTER_REQUEST_MS = 50;
 
 function getErrorText(err: unknown): string {
@@ -93,11 +95,22 @@ export class WalletConnectResponseError extends Error {
   }
 }
 
-function transportError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+type WalletConnectMethod = ChiaMethod | SageMethod;
+
+const CHIA_WALLET_METHODS = new Set<string>(Object.values(ChiaMethod));
+
+/**
+ * Methods whose successful result legitimately carries an `error` field:
+ * `chip0002_sendTransaction` answers `{ status, error }` with the mempool's
+ * verdict, which the caller interprets.
+ */
+const RESULT_CARRIES_ERROR = new Set<string>([SageMethod.SendTransaction]);
+
+function transportError(method: WalletConnectMethod, detail: string, cause?: unknown): Error {
   return new WalletConnectTransportError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
 }
 
-function responseError(method: ChiaMethod, detail: string, cause?: unknown): Error {
+function responseError(method: WalletConnectMethod, detail: string, cause?: unknown): Error {
   return new WalletConnectResponseError(`WalletConnect RPC ${method} failed: ${detail}`, cause);
 }
 
@@ -110,16 +123,17 @@ function isNarrowWalletConnectTransportFailure(error: unknown): boolean {
   );
 }
 
-function shouldLogRpcError(method: ChiaMethod): boolean {
+function shouldLogRpcError(method: WalletConnectMethod): boolean {
   return method !== ChiaMethod.GetCoinRecordsByNames;
 }
 
 /** High-frequency poll methods — skip success traces to avoid drowning the log. */
-function shouldLogRpcTraffic(method: ChiaMethod): boolean {
+function shouldLogRpcTraffic(method: WalletConnectMethod): boolean {
   return (
     method !== ChiaMethod.GetCoinRecordsByNames &&
     method !== ChiaMethod.GetHeightInfo &&
-    method !== ChiaMethod.GetWalletBalance
+    method !== ChiaMethod.GetWalletBalance &&
+    method !== SageMethod.GetAssetBalance
   );
 }
 
@@ -180,15 +194,45 @@ async function waitForRelayerConnected(): Promise<void> {
 }
 
 type PreparedRpc = {
-  method: ChiaMethod;
+  client: NonNullable<ReturnType<typeof walletConnectState.getClient>>;
+  topic: string;
+  chainId: string;
+  epoch: number;
+  address: string | undefined;
+  method: WalletConnectMethod;
   params: Record<string, unknown>;
   data: object;
   paramKeys: string;
   enqueuedAt: number;
 };
 
+function isReadOnlyRpc(method: WalletConnectMethod): boolean {
+  return (
+    method === ChiaMethod.GetWallets ||
+    method === ChiaMethod.GetWalletBalance ||
+    method === ChiaMethod.GetHeightInfo ||
+    method === ChiaMethod.GetCoinRecordsByNames ||
+    method === ChiaMethod.GetPuzzleAndSolution ||
+    method === ChiaMethod.GetFullNodePeerCount ||
+    method === SageMethod.GetAddress ||
+    method === SageMethod.GetAssetBalance ||
+    method === SageMethod.GetAssetCoins
+  );
+}
+
+function supportsTimeoutRecovery(method: WalletConnectMethod): boolean {
+  // Registering the same coin IDs again is idempotent and reserves no funds.
+  return (
+    isReadOnlyRpc(method) ||
+    method === ChiaMethod.PushTransactions ||
+    method === ChiaMethod.RegisterRemoteCoins
+  );
+}
+
 class WalletConnectRpcClient {
-  request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
+  private requestQueue = new AsyncJobQueue({ gapMs: WC_INTER_REQUEST_MS });
+
+  request<T, D extends object = object>(method: WalletConnectMethod, data: D): Promise<T> {
     let prepared: PreparedRpc;
     try {
       prepared = this.prepareRpc(method, data);
@@ -196,7 +240,24 @@ class WalletConnectRpcClient {
       if (e instanceof WalletConnectTransportError) return Promise.reject(e);
       return Promise.reject(responseError(method, getErrorText(e), e));
     }
-    return this.runPreparedRpc<T>(prepared).catch((e) => {
+    // WalletConnect cannot reliably handle overlapping requests.
+    // Keep ownership until the SDK request settles or a retryable request's relay
+    // replacement finishes. Reservation mutations retain their SDK completion lifetime.
+    const response = new Promise<T>((resolve, reject) => {
+      const job = {
+        label: prepared.method,
+        run: async () => {
+          try {
+            resolve(await this.runPreparedRpc<T>(prepared));
+          } catch (error) {
+            reject(error);
+          }
+        },
+      };
+      if (isReadOnlyRpc(prepared.method)) this.requestQueue.enqueue(job);
+      else this.requestQueue.enqueueFront(job);
+    });
+    return response.catch((e) => {
       this.logRpcError(prepared, e);
       if (e instanceof WalletConnectTransportError || e instanceof WalletConnectResponseError) {
         throw e;
@@ -205,31 +266,41 @@ class WalletConnectRpcClient {
     });
   }
 
-  private prepareRpc<D extends object>(method: ChiaMethod, data: D): PreparedRpc {
-    if (!walletConnectState.getClient()) {
+  private prepareRpc<D extends object>(method: WalletConnectMethod, data: D): PreparedRpc {
+    const client = walletConnectState.getClient();
+    const session = walletConnectState.getSession();
+    if (!client) {
       throw transportError(method, 'WalletConnect is not initialized');
     }
-    if (!walletConnectState.getSession()) {
+    if (!session) {
       throw transportError(method, 'Session is not connected');
     }
 
-    const address = walletConnectState.getAddress();
-    if (!address) {
-      throw new Error('no fingerprint set in walletconnect');
-    }
-    const fingerprint = Number.parseInt(address, 10);
-    if (!Number.isFinite(fingerprint)) {
-      throw new Error('walletconnect fingerprint is not a valid integer');
+    // The Chia reference wallet routes each request to a key by fingerprint;
+    // Sage serves its active wallet and validates params strictly.
+    let routed: object = data;
+    if (CHIA_WALLET_METHODS.has(method)) {
+      const address = walletConnectState.getAddress();
+      if (!address) {
+        throw new Error('no fingerprint set in walletconnect');
+      }
+      const fingerprint = Number.parseInt(address, 10);
+      if (!Number.isFinite(fingerprint)) {
+        throw new Error('walletconnect fingerprint is not a valid integer');
+      }
+      routed = { ...data, fingerprint };
     }
 
-    const params = negativeBigintsToDecimalStrings({
-      ...data,
-      fingerprint,
-    }) as Record<string, unknown>;
+    const params = negativeBigintsToDecimalStrings(routed) as Record<string, unknown>;
     const paramKeys = Object.keys(params).join(',');
     const enqueuedAt = Date.now();
 
     return {
+      client,
+      topic: session.topic,
+      chainId: walletConnectState.getChainId(),
+      epoch: walletConnectState.getRequestEpoch(),
+      address: walletConnectState.getAddress(),
       method,
       params,
       data,
@@ -239,16 +310,26 @@ class WalletConnectRpcClient {
   }
 
   private async runPreparedRpc<T>(prepared: PreparedRpc): Promise<T> {
-    const session = walletConnectState.getSession();
-    const client = walletConnectState.getClient();
-    if (!session) throw transportError(prepared.method, 'Session is not connected');
-    if (!client) throw transportError(prepared.method, 'WalletConnect is not initialized');
+    const { client, topic, chainId } = prepared;
+    const assertCurrentContext = () => {
+      if (
+        walletConnectState.getClient() !== client ||
+        walletConnectState.getSession()?.topic !== topic ||
+        walletConnectState.getChainId() !== chainId ||
+        walletConnectState.getRequestEpoch() !== prepared.epoch ||
+        walletConnectState.getAddress() !== prepared.address
+      ) {
+        throw transportError(prepared.method, 'Wallet context changed before request could start');
+      }
+    };
+    assertCurrentContext();
 
     try {
       await waitForRelayerConnected();
     } catch (error) {
       throw transportError(prepared.method, getErrorText(error), error);
     }
+    assertCurrentContext();
 
     if (shouldLogRpcTraffic(prepared.method)) {
       log(
@@ -257,21 +338,52 @@ class WalletConnectRpcClient {
     }
 
     let raw: unknown;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let requestTimedOut = false;
     try {
-      raw = await client.request({
-        topic: session.topic,
-        chainId: walletConnectState.getChainId(),
+      const response = client.request({
+        topic,
+        chainId,
         request: { method: prepared.method, params: prepared.params },
       });
+      raw = supportsTimeoutRecovery(prepared.method)
+        ? await Promise.race([
+            response,
+            new Promise<never>((_resolve, reject) => {
+              timer = setTimeout(() => {
+                log(
+                  `[WC RPC timeout] ${prepared.method} after ${WC_RETRYABLE_REQUEST_TIMEOUT_MS}ms; restarting relay`,
+                );
+                requestTimedOut = true;
+                reject(transportError(prepared.method, 'Request timed out'));
+              }, WC_RETRYABLE_REQUEST_TIMEOUT_MS);
+            }),
+          ])
+        : await response;
     } catch (error) {
+      if (requestTimedOut) {
+        try {
+          await walletConnectState.recoverRelay(client, topic, prepared.method);
+        } catch (recoveryError) {
+          throw transportError(
+            prepared.method,
+            'Request timed out; relay recovery failed',
+            recoveryError,
+          );
+        }
+        throw transportError(prepared.method, 'Request timed out; relay restarted');
+      }
+      if (error instanceof WalletConnectTransportError) throw error;
       const connected =
         walletConnectState.getClient() === client &&
-        walletConnectState.getSession()?.topic === session.topic &&
+        walletConnectState.getSession()?.topic === topic &&
         client.core.relayer.connected;
       if (!connected || isNarrowWalletConnectTransportFailure(error)) {
         throw transportError(prepared.method, getErrorText(error), error);
       }
       throw responseError(prepared.method, getErrorText(error), error);
+    } finally {
+      clearTimeout(timer);
     }
     const result = this.normalizeResult<T>(prepared, raw);
     if (shouldLogRpcTraffic(prepared.method)) {
@@ -283,7 +395,7 @@ class WalletConnectRpcClient {
 
   private normalizeResult<T>(prepared: PreparedRpc, raw: unknown): T {
     const result = integersToBigInt(raw) as Record<string, unknown> | undefined;
-    if (result?.error) {
+    if (result?.error && !RESULT_CARRIES_ERROR.has(prepared.method)) {
       const errorText = toDebugJson(result.error);
       const trace = new Error().stack?.split('\n').slice(1, 6).join('\n') ?? '';
       if (shouldLogRpcError(prepared.method)) {
@@ -317,7 +429,10 @@ class WalletConnectRpcClient {
 
 export const walletConnectRpcClient = new WalletConnectRpcClient();
 
-async function request<T, D extends object = object>(method: ChiaMethod, data: D): Promise<T> {
+async function request<T, D extends object = object>(
+  method: WalletConnectMethod,
+  data: D,
+): Promise<T> {
   return walletConnectRpcClient.request<T, D>(method, data);
 }
 
@@ -381,6 +496,50 @@ async function getPuzzleAndSolution(data: GetPuzzleAndSolutionRequest) {
 async function getFullNodePeerCount(data: GetFullNodePeerCountRequest) {
   return await request<GetFullNodePeerCountResponse>(ChiaMethod.GetFullNodePeerCount, data);
 }
+
+/** Sage coin JSON after integer normalization; amounts may also be decimal strings. */
+export interface SageCoin {
+  parent_coin_info: string;
+  puzzle_hash: string;
+  amount: bigint | string;
+}
+
+export interface SageSpendableCoin {
+  coin: SageCoin;
+  coinName: string;
+  puzzle: string;
+  confirmedBlockIndex: bigint;
+  locked: boolean;
+}
+
+export interface SageCoinSpend {
+  coin: SageCoin;
+  puzzle_reveal: string;
+  solution: string;
+}
+
+export const sageRpc = {
+  getAddress: () => request<{ address: string }>(SageMethod.GetAddress, {}),
+  getAssetBalance: () =>
+    request<{ confirmed: string; spendable: string; spendableCoinCount: bigint }>(
+      SageMethod.GetAssetBalance,
+      { type: null, assetId: null },
+    ),
+  getAssetCoins: (offset: number, limit: number) =>
+    request<SageSpendableCoin[]>(SageMethod.GetAssetCoins, {
+      type: null,
+      assetId: null,
+      offset,
+      limit,
+    }),
+  signCoinSpends: (coinSpends: SageCoinSpend[]) =>
+    request<string>(SageMethod.SignCoinSpends, { coinSpends, partialSign: false }),
+  /** Mempool inclusion status: 1 success, 2 pending, 3 failed (or no peer answered). */
+  sendTransaction: (spendBundle: { coin_spends: SageCoinSpend[]; aggregated_signature: string }) =>
+    request<{ status: bigint; error: string | null }>(SageMethod.SendTransaction, {
+      spendBundle,
+    }),
+};
 
 export const rpc = {
   getWallets,

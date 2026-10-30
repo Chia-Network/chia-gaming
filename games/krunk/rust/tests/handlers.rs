@@ -85,7 +85,7 @@ struct ValidatorResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     if items.is_empty() {
         ValidatorResult {
             code: MoveCode::Slash,
@@ -122,23 +122,28 @@ fn run_validator(
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
+    let curry_args = crate::referee::types::encode_referee_args(
+        allocator,
+        [
+            NodePtr::NIL,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            amount_node,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            move_bytes,
+            mms_node,
+            NodePtr::NIL,
+            ms_node,
+            NodePtr::NIL,
+        ],
+    )
+    .unwrap();
     let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(ms_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(mms_node, tail).unwrap();
-    let tail = a.new_pair(move_bytes, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(amount_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let curry_args = a.new_pair(NodePtr::NIL, tail).unwrap();
 
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(evidence, tail).unwrap();
-    let tail = a.new_pair(validator_program, tail).unwrap();
-    let tail = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(validator_program, evidence).unwrap();
+    let payload = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     let args = a.new_pair(validator_hash, tail).unwrap();
 
@@ -932,7 +937,7 @@ fn test_krunk_bob_invalid_guess_slash() {
         MoveCode::MakeMove,
         "conditional slash returns non-empty list"
     );
-    let items = proper_list(allocator.allocator(), result.output, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result.output).unwrap();
     assert_eq!(
         items.len(),
         4,
@@ -1463,15 +1468,7 @@ fn test_krunk_bob_detects_wrong_clue() {
         .allocator()
         .new_atom(clue_hash_val.hash().bytes())
         .unwrap();
-    let state = {
-        let a = allocator.allocator();
-        let tail = a.new_pair(clue_hash_node, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(commit_node, tail).unwrap();
-        let tail = a.new_pair(alice_clues, tail).unwrap();
-        let tail = a.new_pair(bob_guesses, tail).unwrap();
-        let tail = a.new_pair(base_unit_node, tail).unwrap();
-        a.new_pair(dict_pubkey, tail).unwrap()
-    };
+    let state = crate::tests::shape_tree(&mut allocator, &[dict_pubkey, base_unit_node, bob_guesses, alice_clues, commit_node, clue_hash_node]);
 
     // Reveal move
     let mut reveal_move = Vec::new();
@@ -1487,25 +1484,29 @@ fn test_krunk_bob_detects_wrong_clue() {
     let mms_node = 21_i64.to_clvm(&mut allocator).unwrap();
     let ms_node = 0_i64.to_clvm(&mut allocator).unwrap();
     let curry_args = {
-        let a = allocator.allocator();
-        let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(ms_node, tail).unwrap();
-        let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-        let tail = a.new_pair(mms_node, tail).unwrap();
-        let tail = a.new_pair(move_node, tail).unwrap();
-        let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-        let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-        let tail = a.new_pair(amount_node, tail).unwrap();
-        let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-        let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-        a.new_pair(NodePtr::NIL, tail).unwrap()
+        crate::referee::types::encode_referee_args(
+            &mut allocator,
+            [
+                NodePtr::NIL,
+                NodePtr::NIL,
+                NodePtr::NIL,
+                amount_node,
+                NodePtr::NIL,
+                NodePtr::NIL,
+                move_node,
+                mms_node,
+                NodePtr::NIL,
+                ms_node,
+                NodePtr::NIL,
+            ],
+        )
+        .unwrap()
     };
     let args = {
         let a = allocator.allocator();
-        let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(evidence, tail).unwrap();
-        let tail = a.new_pair(clue_clvm, tail).unwrap();
-        let tail = a.new_pair(state, tail).unwrap();
+        let tail = a.new_pair(clue_clvm, evidence).unwrap();
+        let payload = a.new_pair(state, tail).unwrap();
+        let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
         let tail = a.new_pair(curry_args, tail).unwrap();
         a.new_pair(clue_hash_node, tail).unwrap()
     };

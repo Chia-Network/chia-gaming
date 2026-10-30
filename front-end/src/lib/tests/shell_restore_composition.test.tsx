@@ -342,6 +342,75 @@ describe('Shell production restore composition', () => {
     },
   );
 
+  it('keeps automatic wallet recovery quiet and makes terminal connection loss actionable', async () => {
+    requestTrust.mockResolvedValue('trusted');
+    jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+      qrUri: '',
+      skipQr: true,
+      finalize: async () => {},
+    });
+    jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+    jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
+    jest
+      .spyOn(realBlockchainInfo, 'getHeightInfo')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    jest
+      .spyOn(realBlockchainInfo, 'getBalance')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    let connectionChanged!: (connected: boolean, recovering?: boolean) => void;
+    jest.mocked(realBlockchainInfo.onConnectionChange).mockImplementation((cb) => {
+      connectionChanged = cb;
+      return () => {};
+    });
+    await storageRepository.claimApplicationState();
+    const save = baseSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      pairingToken: 'cancelled-pairing',
+      gameSessionId: '33'.repeat(16),
+      myContribution: '1000',
+      theirContribution: '1000',
+      perGameAmount: '100',
+      iStarted: false,
+      transportDisposition: 'proposal-received',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    act(() => {
+      renderer = create(React.createElement(Shell));
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+    await flushEffects();
+    const walletTab = () => renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' });
+    expect(walletTab()).toBeDefined();
+    act(() => connectionChanged(false, true));
+    expect(walletTab()).toBeDefined();
+    expect(storageRepository.query('walletAlert')).toBe(false);
+    expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
+    act(() => walletTab().props.onClick());
+    await waitForText(renderer!, 'Connected');
+    expect(renderer!.root.findAllByProps({ children: 'Reconnect' })).toHaveLength(0);
+    act(() => connectionChanged(true, false));
+    expect(walletTab()).toBeDefined();
+    expect(storageRepository.query('walletAlert')).toBe(false);
+    // Failure of automatic recovery, including session deletion, is actionable.
+    act(() => renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' }).props.onClick());
+    act(() => connectionChanged(false, true));
+    act(() => connectionChanged(false, false));
+    expect(storageRepository.query('walletAlert')).toBe(true);
+    const lostTab = renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' });
+    act(() => lostTab.props.onClick());
+    await waitForText(renderer!, 'Connection was lost');
+    expect(renderer!.root.findAllByProps({ children: 'Reconnect' }).length).toBeGreaterThan(0);
+  });
+
   it('lets a restored handshake be cancelled when its peer remains unavailable', async () => {
     requestTrust.mockResolvedValue('trusted');
     jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({

@@ -66,7 +66,7 @@ struct ValidatorResult {
 }
 
 fn parse_validator_output(allocator: &mut AllocEncoder, result: NodePtr) -> ValidatorResult {
-    let items = proper_list(allocator.allocator(), result, true).unwrap();
+    let items = crate::tests::validator_fields(allocator.allocator(), result).unwrap();
     if items.is_empty() {
         ValidatorResult {
             code: MoveCode::Slash,
@@ -101,23 +101,28 @@ fn run_validator(
     let mms_node = max_move_size.to_clvm(allocator).unwrap();
     let ms_node = mover_share.to_clvm(allocator).unwrap();
 
+    let curry_args = crate::referee::types::encode_referee_args(
+        allocator,
+        [
+            NodePtr::NIL,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            amount_node,
+            NodePtr::NIL,
+            NodePtr::NIL,
+            move_bytes,
+            mms_node,
+            NodePtr::NIL,
+            ms_node,
+            NodePtr::NIL,
+        ],
+    )
+    .unwrap();
     let a = allocator.allocator();
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(ms_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(mms_node, tail).unwrap();
-    let tail = a.new_pair(move_bytes, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(amount_node, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let tail = a.new_pair(NodePtr::NIL, tail).unwrap();
-    let curry_args = a.new_pair(NodePtr::NIL, tail).unwrap();
 
-    let tail = a.new_pair(NodePtr::NIL, NodePtr::NIL).unwrap();
-    let tail = a.new_pair(evidence, tail).unwrap();
-    let tail = a.new_pair(validator_program, tail).unwrap();
-    let tail = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(validator_program, evidence).unwrap();
+    let payload = a.new_pair(state, tail).unwrap();
+    let tail = a.new_pair(payload, NodePtr::NIL).unwrap();
     let tail = a.new_pair(curry_args, tail).unwrap();
     let args = a.new_pair(validator_hash, tail).unwrap();
 
@@ -1396,8 +1401,7 @@ fn test_end_validator_allows_extra_for_new_mover() {
         let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
         let wp = allocator.allocator().new_atom(bob_pre).unwrap();
         let a = allocator.allocator();
-        let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(mi, tail).unwrap();
+        let tail = a.new_pair(mi, wp).unwrap();
         a.new_pair(hp, tail).unwrap()
     };
 
@@ -1431,8 +1435,7 @@ fn test_end_validator_slashes_underpayment_to_new_mover() {
         let mi = allocator.allocator().new_atom(&alice_image_1).unwrap();
         let wp = allocator.allocator().new_atom(bob_pre).unwrap();
         let a = allocator.allocator();
-        let tail = a.new_pair(wp, NodePtr::NIL).unwrap();
-        let tail = a.new_pair(mi, tail).unwrap();
+        let tail = a.new_pair(mi, wp).unwrap();
         a.new_pair(hp, tail).unwrap()
     };
 

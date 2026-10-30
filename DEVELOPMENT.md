@@ -41,11 +41,11 @@ configured, with at least 1000 mojos in your wallet.
   ```
 - **wasm-pack** (0.15.0):
   ```bash
-  cargo install wasm-pack --version 0.15.0
+  cargo install wasm-pack --version 0.15.0 --locked
   ```
-- **Node 22+** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
+- **Node 24** and **pnpm 10.33** and [Node Version Manager](https://nvmnode.com/):
   ```bash
-  brew install node@22        # or download from https://nodejs.org
+  brew install node@24        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
   ```
 - **A C compiler with WebAssembly support.** The ambient `clang` selected by
@@ -53,6 +53,12 @@ configured, with at least 1000 mojos in your wallet.
   ```bash
   clang --print-targets | grep wasm32
   ```
+
+The workspace uses TypeScript 7 for `tsc` builds through the
+`@typescript/native` npm alias. The `typescript` dependency aliases
+`@typescript/typescript6` so ESLint and ts-jest can use the compiler API they
+support. Keep both entries when updating TypeScript; this follows the
+[TypeScript side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0).
 
 ## Building & Testing
 

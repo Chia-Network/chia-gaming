@@ -1,5 +1,9 @@
 # Game Handler and Validation System
 
+Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
+`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
+their syntax and assumptions.
+
 This document explains the off-chain handler and on-chain validation system
 used by the game framework. It covers how game logic is structured, how
 handlers produce moves, how validators enforce rules, and how the two systems
@@ -158,7 +162,7 @@ After the commitment check, Rust runs the validator with the committed
 arguments to obtain the state passed to the handler. An assert in any required
 nil-evidence run is a hard validator error: the peer move is not accepted
 off-chain and the game must go on chain. The handler is not called with a
-fabricated nil state. Terminal validators return `(list 0)` when the move is
+fabricated nil state. Terminal validators return `(validator-transition 0 0 0)` when the move is
 valid but no evidence was supplied.
 
 Handlers are responsible for safely processing the peer-controlled moves that
@@ -415,10 +419,11 @@ untagged result:
 ### Validator Return: Valid Move
 
 ```
-(next_validation_program_hash new_state max_move_size)
+(validator-transition next_validation_program_hash new_state max_move_size)
 ```
 
-These three elements describe the new game state after the move.
+This constructs `((next_validation_program_hash . new_state) . (max_move_size . nil))`.
+The three transition fields describe the new game state after the move.
 
 - **On-chain**: The referee checks that these values match the commitments
   in the coin's curried state (infohash and max_move_size). If they align,
@@ -426,7 +431,7 @@ These three elements describe the new game state after the move.
 - **Off-chain**: A successful nil-evidence run is a soft non-slash: the
   framework takes `new_state` and `max_move_size` from it before calling the
   their-turn handler. Every structurally valid move must return a payload with
-  nil evidence. `(list 0)` is the valid terminal payload: the next validator
+  nil evidence. `(validator-transition 0 0 0)` is the valid terminal payload: the next validator
   hash is nil, there is no after-state, and the next max move size is zero.
 
 Note: `mover_share` is **not** in the validator's return value. It is part
@@ -436,10 +441,11 @@ validator.
 ### Validator Return: Valid Move with Conditions (Conditional Slash)
 
 ```
-(next_validation_program_hash new_state max_move_size condition1 condition2 ...)
+(validator-result next_validation_program_hash new_state max_move_size
+    (list condition1 condition2 ...))
 ```
 
-Elements beyond the first three are **conditions** that the referee must
+The fourth field is a proper list of **conditions** that the referee must
 emit for the slash to succeed. This enables "conditional slashing" where
 a move is provably invalid but the proof requires an external cryptographic
 check (e.g. verifying that a dictionary range was signed by both players).
@@ -540,9 +546,9 @@ can raise and make the illegal terminal move unslashable.
 The terminal validator therefore rejects a mover mask when bit 7 is set before
 selecting or evaluating cards, then separately requires exactly five set bits.
 The waiter's evidence mask follows the same range and popcount rules. Nil
-evidence returns `(list 0)` without comparing hands. Invalid non-nil evidence
+evidence returns `(validator-transition 0 0 0)` without comparing hands. Invalid non-nil evidence
 raises, rejecting that slash attempt. A well-formed waiter mask that does not
-prove overclaim also returns `(list 0)`. An invalid committed mover mask
+prove overclaim also returns `(validator-transition 0 0 0)`. An invalid committed mover mask
 returns nil and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
@@ -575,9 +581,8 @@ aborts). If the validator hard-fails, the slash transaction never exists;
 that is also a valid way to reject a slash of an honest move.
 
 Slash-solution classification is deliberately less strict than move-solution
-parsing. The second solution element being a validation program is enough for
-an observer to identify a confirmed slash; it does not traverse or impose a
-local shape on the remaining arguments. A slash can reach the chain only when
+parsing. A payload pair on the left and payout atom on the right identify a
+confirmed slash; the observer does not traverse the payload or optional evidence. A slash can reach the chain only when
 the previous move was actually slashable, so this permissiveness cannot be used
 to punish an honest mover. Rejecting a chain-accepted slash locally would only
 break bookkeeping for the player whose illegal move was already punished.

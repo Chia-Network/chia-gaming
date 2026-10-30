@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use clvm_traits::ToClvm;
 
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use serde::{Deserialize, Serialize};
 
@@ -1644,7 +1644,7 @@ mod sequencing_tests {
     use crate::session_phases::types::PotatoState;
     use crate::transaction_manager::TransactionManager;
     use chialisp::runtime_print::{RuntimePrintKind, RuntimePrintOutput, RuntimePrintRecord};
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -2099,7 +2099,7 @@ mod genesis_challenge_tests {
     use super::*;
     use crate::common::constants::AGG_SIG_ME_ADDITIONAL_DATA;
     use crate::common::types::{CoinID, PrivateKey};
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;
 
     #[test]

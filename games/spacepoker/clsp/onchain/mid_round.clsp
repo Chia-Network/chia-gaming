@@ -1,4 +1,7 @@
 (include *standard-cl-26*)
+(import std.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
 
 (import games.spacepoker.clsp.onchain.begin_round exposing (program_hash as begin_hash))
 (import games.spacepoker.clsp.onchain.end exposing (program_hash as end_hash))
@@ -23,11 +26,10 @@
 ;   - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
 ;   - a call: preimage that hashes to mover_image_N (16 bytes at N=1, 32 otherwise)
 ; evidence is empty
-(export (mod_hash
-    (MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-        MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-        (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
-        previous_validation_program evidence)
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (space-raise bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N) previous_validation_program evidence unused_payout)
 
     (if (> (strlen MOVE) 32)
         ; raise branch — prior raise commits to pot for both players
@@ -38,10 +40,8 @@
                 (>= new_raise_amount 0)
                 (<= (+ half_pot last_raise_amount new_raise_amount) (/ AMOUNT 2))
                 0
-                (list mod_hash
-                    (li bet_unit (+ half_pot last_raise_amount) new_raise_amount
-                        waiter_image_N mover_image_N N)
-                    42)
+                (validator-transition mod_hash (make-space-raise bet_unit (+ half_pot last_raise_amount) new_raise_amount
+                        waiter_image_N mover_image_N N) 42)
             )
         )
         ; call branch: MOVE is preimage that hashes to mover_image_N
@@ -51,13 +51,9 @@
             (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
             0
             (if (= N 1)
-                (list end_hash
-                    (li (+ half_pot last_raise_amount) waiter_image_N MOVE)
-                    17)
-                (list begin_hash
-                    (li bet_unit (+ half_pot last_raise_amount)
-                        waiter_image_N MOVE (- N 1) mod_hash)
-                    42)
+                (validator-transition end_hash (make-space-end (+ half_pot last_raise_amount) waiter_image_N MOVE) 17)
+                (validator-transition begin_hash (make-space-open bet_unit (+ half_pot last_raise_amount)
+                        waiter_image_N MOVE (- N 1) mod_hash) 42)
             )
         )
     )

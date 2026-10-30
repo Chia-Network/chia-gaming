@@ -44,10 +44,11 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
 import { Button } from './button';
 import {
-  clientErrorText,
+  browserErrorReport,
   markClientErrorReported,
   wasClientErrorReported,
 } from '../lib/clientError';
+import { log, recentLogText } from '../services/log';
 import { ComposeProposalDialog, ReviewProposalDialog } from './GameProposalDialogs';
 import { bindNotificationOverlayDismissKeys } from './notificationOverlayKeyboard';
 
@@ -78,6 +79,7 @@ export function RenderErrorDialog({
   onDismiss?: () => void;
   onReload?: () => void;
 }) {
+  const { state: copyState, copy } = useCopyToClipboard();
   return (
     <div
       className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 p-4"
@@ -101,6 +103,18 @@ export function RenderErrorDialog({
           </pre>
         )}
         <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            title={copyState === 'failed' ? COPY_FAILED_TITLE : undefined}
+            onClick={() => void copy([title, error, componentStack].filter(Boolean).join('\n\n'))}
+          >
+            {copyState === 'copied'
+              ? 'Copied'
+              : copyState === 'failed'
+                ? 'Copy failed'
+                : 'Copy details'}
+          </Button>
           {onDismiss && (
             <Button variant="outline" size="sm" onClick={onDismiss}>
               Dismiss
@@ -120,16 +134,17 @@ export function RenderErrorDialog({
 export function UncaughtClientErrorReporter() {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const report = (reason: unknown) => {
+    const report = (reason: unknown, event: ErrorEvent | PromiseRejectionEvent) => {
       if (wasClientErrorReported(reason)) return;
       markClientErrorReported(reason);
-      const detail = clientErrorText(reason);
+      const detail = browserErrorReport(event, recentLogText());
+      log(`[client-error] ${detail}`);
       queueMicrotask(() => {
         setError((current) => current ?? detail);
       });
     };
-    const handleError = (event: ErrorEvent) => report(event.error ?? event.message);
-    const handleUnhandledRejection = (event: PromiseRejectionEvent) => report(event.reason);
+    const handleError = (event: ErrorEvent) => report(event.error ?? event.message, event);
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => report(event.reason, event);
     window.addEventListener('error', handleError);
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
     return () => {

@@ -1,3 +1,5 @@
+(import std.shapes)
+(import games.calpoker.clsp.onchain.shapes)
 
 (import games.calpoker.clsp.onchain.a exposing (program as pokera))
 (import games.calpoker.clsp.onchain.b exposing (program as pokerb))
@@ -69,11 +71,11 @@
 
 ; pre_state is alice_commit
 ; move is Bob's seed
-; state is (alice_commit bob_seed)
+; state is (calpoker-seeds alice_commit bob_seed)
 ; immediately sends a message giving Alice's seed
 (defun calpoker_alice_handler_b (PREIMAGE amount pre_state state move validation_info_hash split)
     (list
-        (make_cards (sha256 PREIMAGE move amount))
+        (assign (calpoker-hands) (make_cards (sha256 PREIMAGE move amount)) (list alice_cards bob_cards))
         0
         (curry calpoker_alice_handler_c PREIMAGE)
         PREIMAGE
@@ -127,12 +129,12 @@
 )
 
 ; my_discards is a list of cards
-; state is (alice_commit bob_seed)
+; state is (calpoker-seeds alice_commit bob_seed)
 ; move is Alice's reveal of her card generating seed and her commit to which cards she's picking
 (defun calpoker_alice_handler_c (PREIMAGE my_discards amount state split entropy)
     (assign
-        (alice_commit bob_seed) state
-        (cardsa cardsb) (make_cards (sha256 PREIMAGE bob_seed amount))
+        (calpoker-seeds alice_commit bob_seed) state
+        (calpoker-hands cardsa cardsb) (make_cards (sha256 PREIMAGE bob_seed amount))
         my_discards_bitfield (cards_to_bitfield my_discards cardsa)
         salt (substr entropy 0 16)
         new_commit (sha256 (concat salt my_discards_bitfield))
@@ -154,12 +156,12 @@
 
 ; pre_state is (alce_cards bob_cards alice_commit)
 ; move is Bob's discards
-; state is (bob_discards alice_cards bob_cards alice_commit)
+; state is (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit)
 ; should get an immediate call back with a nil move
 (defun calpoker_alice_handler_d (MY_SALT MY_PICKS amount pre_state
-            (bob_discards alice_cards bob_cards my_commit) move validation_program_hash split)
+            (calpoker-discard-state bob_discards alice_cards bob_cards my_commit) move validation_program_hash split)
     (assign
-        (my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
+        (calpoker-hands my_all_cards_indices bob_all_cards_indices) (get_final_cards_in_canonical_order
             alice_cards MY_PICKS bob_cards move) ;alice_cards alice_picks bob_cards bob_picks
 
         my_all_cards my_all_cards_indices
@@ -221,10 +223,10 @@
 )
 
 ; returns (alice_cards_readable bob_cards_readable)
-(defun parse_message (message (alice_commit bob_seed) amount)
+(defun parse_message (message (calpoker-seeds alice_commit bob_seed) amount)
     (assert
         (= (sha256 message) alice_commit)
-        (make_cards (sha256 (substr message 0 16) (substr bob_seed 0 16) amount))
+        (assign (calpoker-hands) (make_cards (sha256 (substr message 0 16) (substr bob_seed 0 16) amount)) (list alice_cards bob_cards))
     )
 )
 
@@ -232,7 +234,7 @@
 ; move is alice's reveal of her card generating seed and her commit to which cards she's picking
 ; expecting a message revealing Alice's seed which results in local display once verified
 ; return readable is (alice_cards bob_cards)
-(defun calpoker_bob_handler_c (amount pre_state (alice_commit alice_cards bob_cards) move validation_program_hash split)
+(defun calpoker_bob_handler_c (amount pre_state (calpoker-deal alice_commit alice_cards bob_cards) move validation_program_hash split)
     (list
         (list alice_cards bob_cards)
         0
@@ -241,11 +243,11 @@
 )
 
 ; my_move is a list of cards
-; state is (alice_commit alice_cards bob_cards)
+; state is (calpoker-deal alice_commit alice_cards bob_cards)
 ; move is Bob's discards
 (defun calpoker_bob_handler_d (my_move amount state split entropy)
     (assign
-        (alice_commit alice_cards bob_cards) state
+        (calpoker-deal alice_commit alice_cards bob_cards) state
         my_discards_bitfield (cards_to_bitfield my_move bob_cards)
         (list
             "calpoker_bob_handler_d"
@@ -264,13 +266,13 @@
     )
 )
 
-; pre_state is (bob_discards alice_cards bob_cards alice_commit)
+; pre_state is (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit)
 ; move is alice_salted_discards (17 bytes) + alice_card_selections (1 byte)
 ; Computes final cards and hand values from pre_state + move.
 ; Nil-evidence e.clsp raises (evidence is required), so `state` is nil.
 (defun calpoker_bob_handler_e (
         amount
-        (bob_discards alice_cards bob_cards alice_commit)
+        (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit)
         state
         move
         validation_program_hash
@@ -279,7 +281,7 @@
     (assign
         alice_discards (substr move 16 17)
         alice_selects (substr move 17 (strlen move))
-        (alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
+        (calpoker-hands alice_final_cards bob_final_cards) (get_final_cards_in_canonical_order
             alice_cards alice_discards bob_cards bob_discards)
         alice_hand_value (onehandcalc (pull_out_cards alice_selects alice_final_cards))
         (bob_hand_value bob_selects) (handcalc bob_final_cards)

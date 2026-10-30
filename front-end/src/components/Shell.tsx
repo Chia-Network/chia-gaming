@@ -80,6 +80,7 @@ import {
 import { fakeBlockchainInfo } from '../hooks/FakeBlockchainInterface';
 import { realBlockchainInfo } from '../hooks/RealBlockchainInterface';
 import { cloudBlockchainInfo } from '../hooks/CloudBlockchainInterface';
+import { sageBlockchainInfo } from '../hooks/SageBlockchainInterface';
 import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockchain';
 import {
   BALANCE_POLL_INTERVAL_MS,
@@ -150,11 +151,14 @@ import { HubPicker } from './HubPicker';
 
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
 
-type ShellBlockchainType = 'simulator' | 'walletconnect' | 'cloud';
+type ShellBlockchainType = 'simulator' | 'walletconnect' | 'sage' | 'cloud';
 
 function getInterface(bcType: ShellBlockchainType) {
   if (bcType === 'walletconnect') {
     return { iface: realBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS };
+  }
+  if (bcType === 'sage') {
+    return { iface: sageBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS };
   }
   if (bcType === 'cloud') {
     return { iface: cloudBlockchainInfo, pollMs: CHAIN_POLL_INTERVAL_MS };
@@ -776,6 +780,7 @@ const Shell = () => {
   );
 
   const [walletConnected, setWalletConnected] = useState(false);
+  const [walletRecovering, setWalletRecovering] = useState(false);
   const [terminalFinalizationBlocker, setTerminalFinalizationBlocker] = useState<string | null>(
     null,
   );
@@ -1850,8 +1855,9 @@ const Shell = () => {
   useEffect(() => {
     const iface = activeBlockchainRef.current;
     if (!iface) return;
-    return iface.onConnectionChange((connected) => {
-      if (!connected && activeTabRef.current !== 'wallet') {
+    return iface.onConnectionChange((connected, recovering = false) => {
+      setWalletRecovering(recovering);
+      if (!connected && !recovering && activeTabRef.current !== 'wallet') {
         setWalletAlert(true);
       }
       if (connected) {
@@ -2424,6 +2430,7 @@ const Shell = () => {
       setBlockchainType(bcType);
       blockchainTypeRef.current = bcType;
       setWalletConnected(true);
+      setWalletRecovering(false);
       walletConnectedRef.current = true;
       setConnecting(false);
       setConnectionSetup(null);
@@ -2518,10 +2525,12 @@ const Shell = () => {
       if (!connectionSetup || !blockchainType) return;
       log(`[Shell] handleFinalize: bcType=${blockchainType}`);
       const { iface, pollMs } = getInterface(blockchainType);
+      wcAbortRef.current = false;
       setConnectError(null);
       setConnecting(true);
       try {
         await connectionSetup.finalize(values);
+        if (wcAbortRef.current) return;
         log(`[Shell] handleFinalize: finalize complete`);
         // A fee entered in the connect modal is persisted globally by finalize;
         // resync local state so the Wallet-tab editor reflects it.
@@ -2529,6 +2538,8 @@ const Shell = () => {
         setShowConnectionSetupModal(false);
         completeConnection(iface, blockchainType, pollMs, { switchToHub: true });
       } catch (err) {
+        // Cancel already reset the modal; its aborted sign-in is not an error.
+        if (wcAbortRef.current) return;
         console.error(`[Shell] ${blockchainType} finalize failed`, err);
         setConnectError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -3299,6 +3310,7 @@ const Shell = () => {
     activeBlockchainRef.current = null;
     setActiveBlockchainPoller(null);
     setWalletConnected(false);
+    setWalletRecovering(false);
     walletConnectedRef.current = false;
     setBlockchainType(undefined);
     blockchainTypeRef.current = undefined;
@@ -3786,7 +3798,7 @@ const Shell = () => {
             let pipeConnected: boolean | null = null;
             switch (tab.id) {
               case 'wallet':
-                pipeConnected = walletConnected;
+                pipeConnected = walletConnected || walletRecovering;
                 break;
               case 'hub':
                 pipeConnected = hubLiveness === 'connected';
@@ -3795,7 +3807,7 @@ const Shell = () => {
                 pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
                 break;
             }
-            const walletDisconnected = tab.id === 'wallet' && !walletConnected;
+            const walletDisconnected = tab.id === 'wallet' && !walletConnected && !walletRecovering;
             const pipeLabel =
               pipeConnected === null
                 ? tab.label
@@ -3905,7 +3917,7 @@ const Shell = () => {
               connecting={connecting}
               error={connectError}
             />
-            {walletConnected ? (
+            {walletConnected || walletRecovering ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
@@ -4152,6 +4164,13 @@ const Shell = () => {
                     onClick={() => handleConnect('walletconnect', false, true)}
                   >
                     Link Wallet
+                  </Button>
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() => handleConnect('sage', false, true)}
+                  >
+                    Sage Wallet
                   </Button>
                   <Button
                     variant="solid"
