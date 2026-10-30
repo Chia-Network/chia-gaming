@@ -956,6 +956,11 @@ mod gaming_wasm {
         enum OfferBech32m {}
         impl bech32::Checksum for OfferBech32m {
             type MidstateRepr = u32;
+            type CorrectionField = <bech32::Bech32m as bech32::Checksum>::CorrectionField;
+            const ROOT_GENERATOR: Self::CorrectionField =
+                <bech32::Bech32m as bech32::Checksum>::ROOT_GENERATOR;
+            const ROOT_EXPONENTS: core::ops::RangeInclusive<usize> =
+                <bech32::Bech32m as bech32::Checksum>::ROOT_EXPONENTS;
             const CODE_LENGTH: usize = usize::MAX;
             const CHECKSUM_LENGTH: usize = 6;
             const GENERATOR_SH: [u32; 5] = [

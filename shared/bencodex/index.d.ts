@@ -18,7 +18,7 @@ export interface BencodexDecodeLimits {
   readonly maxValues: number;
 }
 
-export function encode(value: BencodexValue): Uint8Array;
+export function encode(value: BencodexValue): Uint8Array<ArrayBuffer>;
 export function decode(
   bytes: Uint8Array | ArrayBuffer,
   limits?: BencodexDecodeLimits,
