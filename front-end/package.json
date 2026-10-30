@@ -20,7 +20,7 @@
     "@radix-ui/react-slot": "1.5.0",
     "@radix-ui/react-tooltip": "1.4.1",
     "@walletconnect/sign-client": "2.23.10",
-    "@walletconnect/types": "2.23.10",
+    "@walletconnect/types": "2.26.0",
     "bech32": "^2.0.0",
     "chia-gaming-bencodex": "workspace:*",
     "chia-gaming-protocol-constants": "workspace:*",
