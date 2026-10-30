@@ -1502,8 +1502,9 @@ const Shell = () => {
           // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
         } else {
           existing?.destroy();
+          // A fresh session keeps its own Rust owner; controller attachment is
+          // reserved for replacing the carrier of an existing session.
           peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
-          bindPeerMessageHandler(peerSessionRef.current);
         }
         peerSessionRef.current!.reliableTransport.acceptSession(
           {
@@ -1649,7 +1650,6 @@ const Shell = () => {
       stablePeerConn,
       abandonFailedStartAttempt,
       beginPersistFlight,
-      bindPeerMessageHandler,
       cancelAttemptedSession,
       endPersistFlight,
       freshStartPersistCommittedRef,
@@ -1676,11 +1676,6 @@ const Shell = () => {
       void beginAcceptTransition('accept-advisory', pairingToken, async () => {
         try {
           const gameSessionId = generateSessionId();
-          // Reserve the peer relay before sending so a delivery_failure for this
-          // proposal can cancel the attempt (PeerSession must already exist).
-          peerSessionRef.current?.destroy();
-          peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
-          bindPeerMessageHandler(peerSessionRef.current);
           await startFreshSessionWithPeer({
             peerId: advisory.peer_id,
             opponentAlias: advisory.peer_alias,
@@ -1693,8 +1688,8 @@ const Shell = () => {
             pairingToken,
           });
         } catch (error) {
-          // Setup threw before startFreshSessionWithPeer could clean up (e.g.
-          // after PeerSession was reserved). Do not leave the lobby stuck.
+          // Setup threw before startFreshSessionWithPeer could clean up.
+          // Do not leave the lobby stuck.
           console.error('[Shell] accept-advisory failed', error);
           log(
             `[Shell] accept-advisory failed peer=${advisory.peer_id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1707,7 +1702,6 @@ const Shell = () => {
     [
       abandonFailedStartAttempt,
       beginAcceptTransition,
-      bindPeerMessageHandler,
       sendSessionReject,
       startFreshSessionWithPeer,
     ],
