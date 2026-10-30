@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::run_program;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::types::{
@@ -11,13 +10,14 @@ use crate::channel_state::types::{
     StateUpdateSignatures,
 };
 use crate::channel_state::ChannelState;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::standard_coin::{
     private_to_public_key, puzzle_hash_for_synthetic_public_key, sign_reward_payout,
 };
 use crate::common::types::{
-    chia_dialect, Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID,
-    GameType, GetCoinStringParts, Hash, IntoErr, LocalProposalId, Node, Program, ProgramRef,
-    Puzzle, PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
+    Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType,
+    GetCoinStringParts, Hash, IntoErr, LocalProposalId, Node, Program, ProgramRef, Puzzle,
+    PuzzleHash, Sha256Input, Sha256tree, Spend, SpendBundle, Timeout, ToQuotedProgram,
     MAX_BLOCK_COST_CLVM,
 };
 use crate::game_session::{phase_operation_error, PeerLifecyclePhase};
@@ -65,15 +65,8 @@ pub(crate) fn validate_wallet_bundle_applies_conditions(
         }
         let puzzle = spend.bundle.puzzle.to_program().to_nodeptr(allocator)?;
         let solution = spend.bundle.solution.to_nodeptr(allocator)?;
-        let emitted = run_program(
-            allocator.allocator(),
-            &chia_dialect(),
-            puzzle,
-            solution,
-            MAX_BLOCK_COST_CLVM,
-        )
-        .into_gen()?
-        .1;
+        let emitted =
+            run_clvm_with_runtime_prints(allocator, puzzle, solution, MAX_BLOCK_COST_CLVM)?.1;
         let emitted = crate::utils::proper_list(allocator.allocator_ref(), emitted, true)
             .ok_or_else(|| Error::Channel("wallet coin conditions were not a list".to_string()))?;
         let emitted_hashes = emitted

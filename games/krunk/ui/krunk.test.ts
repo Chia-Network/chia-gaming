@@ -228,7 +228,7 @@ describe('Krunk automatic moves', () => {
     );
   });
 
-  it('keeps an early guess queued when activation-time submission is rejected', () => {
+  it('drops a rejected queued guess and submits the next guess', () => {
     const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -247,18 +247,26 @@ describe('Krunk automatic moves', () => {
             myTurn: false,
             secretWord: 'CRANE',
           },
-          initialKrunkGameState('bob'),
+          {
+            ...initialKrunkGameState('bob'),
+            queuedGuesses: ['XXXXX', 'SLATE'],
+          },
         ],
       }),
     );
     let checkpoint = structuredClone(hand.getState());
+    let moveCount = 0;
     const dispatch = jest.fn((intent: { type: string }) => {
       if (intent.type === 'state-changed') {
         checkpoint = structuredClone(hand.getState());
       } else if (intent.type === 'make-move') {
-        checkpoint.members.forEach((member, memberIndex) => {
-          hand.updateGame(memberIndex, () => structuredClone(member));
-        });
+        moveCount += 1;
+        if (moveCount === 1) {
+          checkpoint.members.forEach((member, memberIndex) => {
+            hand.updateGame(memberIndex, () => structuredClone(member));
+          });
+          hand.receive({ type: 'move-rejected', memberIndex: 1 });
+        }
       }
     });
     const view: GameMountView<KrunkHand> = {
@@ -270,36 +278,25 @@ describe('Krunk automatic moves', () => {
     act(() => {
       renderer = create(React.createElement(Krunk, { view }));
     });
-    for (const letter of ['S', 'L', 'A', 'T', 'E']) {
-      const key = renderer!.root
-        .findAllByType('button')
-        .find((button) => button.props.children === letter);
-      act(() => key!.props.onClick());
-    }
-    const guess = renderer!.root
-      .findAllByType('button')
-      .find((button) => button.props.children === 'Guess');
-    act(() => guess!.props.onClick());
-    expect(hand.getState().members[1].queuedGuesses).toEqual(['SLATE']);
-
     hand.receive({
       type: 'move-readable',
       memberIndex: 1,
       readable: Program.fromBytes(new Uint8Array()),
       moverShare: 100n,
     });
+    checkpoint = structuredClone(hand.getState());
+    act(() => {
+      renderer!.update(React.createElement(Krunk, { view: { ...view } }));
+    });
     act(() => {
       renderer!.update(React.createElement(Krunk, { view }));
     });
 
-    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
-      'state-changed',
-      'make-move',
-    ]);
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual(['make-move', 'make-move']);
     expect(hand.getState().members[1]).toMatchObject({
       handler: KrunkHandler.BobWaiting,
-      queuedGuesses: ['SLATE'],
-      guesses: [],
+      queuedGuesses: [],
+      guesses: [{ word: 'SLATE', clue: [-1n, -1n, -1n, -1n, -1n] }],
     });
     act(() => renderer!.unmount());
     renderer = null;
