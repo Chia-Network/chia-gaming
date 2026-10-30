@@ -762,7 +762,6 @@ describe('session machine controller command failures', () => {
       close: () => {},
     });
     controller.setGameSession({
-      pendingTerminalHandoff: () => null,
       snapshot_watched_coins: () => [],
       drain_submissions: () => ({ submissions: [], retired_submission_ids: [], failures: [] }),
       configure_submission_fee: () => {},

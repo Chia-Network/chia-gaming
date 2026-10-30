@@ -4,6 +4,7 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
+import * as wasmInit from '../../hooks/WasmStateInit';
 import * as blobSingleton from '../../hooks/blobSingleton';
 import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
 import { storageRepository } from '../session/storageRepository';
@@ -14,7 +15,8 @@ import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
 import { calpokerStateCodec } from './game_state_helpers';
 
 import type { HubConnection } from '../../services/HubConnection';
-import { PeerSession, encodePeerAppMessage } from '../../services/PeerSession';
+import { PeerSession, decodeReliableFrame, encodePeerAppMessage } from '../../services/PeerSession';
+import { SessionController } from '../../hooks/SessionController';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { GameSessionProps } from '../../components/GameSession';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
@@ -40,7 +42,7 @@ jest.mock('../../components/GameSession', () => {
 
 let mockHubCallbacks: ConstructorParameters<typeof HubConnection>[2] | null = null;
 const mockSetBusy = jest.fn();
-const mockSendToPeer = jest.fn(() => true);
+const mockSendToPeer = jest.fn((_peerId: string, _frame: Uint8Array) => true);
 jest.mock('../../services/HubConnection', () => {
   const actual = jest.requireActual('../../services/HubConnection');
   return {
@@ -413,8 +415,22 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell));
     });
     await waitForText(renderer!, 'You have previously saved state.');
+    let finishPeerLoad!: () => void;
+    const peerLoading = new Promise<void>((resolve) => {
+      finishPeerLoad = resolve;
+    });
+    const peerLoader = jest
+      .spyOn(wasmInit, 'ensurePeerProtocolLoaded')
+      .mockReturnValue(peerLoading);
     await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      void renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    for (let n = 0; n < 30 && !peerLoader.mock.calls.length; n++) await flushEffects();
+    expect(peerLoader).toHaveBeenCalled();
+    expect(renderer!.root.findAllByProps({ children: 'Handshaking' })).toHaveLength(0);
+    peerLoader.mockRestore();
+    await act(async () => {
+      finishPeerLoad();
     });
     await waitForText(renderer!, 'Handshaking');
     for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
@@ -555,6 +571,155 @@ describe('Shell production restore composition', () => {
         secondAttempt.destroy();
         await storageRepository.inspect();
       });
+    },
+  );
+
+  it.each([false, true])(
+    'checkpoints a fresh proposal before sending with retained controller=%s',
+    async (retainedController) => {
+      requestTrust.mockResolvedValue('trusted');
+      jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+        qrUri: '',
+        skipQr: true,
+        finalize: async () => {},
+      });
+      jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+      jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
+      jest
+        .spyOn(realBlockchainInfo, 'getHeightInfo')
+        .mockImplementation(() => new Promise<never>(() => {}));
+      jest
+        .spyOn(realBlockchainInfo, 'getBalance')
+        .mockImplementation(() => new Promise<never>(() => {}));
+      jest.spyOn(realBlockchainInfo, 'getWalletOfferProvider').mockReturnValue({
+        capability: 'best-effort',
+        scope: { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },
+        beginCreation: jest.fn(),
+        cancel: jest.fn(),
+      });
+      await storageRepository.claimApplicationState();
+      const save = baseSave({
+        blockchainType: 'walletconnect',
+        hubUrl: 'https://hub.example.test',
+        activeTab: 'game',
+        channelStatus: { state: 'ResolvedClean' },
+        coinsOfInterest: [],
+        terminalIStarted: true,
+        activeGameIds: [],
+        currentHandGameIds: [],
+        gameInstances: {},
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      act(() => {
+        renderer = create(React.createElement(Shell));
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      });
+      await waitForText(renderer!, 'Resolved Clean');
+      for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+      await flushEffects();
+      expect(mockHubCallbacks).not.toBeNull();
+
+      const oldPeer = new PeerSession('old-peer', '55'.repeat(16), {
+        sendToPeer: () => true,
+      } as unknown as HubConnection);
+      let oldController: SessionController | null = null;
+      if (retainedController) {
+        oldController = new SessionController(null, 'old-controller', 100n, 100n, oldPeer);
+        oldController
+          .getPeerProtocol()
+          .accept_session({ proposer_amount: '100', responder_amount: '100' }, false);
+        oldController.restoreChannelStatus({
+          ...INITIAL_CHANNEL_STATUS_MODEL,
+          state: 'ResolvedClean',
+        });
+        jest.replaceProperty(blobSingleton, 'sessionController', oldController);
+      }
+      const oldOwner = oldController?.getPeerProtocol();
+      let releaseCheckpoint!: () => void;
+      const checkpointGate = new Promise<void>((resolve) => {
+        releaseCheckpoint = resolve;
+      });
+      let checkpointStarted = false;
+      const write = storageRepository.write.bind(storageRepository);
+      jest.spyOn(storageRepository, 'write').mockImplementation(async (snapshot) => {
+        if (snapshot.session?.phase === 'pre-handshake') {
+          checkpointStarted = true;
+          await checkpointGate;
+        }
+        await write(snapshot);
+      });
+      mockSendToPeer.mockClear();
+      try {
+        act(() => {
+          mockHubCallbacks!.onAdvisoryStart({
+            peer_id: '22'.repeat(16),
+            peer_alias: 'Clyde',
+            my_amount: '1000',
+            their_amount: '1000',
+          });
+        });
+        await waitForText(renderer!, 'New Session');
+        await act(async () => {
+          renderer!.root.findByProps({ children: 'Accept' }).props.onClick();
+        });
+        // Run the automatic transport timer while the first write is still blocked.
+        await flushEffects();
+        expect(checkpointStarted).toBe(true);
+        const pending = storageRepository.loadState().session;
+        if (pending?.phase !== 'pre-handshake') throw new Error('Missing fresh checkpoint');
+        const remote = new PeerSession('11'.repeat(16), pending.pairing.gameSessionId, {
+          sendToPeer: (_peerId: string, frame: Uint8Array) => {
+            mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frame);
+            return true;
+          },
+        } as unknown as HubConnection);
+        act(() => {
+          mockHubCallbacks!.onHubDisconnected();
+          mockHubCallbacks!.onHubReconnected();
+          mockHubCallbacks!.onPeerAvailable('22'.repeat(16));
+          remote.sendAck(1);
+          remote.sendMessage(1, Uint8Array.of(0x01));
+          remote.sendKeepalive();
+          remote.destroy();
+        });
+        await flushEffects();
+        expect(mockSendToPeer).not.toHaveBeenCalled();
+        expect((await storageRepository.inspect()).applicationState?.session?.phase).toBe(
+          'terminal',
+        );
+        expect(oldController?.getPeerProtocol()).toBe(oldOwner);
+        expect(blobSingleton.sessionController).toBe(oldController);
+
+        await act(async () => {
+          releaseCheckpoint();
+        });
+        await waitForText(renderer!, 'Handshaking');
+        expect(blobSingleton.sessionController).toBeNull();
+        expect(mockSendToPeer).toHaveBeenCalledTimes(1);
+        const frame = decodeReliableFrame(mockSendToPeer.mock.calls[0][1]);
+        const saved = (await storageRepository.inspect()).applicationState;
+        expect(saved?.session?.phase).toBe('pre-handshake');
+        if (saved?.session?.phase !== 'pre-handshake' || frame?.tag !== 0x01) {
+          throw new Error('Fresh session did not persist and emit its proposal');
+        }
+        expect(frame.sessionId).toBe(saved.session.pairing.gameSessionId);
+        expect(frame.sessionId).not.toBe(oldPeer.sessionId);
+        expect(saved.session.transport.unackedMessages).toEqual([{ msgno: 1n, msg: frame.data }]);
+        expect(unhandledRejections).toEqual([]);
+      } finally {
+        await act(async () => {
+          releaseCheckpoint();
+          oldController?.cleanup();
+          oldPeer.destroy();
+          await storageRepository.inspect();
+        });
+      }
     },
   );
 

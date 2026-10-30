@@ -24,6 +24,22 @@ and continuing through handshake, play, and cooperative shutdown. Transport
 acknowledgements and keepalives are not recursively acknowledged, but they are
 bound to the same peer session ID.
 
+The reference implementation places reliable delivery and accepted-session
+setup in Rust (`src/peer_session.rs`, exposed by `wasm/src/peer.rs`). Local
+acceptance starts the session; Rust constructs the proposal and requests the
+wallet address through the TypeScript host. The host owns hub connectivity,
+storage writes, and carrier execution. One accepted Rust session directly owns
+reliability state and channel; message delivery, outgoing journal allocation,
+and terminal acknowledgement completion are methods on that owner using native
+calls and results. Each call receives its host and releases state/channel borrows
+before invoking host callbacks. Gameplay
+and chain observations also target that object directly, without a channel-handle
+registry. Carrier replacement
+preserves this owner, and retirement releases its channel. Registration and peer-availability
+observations tell Rust when to replay. This ownership does not change any wire
+format, message numbering, consent requirement, or checkpoint-release rule
+specified below.
+
 This document covers:
 
 - reliable session negotiation;
@@ -86,6 +102,12 @@ message number. The wire counter is an unsigned 32-bit integer. The current
 protocol does not define rollover; a sender must not wrap the counter within a
 session. Counters, acknowledgements, ordering, and replay are scoped to
 `session_id` independently in each direction.
+
+The Rust peer owner also enforces delivery eligibility before local consent,
+recognizes session rejection, and tracks the final cooperative handoff through
+send, acknowledgement and restore. The host supplies availability observations,
+carrier operations, persistence and application effects. These ownership
+boundaries do not change the wire format or ordering rules above.
 
 ## 3. Bencodex wire encoding
 
@@ -399,7 +421,8 @@ proposal was accepted or that an on-chain transaction succeeded.
 
 ### 5.4 Replay
 
-The host replays all unacknowledged data frames only in these two cases:
+The Rust delivery owner attempts to resend unacknowledged data frames through
+the host carrier only in these two cases:
 
 - after this endpoint reconnects to the hub and receives `registered`, including
   a reload that restores a saved session and then re-identifies; and

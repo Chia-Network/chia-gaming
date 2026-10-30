@@ -1,6 +1,6 @@
+import { restorePeerState } from './peer_protocol.harness';
 import {
   PeerSession as BrowserPeerSession,
-  decodePeerAppMessage,
   encodePeerAppMessage,
   generateSessionId,
 } from '../../services/PeerSession';
@@ -309,10 +309,10 @@ describe('PeerSession', () => {
         const ps = new PeerSession('peer1', 'session1', conn);
         const provisionalFailure = jest.fn();
         const activeFailure = jest.fn();
-        ps.reliableState.disposition = 'proposal-received';
+        restorePeerState(ps, { disposition: 'proposal-received' });
         ps.reliableTransport.attachConsumer({
           isReady: () => true,
-          canDeliver: (msgno) => msgno === 1n,
+          mode: 'proposal',
           deliver: jest.fn(),
           persist: () => Promise.resolve(),
           failure: provisionalFailure,
@@ -320,7 +320,7 @@ describe('PeerSession', () => {
         // A handshake waits behind consent; rejection must retire this buffer.
         ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 2, new Uint8Array([0xaa])));
         if (disposition === 'active') {
-          ps.reliableState.disposition = 'active';
+          restorePeerState(ps, { disposition: 'active' });
           ps.reliableTransport.attachConsumer({
             isReady: () => false,
             deliver: jest.fn(),
@@ -341,7 +341,6 @@ describe('PeerSession', () => {
         expect(currentFailure).toHaveBeenCalledTimes(1);
         expect(currentFailure).toHaveBeenCalledWith(expect.stringContaining('session mismatch'));
         if (disposition === 'active') expect(provisionalFailure).not.toHaveBeenCalled();
-        expect(ps.reliableTransport.runtime.reorderQueue.size).toBe(0);
         expect(ps.liveness).toBe('dead');
       },
     );
@@ -433,8 +432,8 @@ describe('PeerSession', () => {
       const prompt = jest.fn();
       const wasm = jest.fn();
       const localReply = new Uint8Array([0xcc]);
-      ps.reliableState.messageNumber = 2n;
-      ps.reliableState.unackedMessages = [{ msgno: 1n, msg: localReply }];
+      restorePeerState(ps, { messageNumber: 2n });
+      restorePeerState(ps, { unackedMessages: [{ msgno: 1n, msg: localReply }] });
       ps.reliableTransport.attachConsumer({
         isReady: () => true,
         deliver: (_msgno, body) => {
@@ -489,14 +488,7 @@ describe('PeerSession', () => {
       const handshakeA = new Uint8Array([0xaa, 0xbb]);
       ps.reliableTransport.attachConsumer({
         isReady: () => true,
-        canDeliver: (msgno, body) => {
-          if (msgno === 1n) return true;
-          try {
-            return decodePeerAppMessage(body)?.type === 'session_reject';
-          } catch {
-            return false;
-          }
-        },
+        mode: 'proposal',
         deliver: (msgno) => {
           expect(msgno).toBe(1n);
           prompt();
@@ -514,7 +506,6 @@ describe('PeerSession', () => {
       expect(prompt).toHaveBeenCalledTimes(1);
       expect(wasm).not.toHaveBeenCalled();
       expect(ps.reliableState.remoteNumber).toBe(1n);
-      expect(ps.reliableTransport.runtime.reorderQueue.get(2n)).toEqual(handshakeA);
       expect(conn.sentPeerMessages.map(({ payload }) => payload[0])).toEqual([0x02]);
 
       ps.reliableTransport.attachConsumer({
@@ -535,23 +526,10 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       const delivered = jest.fn();
       const rejectBody = encodePeerAppMessage({ type: 'session_reject' });
-      ps.reliableState.remoteNumber = 1n;
+      restorePeerState(ps, { remoteNumber: 1n });
       ps.reliableTransport.attachConsumer({
         isReady: () => true,
-        canDeliver: (_msgno, body) => {
-          try {
-            return decodePeerAppMessage(body)?.type === 'session_reject';
-          } catch {
-            return false;
-          }
-        },
-        canTerminateAt: (_msgno, body) => {
-          try {
-            return decodePeerAppMessage(body)?.type === 'session_reject';
-          } catch {
-            return false;
-          }
-        },
+        mode: 'proposal',
         deliver: delivered,
         persist: () => Promise.resolve(),
         failure: (reason) => fail(reason),
@@ -561,18 +539,17 @@ describe('PeerSession', () => {
       expect(ps.reliableTransport.receiveData(3n, rejectBody)).toBe(true);
       await ps.reliableTransport.flushPending();
 
-      expect(delivered).toHaveBeenCalledTimes(1);
-      expect(delivered).toHaveBeenCalledWith(3n, rejectBody);
+      expect(delivered).not.toHaveBeenCalled();
+      expect(ps.reliableState.disposition).toBe('inbound-reject');
       expect(ps.reliableState.remoteNumber).toBe(3n);
-      expect(ps.reliableTransport.runtime.reorderQueue.size).toBe(0);
     });
 
     it('rejects a cumulative ack beyond the allocated range without pruning', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const failure = jest.fn();
-      ps.reliableState.messageNumber = 2n;
-      ps.reliableState.unackedMessages = [{ msgno: 1n, msg: new Uint8Array([0xaa]) }];
+      restorePeerState(ps, { messageNumber: 2n });
+      restorePeerState(ps, { unackedMessages: [{ msgno: 1n, msg: new Uint8Array([0xaa]) }] });
       ps.reliableTransport.attachConsumer({
         isReady: () => true,
         deliver: jest.fn(),
@@ -594,7 +571,6 @@ describe('PeerSession', () => {
       expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x99]))).toBe(false);
       expect(ps.deliverRawPeerMessage('peer1', new Uint8Array([0x02, 0x00]))).toBe(false);
       expect(ps.reliableState.remoteNumber).toBe(0n);
-      expect(ps.reliableTransport.runtime.reorderQueue.size).toBe(0);
     });
 
     it('does not replay outbound data before its persistence completes', async () => {
@@ -611,7 +587,7 @@ describe('PeerSession', () => {
         failure: (reason) => fail(reason),
       });
 
-      ps.reliableTransport.allocateOutbound(new Uint8Array([0xaa]));
+      ps.reliableTransport.rejectSession();
       const flush = ps.reliableTransport.flushPending();
       ps.reliableTransport.receiveKeepalive();
       expect(conn.sentPeerMessages).toEqual([]);
@@ -637,7 +613,7 @@ describe('PeerSession', () => {
         committed,
       });
 
-      ps.reliableTransport.allocateOutbound(new Uint8Array([0xaa]));
+      ps.reliableTransport.rejectSession();
       ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xbb])));
 
       await expect(ps.reliableTransport.flushPending()).rejects.toThrow('storage unavailable');
@@ -695,9 +671,9 @@ describe('PeerSession', () => {
         failure: (reason) => fail(reason),
       });
 
-      ps.reliableTransport.allocateOutbound(new Uint8Array([0x01]));
+      ps.reliableTransport.rejectSession();
       const flush = ps.reliableTransport.flushPending();
-      ps.reliableTransport.allocateOutbound(new Uint8Array([0x02]));
+      ps.reliableTransport.rejectSession();
       ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0x03])));
       resolveFirstPersist();
       await flush;

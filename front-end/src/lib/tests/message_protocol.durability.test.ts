@@ -1,3 +1,9 @@
+import {
+  acceptedTerms,
+  createAcceptedBlob,
+  installAcceptedChannel,
+} from './accepted_session.harness';
+import { restorePeerState } from './peer_protocol.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { BlockchainPoller } from '../../hooks/BlockchainPoller';
 import { SessionController } from '../../hooks/SessionController';
@@ -61,21 +67,17 @@ describe('WASM command persistence', () => {
     setActiveBlob(blob);
     const save = jest.fn(async () => {});
     setTestPersistence(blob, save);
-    const outbound = enc('pre-cradle-outbound');
-
-    blob.processResult(wasmResult({ events: [{ OutboundMessage: outbound }] }));
+    blob.getPeerProtocol().accept_session(acceptedTerms, true);
+    const outbound = blob.unackedMessages[0].msg;
     await expect(blob.flushPendingSave()).rejects.toThrow(
       'Active-session persistence requires SessionMachineRuntime coordination',
     );
     expect(save).not.toHaveBeenCalled();
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
     expect(blob.unackedMessages).toEqual([{ msgno: 1n, msg: outbound }]);
-
-    blob.rewardPuzzleHash = '11'.repeat(32);
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(makeMockCradle());
+    blob.pairingToken = 'test-pairing';
+    await installAcceptedChannel(blob, true, true);
     await blob.flushPendingSave();
-
     expect(save).toHaveBeenCalledTimes(1);
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
     expect(sentAcks).toEqual([]);
@@ -100,33 +102,21 @@ describe('WASM command persistence', () => {
   });
 
   it('keeps outbound delivery behind one immediate durability flush', async () => {
-    jest.useFakeTimers();
-    const outbound = enc('eventless-command-outbound');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob();
-    setActiveBlob(blob);
+    const { blob, sentMessages, sentAcks } = await createAcceptedBlob(true);
     const save = jest.fn(() => {
       expect(sentMessages).toEqual([]);
       expect(sentAcks).toEqual([]);
     });
     setTestPersistence(blob, save);
-    (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() =>
-      wasmResult({ events: [{ OutboundMessage: outbound }] }),
-    );
-
-    try {
-      expect(blob.makeMove('7', null)).toBe('queued');
-      expect(save).not.toHaveBeenCalled();
-      expect(sentMessages).toEqual([]);
-
-      await blob.flushPendingWork();
-      expect(save).toHaveBeenCalledTimes(1);
-      expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-
-      await jest.advanceTimersByTimeAsync(500);
-      expect(save).toHaveBeenCalledTimes(1);
-    } finally {
-      jest.useRealTimers();
-    }
+    blob.activateSpend();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
+    expect(save).not.toHaveBeenCalled();
+    expect(sentMessages).toEqual([]);
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -198,11 +188,7 @@ describe('durability failures', () => {
   });
 
   it('keeps valid WASM state and releases reliable effects once across IndexedDB failure', async () => {
-    const helloBytes = enc('hello');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: helloBytes }],
-    }));
-    setActiveBlob(blob);
+    const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     const warnings: string[] = [];
     const sub = blob.getObservable().subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
@@ -211,29 +197,23 @@ describe('durability failures', () => {
     setTestPersistence(blob, () =>
       fail ? Promise.reject(new Error('permanent write failure')) : Promise.resolve(),
     );
+    blob.activateSpend();
+    const after = cradle.serialize();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
     try {
-      blob.deliverMessage(1n, enc('trigger'));
-      blob.flushDeferredWork();
-      await expect(blob.flushPendingWork()).rejects.toThrow();
-
+      await expect(blob.flushPendingWork()).rejects.toThrow('permanent write failure');
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('continuing without a durable checkpoint');
-      expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
-      expect(blob.remoteNumber).toBe(1n);
-      expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-      expect(sentAcks).toEqual([1]);
-      expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
+      expect(cradle.serialize()).toEqual(after);
+      expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
+      expect(blob.unackedMessages).toContainEqual({ msgno: 2n, msg: outbound });
     } finally {
       fail = false;
     }
-
     await blob.flushPendingSave();
     await blob.flushPendingWork();
-
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
-    expect(blob.remoteNumber).toBe(1n);
-    expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-    expect(sentAcks).toEqual([1]);
+    expect(cradle.serialize()).toEqual(after);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
     sub.unsubscribe();
   });
 
@@ -320,79 +300,55 @@ describe('durability failures', () => {
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {
-    const { storageRepository } = await import('../session/storageRepository');
-    const outbound = enc('outbound');
-    const { blob, cradle, sentMessages } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: outbound }],
-    }));
-    setActiveBlob(blob);
-
-    const cradleBytes = new Uint8Array([7, 7, 7, 7]);
-    (cradle.serialize as jest.Mock).mockReturnValue(cradleBytes);
+    const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     let saveReturned = false;
     setTestPersistence(blob, () => {
       const fields = blob.getWasmFields();
       if (!fields) throw new Error('expected save fields');
-      const pending = saveLiveSession({
-        ...fields,
-        serializedGameSession: cradle.serialize(),
-        pairingToken: 'sync-cradle',
-      });
-      // Cached must already contain the cradle before the returned Promise
-      // settles — durability flushes immediately after starting the prepared save.
+      const pending = saveLiveSession({ ...fields, pairingToken: 'sync-cradle' });
       const state = storageRepository.loadState();
       expect(state.session?.phase === 'live' && state.session.live.serializedGameSession).toEqual(
         cradleBytes,
       );
+      expect(sentMessages).toEqual([]);
       saveReturned = true;
       return pending;
     });
-
-    blob.deliverMessage(1n, enc('trigger'));
+    blob.activateSpend();
+    const cradleBytes = cradle.serialize();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
     await blob.flushPendingWork();
-
     expect(saveReturned).toBe(true);
     const persisted = await storageRepository.readCurrentState();
     expect(
       persisted?.session?.phase === 'live' && persisted.session.live.serializedGameSession,
     ).toEqual(cradleBytes);
-    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
   });
 
   it('releases the prepared outbound when persistence-time cradle serialization fails', async () => {
-    const outbound = enc('outbound');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: outbound }],
-    }));
-    setActiveBlob(blob);
-    setTestPersistence(blob, () => Promise.resolve());
-    await blob.flushPendingWork();
-    await blob.flushPendingSave();
+    const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     const previousFields = blob.getWasmFields();
     if (!previousFields) throw new Error('expected save fields');
-    void saveLiveSession({
+    await saveLiveSession({
       ...previousFields,
       serializedGameSession: new Uint8Array([9, 9, 9]),
       pairingToken: 'previous-durable-record',
     });
-    await storageRepository.checkpointDomainMutations();
-    (cradle.serialize as jest.Mock).mockImplementation(() => {
+    const serialize = jest.spyOn(cradle, 'serialize').mockImplementation(() => {
       throw new Error('malformed cradle serialization');
     });
     setTestPersistence(blob, () => {
-      // Serialize failures throw from getWasmFields; null means not ready yet.
       const fields = blob.getWasmFields();
-      if (!fields) return Promise.resolve();
+      if (!fields) throw new Error('expected save fields');
       return saveLiveSession(fields as unknown as Record<string, unknown>);
     });
-
-    blob.deliverMessage(1n, enc('trigger'));
+    blob.activateSpend();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
     await expect(blob.flushPendingWork()).rejects.toThrow('malformed cradle serialization');
-
-    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-    expect(sentAcks).toEqual([1]);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
     blob.cleanup();
-    setActiveBlob(null);
+    serialize.mockRestore();
     const saved = await storageRepository.readCurrentState();
     expect(saved?.session?.phase === 'live' && saved.session.live.serializedGameSession).toEqual(
       new Uint8Array([9, 9, 9]),
@@ -406,11 +362,13 @@ describe('resendUnacked', () => {
     setActiveBlob(blob);
     await blob.flushPendingSave();
 
-    blob.messageNumber = 3n;
-    blob.unackedMessages = [
-      { msgno: 1n, msg: enc('a') },
-      { msgno: 2n, msg: enc('b') },
-    ];
+    restorePeerState(blob, { messageNumber: 3n });
+    restorePeerState(blob, {
+      unackedMessages: [
+        { msgno: 1n, msg: enc('a') },
+        { msgno: 2n, msg: enc('b') },
+      ],
+    });
     blob.resendUnacked();
 
     expect(sentMessages).toEqual([
@@ -502,7 +460,6 @@ describe('restore ordering', () => {
     );
     unsubscribe();
 
-    expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([]);
     expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();

@@ -1,6 +1,7 @@
 import {
   WasmStateInit,
   ensureWasmLoaded,
+  ensurePeerProtocolLoaded,
   startWasmBootstrap,
   storeInitArgs,
   registerWasmLoader,
@@ -23,6 +24,7 @@ describe('WasmStateInit lazy load', () => {
   function mockWasm(): WasmConnection {
     return {
       init: jest.fn(),
+      create_peer_protocol: jest.fn(),
       cache_file: jest.fn(),
       registered_game_packages: jest.fn(() => [...TEST_PROTOCOL_IDS]),
     } as unknown as WasmConnection;
@@ -124,7 +126,9 @@ describe('WasmStateInit lazy load', () => {
 
     await expect(ensureWasmLoaded()).rejects.toThrow('transient preset fetch');
     await expect(ensureWasmLoaded()).resolves.toBe(wasm);
-    expect(initFn).toHaveBeenCalledTimes(2);
+    // The peer engine is now independently usable while game assets retry.
+    // Retrying a preset must not replace an initialized protocol module.
+    expect(initFn).toHaveBeenCalledTimes(1);
     expect(fetchPreset.mock.calls.length).toBeGreaterThan(PRESET_FILES.length);
   });
 
@@ -146,5 +150,24 @@ describe('WasmStateInit lazy load', () => {
     expect(protocolIdentitiesReady()).toBe(true);
     completeRegisteredGames(wasm);
     expect(protocolIdentitiesReady()).toBe(true);
+  });
+
+  it('makes peer delivery available while game presets are still pending', async () => {
+    const wasm = mockWasm();
+    const initFn = jest.fn(async () => {});
+    let finishPresets!: (bytes: Uint8Array) => void;
+    const pendingPreset = new Promise<Uint8Array>((resolve) => {
+      finishPresets = resolve;
+    });
+    const fetchPreset = jest.fn(() => pendingPreset);
+    new WasmStateInit(fetchPreset);
+    storeInitArgs(initFn, wasm);
+    const gamesReady = ensureWasmLoaded();
+    await ensurePeerProtocolLoaded();
+    expect(initFn).toHaveBeenCalledTimes(1);
+    expect(wasm.cache_file).not.toHaveBeenCalled();
+    finishPresets(new Uint8Array([1]));
+    await expect(gamesReady).resolves.toBe(wasm);
+    expect(initFn).toHaveBeenCalledTimes(1);
   });
 });

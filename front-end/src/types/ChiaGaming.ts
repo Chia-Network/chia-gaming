@@ -1,11 +1,7 @@
 import { CoinRecord } from './rpc/CoinRecord';
-import type { ProposalParameterValue } from '@games/host';
-import { jsonStringify } from '../util/jsonSafe';
 import type * as WasmContract from '../../../wasm/contract';
 
-declare const protocolGameIdBrand: unique symbol;
-/** First generated member's initial validation puzzle hash. */
-export type ProtocolGameId = string & { readonly [protocolGameIdBrand]: void };
+export type ProtocolGameId = WasmContract.ProtocolGameId;
 
 export type HubLiveness = 'connected' | 'reconnecting' | 'inactive' | 'disconnected';
 
@@ -18,12 +14,7 @@ export type CoinSpend = WasmContract.CoinSpend;
 export type SpendBundle = WasmContract.SpendBundle;
 
 /** Raw per-coin chain state fed to the transaction manager's `report_coin_states`. */
-export interface CoinStateRecord {
-  /** Full coin string, hex-encoded. */
-  coin: string;
-  created_height: bigint | null;
-  spent_height: bigint | null;
-}
+export type CoinStateRecord = WasmContract.CoinStateRecord;
 
 /** Wallet funding request emitted by the WASM game-session boundary. */
 export type NeedCoinSpendRequest = WasmContract.NeedCoinSpendRequest;
@@ -139,15 +130,7 @@ export interface CoinsetOrgBlockSpend {
   solution: string;
 }
 
-export interface ProposeGameParams {
-  /** First generated member's initial validation puzzle hash (32-byte hex). */
-  game_type: ProtocolGameId;
-  timeout: bigint;
-  sender_is_player_a: boolean;
-  parameters: ProposalParameterValue;
-}
-
-type IChiaIdentity = WasmContract.IChiaIdentity;
+export type ProposeGameParams = WasmContract.ProposeGameParams;
 
 export interface GameConnectionState {
   stateIdentifier: StateIdentifier;
@@ -211,33 +194,18 @@ export type WasmEvent =
   | { type: 'address'; data: BlockchainInboundAddressResult }
   | { type: 'log'; message: string };
 
-type GameSessionCreateConfig = WasmContract.GameSessionConfig;
-
 /// A labeled coin id (hex) surfaced in the dashboard for explorer lookup.
-export interface CoinOfInterestEntry {
-  label: string;
-  id: string;
-  game_id?: string;
-  game_coin_kind?: 'current' | 'reward';
-}
+export type CoinOfInterestEntry = WasmContract.CoinOfInterestEntry;
 
 export type TransactionSubmission = WasmContract.TransactionSubmission;
 export type SubmissionDrainFailureStage = WasmContract.SubmissionDrainFailureStage;
 export type SubmissionDrainFailure = WasmContract.SubmissionDrainFailure;
 export type SubmissionDrain = WasmContract.SubmissionDrain;
 
-export interface FinalizedSubmission {
-  protocol_bundle: SpendBundle;
-  bundle: unknown;
-  applied_fee: string;
-  warning?: string | null;
-  fee_source_disposition: 'attached' | 'unused' | 'not-requested';
-  variant_fingerprint: string;
-  should_broadcast: boolean;
-}
+export type FinalizedSubmission = WasmContract.FinalizedSubmission;
 
-export type SubmissionAttemptStatus = 'applied' | 'stale';
-export type SubmissionFinalizationResult = FinalizedSubmission | { status: 'stale' };
+export type SubmissionAttemptStatus = WasmContract.SubmissionAttemptStatus;
+export type SubmissionFinalizationResult = WasmContract.SubmissionFinalizationResult;
 
 export type WalletSubmitOutcome =
   | { status: 'acknowledged'; detail?: string }
@@ -301,38 +269,11 @@ export type WalletOfferBeginOutcome =
   WalletOfferCompletion | { kind: 'pending'; recoveryId: string };
 
 export interface WasmConnection {
-  // System
+  create_peer_protocol: import('../services/peerProtocol').PeerProtocolFactory;
   init: () => void;
-  create_rng: (seed: string) => number;
-  create_game_session: (config: GameSessionCreateConfig) => { id: number; puzzle_hash: string };
-  restore_session: (serialized: Uint8Array, new_seed: string) => number;
   game_session_serialization_schema: () => number;
   cache_file: (name: string, data: Uint8Array) => void;
   registered_game_packages: () => Array<{ key: string; id: string }>;
-
-  // Blockchain
-  start_handshake: (cid: number, opening_fee: string) => WasmResult;
-  provide_coin_spend_bundle: (cid: number, bundle_json: string) => WasmResult;
-  provide_offer_bech32: (cid: number, offer_bech32: string) => WasmResult;
-  wallet_callback_failed: (cid: number, reason: string) => WasmResult;
-  get_channel_puzzle_hash: (cid: number) => string | null;
-  report_coin_states: (cid: number, height: bigint, records_json: string) => WasmResult;
-  report_height: (cid: number, height: bigint) => WasmResult;
-  snapshot_watched_coins: (cid: number) => Array<{ coin_name: string; coin_string: string }>;
-  snapshot_pending_coin_solution_requests: (cid: number) => string[];
-  drain_submissions: (cid: number) => SubmissionDrain;
-  configure_submission_fee: (cid: number, amount: string) => void;
-  finalize_submission_attempt: (
-    cid: number,
-    attempt_token: string,
-    fee_source_json?: string,
-  ) => SubmissionFinalizationResult;
-  acknowledge_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
-  reject_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
-  submission_attempt_unavailable: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
-  relinquish_submission_attempt: (cid: number, attempt_token: string) => SubmissionAttemptStatus;
-  chain_snapshot_ready: (cid: number) => void;
-  request_fee_upgrades: (cid: number) => void;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
   convert_coinset_to_coin_string: (
@@ -341,223 +282,10 @@ export interface WasmConnection {
     amount: string,
   ) => string;
   convert_chia_public_key_to_puzzle_hash: (public_key: string) => string;
-
-  // Game
-  propose: (cid: number, proposal: ProposeGameParams) => WasmResult;
-  accept_proposal: (cid: number, game_id: string) => WasmResult;
-  cancel_proposal: (cid: number, game_id: string) => WasmResult;
-  make_move_with_entropy_for_testing: (
-    cid: number,
-    id: string,
-    readable: Uint8Array,
-    new_entropy: string,
-  ) => WasmResult;
-  make_move: (cid: number, id: string, readable: Uint8Array) => WasmResult;
-  cheat: (cid: number, id: string, mover_share: string) => WasmResult;
-  accept_settlement: (cid: number, id: string) => WasmResult;
-  shut_down: (cid: number) => WasmResult;
-  drop_game_session: (cid: number) => void;
-  abandon: (cid: number) => WasmResult;
-  complete_outbound_terminal_handoff: (cid: number) => WasmResult;
-  pending_terminal_handoff: (cid: number) => { id: string; message: Uint8Array } | null;
-  go_on_chain: (cid: number) => WasmResult;
-  report_puzzle_and_solution: (
-    cid: number,
-    coin_hex: string,
-    puzzle_hex: string | undefined,
-    solution_hex: string | undefined,
-  ) => WasmResult;
-  deliver_message: (cid: number, inbound_message: Uint8Array) => WasmResult;
-  get_identity: (cid: number) => IChiaIdentity;
-  historical_unroll_count: (cid: number) => number | undefined;
-  coins_of_interest: (cid: number) => CoinOfInterestEntry[];
-  serialize_game_session: (cid: number) => Uint8Array;
-
-  // Misc
   sha256bytes: (hex: string) => string;
 }
 
-export class ChiaGame {
-  wasm: WasmConnection;
-  waiting_messages: Uint8Array[];
-  session: number;
-
-  constructor(wasm: WasmConnection, sessionId: number) {
-    this.wasm = wasm;
-    this.waiting_messages = [] as Uint8Array[];
-    this.session = sessionId;
-  }
-
-  propose(proposal: ProposeGameParams): WasmResult {
-    return this.wasm.propose(this.session, proposal);
-  }
-
-  accept_proposal(game_id: string): WasmResult {
-    return this.wasm.accept_proposal(this.session, game_id);
-  }
-
-  cancel_proposal(game_id: string): WasmResult {
-    return this.wasm.cancel_proposal(this.session, game_id);
-  }
-
-  historical_unroll_count(): bigint | undefined {
-    const count = this.wasm.historical_unroll_count(this.session);
-    return count === undefined ? undefined : BigInt(count);
-  }
-
-  coins_of_interest(): CoinOfInterestEntry[] {
-    return this.wasm.coins_of_interest(this.session);
-  }
-
-  snapshot_pending_coin_solution_requests(): string[] {
-    return this.wasm.snapshot_pending_coin_solution_requests(this.session);
-  }
-
-  serialize(): Uint8Array {
-    return this.wasm.serialize_game_session(this.session);
-  }
-
-  acceptSettlement(id: string): WasmResult {
-    return this.wasm.accept_settlement(this.session, id);
-  }
-
-  shut_down(): WasmResult {
-    return this.wasm.shut_down(this.session);
-  }
-
-  dropGameSession(): void {
-    this.wasm.drop_game_session?.(this.session);
-  }
-
-  abandon(): WasmResult {
-    return this.wasm.abandon(this.session);
-  }
-
-  completeOutboundTerminalHandoff(): WasmResult {
-    return this.wasm.complete_outbound_terminal_handoff(this.session);
-  }
-
-  pendingTerminalHandoff(): { id: string; message: Uint8Array } | null {
-    return this.wasm.pending_terminal_handoff(this.session);
-  }
-
-  go_on_chain(): WasmResult {
-    return this.wasm.go_on_chain(this.session);
-  }
-
-  report_puzzle_and_solution(
-    coin_hex: string,
-    puzzle_hex: string | undefined,
-    solution_hex: string | undefined,
-  ): WasmResult {
-    return this.wasm.report_puzzle_and_solution(this.session, coin_hex, puzzle_hex, solution_hex);
-  }
-
-  make_move(id: string, readable: Uint8Array): WasmResult {
-    return this.wasm.make_move(this.session, id, readable);
-  }
-
-  make_move_with_entropy_for_testing(
-    id: string,
-    readable: Uint8Array,
-    new_entropy: string,
-  ): WasmResult {
-    return this.wasm.make_move_with_entropy_for_testing(this.session, id, readable, new_entropy);
-  }
-
-  cheat(game_id: string, mover_share: bigint): WasmResult {
-    return this.wasm.cheat(this.session, game_id, String(mover_share));
-  }
-
-  deliver_message(msg: Uint8Array): WasmResult {
-    return this.wasm.deliver_message(this.session, msg);
-  }
-
-  start_handshake(opening_fee: string): WasmResult {
-    return this.wasm.start_handshake(this.session, opening_fee);
-  }
-
-  provide_coin_spend_bundle(bundle_json: string): WasmResult {
-    return this.wasm.provide_coin_spend_bundle(this.session, bundle_json);
-  }
-
-  provide_offer_bech32(offer_bech32: string): WasmResult {
-    return this.wasm.provide_offer_bech32(this.session, offer_bech32);
-  }
-
-  wallet_callback_failed(reason: string): WasmResult {
-    return this.wasm.wallet_callback_failed(this.session, reason);
-  }
-
-  get_channel_puzzle_hash(): string | null {
-    return this.wasm.get_channel_puzzle_hash(this.session);
-  }
-
-  /** Report raw per-coin chain state; the manager computes the diff internally. */
-  report_coin_states(height: bigint, records: CoinStateRecord[]): WasmResult {
-    return this.wasm.report_coin_states(this.session, height, jsonStringify(records));
-  }
-
-  /** Advance protocol clocks without treating absent coin data as a snapshot. */
-  report_height(height: bigint): WasmResult {
-    return this.wasm.report_height(this.session, height);
-  }
-
-  /** Durable watched-coin snapshot used to seed host polling after attach/restore. */
-  snapshot_watched_coins(): Array<{ coin_name: string; coin_string: string }> {
-    return this.wasm.snapshot_watched_coins(this.session);
-  }
-
-  /** Typed submissions the manager captured and the host should submit. */
-  drain_submissions(): SubmissionDrain {
-    return this.wasm.drain_submissions(this.session);
-  }
-
-  configure_submission_fee(amount: string): void {
-    this.wasm.configure_submission_fee(this.session, amount);
-  }
-
-  finalize_submission_attempt(
-    attemptToken: string,
-    feeSourceJson?: string,
-  ): SubmissionFinalizationResult {
-    return this.wasm.finalize_submission_attempt(this.session, attemptToken, feeSourceJson);
-  }
-
-  acknowledge_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
-    return this.wasm.acknowledge_submission_attempt(this.session, attemptToken);
-  }
-
-  reject_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
-    return this.wasm.reject_submission_attempt(this.session, attemptToken);
-  }
-
-  submission_attempt_unavailable(attemptToken: string): SubmissionAttemptStatus {
-    return this.wasm.submission_attempt_unavailable(this.session, attemptToken);
-  }
-
-  relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus {
-    return this.wasm.relinquish_submission_attempt(this.session, attemptToken);
-  }
-
-  chain_snapshot_ready(): void {
-    this.wasm.chain_snapshot_ready(this.session);
-  }
-
-  request_fee_upgrades(): void {
-    this.wasm.request_fee_upgrades(this.session);
-  }
-}
-
-export class RngId {
-  rngId: number;
-  constructor(rngId: number) {
-    this.rngId = rngId;
-  }
-  getId() {
-    return this.rngId;
-  }
-}
+export type ChiaGame = WasmContract.GameSessionApi;
 
 export interface WatchReport {
   created_watched: string[];

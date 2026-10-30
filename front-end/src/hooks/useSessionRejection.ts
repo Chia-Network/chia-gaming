@@ -10,12 +10,7 @@ import {
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../lib/session/indexedDb';
 import { storageRepository } from '../lib/session/storageRepository';
 import type { HubConnection } from '../services/HubConnection';
-import {
-  decodePeerAppMessage,
-  decodeReliableFrame,
-  encodePeerAppMessage,
-  PeerSession,
-} from '../services/PeerSession';
+import { decodeReliableFrame, PeerSession } from '../services/PeerSession';
 
 interface UseSessionRejectionOptions {
   getPrimaryPeer(): PeerSession | null;
@@ -72,24 +67,8 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
       const key = rejectionTransportKey(peer.peerId, peer.sessionId);
       peer.reliableTransport.attachConsumer({
         isReady: () => true,
-        canDeliver: () => true,
-        deliver: (msgno, body) => {
-          let semantic = null;
-          try {
-            semantic = decodePeerAppMessage(body);
-          } catch {}
-          if (semantic?.type === 'session_reject') return;
-          if (
-            msgno === 1n &&
-            semantic?.type === 'session_proposal' &&
-            peer.reliableState.unackedMessages.length === 0
-          ) {
-            peer.reliableTransport.allocateOutbound(
-              encodePeerAppMessage({ type: 'session_reject' }),
-              'outbound-reject',
-            );
-          }
-        },
+        mode: 'rejection',
+        deliver: () => {},
         persist: () =>
           store.write({
             kind: 'outbound-reject',
@@ -100,8 +79,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
             remoteNumber: peer.reliableState.remoteNumber,
             unackedMessages: structuredClone(peer.reliableState.unackedMessages),
           }),
-        acknowledged: () => {
-          if (peer.reliableState.unackedMessages.length > 0) return;
+        rejectionAcknowledged: () => {
           void peer.reliableTransport
             .flushPending()
             .then(async () => {
@@ -198,33 +176,13 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
       rejected(): void;
       failed(reason: string): void;
     }) => {
-      let rejected = false;
       let rejectionPersisted = false;
-      const isSessionReject = (body: Uint8Array): boolean => {
-        try {
-          return decodePeerAppMessage(body)?.type === 'session_reject';
-        } catch {
-          return false;
-        }
-      };
       args.peer.reliableTransport.attachConsumer({
-        isReady: () => !rejected,
-        canDeliver: (msgno, body) => msgno === 1n || isSessionReject(body),
-        canTerminateAt: (_msgno, body) => isSessionReject(body),
-        deliver: (msgno, body) => {
-          const semantic = decodePeerAppMessage(body);
-          if (semantic?.type === 'session_reject') {
-            rejected = true;
-            args.peer.reliableState.disposition = 'inbound-reject';
-            args.peer.reliableTransport.discardOutbound();
-            return;
-          }
-          if (msgno !== 1n || semantic?.type !== 'session_proposal') {
-            throw new Error('initial reliable message is not a session proposal');
-          }
-        },
+        mode: 'proposal',
+        isReady: () => true,
+        deliver: () => {},
         persist: async () => {
-          if (!rejected) {
+          if (args.peer.reliableState.disposition !== 'inbound-reject') {
             await args.persistProposal();
             return;
           }
@@ -256,10 +214,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
       bindOutbound(peer, Date.now());
       retain(peer);
       optionsRef.current.releasePrimaryPeer(peer);
-      peer.reliableTransport.allocateOutbound(
-        encodePeerAppMessage({ type: 'session_reject' }),
-        'outbound-reject',
-      );
+      peer.reliableTransport.rejectSession();
       return peer.reliableTransport.flushPending().catch((error) => {
         console.error('[rejection] failed to persist session rejection', error);
       });
@@ -269,6 +224,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
 
   const bindPrimaryRetirement = useCallback((peer: PeerSession) => {
     peer.reliableTransport.attachConsumer({
+      mode: 'retiring',
       isReady: () => true,
       deliver: () => {},
       persist: async () => {
@@ -278,8 +234,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
         });
         await storageRepository.checkpointDomainMutations();
       },
-      acknowledged: () => {
-        if (peer.reliableState.unackedMessages.length > 0) return;
+      rejectionAcknowledged: () => {
         void peer.reliableTransport
           .flushPending()
           .then(() => storageRepository.clearSession())
@@ -307,7 +262,7 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
           console.error('[rejection] failed to persist rejection', error);
         });
       } else {
-        peer.reliableTransport.replayUnacked();
+        peer.reliableTransport.connectivity('registered');
       }
     }
   }, []);
@@ -316,20 +271,6 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
     async (conn: HubConnection, descriptors: readonly DurableRejectionTransport[]) => {
       const tombstones = structuredClone(descriptors);
       for (const tombstone of tombstones) {
-        if (tombstone.kind === 'outbound-reject' && tombstone.unackedMessages.length === 0) {
-          try {
-            await repositoryStore.delete(tombstone.peerId, tombstone.sessionId);
-          } catch (error) {
-            if (
-              error instanceof StorageAuthorityLostError ||
-              error instanceof StorageAuthorityRequiredError
-            ) {
-              throw error;
-            }
-            console.error('[rejection] failed to retire tombstone', error);
-          }
-          continue;
-        }
         const peer = new PeerSession(
           tombstone.peerId,
           tombstone.sessionId,
@@ -343,10 +284,25 @@ export function useSessionRejection(options: UseSessionRejectionOptions) {
               tombstone.kind === 'outbound-reject' ? 'outbound-reject' : 'inbound-reject',
           },
         );
+        if (peer.reliableTransport.state.rejectionComplete) {
+          try {
+            await repositoryStore.delete(tombstone.peerId, tombstone.sessionId);
+          } catch (error) {
+            if (
+              error instanceof StorageAuthorityLostError ||
+              error instanceof StorageAuthorityRequiredError
+            ) {
+              throw error;
+            }
+            console.error('[rejection] failed to retire tombstone', error);
+          }
+          peer.destroy();
+          continue;
+        }
         retain(peer);
         if (tombstone.kind === 'outbound-reject') {
           bindOutbound(peer, tombstone.createdAt);
-          peer.reliableTransport.replayUnacked();
+          peer.reliableTransport.connectivity('registered');
         }
       }
     },

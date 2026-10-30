@@ -97,9 +97,8 @@ describe('GameSession render boundary', () => {
     );
     expect(registrations).toBe(1);
     expect(observedController).not.toBeNull();
-    expect([
-      ...(observedController as any).reliableTransport.runtime.reorderQueue.entries(),
-    ]).toEqual([[1n, Uint8Array.from([1])]]);
+    // The inbound message has not been delivered while the controller is unready.
+    expect((observedController as unknown as SessionController).remoteNumber).toBe(0n);
   });
 
   it('dismisses terminal errors locally while protocol controls stay frozen', () => {

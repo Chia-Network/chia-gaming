@@ -87,28 +87,22 @@ export async function configSessionController(
 ): Promise<SessionController> {
   const wasmConnection = await wasmStateInit.getWasmConnection();
   sc.loadWasm(wasmConnection);
-  const entropy = new Uint8Array(32);
-  crypto.getRandomValues(entropy);
-  const seedHex = Array.from(entropy, (b) => b.toString(16).padStart(2, '0')).join('');
-  const rngId = wasmConnection.create_rng(seedHex);
-  const address = rewardPuzzleHashOverride
-    ? { puzzleHash: rewardPuzzleHashOverride }
-    : await blockchain.rpc.getAddress();
-  sc.rewardPuzzleHash = address.puzzleHash;
-  sc.emitRewardAddress();
-  const theirContribution = sc.theirContribution;
-  const { game: cradle } = wasmStateInit.createGame(
-    rngId,
-    wasmConnection,
+  const peer = sc.getPeerProtocol();
+  const result = await peer.open_channel(
+    {
+      proposer_amount: (iStarted ? sc.myContribution : sc.theirContribution).toString(),
+      responder_amount: (iStarted ? sc.theirContribution : sc.myContribution).toString(),
+      channel_timeout: channelTimeout?.toString(),
+      unroll_timeout: unrollTimeout?.toString(),
+    },
     iStarted,
-    sc.myContribution,
-    theirContribution,
-    sc.rewardPuzzleHash,
     getGenesisChallenge(),
-    channelTimeout,
-    unrollTimeout,
+    async () => rewardPuzzleHashOverride ?? (await blockchain.rpc.getAddress()).puzzleHash,
   );
-  sc.setGameSession(cradle);
+  if (!result) return sc;
+  sc.rewardPuzzleHash = result.rewardPuzzleHash;
+  sc.emitRewardAddress();
+  sc.setGameSession(peer);
   sc.attachBlockchain(blockchain);
   log('[wasm] activateSpend');
   sc.activateSpend();
@@ -142,12 +136,12 @@ export async function restoreSession(
       : (() => {
           throw new Error('restoreSession serializedGameSession must be a Uint8Array');
         })();
-  const cradle = wasmStateInit.deserializeGame(wasmConnection, cradleBytes);
 
   if (sc.getGameSessionId() !== session.pairing.gameSessionId) {
     throw new Error('restoreSession: reliable session id does not match persisted pairing');
   }
   sc.restoreTransportCheckpoint(session.live);
+  const cradle = wasmStateInit.deserializeGame(cradleBytes, sc.getPeerProtocol());
   sc.iStarted = requireBoolean(session.pairing.iStarted, 'iStarted');
   sc.pairingToken = requireString(session.pairing.token, 'pairingToken');
   if (session.live.disposition !== 'active') {

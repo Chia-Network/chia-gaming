@@ -7,7 +7,7 @@ import type {
 } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
 import { spend_bundle_to_clvm } from '../../util';
-import { jsonStringify } from '../../util/jsonSafe';
+import type { WalletFeeSource } from '../../../../wasm/contract';
 import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
 import type { ProviderOwner } from './providerKeys';
 import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
@@ -290,7 +290,7 @@ export class SubmissionPump {
 
     let feeOwner: ProviderOwner | undefined;
     let feeOfferCreated = false;
-    let feeSourceJson: string | undefined;
+    let walletFeeSource: WalletFeeSource | undefined;
     let finalizedDisposition: FinalizedSubmission['fee_source_disposition'] | undefined;
     let outcome: WalletSubmitOutcome | undefined;
     try {
@@ -300,10 +300,10 @@ export class SubmissionPump {
       if (submission.fee_request) {
         const owner = this.walletOwnerForSubmission(submission.id);
         if (!owner) {
-          feeSourceJson = jsonStringify({
+          walletFeeSource = {
             kind: 'failure',
             reason: 'wallet fee provider is unavailable',
-          });
+          };
         } else {
           feeOwner = owner;
           const request = {
@@ -330,12 +330,9 @@ export class SubmissionPump {
               }
               return this.completion('skipped', false);
             }
-            feeSourceJson =
-              feeSource.material.kind === 'offer'
-                ? jsonStringify({ kind: 'offer', offer: feeSource.material.offer })
-                : jsonStringify({ kind: 'bundle', bundle: feeSource.material.bundle });
+            walletFeeSource = feeSource.material;
           } else if (feeSource.kind === 'failure' || feeSource.kind === 'unavailable') {
-            feeSourceJson = jsonStringify({ kind: 'failure', reason: feeSource.reason });
+            walletFeeSource = { kind: 'failure', reason: feeSource.reason };
           } else {
             throw new Error('Reserving fee provider returned ephemeral wallet material');
           }
@@ -352,7 +349,10 @@ export class SubmissionPump {
         }
         const cradle = this.ports.getCradle();
         if (!cradle) throw new Error('WASM cradle became unavailable before finalization');
-        const result = cradle.finalize_submission_attempt(submission.attempt_token, feeSourceJson);
+        const result = cradle.finalize_submission_attempt(
+          submission.attempt_token,
+          walletFeeSource,
+        );
         if ('status' in result && result.status === 'stale') {
           if (feeOfferCreated && feeOwner) {
             this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-superseded');

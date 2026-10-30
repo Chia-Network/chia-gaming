@@ -106,6 +106,27 @@ compatibility-sensitive contracts.
 
 ## Persistence transactionality
 
+Local acceptance starts the Rust peer session. Its setup state constructs the
+outgoing proposal and requests the wallet reward address through the host;
+the returned address lets Rust create the channel engine in the same session.
+Rust also owns reliable peer numbering, acknowledgements, ordering, and replay,
+including consent/rejection delivery policy, terminal-message tracking, queue
+draining and send attempts (`src/peer_session.rs` and `src/peer_session/session.rs`). The accepted
+Rust session directly contains the reliability state and channel; native calls
+and results connect them without internal JavaScript conversions or callbacks.
+Delivery operations are methods on that owning session, with the host passed per
+call. State and channel borrows end before any host callback.
+TypeScript invokes gameplay, chain observations and serialization as methods
+on that same exported object, with no numeric channel lookup or forwarding wrapper.
+Retirement releases the channel; a carrier replacement preserves the same owner.
+The constructor receives fresh seed material directly. The channel owns its RNG;
+seed and RNG are excluded from persistence. Wallet bundles and fee-source results
+cross as structured values with exact `BigInt` amounts.
+TypeScript owns the connections, provides the socket-send callback and wallet
+requests, and performs the aggregate checkpoint. It reports connection events
+and checkpoint outcomes without inspecting or manipulating protocol queues. Pending proposal and
+retained rejection records are distinct from the accepted session lifetime.
+
 Persistence is crash transactionality over the residue of a completed drain,
 not continuous autosave and not a substitute for in-process rollback. A drain
 owner consumes one stimulus and all consequences to a fixed point, then captures
@@ -956,7 +977,7 @@ protocol. Rust owns transaction submission intent and the frontend submission
 queue owns only ordered one-shot wallet delivery.
 
 The browser aggregate is strict `DurableApplicationState` v5, its opaque
-Rust/WASM cradle is schema 23, and the app IndexedDB is schema 5. Under the
+Rust/WASM cradle is schema 24, and the app IndexedDB is schema 5. Under the
 [unreleased-format policy](#unreleased-app-owned-formats), any incompatible or
 malformed field rejects the whole root. The unchanged evidence remains
 available for diagnosis until explicit hard reset.

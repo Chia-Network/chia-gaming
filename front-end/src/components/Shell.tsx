@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 
+import { ensurePeerProtocolLoaded } from '../hooks/WasmStateInit';
 import { useAcceptLifecycle } from '../hooks/useAcceptLifecycle';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { useShellSessionState } from '../hooks/useShellSessionState';
@@ -46,7 +47,6 @@ import {
   PeerSession,
   decodePeerAppMessage,
   decodeReliableFrame,
-  encodePeerAppMessage,
   generateSessionId,
 } from '../services/PeerSession';
 import { storageRepository } from '../lib/session/storageRepository';
@@ -869,6 +869,9 @@ const Shell = () => {
       const hasLiveSession =
         save.session?.phase === 'live' || save.session?.phase === 'pre-handshake';
       if (hasLiveSession) {
+        const generation = storageRepository.lifecycleGeneration;
+        await ensurePeerProtocolLoaded();
+        if (!storageRepository.isGenerationCurrent(generation)) return { deferReady: true };
         performResume(bootstrap);
       } else if (save.session?.phase === 'terminal') {
         restoreFinishedSessionFromSave(bootstrap);
@@ -1328,10 +1331,10 @@ const Shell = () => {
     );
   }, [freshStartPersistInFlightRef]);
 
-  const replayPeerUnacked = useCallback(() => {
+  const replayPeerUnacked = useCallback((event: 'registered' | 'peer-available' = 'registered') => {
     const peer = peerSessionRef.current;
     if (!peer || peer.isDestroyed()) return;
-    peer.reliableTransport.replayUnacked();
+    peer.reliableTransport.connectivity(event);
   }, []);
 
   const resetPeerRelayState = useCallback((options?: { persistSession?: boolean }) => {
@@ -1499,10 +1502,20 @@ const Shell = () => {
           // Reuse provisional PeerSession created when the proposal arrived (preserves buffered messages).
         } else {
           existing?.destroy();
+          // A fresh session keeps its own Rust owner; controller attachment is
+          // reserved for replacing the carrier of an existing session.
           peerSessionRef.current = new PeerSession(request.peerId, sessionId, conn);
-          bindPeerMessageHandler(peerSessionRef.current);
         }
-        peerSessionRef.current!.reliableState.disposition = 'active';
+        peerSessionRef.current!.reliableTransport.acceptSession(
+          {
+            proposer_amount: request.iStarted ? request.myAmount : request.theirAmount,
+            responder_amount: request.iStarted ? request.theirAmount : request.myAmount,
+            channel_timeout: request.channel_timeout,
+            unroll_timeout: request.unroll_timeout,
+            network: storageRepository.query('network'),
+          },
+          request.iStarted,
+        );
         const channelTimeout = parseOptionalBigInt(request.channel_timeout);
         const unrollTimeout = parseOptionalBigInt(request.unroll_timeout);
         const diagnosticLog = storageRepository.loadState().history.diagnosticLog;
@@ -1540,6 +1553,7 @@ const Shell = () => {
             destroySessionController();
           },
           persistLiveCheckpoint: async () => {
+            const commit = peerSessionRef.current!.reliableTransport.prepareCommit();
             await captureFreshStart({
               epoch,
               getCurrentEpoch: () => sessionStartEpochRef.current,
@@ -1578,9 +1592,7 @@ const Shell = () => {
             });
             const peer = peerSessionRef.current;
             if (peer?.sessionId === sessionId) {
-              for (const { msgno, msg } of peer.reliableState.unackedMessages) {
-                peer.sendMessage(Number(msgno), msg);
-              }
+              peer.reliableTransport.completeCommit(commit, true);
             }
           },
           mountLiveSession: () => {
@@ -1638,7 +1650,6 @@ const Shell = () => {
       stablePeerConn,
       abandonFailedStartAttempt,
       beginPersistFlight,
-      bindPeerMessageHandler,
       cancelAttemptedSession,
       endPersistFlight,
       freshStartPersistCommittedRef,
@@ -1665,20 +1676,6 @@ const Shell = () => {
       void beginAcceptTransition('accept-advisory', pairingToken, async () => {
         try {
           const gameSessionId = generateSessionId();
-          // Reserve the peer relay before sending so a delivery_failure for this
-          // proposal can cancel the attempt (PeerSession must already exist).
-          peerSessionRef.current?.destroy();
-          peerSessionRef.current = new PeerSession(advisory.peer_id, gameSessionId, conn);
-          bindPeerMessageHandler(peerSessionRef.current);
-          const proposalBody = encodePeerAppMessage({
-            type: 'session_proposal',
-            proposer_amount: advisory.my_amount,
-            responder_amount: advisory.their_amount,
-            channel_timeout: advisory.channel_timeout,
-            unroll_timeout: advisory.unroll_timeout,
-            network: storageRepository.query('network'),
-          });
-          peerSessionRef.current.reliableTransport.allocateOutbound(proposalBody);
           await startFreshSessionWithPeer({
             peerId: advisory.peer_id,
             opponentAlias: advisory.peer_alias,
@@ -1691,8 +1688,8 @@ const Shell = () => {
             pairingToken,
           });
         } catch (error) {
-          // Setup threw before startFreshSessionWithPeer could clean up (e.g.
-          // after PeerSession was reserved). Do not leave the lobby stuck.
+          // Setup threw before startFreshSessionWithPeer could clean up.
+          // Do not leave the lobby stuck.
           console.error('[Shell] accept-advisory failed', error);
           log(
             `[Shell] accept-advisory failed peer=${advisory.peer_id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1705,7 +1702,6 @@ const Shell = () => {
     [
       abandonFailedStartAttempt,
       beginAcceptTransition,
-      bindPeerMessageHandler,
       sendSessionReject,
       startFreshSessionWithPeer,
     ],
@@ -1903,6 +1899,7 @@ const Shell = () => {
       }
       let hubSessionId: string;
       try {
+        await ensurePeerProtocolLoaded();
         hubSessionId = await deriveHubSessionId(storageRepository.getSessionId(), origin);
       } catch (error) {
         if (connectAttempt !== hubConnectAttemptRef.current) return;
@@ -1990,7 +1987,6 @@ const Shell = () => {
             const peerAlias = fromAlias || fromId;
             const pairingToken = `peer_${fromId}_${Date.now()}`;
             const provisional = new PeerSession(fromId, frame.sessionId, conn);
-            provisional.reliableState.disposition = 'proposal-received';
             peerSessionRef.current = provisional;
             bindInboundProposal({
               conn,
@@ -2102,12 +2098,15 @@ const Shell = () => {
           },
           onPeerAvailable: (playerId: string) => {
             if (restoreHubPeerConnected(playerId)) {
-              if (sessionController) sessionController.resendUnacked();
-              else replayPeerUnacked();
+              if (sessionController) sessionController.reportPeerConnectivity('peer-available');
+              else replayPeerUnacked('peer-available');
             }
             replayRejectionPeers(playerId);
           },
           onPeerUnavailable: (playerId: string) => {
+            if (peerSessionRef.current?.peerId === playerId) {
+              peerSessionRef.current.reliableTransport.connectivity('peer-unavailable');
+            }
             applyHubPeerDisconnected(playerId);
           },
           onRegistered: (playerId: string) => {
@@ -2248,16 +2247,19 @@ const Shell = () => {
             }
           },
           onClosed: () => {
+            peerSessionRef.current?.reliableTransport.connectivity('disconnected');
             hubWsUpRef.current = false;
             markPeerInactive();
             setHubLiveness('disconnected');
             setHubConnectionError(`Unable to connect to hub at ${origin}.`);
           },
           onHubDisconnected: () => {
+            peerSessionRef.current?.reliableTransport.connectivity('disconnected');
             hubWsUpRef.current = false;
             setHubLiveness('reconnecting');
           },
           onHubReconnected: () => {
+            peerSessionRef.current?.reliableTransport.connectivity('reconnected');
             hubWsUpRef.current = true;
             lastHubActivityRef.current = Date.now();
             setHubLiveness('connected');

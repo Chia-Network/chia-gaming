@@ -179,10 +179,12 @@ protocol frames remain opaque bytes in the relay dictionary's `payload`.
    showing another consent prompt, it **ignores** the advisory (no
    `session_reject`).
 6. If the accepter consents, that app becomes the channel initiator. It marks
-   itself busy, generates a random 16-byte peer session ID, durably creates the
-   peer reliability state, and sends a bencodex `session_proposal` as reliable
-   data message 1. It starts the WASM session as initiator and sends the
-   handshake through the same peer session and sequence-number stream. Starting
+   itself busy, generates a random 16-byte peer session ID, and starts the Rust
+   peer session at local acceptance. Rust constructs `session_proposal` as
+   reliable data message 1; the host checkpoints it before sending. Rust setup
+   requests the wallet reward address, and its completion creates the channel
+   engine within that same accepted session. The handshake continues through
+   the same peer session and sequence-number stream. Starting
    persists session state asynchronously; a later `session_reject` (or local
    cancel) must abort that in-flight start so it cannot resurrect an orphan
    handshake.
@@ -337,6 +339,15 @@ watched coins. Disconnecting a wallet does not end or abandon that session,
 including during a handshake. Wallet-dependent work pauses until a ready backend
 is attached; losing connectivity is not a terminal protocol event.
 
+The session starts at local acceptance. Rust's `peer_session::session::Session`
+records the accepted setup and requests the wallet address; TypeScript executes
+the request and returns its result to that owner. The channel `GameSession`
+is constructed by Rust when the address arrives. Pending incoming proposals
+before acceptance and retained rejection-delivery records are not sessions.
+They use the same Rust reliability implementation, preserving the stream when
+the receiver accepts. No address placeholder or new logical session is used
+at address completion.
+
 Hub connectivity is completely independent of wallet connectivity. Wallet
 connect, disconnect, switch, and failure events must leave the hub lobby,
 relay, and reconnect lifecycle intact. The app can connect or reconnect to a
@@ -398,10 +409,11 @@ The actual security boundaries are:
 The game cradle's `ChaCha8Rng` (used for move entropy and identity
 generation) is **not** serialized. The `ChaCha8SerializationWrapper`
 emits nothing for the RNG field (`#[serde(skip)]`) and deserializes to a
-zeroed placeholder via `Default`. On restore, `restore_session`
-always takes a fresh `new_seed` parameter from JavaScript, hashes it, and
-creates a brand new `ChaCha8Rng` — the deserialized placeholder is
-immediately overwritten. This avoids persisting seed material and
+zeroed placeholder via `Default`. JavaScript passes fresh entropy directly to
+`create_peer_protocol(state, policy, seed)` when constructing each owner; Rust
+hashes it once. Channel creation initializes its owned RNG from that seed,
+and `restore_channel(data)` replaces the deserialized placeholder from the
+new owner's seed. There is no RNG handle, global registry or seed callback. This avoids persisting seed material and
 guarantees fresh entropy after every save/restore cycle. The RNG is used
 only for commit-reveal preimages and initial key generation, not for
 cryptographic nonces or signatures (BLS signatures are deterministic).
@@ -628,7 +640,7 @@ cleanup; retirement records the required transitions, and the next matching
 lifecycle attachment drains them.
 
 The app-owned persistence versions are aggregate v5, opaque Rust/WASM cradle
-schema 23, and IndexedDB v5. Their compatibility behavior is defined by the
+schema 24, and IndexedDB v5. Their compatibility behavior is defined by the
 [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
 
 Transaction submission and resubmission remain owned by Rust's
@@ -770,12 +782,37 @@ state is not displayed.
 #### Delivery-critical saves
 
 Peer message counters and queues are part of the reliable transport protocol.
-The shared reliability owner exists before the WASM controller: it increments
+The Rust reliability owner exists before the TypeScript controller: it increments
 `messageNumber`, appends every outbound semantic body to `unackedMessages`, and
 stages the actual WebSocket send. When an inbound body is delivered to
-negotiation or WASM, it advances `remoteNumber` and stages the ack. With a live
+negotiation or the owned Rust channel, it advances `remoteNumber` and stages the ack. With a live
 runtime these allocations participate in the same fixed-point drain and active
 commit as all other session work.
+
+`ReliablePeerTransport` is the TypeScript host adapter for this Rust owner. It
+provides the existing consumer, carrier callbacks, and commit coordinator; its
+snapshot is a read-only copy for persistence. The owning Rust session invokes the carrier
+and application callbacks, drains its queues, processes callback results, and
+prepares and releases each captured generation. These are methods on the owner,
+with the host passed per call and state/channel borrows released before callbacks.
+TypeScript reports connectivity
+and checkpoint completion; it has no queue accessors or delivery-confirmation
+steps. Rust also owns the pre-consent delivery rules, incoming rejection
+recognition, repeated-proposal rejection handling, and terminal-message
+reconciliation and sent/ACK state. One Rust session directly contains the
+reliability state and channel. Gameplay and chain-observation calls are methods
+on that same exported object; `ChiaGame` is a TypeScript interface, with no
+forwarding wrapper or numeric channel registry. Native
+calls and results deliver inbound messages, journal channel output, and complete
+terminal acknowledgements without internal JavaScript conversions or callback
+routing. TypeScript receives the resulting UI/wallet effects
+without forwarding peer bodies or channel commands between Rust objects.
+Replacing the carrier transfers the existing owner, and retirement releases its
+channel. Host notifications can request rejection retirement. The three host
+callbacks send frames, report consumer availability, and handle notifications. IndexedDB and commit scheduling remain
+host work. Rust's `open_channel` awaits the existing TypeScript address provider
+and suppresses construction if setup retires during that request. WalletConnect
+RPC normalization and recovery stay in the TypeScript adapter.
 
 At quiescence `SessionMachineRuntime` drains machine, controller, and generated
 work to a fixed point, then:
@@ -975,8 +1012,11 @@ No unsupported app format is decoded or deleted automatically.
 
 On page load, `index.tsx` starts WASM bootstrap in parallel with React:
 fetch the module and binary CLVM presets, then bind the protocol game
-identities calculated by the package build. Handshake uses that already-loaded
-module for BLS identity only.
+identities calculated by the package build. The Rust peer module becomes usable
+as soon as WASM initializes, independently of game-preset loading. Opening the
+hub relay and mounting a restored live session await that module; neither waits
+for game presets. The restore wait retains the storage-generation fence, so
+losing authority while WASM loads cannot resurrect the obsolete session.
 
 On page load, Shell delegates storage/recovery ownership to
 `BootRecoveryBoundary`. It completes a pending origin-wide storage wipe and visible
@@ -1131,6 +1171,13 @@ ack protocol to guarantee exactly-once ordered delivery across reconnects. The
 hub relays frames and relay-control messages verbatim — it does not understand
 peer session IDs, message numbers, or acks.
 
+The delivery engine is `src/peer_session.rs` and `src/peer_session/session.rs`,
+exposed by `wasm/src/peer.rs`. Rust owns counters, buffered incoming messages,
+ACK retirement, pending release, and reconnect replay, including the loops
+that attempt sends and deliver eligible incoming messages. The browser `PeerSession` handles frame routing and
+liveness presentation; `ReliablePeerTransport` executes the Rust engine's
+carrier and persistence work. WASM is initialized before opening the hub relay.
+
 #### Wire format
 
 Semantic messages are Bencodex bodies inside addressed peer-relay payloads. The
@@ -1260,8 +1307,11 @@ Disruptive hub actions are gated by cascade confirmation dialogs. See
 #### Reconnect
 
 When a player reconnects (receives `registered` from the hub), and has an
-active session peer, it calls `resendUnacked()` to replay un-acked messages.
-A matching `peer_available` does the same when the other endpoint returns.
+active session peer, TypeScript reports registration to the Rust delivery
+engine, which selects unacknowledged messages for replay. A matching
+`peer_available` does the same when the other endpoint returns. Socket loss
+and reopening are also reported to Rust but do not themselves trigger replay
+or change the channel's terminal `peer_disconnected` flag.
 The ordering and deduplication logic on the receiving side handles any
 duplicates caused by the replay. Keepalives and duplicate inbound frames do
 not replay. These are the only replay boundaries.
@@ -1573,7 +1623,7 @@ than calling `finalize()` without a user click.
 
 **Session persistence:** Wallet connection updates
 `DurableApplicationState.preferences.blockchainType` through
-`StorageRepository` and marks the app resumable before a WASM session exists.
+`StorageRepository` and marks the app resumable before an accepted peer session exists.
 Once play begins, the same aggregate checkpoint includes that preference,
 session presentation, reliable transport, opaque WASM cradle, wallet
 obligations, and rejection transports. `clearSession()` preserves common state
