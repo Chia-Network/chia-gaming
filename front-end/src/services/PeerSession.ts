@@ -1,21 +1,3 @@
-import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
-import { HubConnection } from './HubConnection';
-import { log } from './log';
-import { createPeerProtocol } from './peerProtocol';
-import type {
-  PeerProtocolApi,
-  PeerSessionTerms,
-  PeerHost,
-  PeerPreparedCommit,
-  PeerProtocolSnapshot,
-  PeerReceiveMode,
-  PeerTerminalHandoff,
-  WasmResult,
-} from '../../../wasm/contract';
-import {
-  DEFAULT_SESSION_RECEIVE_POLICY,
-  type ReadonlySessionReceivePolicy,
-} from '../lib/session/receivePolicy';
 import {
   decode as decodeBencodex,
   encode as encodeBencodex,
@@ -23,6 +5,24 @@ import {
   isDictionary,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import type {
+  PeerHost,
+  PeerPreparedCommit,
+  PeerProtocolApi,
+  PeerProtocolSnapshot,
+  PeerReceiveMode,
+  PeerSessionTerms,
+  PeerTerminalHandoff,
+  WasmResult,
+} from '../../../wasm/contract';
+import {
+  DEFAULT_SESSION_RECEIVE_POLICY,
+  type ReadonlySessionReceivePolicy,
+} from '../lib/session/receivePolicy';
+import { PeerConnectionResult, PeerLiveness } from '../types/ChiaGaming';
+import { PeerCarrier } from './HubConnection';
+import { log } from './log';
+import { createPeerProtocol } from './peerProtocol';
 export interface ReliableCommitCoordinator {
   requestCommit(): void;
   flush(): Promise<void>;
@@ -57,13 +57,6 @@ export type ReliableFrame =
   | { tag: 0x02; sessionId: string; msgno: number }
   | { tag: 0x03; sessionId: string };
 
-export type MessageHandler = {
-  handler: (msgno: number, msg: Uint8Array) => void;
-  ackHandler: (ack: number) => void;
-  keepaliveHandler: () => void;
-  failureHandler?: (reason: string) => void;
-};
-
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
   mode?: PeerReceiveMode;
@@ -84,7 +77,7 @@ export type PreparedReliableCommit = PeerPreparedCommit;
 /** The host persists snapshots and supplies carrier/application callbacks.
  * Rust owns every receive, send, ACK and replay turn. */
 export class ReliablePeerTransport {
-  protocol: PeerProtocolApi;
+  readonly protocol: PeerProtocolApi;
   private readonly host: PeerHost;
   private consumer: ReliableMessageConsumer | null = null;
   private flushScheduled = false;
@@ -182,10 +175,6 @@ export class ReliablePeerTransport {
     this.protocol.consumer_ready(this.consumer?.mode ?? 'raw', this.host);
   }
 
-  detachConsumer(consumer?: ReliableMessageConsumer): void {
-    if (!consumer || this.consumer === consumer) this.consumer = null;
-  }
-
   receiveData(msgno: bigint, body: Uint8Array): boolean {
     let accepted = true;
     const receive = () => {
@@ -233,12 +222,6 @@ export class ReliablePeerTransport {
   }
   rejectSession(): void {
     this.protocol.reject_session(this.host);
-  }
-  takeSession(from: ReliablePeerTransport): void {
-    // A carrier replacement transfers the existing Rust owner, including its channel.
-    // Give the detached carrier our unused negotiation object so its later cleanup
-    // cannot retire the live session.
-    [this.protocol, from.protocol] = [from.protocol, this.protocol];
   }
 
   clearRuntime(retainRejection = false): void {
@@ -400,11 +383,9 @@ export class PeerSession implements PeerConnectionResult {
   readonly sessionId: string;
   readonly peerId: string;
   readonly receivePolicy: ReadonlySessionReceivePolicy;
-  private hubConn: HubConnection;
+  private hubConn: PeerCarrier;
   private _liveness: PeerLiveness = null;
   private _lastActivity: number = 0;
-  private messageHandler: MessageHandler | null = null;
-  private messageConsumer: ReliableMessageConsumer | null = null;
   private failureReason: string | null = null;
   private destroyed = false;
   private livenessListeners = new Set<(liveness: PeerLiveness) => void>();
@@ -416,34 +397,42 @@ export class PeerSession implements PeerConnectionResult {
   constructor(
     peerId: string,
     sessionId: string,
-    hubConn: HubConnection,
+    hubConn: PeerCarrier,
     receivePolicy: ReadonlySessionReceivePolicy = DEFAULT_SESSION_RECEIVE_POLICY,
-    initialState?: Omit<ReliableTransportState, 'sessionId'>,
+    initialState?: Omit<ReliableTransportState, 'sessionId'> | ReliablePeerTransport,
   ) {
     this.peerId = peerId;
     this.sessionId = sessionId;
     this.hubConn = hubConn;
     this.receivePolicy = receivePolicy;
-    const reliableState: ReliableTransportState = {
-      sessionId,
-      messageNumber: 1n,
-      remoteNumber: 0n,
-      unackedMessages: [],
-      disposition: 'active',
-      ...initialState,
-    };
-    this.reliableTransport = new ReliablePeerTransport(
-      reliableState,
-      receivePolicy,
-      (msgno, body) => this.sendMessage(Number(msgno), body),
-      (msgno) => this.sendAck(Number(msgno)),
-    );
-    this.reliableTransport.attachConsumer({
-      isReady: () => false,
-      deliver: () => {},
-      persist: null,
-      failure: (reason) => this.failBufferedPeer(reason),
-    });
+    this.reliableTransport =
+      initialState instanceof ReliablePeerTransport
+        ? initialState
+        : new ReliablePeerTransport(
+            {
+              sessionId,
+              messageNumber: 1n,
+              remoteNumber: 0n,
+              unackedMessages: [],
+              disposition: 'active',
+              ...initialState,
+            },
+            receivePolicy,
+            (msgno, body) => this.sendMessage(Number(msgno), body),
+            (msgno) => this.sendAck(Number(msgno)),
+          );
+    if (!(initialState instanceof ReliablePeerTransport)) {
+      this.reliableTransport.attachConsumer({
+        isReady: () => false,
+        deliver: () => {},
+        persist: null,
+        failure: (reason) => this.failBufferedPeer(reason),
+      });
+    }
+  }
+
+  attachCarrier(carrier: PeerCarrier): void {
+    this.hubConn = carrier;
   }
 
   // --- PeerConnectionResult interface ---
@@ -470,13 +459,6 @@ export class PeerSession implements PeerConnectionResult {
       log(`[PeerSession] keepalive dropped (hub ws not open) peer=${this.peerId}`);
     }
     return sent;
-  }
-
-  hostLog(_msg: string): void {
-    /* no-op */
-  }
-  close(): void {
-    /* no-op; destroy() handles real cleanup */
   }
 
   // --- Liveness ---
@@ -521,32 +503,6 @@ export class PeerSession implements PeerConnectionResult {
     if (this.destroyed || this._liveness === 'dead') return;
     this._lastActivity = 0;
     this.setLiveness(null);
-  }
-
-  // --- Message handler registration ---
-
-  registerMessageHandler(mh: MessageHandler): void {
-    this.messageHandler = mh;
-    if (this.failureReason) {
-      mh.failureHandler?.(this.failureReason);
-      return;
-    }
-    const consumer: ReliableMessageConsumer = {
-      isReady: () => true,
-      deliver: (msgno, body) => mh.handler(Number(msgno), body),
-      persist: () => Promise.resolve(),
-      failure: (reason) => mh.failureHandler?.(reason),
-      acknowledged: (ack) => mh.ackHandler(Number(ack)),
-      keepalive: mh.keepaliveHandler,
-    };
-    this.messageConsumer = consumer;
-    this.reliableTransport.attachConsumer(consumer);
-  }
-
-  clearMessageHandler(): void {
-    if (this.messageConsumer) this.reliableTransport.detachConsumer(this.messageConsumer);
-    this.messageConsumer = null;
-    this.messageHandler = null;
   }
 
   private failBufferedPeer(reason: string): void {
@@ -618,7 +574,6 @@ export class PeerSession implements PeerConnectionResult {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.clearMessageHandler();
     this.reliableTransport.clearRuntime();
     this.livenessListeners.clear();
     log(`[PeerSession] destroyed session=${this.sessionId} peer=${this.peerId}`);

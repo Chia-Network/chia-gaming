@@ -1,29 +1,30 @@
 import 'fake-indexeddb/auto';
 import type { WalletFeeSource } from '../../../../wasm/contract';
-import { SessionController } from '../../hooks/SessionController';
 import type {
+  ChannelStatusPayload,
   ChiaGame,
-  WasmConnection,
-  WasmResult,
   InternalBlockchainInterface,
   PeerConnectionResult,
   SpendBundle,
-  TransactionSubmission,
   SubmissionDrainFailure,
-  ChannelStatusPayload,
+  TransactionSubmission,
+  WasmConnection,
+  WasmResult,
 } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { _resetGameIdentityWarmupForTests } from '../gameIdentities';
-import { liveSave } from './session_save_envelope.fixtures';
-import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import type { ReadonlySessionReceivePolicy } from '../session/receivePolicy';
-import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
+import { SessionController } from '../session/SessionController';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { activateTestExecution } from './session_machine.harness';
+import { liveSave } from './session_save_envelope.fixtures';
 export const testIndexedDb = indexedDB;
 export const mockRpc = new Proxy(
   {
     isConnected: () => true,
+    onPlayReadinessChange: () => () => {},
     getWalletOfferProvider(this: Record<string, any>) {
       return {
         capability: 'best-effort' as const,
@@ -232,8 +233,7 @@ export function makePeerConn(
       return true;
     },
     sendKeepalive: () => true,
-    hostLog: () => {},
-    close: () => {},
+
     receivePolicy,
   };
 }
@@ -256,14 +256,13 @@ export function setTestPersistence(
 }
 
 /**
- * Protocol unit tests intentionally isolate SessionController from React. Give
- * them an explicit coordinator instead of reviving the removed production
- * controller-owned persistence fallback.
+ * Protocol unit tests activate the real execution owner with a controlled
+ * checkpoint writer. No renderer or second runtime owns these tests.
  */
 export function attachTestCommitCoordinator(blob: SessionController): void {
   if (coordinatedControllers.has(blob)) return;
   coordinatedControllers.add(blob);
-  createCoordinatorOnlySessionMachineRuntime(blob, () => testPersistence.get(blob)?.());
+  activateTestExecution(blob, () => testPersistence.get(blob)?.());
 }
 
 /**

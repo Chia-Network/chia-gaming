@@ -1,11 +1,11 @@
-import { CLOUD_WALLET_OAUTH_CALLBACK_PATH, CLOUD_WALLET_OAUTH_SCOPES } from '../constants/env';
+import { CLOUD_WALLET_OAUTH_CALLBACK_PATH, CLOUD_WALLET_OAUTH_SCOPES } from '../../constants/env';
+import { log } from '../../services/log';
+import { type CloudWalletAuthState } from './cloudWalletAuth';
 import {
   getCloudWalletApiUrl,
   getCloudWalletClientId,
   getCloudWalletUiUrl,
 } from './cloudWalletConfig';
-import { type CloudWalletAuthState } from './cloudWalletAuth';
-import { log } from '../services/log';
 
 export const OAUTH_MESSAGE_TYPE = 'chia-gaming/oauth';
 export const SIGNATURE_REQUEST_MESSAGE_TYPE = 'chia-cloud-wallet/signature-request';

@@ -1,8 +1,8 @@
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
-import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
+import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
   createActivePair,
   flushWrapperDrain,
@@ -48,7 +48,7 @@ it(
   async () => {
     const poller = await startSimulator(['cafe00021', 'dead00021']);
     if (!poller) return;
-    poller.stop();
+    poller.pauseChainPolling();
     await pollOnce(poller);
     const provider = fakeBlockchainInfo.getWalletOfferProvider();
     if (provider) channelFundingRuntime.attachProvider(provider);
@@ -95,7 +95,8 @@ it(
       assert.equal(lane.controller.goOnChain(), true);
       await flushWrapperDrain(adapters);
 
-      lane.controller.attachBlockchain(poller);
+      lane.controller.setWallet(null);
+      lane.controller.setWallet(poller);
       await flushWrapperDrain(adapters);
       await flushWrapperDrain(adapters);
       assert.equal(rustSubmissions.length, 2);
@@ -138,7 +139,7 @@ it(
       for (const adapter of adapters) {
         if (adapter.blob) poller.detachGameSession(adapter.blob);
       }
-      poller.stop();
+      poller.pauseChainPolling();
       for (const adapter of adapters) adapter.blob?.cleanup();
       fakeBlockchainInfo.spend = originalSpend;
       fakeBlockchainInfo.beginWalletOffer = originalBeginWalletOffer;

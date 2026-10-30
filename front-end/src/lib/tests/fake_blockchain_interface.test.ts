@@ -1,8 +1,8 @@
+import type { WalletOfferOperation, WalletOfferRequest } from '../../types/ChiaGaming';
 import {
   FakeBlockchainInterface,
   SimulatorTransportError,
-} from '../../hooks/FakeBlockchainInterface';
-import type { WalletOfferOperation, WalletOfferRequest } from '../../types/ChiaGaming';
+} from '../wallet/FakeBlockchainInterface';
 
 const operation: WalletOfferOperation = {
   owner: {

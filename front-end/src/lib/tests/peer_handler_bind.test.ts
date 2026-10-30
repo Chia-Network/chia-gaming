@@ -1,27 +1,18 @@
-import { restorePeerState } from './peer_protocol.harness';
-import { encodePeerAppMessage, PeerSession, type MessageHandler } from '../../services/PeerSession';
+import { configureSessionExecution } from './session_execution.harness';
 import type { HubConnection } from '../../services/HubConnection';
-import { SessionController } from '../../hooks/SessionController';
+import { encodePeerAppMessage, PeerSession } from '../../services/PeerSession';
+import { createSessionModel } from '../session/model';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
+import { createSessionMachineState } from '../session/sessionMachine';
+
+import { handshakeA, installAcceptedChannel } from './accepted_session.harness';
 import {
   attachTestCommitCoordinator,
   setTestPersistence,
   trackTestController,
 } from './message_protocol.harness';
-import { handshakeA, installAcceptedChannel } from './accepted_session.harness';
-import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
-import { createSessionModel } from '../session/model';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-
-/** Mirrors Shell's direct-owner bypass for the legacy callback bridge. */
-function bindPeerMessageHandler(
-  peerSession: PeerSession,
-  handler: MessageHandler,
-  controller: SessionController,
-): void {
-  if (!peerSession || !handler || !controller) return;
-  controller.attachReliableTransport(peerSession.reliableTransport);
-}
+import { restorePeerState } from './peer_protocol.harness';
 
 const sessionId = '000102030405060708090a0b0c0d0e0f';
 function mockHub(): HubConnection & { sendToPeer: jest.Mock } {
@@ -57,31 +48,25 @@ async function acceptedController(peerSession: PeerSession, coordinate = true) {
 }
 
 describe('delayed PeerSession message-handler binding', () => {
-  it('keeps the accepted Rust owner when the legacy bridge binds', async () => {
+  it('keeps the accepted Rust owner and checkpoint callbacks when its carrier changes', async () => {
     const hub = mockHub();
     const peerSession = new PeerSession('peer-1', sessionId, hub);
     const { controller, cradle } = await acceptedController(peerSession);
     const before = cradle.serialize();
     const owner = controller.getPeerProtocol();
-    const legacyDelivery = jest.fn();
-    bindPeerMessageHandler(
-      peerSession,
-      {
-        handler: legacyDelivery,
-        ackHandler: (ack) => controller.receiveAck(BigInt(ack)),
-        keepaliveHandler: () => controller.receiveKeepalive(),
-      },
-      controller,
-    );
+    const transport = peerSession.reliableTransport;
+    const replacement = mockHub();
+    peerSession.attachCarrier(replacement);
 
     peerSession.deliverRawPeerMessage('peer-1', dataFrame(1, await handshakeA()));
     await controller.flushPendingWork();
 
     expect(controller.getPeerProtocol()).toBe(owner);
-    expect(legacyDelivery).not.toHaveBeenCalled();
     expect(cradle.serialize()).not.toEqual(before);
-    expect(hub.sendToPeer).toHaveBeenCalledTimes(1);
-    expect((hub.sendToPeer.mock.calls[0][1] as Uint8Array)[0]).toBe(0x02);
+    expect(peerSession.reliableTransport).toBe(transport);
+    expect(hub.sendToPeer).not.toHaveBeenCalled();
+    expect(replacement.sendToPeer).toHaveBeenCalledTimes(1);
+    expect((replacement.sendToPeer.mock.calls[0][1] as Uint8Array)[0]).toBe(0x02);
   });
 
   it('orders an out-of-order rejection after the preceding Rust channel message', async () => {
@@ -133,7 +118,7 @@ describe('delayed PeerSession message-handler binding', () => {
     const normalPersist = jest.fn(async () => {
       order.push('normal-persist');
     });
-    const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+    const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
       controller,
       iStarted: false,
       restoring: false,

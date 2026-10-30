@@ -1,23 +1,24 @@
+import { observeWasmEvents } from './session_execution.harness';
+import { expectConsoleError } from '../../../scripts/testSetup';
+import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
+import { SESSION_DB_NAME } from '../session/indexedDb';
+import {
+  decodeDurableApplicationState,
+  rehydrateDurableApplicationState,
+} from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { restoreSession } from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   acceptedTerms,
   createAcceptedBlob,
   installAcceptedChannel,
 } from './accepted_session.harness';
 import { restorePeerState } from './peer_protocol.harness';
-import { expectConsoleError } from '../../../scripts/testSetup';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { SessionController } from '../../hooks/SessionController';
-import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
-import { restoreSession } from '../../hooks/blobSingleton';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { storageRepository } from '../session/storageRepository';
-import { decodeDurableApplicationState } from '../session/persistence';
-import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
-import { SESSION_DB_NAME } from '../session/indexedDb';
 
-import { liveSave } from './session_save_envelope.fixtures';
 import {
   channelStatus,
   createReadyBlob,
@@ -34,6 +35,7 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { liveSave } from './session_save_envelope.fixtures';
 
 async function readRawApplicationState(): Promise<Uint8Array> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -70,7 +72,7 @@ describe('WASM command persistence', () => {
     blob.getPeerProtocol().accept_session(acceptedTerms, true);
     const outbound = blob.unackedMessages[0].msg;
     await expect(blob.flushPendingSave()).rejects.toThrow(
-      'Active-session persistence requires SessionMachineRuntime coordination',
+      'Active-session persistence requires session execution coordination',
     );
     expect(save).not.toHaveBeenCalled();
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
@@ -125,8 +127,10 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     const warnings: string[] = [];
     const retry = jest.fn();
-    const unsubscribeRetry = blob.onTerminalFinalizationRetry(retry);
-    const sub = blob.getObservable().subscribe((event) => {
+    const unsubscribeRetry = blob.frontend.subscribe((event) => {
+      if (event.type === 'terminal-retry') retry();
+    });
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
 
@@ -149,7 +153,7 @@ describe('durability failures', () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     const warnings: string[] = [];
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
     let fail = true;
@@ -190,7 +194,7 @@ describe('durability failures', () => {
   it('keeps valid WASM state and releases reliable effects once across IndexedDB failure', async () => {
     const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     const warnings: string[] = [];
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
     let fail = true;
@@ -356,7 +360,7 @@ describe('durability failures', () => {
   });
 });
 
-describe('resendUnacked', () => {
+describe('peer reconnection', () => {
   it('re-sends all un-acked messages via sendMessage', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
@@ -369,7 +373,7 @@ describe('resendUnacked', () => {
         { msgno: 2n, msg: enc('b') },
       ],
     });
-    blob.resendUnacked();
+    blob.reportPeerConnectivity('registered');
 
     expect(sentMessages).toEqual([
       { msgno: 1, msg: enc('a') },
@@ -424,16 +428,20 @@ describe('restore ordering', () => {
       game_session_serialization_schema: () => 4,
       registered_game_packages: () => [...TEST_PROTOCOL_IDS],
     } as unknown as WasmConnection;
-    const wasmStateInit = {
-      getWasmConnection: jest.fn(async () => restoreWasmConnection),
-      deserializeGame: jest.fn(() => cradle),
-    } as unknown as WasmStateInit;
+    Object.assign(blob.getPeerProtocol(), cradle, { restore_channel: jest.fn() });
 
     blob.kickSystem(2);
     blob.deliverMessage(1n, enc('already-processed'));
     await blob.flushPendingWork();
-    const statuses: string[] = [];
-    const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
+    const statuses: string[] = [blob.getRestoreStatus()];
+    const setStatus = (blob as any).setRestoreStatus.bind(blob);
+    const statusSpy = jest
+      .spyOn(blob as any, 'setRestoreStatus')
+      .mockImplementation((...args: any[]) => {
+        setStatus(...args);
+        statuses.push(blob.getRestoreStatus());
+      });
+    const unsubscribe = () => statusSpy.mockRestore();
 
     const newestDiagnostic = `newest:${'界'.repeat(60_000)}`;
     const save = liveSave({
@@ -456,7 +464,7 @@ describe('restore ordering', () => {
     });
     expect(() => decodeDurableApplicationState(save)).not.toThrow();
     await blob.beginRestore(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), restoreWasmConnection),
     );
     unsubscribe();
 
@@ -487,7 +495,7 @@ describe('restore ordering', () => {
     setActiveBlob(blob);
 
     const errors: string[] = [];
-    const sub = blob.getObservable().subscribe({
+    const sub = observeWasmEvents(blob).subscribe({
       next: (evt) => {
         if (evt.type === 'error') errors.push(evt.error);
       },
@@ -517,7 +525,7 @@ describe('restore ordering', () => {
     setActiveBlob(blob);
 
     const errors: string[] = [];
-    const sub = blob.getObservable().subscribe({
+    const sub = observeWasmEvents(blob).subscribe({
       next: (evt) => {
         if (evt.type === 'error') errors.push(evt.error);
       },
@@ -536,23 +544,18 @@ describe('restore ordering', () => {
 describe('cradle serialization schema restore guard', () => {
   function makeRestoreHarness(deserializeGame: () => ChiaGame): {
     blob: SessionController;
-    wasmStateInit: WasmStateInit;
+    wasmConnection: WasmConnection;
     deserializeMock: jest.Mock;
   } {
     const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn([], []));
     setActiveBlob(blob);
-    const deserializeMock = jest.fn(deserializeGame);
-    const wasmStateInit = {
-      getWasmConnection: jest.fn(
-        async () =>
-          ({
-            game_session_serialization_schema: () => 4,
-            registered_game_packages: () => [...TEST_PROTOCOL_IDS],
-          }) as unknown as WasmConnection,
-      ),
-      deserializeGame: deserializeMock,
-    } as unknown as WasmStateInit;
-    return { blob, wasmStateInit, deserializeMock };
+    const deserializeMock = jest.fn(() => Object.assign(blob.getPeerProtocol(), deserializeGame()));
+    blob.getPeerProtocol().restore_channel = deserializeMock;
+    const wasmConnection = {
+      game_session_serialization_schema: () => 4,
+      registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+    } as unknown as WasmConnection;
+    return { blob, wasmConnection, deserializeMock };
   }
 
   it('rejects a whole aggregate with a missing cradle schema', async () => {
@@ -593,10 +596,10 @@ describe('cradle serialization schema restore guard', () => {
     await storageRepository.write(storageRepository.patchApplicationState(() => save));
     const memoryBefore = structuredClone(storageRepository.loadState());
     const durableBytesBefore = await readRawApplicationState();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+    const { blob, wasmConnection, deserializeMock } = makeRestoreHarness(makeMockCradle);
 
     await expect(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmConnection),
     ).rejects.toThrow('Unsupported saved game format: cradle schema 3; current schema is 4');
 
     expect(deserializeMock).not.toHaveBeenCalled();
@@ -620,13 +623,13 @@ describe('cradle serialization schema restore guard', () => {
       rewardPuzzleHash: '11'.repeat(32),
     });
     await storageRepository.checkpointDomainMutations();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
+    const { blob, wasmConnection, deserializeMock } = makeRestoreHarness(() => {
       throw new Error('corrupt current-schema cradle');
     });
     const save = (await storageRepository.readCurrentState())!;
 
     await expect(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmConnection),
     ).rejects.toThrow('corrupt current-schema cradle');
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);
@@ -707,7 +710,7 @@ describe('abandon calls Rust through cradle', () => {
       }),
     } as unknown as ChiaGame;
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     blob.loadWasm(mockWasmConnection);

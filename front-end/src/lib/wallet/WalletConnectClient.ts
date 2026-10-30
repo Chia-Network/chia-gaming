@@ -2,16 +2,16 @@ import Client from '@walletconnect/sign-client';
 import { SessionTypes } from '@walletconnect/types';
 import { Subject } from 'rxjs';
 
-import { PROJECT_ID, RELAY_URL } from '../constants/env';
+import { PROJECT_ID, RELAY_URL } from '../../constants/env';
 import {
   getChainId,
   getOptionalNamespaces,
   getRequiredNamespaces,
-} from '../constants/wallet-connect';
-import { log } from '../services/log';
-import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
-import { startPendingWalletConnectWipe } from './saveHardReset';
-import { AsyncJobQueue } from '../lib/AsyncScheduler';
+} from '../../constants/wallet-connect';
+import { log } from '../../services/log';
+import { walletConnectDappMetadata } from '../../util/walletConnectMetadata';
+import { startPendingWalletConnectWipe } from '../session/saveHardReset';
+import { AsyncJobQueue } from '../AsyncScheduler';
 
 const WC_RELAY_LIFECYCLE_TIMEOUT_MS = 30000;
 const WC_SESSION_AUTHORITY_KEY = 'appState_wcSessionAuthority';

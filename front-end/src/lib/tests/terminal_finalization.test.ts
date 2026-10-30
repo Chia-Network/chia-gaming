@@ -1,49 +1,51 @@
+import { configureSessionExecution } from './session_execution.harness';
 import 'fake-indexeddb/auto';
+import { useTestSessionPresentation } from './session_frontend.harness';
 
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { useGameSession } from '../../hooks/useGameSession';
 
-import type { SessionController } from '../../hooks/SessionController';
 import { initialKrunkGameState, KrunkHandler, restoreKrunkHand } from '@games/krunk/ui/serialize';
-import { krunkStateCodec } from './game_state_helpers';
 import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
 import FinishedSessionGameView from '../../components/FinishedSessionGameView';
-import { storageRepository } from '../session/storageRepository';
-import { hasSavedSessionMarker, markSavedSession } from '../../hooks/saveCoordination';
-import { createSessionModel } from '../session/model';
-import type { SessionModel } from '../session/types';
+import { renderFrozenGameMount } from '../gameMountRegistry';
+import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
 import {
   readApplicationState,
   SESSION_DB_NAME,
   StorageAuthorityLostError,
   StorageAuthorityRequiredError,
 } from '../session/indexedDb';
+import { createSessionModel } from '../session/model';
 import { decodeDurableApplicationState } from '../session/persistence';
+import { hasSavedSessionMarker, markSavedSession } from '../session/saveCoordination';
+import type { SessionController } from '../session/SessionController';
 import { createSessionMachineState } from '../session/sessionMachine';
-import {
-  buildDurableApplicationState,
-  type SessionPersistDependencies,
-  type TerminalCapture,
-} from '../session/sessionMachinePersist';
-import { selectFinishedSessionDisplay } from '../session/finishedSessionDisplay';
-import { renderFrozenGameMount } from '../gameMountRegistry';
+
+import { storageRepository } from '../session/storageRepository';
 import {
   finalizeTerminalSession,
   type TerminalFinalizationDependencies,
 } from '../session/terminalFinalization';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { liveSave } from './session_save_envelope.fixtures';
-import { bestEffortWalletRpc, setup } from './runtime_capability.harness';
+import type { SessionModel } from '../session/types';
+import {
+  installCapturedState,
+  type SessionPersistDependencies,
+  type TerminalCapture,
+} from './checkpoint_capture.harness';
+import { krunkStateCodec } from './game_state_helpers';
 import { submissionDrain, wasmResult } from './message_protocol.harness';
+import { bestEffortWalletRpc, setup } from './runtime_capability.harness';
+import { liveSave } from './session_save_envelope.fixtures';
 
 const testIndexedDb = indexedDB;
 const walletProviderScope = { provider: 'simulator' as const, identity: 'player' };
 const liveCradle = new Uint8Array([1, 2, 3]);
 
 async function persistCapturedState(dependencies: SessionPersistDependencies) {
-  const snapshot = buildDurableApplicationState({ kind: 'live', ...dependencies });
+  const snapshot = installCapturedState({ kind: 'live', ...dependencies });
   if (!snapshot) throw new Error('expected live snapshot');
   const state = structuredClone(storageRepository.loadState());
   await storageRepository.write(snapshot);
@@ -51,7 +53,7 @@ async function persistCapturedState(dependencies: SessionPersistDependencies) {
 }
 
 async function persistTerminalSnapshot(capture: TerminalCapture): Promise<void> {
-  const snapshot = buildDurableApplicationState(capture);
+  const snapshot = installCapturedState(capture);
   if (!snapshot) throw new Error('expected terminal snapshot');
   await storageRepository.write(snapshot);
 }
@@ -228,7 +230,7 @@ it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finali
   const teardown = jest.fn(() => events.push('teardown'));
   const dependencies: TerminalFinalizationDependencies = {
     persistTerminal: async (capture) => {
-      const snapshot = buildDurableApplicationState(capture);
+      const snapshot = installCapturedState(capture);
       if (!snapshot) throw new Error('expected terminal snapshot');
       events.push('stage-terminal', 'write-start');
       await writeGate;
@@ -335,7 +337,7 @@ it('keeps terminal root authoritative when fee cancellation completes during its
   }));
   await storageRepository.write(seeded);
 
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -372,7 +374,7 @@ it('keeps terminal root authoritative when fee cancellation completes during its
   const finalization = finalizeTerminalSession(finalizationArgs(controller), {
     persistTerminal: persistTerminalSnapshot,
     updateMarker: markSavedSession,
-    teardown: (terminalController) => terminalController.cleanupAfterTerminalFlush(),
+    teardown: (terminalController) => terminalController.cleanup(),
   });
   await reachedTerminalWrite;
   finishCancellation();
@@ -432,7 +434,7 @@ it('does not stage or tear down before controller terminal quiescence', async ()
 
 it('keeps the blockchain attached until finalization finishes before terminal presentation', async () => {
   const { controller, blockchain } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -446,6 +448,7 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
   await runtime.flush();
   const attach = jest.spyOn(blockchain, 'attachGameSession');
   const detach = jest.spyOn(blockchain, 'detachGameSession');
+  controller.setWallet(blockchain);
   const params = {
     iStarted: true,
     myContribution: 100n,
@@ -453,7 +456,13 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
     perGameAmount: 10n,
   };
   function Harness({ terminal }: { terminal?: { model: SessionModel; iStarted: boolean } }) {
-    useGameSession(params, controller, () => {}, undefined, blockchain, terminal);
+    useGameSession(
+      params,
+      runtime.frontend,
+      () => {},
+      terminal,
+      useTestSessionPresentation(runtime.frontend),
+    );
     return null;
   }
   let renderer!: ReactTestRenderer;
@@ -475,7 +484,7 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
       await writeGate;
     },
     updateMarker: () => {},
-    teardown: (finished) => finished.cleanupAfterTerminalFlush(),
+    teardown: (finished) => finished.cleanup(),
   });
   try {
     await enteredWrite;
@@ -500,7 +509,7 @@ it('keeps the blockchain attached until finalization finishes before terminal pr
 
 it('seals the concrete runtime before a microtask queued during snapshot can mutate it', async () => {
   const { controller } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -525,7 +534,7 @@ it('seals the concrete runtime before a microtask queued during snapshot can mut
 
     expect(first.model).toEqual(model);
     expect(runtime.getState().coordination.firstGameAccepted).toBe(false);
-    expect(controller.getCommittedSessionRuntime()).toBeNull();
+    expect(controller.executionActive).toBe(false);
   } finally {
     controller.cleanup();
   }
@@ -533,7 +542,7 @@ it('seals the concrete runtime before a microtask queued during snapshot can mut
 
 it('rejects a remounted runtime while the sealed terminal model is being written', async () => {
   const { controller } = setup(jest.fn());
-  const runtime = new SessionMachineRuntime(createSessionMachineState(model), {
+  const runtime = configureSessionExecution(createSessionMachineState(model), {
     controller,
     iStarted: true,
     restoring: false,
@@ -571,7 +580,7 @@ it('rejects a remounted runtime while the sealed terminal model is being written
       status: { ...model.channel.status, ourBalance: '999' },
     },
   });
-  const remountedRuntime = new SessionMachineRuntime(createSessionMachineState(remountedModel), {
+  const remountedRuntime = configureSessionExecution(createSessionMachineState(remountedModel), {
     controller,
     iStarted: true,
     restoring: false,
@@ -584,7 +593,7 @@ it('rejects a remounted runtime while the sealed terminal model is being written
   remountedRuntime.activate();
   remountedRuntime.dispatch({ type: 'set-first-game-accepted', accepted: true });
 
-  expect(controller.getCommittedSessionRuntime()).toBeNull();
+  expect(controller.executionActive).toBe(false);
   expect(remountedRuntime.getState().coordination.firstGameAccepted).toBe(false);
   expect(persistTerminal).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -925,7 +934,7 @@ it('assembles current timer ownership instead of stale checkpoint timing', () =>
   };
 
   waitingStateEnteredAt = 300n;
-  const snapshot = buildDurableApplicationState({ kind: 'live', ...dependencies });
+  const snapshot = installCapturedState({ kind: 'live', ...dependencies });
   const captured = storageRepository.loadState();
 
   expect(snapshot).not.toBeNull();
@@ -1104,7 +1113,7 @@ it('returns the terminal result and tears down after an ordinary write failure',
   const teardown = jest.fn(() => events.push('teardown'));
   const dependencies: TerminalFinalizationDependencies = {
     persistTerminal: async (capture) => {
-      buildDurableApplicationState(capture);
+      installCapturedState(capture);
       throw new Error('deferred IndexedDB write failed');
     },
     updateMarker: () => events.push('marker'),
@@ -1165,7 +1174,7 @@ it.each([
   await expect(
     finalizeTerminalSession(finalizationArgs(controller), {
       persistTerminal: async (capture) => {
-        buildDurableApplicationState(capture);
+        installCapturedState(capture);
         throw error();
       },
       updateMarker,

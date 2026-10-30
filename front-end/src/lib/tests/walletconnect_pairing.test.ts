@@ -28,7 +28,7 @@ jest.mock('@walletconnect/sign-client', () => ({
 
 jest.mock('../../services/log', () => ({ log: jest.fn(), diagStack: jest.fn() }));
 
-jest.mock('../../hooks/saveHardReset', () => ({
+jest.mock('../session/saveHardReset', () => ({
   startPendingWalletConnectWipe: jest.fn(async () => {}),
 }));
 
@@ -57,13 +57,13 @@ jest.mock('../../util/walletConnectMetadata', () => ({
 }));
 
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { walletConnectState } from '../../hooks/useWalletConnect';
+import { walletConnectState } from '../wallet/WalletConnectClient';
 import type { SessionTypes } from '@walletconnect/types';
 import { ChiaMethod } from '../../constants/wallet-connect';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { RealBlockchainInterface } from '../wallet/RealBlockchainInterface';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
-import { rpc } from '../../hooks/WalletConnectRpc';
+import { rpc } from '../wallet/WalletConnectRpc';
 
 const connectedSession = {
   topic: 'session-topic',
@@ -84,7 +84,7 @@ async function expectRestorableSession(): Promise<void> {
     mockClient.session.get.mockReturnValue(connectedSession);
     let reloaded!: typeof walletConnectState;
     jest.isolateModules(() => {
-      reloaded = jest.requireActual('../../hooks/useWalletConnect').walletConnectState;
+      reloaded = jest.requireActual('../wallet/WalletConnectClient').walletConnectState;
     });
     await reloaded.init();
     expect(reloaded.getSession()?.topic).toBe(connectedSession.topic);
@@ -596,7 +596,7 @@ describe('WalletConnect pairing teardown', () => {
       }));
       let reloaded!: typeof walletConnectState;
       jest.isolateModules(() => {
-        reloaded = jest.requireActual('../../hooks/useWalletConnect').walletConnectState;
+        reloaded = jest.requireActual('../wallet/WalletConnectClient').walletConnectState;
       });
       await reloaded.init();
       expect(reloaded.getSession()?.topic).toBe(connectedSession.topic);
@@ -673,7 +673,7 @@ describe('WalletConnect pairing teardown', () => {
       mockClient.session.get.mockReturnValue(connectedSession);
       let reloaded!: typeof walletConnectState;
       jest.isolateModules(() => {
-        reloaded = jest.requireActual('../../hooks/useWalletConnect').walletConnectState;
+        reloaded = jest.requireActual('../wallet/WalletConnectClient').walletConnectState;
       });
       await reloaded.init();
       expect(reloaded.getSession()).toBeUndefined();
@@ -809,7 +809,9 @@ describe('WalletConnect pairing teardown', () => {
         await jest.advanceTimersByTimeAsync(0);
         expect(poller.getPeak()).toBe(100n);
       } finally {
-        poller.stop();
+        poller.detachProvider();
+        poller.pauseChainPolling();
+        poller.stopBalanceInterest();
         await blockchain.disconnect();
         await jest.advanceTimersByTimeAsync(1000);
         consoleError.mockRestore();

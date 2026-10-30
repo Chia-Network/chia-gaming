@@ -24,7 +24,7 @@ const mockClient = {
 };
 const mockReplacementClient = { ...mockClient };
 
-jest.mock('../../hooks/useWalletConnect', () => ({
+jest.mock('../wallet/WalletConnectClient', () => ({
   walletConnectState: {
     getClient: () =>
       mockClientAvailable
@@ -45,14 +45,14 @@ jest.mock('../../services/log', () => ({
 }));
 
 import { ChiaMethod } from '../../constants/wallet-connect';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { RealBlockchainInterface } from '../wallet/RealBlockchainInterface';
 import type { PushTransactionsRequest } from '../../types/rpc/PushTransactions';
 import {
   rpc,
   WalletConnectResponseError,
   WalletConnectTransportError,
-} from '../../hooks/WalletConnectRpc';
+} from '../wallet/WalletConnectRpc';
 
 async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 12; i++) await Promise.resolve();

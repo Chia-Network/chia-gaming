@@ -1,13 +1,13 @@
-import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { CalpokerHand } from '@games/calpoker/ui/serialize';
 import { useCalpokerHand, type UseCalpokerHandResult } from '@games/calpoker/ui/useCalpokerHand';
 import type { GameIntent, LiveGamePort } from '@games/host';
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
+import { ensureWasmLoaded } from '../session/wasmLoader';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
   action_with_messages,
   addActiveCradle,
@@ -78,7 +78,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       const id = lanes[index].runtime.getState().model.game.currentHandIds[intent.memberIndex];
       assert.ok(id, `Calpoker reload player ${index}: invalid member ${intent.memberIndex}`);
       submittedMoves[index] += 1;
-      lanes[index].runtime.commitLocalGameAction({
+      return lanes[index].runtime.commitLocalGameAction({
         gameType: 'calpoker',
         id,
         command: { type: 'make-move', readable: intent.readable },
@@ -181,7 +181,7 @@ async function runCalpokerReloadAndAdvance(poller: BlockchainPoller): Promise<vo
       0,
       'restore alone must wait for reconnect or peer availability before replay',
     );
-    lanes[0].controller.resendUnacked();
+    lanes[0].controller.reportPeerConnectivity('registered');
     assert.ok(
       adapters[0].waiting_messages.length > 0,
       'reconnected transport must replay its unacknowledged proposal',
@@ -399,14 +399,14 @@ async function runHandshakeRoleReload(
       `a11ce00${suffix}`,
       true,
       adapters[0].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
     ),
     initSessionController(
       poller,
       `b0b7000${suffix}`,
       false,
       adapters[1].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
     ),
   ]);
   controllers.forEach((controller, index) => {
@@ -417,7 +417,7 @@ async function runHandshakeRoleReload(
   await flushWrapperDrain(adapters);
   // This test owns every chain observation so the checkpoint cannot advance
   // between the pre-reload snapshot and the post-restore comparison.
-  poller.stop();
+  poller.pauseChainPolling();
 
   const deliverNext = async (sender: 0 | 1): Promise<void> => {
     const outbound = adapters[sender].outbound_messages();
@@ -511,7 +511,7 @@ it(
       'b0b70010',
       false,
       adapters[1].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
       100n,
       100n,
       delayedBehavior,
@@ -522,7 +522,7 @@ it(
       'a11ce010',
       true,
       adapters[0].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
       100n,
       100n,
       immediateBehavior,

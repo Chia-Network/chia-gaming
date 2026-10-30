@@ -1,19 +1,21 @@
-import React from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
+import { observeWasmEvents } from './session_execution.harness';
+import { configureSessionExecution } from './session_execution.harness';
 import type { CalpokerHand } from '@games/calpoker/ui/serialize';
-import { calpokerStateCodec } from './game_state_helpers';
 import {
   shouldAutoFireCalpokerMove,
   useCalpokerHand,
   type UseCalpokerHandResult,
 } from '@games/calpoker/ui/useCalpokerHand';
+import type { GameIntent, LiveGamePort } from '@games/host';
+import { Program } from 'clvm-lib';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { SessionController } from '../session/SessionController';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import type { HandProposal } from '../session/types';
-import type { GameIntent, LiveGamePort } from '@games/host';
+import { calpokerStateCodec } from './game_state_helpers';
 import {
   addActiveSubscription,
   createActivePair,
@@ -22,6 +24,7 @@ import {
   LONG_WASM_TEST_TIMEOUT,
   startSimulator,
 } from './load_wasm.harness';
+import { observeSessionProjection } from './session_frontend.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
@@ -37,7 +40,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     gameTimeout: 15n,
     parameters: 20n,
   };
-  const runtimes: SessionMachineRuntime[] = [];
+  const runtimes: SessionController[] = [];
   const ports: LiveGamePort[] = [];
   const errors: unknown[] = [];
   const statuses: Array<Array<{ id: string; moverShare: unknown }>> = [[], []];
@@ -48,8 +51,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
   for (const [index, controller] of controllers.entries()) {
     const status = controller.lastChannelStatus;
     assert.ok(status, `calpoker initial deal player ${index}: missing active channel status`);
-    cradles[index].retireRuntime();
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       createSessionMachineState(
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
@@ -67,7 +69,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         persist: async () => {},
       },
     );
-    runtime.setRender((state) => {
+    observeSessionProjection(runtime, (state) => {
       const runtimeHand = calpokerStateCodec.decode(state.model.game.handState);
       if (runtimeHand) stageTrace[index].push(runtimeHand.moveNumber);
     });
@@ -86,7 +88,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
         assert.ok(Number.isInteger(intent.memberIndex) && intent.memberIndex >= 0);
         const id = game.currentHandIds[intent.memberIndex];
         assert.ok(id, `calpoker completion: invalid member index ${intent.memberIndex}`);
-        runtime.commitLocalGameAction({
+        return runtime.commitLocalGameAction({
           gameType: 'calpoker',
           id,
           command:
@@ -99,7 +101,7 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
       },
     });
     addActiveSubscription(
-      controller.getObservable().subscribe((event) => {
+      observeWasmEvents(controller).subscribe((event) => {
         if (event.type !== 'notification') return;
         const gameStatus = event.data.GameStatus;
         if (gameStatus) {
@@ -128,29 +130,33 @@ async function runRealCalpokerCompletionCase(poller: BlockchainPoller): Promise<
     return state;
   };
   const submitSelections = (index: number, selections: bigint[]) => {
+    const rejection = ports[index].dispatch({
+      type: 'make-move',
+      memberIndex: 0,
+      readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
+    });
+    assert.equal(rejection, undefined, 'Calpoker selections must be accepted');
     (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
       ...state,
       cardSelections: selections,
       moveNumber: 2n,
       isPlayerTurn: false,
     }));
-    ports[index].dispatch({
-      type: 'make-move',
-      memberIndex: 0,
-      readable: Program.fromList(selections.map((card) => Program.fromBigInt(card))),
-    });
+    ports[index].dispatch({ type: 'state-changed' });
   };
   const submitNil = (index: number, moveNumber: bigint) => {
+    const rejection = ports[index].dispatch({
+      type: 'make-move',
+      memberIndex: 0,
+      readable: null,
+    });
+    assert.equal(rejection, undefined, 'Calpoker automatic move must be accepted');
     (runtimes[index].getGameHand() as CalpokerHand).update((state) => ({
       ...state,
       moveNumber,
       isPlayerTurn: false,
     }));
-    ports[index].dispatch({
-      type: 'make-move',
-      memberIndex: 0,
-      readable: null,
-    });
+    ports[index].dispatch({ type: 'state-changed' });
   };
   const autofireOpening = (index: number) => {
     const state = hand(index);

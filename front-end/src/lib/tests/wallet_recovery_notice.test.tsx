@@ -1,3 +1,4 @@
+import { WalletConnection } from '../wallet/WalletConnection';
 import 'fake-indexeddb/auto';
 
 import React from 'react';
@@ -39,6 +40,7 @@ const request: FeeAttachment = {
 
 describe('wallet recovery notice after changing wallets', () => {
   let renderer: ReactTestRenderer | null = null;
+  let stop: (() => void) | undefined;
 
   beforeEach(async () => {
     storageRepository._resetForTests();
@@ -56,13 +58,19 @@ describe('wallet recovery notice after changing wallets', () => {
   afterEach(async () => {
     await act(async () => renderer?.unmount());
     renderer = null;
+    stop?.();
     await storageRepository.checkpointDomainMutations();
     channelFundingRuntime.resetForTests();
   });
 
   async function mount() {
     await act(async () => {
-      renderer = create(<WalletRecoveryNotice />);
+      const wallet = new WalletConnection('test', (event) => {
+        if (event.type === 'view' && renderer)
+          renderer.update(<WalletRecoveryNotice notice={event.view.recoveryNotice} />);
+      });
+      stop = wallet.start();
+      renderer = create(<WalletRecoveryNotice notice={wallet.view.recoveryNotice} />);
     });
   }
 

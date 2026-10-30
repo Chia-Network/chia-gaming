@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { Program } from 'clvm-lib';
 import { requireLiveGameMount, type GameMountView } from '../../host';
 import { krunkSettlementStatus } from './settlement';
@@ -19,8 +19,9 @@ export type { KrunkGameState, KrunkGuess, KrunkRole };
 
 export interface UseKrunkHandResult {
   gameState: KrunkGameState;
-  setSecretWord: (word: string) => void;
-  submitGuess: (word: string) => void;
+  rejection: string | null;
+  setSecretWord: (word: string) => boolean;
+  submitGuess: (word: string) => boolean;
   queueGuess: (word: string) => void;
   submitNextQueuedGuess: () => void;
 }
@@ -254,12 +255,36 @@ export function useKrunkHand(
   memberIndexRef.current = memberIndex;
   activeRef.current = interactive;
 
-  const commitLocalAction = useCallback((next: KrunkGameState, command: LocalGameCommand): void => {
-    const memberIndex = memberIndexRef.current;
-    const live = requireLiveGameMount(viewRef.current);
-    live.hand.updateGame(memberIndex, () => next);
-    live.port.dispatch({ type: 'make-move', memberIndex, readable: command.readable });
-  }, []);
+  const [rejection, setRejection] = useState<string | null>(null);
+  const commitLocalAction = useCallback(
+    (next: KrunkGameState, command: LocalGameCommand): boolean => {
+      const memberIndex = memberIndexRef.current;
+      const live = requireLiveGameMount(viewRef.current);
+      const rejected = live.port.dispatch({
+        type: 'make-move',
+        memberIndex,
+        readable: command.readable,
+      });
+      setRejection(
+        rejected
+          ? rejected.tag === 'not_in_dictionary'
+            ? `${rejected.message} is not in the dictionary.`
+            : rejected.message
+          : null,
+      );
+      if (rejected) {
+        if (live.hand.getState().members[memberIndex].queuedGuesses.length > 0) {
+          live.hand.updateGame(memberIndex, (current) => ({ ...current, queuedGuesses: [] }));
+          live.port.dispatch({ type: 'state-changed' });
+        }
+        return false;
+      }
+      live.hand.updateGame(memberIndex, () => next);
+      live.port.dispatch({ type: 'state-changed' });
+      return true;
+    },
+    [],
+  );
 
   const commitStateChange = useCallback((next: KrunkGameState): void => {
     const memberIndex = memberIndexRef.current;
@@ -299,13 +324,13 @@ export function useKrunkHand(
 
   const setSecretWord = useCallback(
     (word: string) => {
-      if (!activeRef.current) return;
+      if (!activeRef.current) return false;
       const cur = gameStateRef.current;
-      if (cur.role !== 'alice' || cur.handler !== KrunkHandler.WaitingCommit) return;
+      if (cur.role !== 'alice' || cur.handler !== KrunkHandler.WaitingCommit) return false;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] secret word must be 5 letters');
-        return;
+        return false;
       }
       requireLiveGameMount(viewRef.current);
       const next = {
@@ -314,7 +339,7 @@ export function useKrunkHand(
         handler: KrunkHandler.AliceWaiting,
         myTurn: false,
       } satisfies KrunkGameState;
-      commitLocalAction(next, {
+      return commitLocalAction(next, {
         type: 'make-move',
         readable: wordToProgram(normalised),
       });
@@ -324,18 +349,18 @@ export function useKrunkHand(
 
   const submitGuess = useCallback(
     (word: string) => {
-      if (!activeRef.current) return;
+      if (!activeRef.current) return false;
       const cur = gameStateRef.current;
       if (
         cur.role !== 'bob' ||
         cur.handler !== KrunkHandler.BobGuess ||
         cur.queuedGuesses.length > 0
       )
-        return;
+        return false;
       const normalised = word.trim().toUpperCase();
       if (!/^[A-Z]{5}$/.test(normalised)) {
         console.warn('[krunk] guess must be 5 letters');
-        return;
+        return false;
       }
       requireLiveGameMount(viewRef.current);
       const next = {
@@ -349,7 +374,7 @@ export function useKrunkHand(
         handler: KrunkHandler.BobWaiting,
         myTurn: false,
       } satisfies KrunkGameState;
-      commitLocalAction(next, {
+      return commitLocalAction(next, {
         type: 'make-move',
         readable: wordToProgram(normalised),
       });
@@ -404,6 +429,7 @@ export function useKrunkHand(
 
   return {
     gameState,
+    rejection,
     setSecretWord,
     submitGuess,
     queueGuess,

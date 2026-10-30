@@ -160,7 +160,6 @@ export function reduceSessionMachine(
     case 'notification-game-terminal':
     case 'notification-abandoned':
     case 'hand-state-changed':
-    case 'local-game-action-committed':
     case 'local-action-applied':
       return classifyTransition(state, event, reduceDurableGameEvent(state, event, activeHand));
 

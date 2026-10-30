@@ -1,22 +1,28 @@
-import type { WalletFeeSource } from '../../../../wasm/contract';
-import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
-import { restorePeerState } from './peer_protocol.harness';
-import { expectConsoleError } from '../../../scripts/testSetup';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { observeWasmEvents } from './session_execution.harness';
 import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
+import type { WalletFeeSource } from '../../../../wasm/contract';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import type {
   NeedCoinSpendRequest,
   TransactionSubmission,
   WasmResult,
 } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
+import {
+  _resetGameIdentityWarmupForTests,
+  protocolIdentitiesReady,
+  setProtocolIds,
+} from '../gameIdentities';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { createSessionModel } from '../session/model';
+import { sessionReceivePolicy } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
-import { createSessionModel } from '../session/model';
-import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
 import {
   channelStatus,
   createReadyBlob,
@@ -32,23 +38,15 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
-import {
-  createCoordinatorOnlySessionMachineRuntime,
-  reduceSessionMachineForTest,
-} from './session_machine.harness';
+import { restorePeerState } from './peer_protocol.harness';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { reduceSessionMachineForTest } from './session_machine.harness';
 
 async function waitForCall(mock: jest.Mock, count: number): Promise<void> {
   for (let attempt = 0; attempt < 30 && mock.mock.calls.length < count; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
-import {
-  protocolIdentitiesReady,
-  setProtocolIds,
-  _resetGameIdentityWarmupForTests,
-} from '../gameIdentities';
-import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
-import { sessionReceivePolicy } from '../session/receivePolicy';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
@@ -117,7 +115,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification' && event.data.ActionFailed) {
         reasons.push(String(event.data.ActionFailed.reason));
       }
@@ -139,7 +137,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       const reason = String(event.data.ActionFailed.reason);
       reasons.push(reason);
@@ -166,7 +164,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       delivered += 1;
       if (delivered < 101) {
@@ -192,7 +190,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       delivered += 1;
       if (delivered < 101) {
@@ -217,7 +215,7 @@ describe('in-order delivery', () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       reasons.push(String(event.data.ActionFailed.reason));
       blob.cleanup();
@@ -247,7 +245,7 @@ describe('protocol identity loading', () => {
     setActiveBlob(blob);
     setProtocolIds(TEST_PROTOCOL_IDS);
     const tags: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') {
         tags.push(Object.keys(event.data)[0] ?? '');
       }
@@ -280,7 +278,7 @@ describe('protocol identity loading', () => {
     setActiveBlob(blob);
     _resetGameIdentityWarmupForTests();
     const tags: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') {
         tags.push(Object.keys(event.data)[0] ?? '');
       }
@@ -327,7 +325,7 @@ describe('protocol identity loading', () => {
     expectConsoleError('completeRegisteredGames failed');
     const tags: string[] = [];
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') {
         tags.push(Object.keys(event.data)[0] ?? '');
       }
@@ -457,7 +455,7 @@ describe('active game tracking', () => {
         },
       }).state;
       const settledIds: string[] = [];
-      blob.getObservable().subscribe((event) => {
+      observeWasmEvents(blob).subscribe((event) => {
         if (event.type !== 'notification') return;
         if (event.data.GameSettled) settledIds.push(String(event.data.GameSettled.id));
         machine = reduceSessionNotification(
@@ -576,7 +574,7 @@ describe('game action failure events', () => {
       throw new Error('cannot accept settlement');
     };
     const events: import('../../types/ChiaGaming').WasmEvent[] = [];
-    const subscription = blob.getObservable().subscribe((event) => events.push(event));
+    const subscription = observeWasmEvents(blob).subscribe((event) => events.push(event));
 
     expect(() => blob.makeMove('41', null)).toThrow('cannot reveal');
     expect(() => blob.acceptSettlement('42')).toThrow('cannot accept settlement');
@@ -619,7 +617,7 @@ describe('game action failure events', () => {
         ],
       });
     const notifications: unknown[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') notifications.push(event.data);
     });
 
@@ -634,6 +632,8 @@ describe('game action failure events', () => {
 
   it('returns rejection before a local candidate can be committed', () => {
     const { blob, cradle } = createReadyBlob();
+    const broadcast = jest.fn();
+    observeWasmEvents(blob).subscribe(broadcast);
     const makeMove = jest.fn(() =>
       wasmResult({
         events: [
@@ -651,7 +651,8 @@ describe('game action failure events', () => {
       }
     ).make_move = makeMove;
 
-    expect(blob.makeMove('41', null)).toBe('rejected');
+    expect(blob.makeMove('41', null)).toEqual({ tag: 'illegal_move', message: 'not allowed' });
+    expect(broadcast).not.toHaveBeenCalled();
     makeMove.mockReturnValue(wasmResult());
     expect(blob.makeMove('41', null)).toBe('queued');
     makeMove.mockReturnValue(
@@ -728,7 +729,7 @@ describe('keepalive activity', () => {
         const close = enc('signed close completion');
         restorePeerState(blob, { messageNumber: 2n });
         restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: close }] });
-        blob.resendUnacked();
+        blob.reportPeerConnectivity('registered');
         expect(sentMessages).toContainEqual({ msgno: 1, msg: close });
         blob.deliverMessage(1n, body);
         await blob.flushPendingWork();
@@ -1188,7 +1189,7 @@ describe('WASM wallet funding requests', () => {
       'processResultNow',
     );
     const advances: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification' && event.data.ActionFailed) {
         advances.push(String(event.data.ActionFailed.reason));
       }
@@ -1233,7 +1234,7 @@ describe('WASM wallet funding requests', () => {
     (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
       walletCallbackFailed;
     setActiveBlob(blob);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
 
     blob.processResult(
       wasmResult({
@@ -1264,21 +1265,29 @@ describe('WASM wallet funding requests', () => {
 
   it('asks Rust for fee upgrades only on provider attach or readiness', async () => {
     let readiness: ((ready: boolean) => void) | undefined;
+    const unsubscribe = jest.fn();
+    const subscribe = jest.fn((callback: (ready: boolean) => void) => {
+      readiness = callback;
+      return unsubscribe;
+    });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
-        onPlayReadinessChange: (callback: (ready: boolean) => void) => {
-          readiness = callback;
-          return () => {};
-        },
+        onPlayReadinessChange: subscribe,
       },
       60000,
     );
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await blob.flushPendingWork();
+    expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
+
+    blob.setWallet(blockchain);
+    await blob.flushPendingWork();
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).not.toHaveBeenCalled();
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
 
     readiness?.(false);
@@ -1288,6 +1297,10 @@ describe('WASM wallet funding requests', () => {
     readiness?.(true);
     await blob.flushPendingWork();
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(2);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    blob.setWallet(null);
+    blob.cleanup();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it('fails one distinct concurrent funding request without launching it', async () => {
@@ -1320,7 +1333,7 @@ describe('WASM wallet funding requests', () => {
       walletCallbackFailed;
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -1345,7 +1358,7 @@ describe('WASM wallet funding requests', () => {
     expect(errors.filter((error) => error.includes('concurrent funding request'))).toHaveLength(1);
   });
 
-  it('reschedules an unlaunched funding attempt onto a replacement runtime once', async () => {
+  it('keeps an unlaunched funding attempt through repeated execution initialization', async () => {
     const request: NeedCoinSpendRequest = {
       amount: '100',
       fee: '0',
@@ -1360,12 +1373,13 @@ describe('WASM wallet funding requests', () => {
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
 
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
-    const replacement = createCoordinatorOnlySessionMachineRuntime(blob);
-    await replacement.persist();
+    const frontend = blob.initializeExecution(false);
+    expect(blob.initializeExecution(false)).toBe(frontend);
+    await blob.flush();
     await blob.flushPendingWork();
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    replacement.retire();
+    blob.retireExecution();
   });
 });
 
@@ -1647,7 +1661,7 @@ describe('wallet fee attachment on submission', () => {
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, spend }, 60000));
     setFinalizer(blob, finalize);
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -1833,7 +1847,7 @@ describe('wallet fee attachment on submission', () => {
       undefined,
     );
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     channelFundingRuntime.providerReconnectReady(
       blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
@@ -1990,7 +2004,7 @@ describe('wallet fee attachment on submission', () => {
     });
     const recoverableEvents: Array<{ error: string }> = [];
     const ordinaryErrors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableEvents.push(event);
       if (event.type === 'error') ordinaryErrors.push(event.error);
     });
@@ -2036,7 +2050,7 @@ describe('wallet fee attachment on submission', () => {
       .mockReturnValue(submissionDrain());
     const recoverableEvents: Array<{ error: string }> = [];
     const ordinaryErrors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableEvents.push(event);
       if (event.type === 'error') ordinaryErrors.push(event.error);
     });
@@ -2081,7 +2095,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -2130,7 +2144,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -2225,7 +2239,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 

@@ -1,23 +1,23 @@
-import { WasmStateInit, storeInitArgs } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import { ensureWasmLoaded, storeInitArgs } from '../session/wasmLoader';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+import { hasSavedSessionMarker } from '../session/saveCoordination';
 import { storageRepository } from '../session/storageRepository';
-import { hasSavedSessionMarker } from '../../hooks/saveCoordination';
 import {
+  LONG_WASM_TEST_TIMEOUT,
   SessionControllerAdapter,
   action_with_messages,
   addActiveCradle,
   assertCradleRoundTrip,
-  restoreTestSession,
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
-  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   pollOnce,
+  restoreTestSession,
   startSimulator,
 } from './load_wasm.harness';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -45,11 +45,9 @@ it(
         },
         sendAck: (_ackMsgno: number) => true,
         sendKeepalive: () => true,
-        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
-        close: () => {},
       };
-      const wasm_init1 = new WasmStateInit(fetchPreset);
       storeInitArgs(async () => {}, WholeWasmObject);
+      const wasm_init1 = await ensureWasmLoaded(fetchPreset);
       const wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
@@ -68,10 +66,8 @@ it(
         },
         sendAck: (_ackMsgno: number) => true,
         sendKeepalive: () => true,
-        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
-        close: () => {},
       };
-      const wasm_init2 = new WasmStateInit(fetchPreset);
+      const wasm_init2 = await ensureWasmLoaded(fetchPreset);
       const wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',

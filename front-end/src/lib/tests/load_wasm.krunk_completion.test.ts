@@ -1,17 +1,20 @@
-import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
-import { storageRepository } from '../session/storageRepository';
-import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
-import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
+import { observeWasmEvents } from './session_execution.harness';
+import { configureSessionExecution } from './session_execution.harness';
 import type { KrunkGameState } from '@games/krunk/ui/serialize';
-import { krunkStateCodec } from './game_state_helpers';
+import { krunkBoardNotice } from '@games/krunk/ui/useKrunkHand';
+import { Program } from 'clvm-lib';
+import type { ProposalAcceptedGroupPayload } from '../../types/ChiaGaming';
 import { terminalInfoFromGameSettled } from '../session/gameSessionEvents';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { buildDurableApplicationState } from '../session/sessionMachinePersist';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import { decodeDurableApplicationState } from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { createSessionMachineState } from '../session/sessionMachine';
+
+import { storageRepository } from '../session/storageRepository';
 import type { GameTerminalModel, HandProposal } from '../session/types';
+import { installCapturedState } from './checkpoint_capture.harness';
+import { krunkStateCodec } from './game_state_helpers';
+import { runKrunkReloadCoverage } from './krunk_reload.scenario';
 import {
   addActiveSubscription,
   createActivePair,
@@ -20,7 +23,6 @@ import {
   LONG_WASM_TEST_TIMEOUT,
   startSimulator,
 } from './load_wasm.harness';
-import { runKrunkReloadCoverage } from './krunk_reload.scenario';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
@@ -51,7 +53,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     Array<{ currentHandIds: string[]; payloadMemberCount: number; activeIds: string[] }>
   > = [[], []];
   const errors: unknown[] = [];
-  const runtimes: SessionMachineRuntime[] = [];
+  const runtimes: SessionController[] = [];
   const settlementTraces: KrunkSettlementTrace[][] = [[], []];
   const pendingSettlementIds: string[][] = [[], []];
   const acceptedGroups: ProposalAcceptedGroupPayload[][] = [[], []];
@@ -85,7 +87,6 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
   for (const [index, controller] of controllers.entries()) {
     const status = controller.lastChannelStatus;
     assert.ok(status, `krunk completion player ${index}: missing active channel status`);
-    cradles[index].retireRuntime();
     const persist = async () => {
       const runtime = runtimes[index];
       assert.ok(
@@ -100,7 +101,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
         payloadMemberCount: hand?.members.length ?? 0,
         activeIds: [...machine.model.game.activeIds],
       });
-      const snapshot = buildDurableApplicationState({
+      const snapshot = installCapturedState({
         kind: 'live',
         controller,
         state: runtime.getState(),
@@ -111,7 +112,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
       if (snapshot) await storageRepository.write(snapshot);
       decodeDurableApplicationState((await storageRepository.readCurrentState())!);
     };
-    const runtime = new SessionMachineRuntime(
+    const runtime = configureSessionExecution(
       createSessionMachineState(
         createSessionModel({
           channel: { status: channelStatusModelFromPayload(status) },
@@ -133,7 +134,7 @@ async function runRealKrunkCompletionCase(poller: BlockchainPoller): Promise<voi
     cradles[index].bindRuntime(runtime);
     runtimes.push(runtime);
     addActiveSubscription(
-      controller.getObservable().subscribe((event) => {
+      observeWasmEvents(controller).subscribe((event) => {
         if (event.type === 'notification') {
           if ('ProposalAcceptedGroup' in event.data && event.data.ProposalAcceptedGroup) {
             acceptedGroups[index].push(event.data.ProposalAcceptedGroup);

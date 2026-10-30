@@ -151,8 +151,8 @@ The same ownership applies to submission intent: Rust
 `TransactionManager` is its durable retained owner. `SubmissionPump` owns one
 browser map and ordered promise tail from persistence-gated launch through
 optional fee acquisition, exact broadcast, typed completion, and
-relinquishment. Committed-runtime replacement reschedules only unlaunched work;
-launched work remains queue-owned through terminal quiescence. Duplicate IDs
+relinquishment. The same session execution owner gates unlaunched work and
+retains launched work through terminal quiescence. Duplicate IDs
 must carry the immutable Rust-issued lineage for the same retained intent.
 
 **Retained transaction rebroadcast.** When the manager drains a transaction for
@@ -496,14 +496,14 @@ policy. Durability follows fixed-point durable residue and a named restore
 consumer; rehydrating the latest successful boundary supplies implicit crash
 rollback. Importance alone does not admit a field to the aggregate.
 
-`SessionMachineRuntime` construction is inert. The committed React layout
-effect installs its render callback and calls `activate()`; only then does it
-become the controller's exclusive committed runtime. Layout-effect cleanup calls
-only `clearRender()`. It does not retire the runtime or protocol. Replacement of
-the committed runtime and `SessionController` cleanup—including terminal
-cleanup—own retirement. The controller retains the committed runtime while no
-renderer is mounted; a later renderer reads and reattaches that same runtime
-without changing protocol ownership during render.
+`SessionController` owns Rust interaction, reducer execution, command results,
+checkpoint ordering, and terminal sealing in one object. Backend session setup
+activates execution; no React lifecycle drives it. Application consumes ordered
+batch/readiness events and exposes data plus session-bound intents to the GUI.
+Unsubscribing a view leaves execution running. Cleanup and terminal sealing
+retire execution; no independently replaceable runtime remains. The snapshot
+assembler receives captured values and the current aggregate; session/terminal
+callers own root installation and exact writes.
 
 Local restore and external recovery are separate. A valid IndexedDB envelope
 and WASM cradle may project the restored shell/game/dashboard immediately,
@@ -554,11 +554,10 @@ a newly installed external obligation, and repository-owned preference/history
 mutations use a coalesced repository drain. Those distinct owners retain the
 last complete session capture and never serialize a partial runtime drain.
 
-`SessionMachineRuntime` directly provides the peer transport's narrow
+`SessionController` directly provides the peer transport's narrow
 `ReliableCommitCoordinator` facet and `snapshotModel()` returns its
-authoritative model. Replacing a committed runtime or cleaning up its controller
-retires the old runtime, discards queued
-events and fire-and-forget controller work, and rejects queued result promises
+authoritative model. Cleanup or terminal sealing retires execution, discards
+queued events and fire-and-forget work, and rejects queued result promises
 and persistence-gated effects. Completion callbacks from an in-flight write
 also become inert after retirement. Final controller cleanup settles unlaunched
 submission deliveries and queued jobs and removes tracked effects from
@@ -624,7 +623,7 @@ Both WalletConnect uncertainty and pre-ID Cloud uncertainty persist across
 reload and automatically get exactly one new attempt on each later
 `WalletProviderRegistry` readiness epoch, with no timer or immediate loop.
 
-`BootRecoveryBoundary` owns pending wipe, read-only inspection, atomic
+`Recovery` (`lib/application/Recovery.ts`) owns pending wipe, read-only inspection, atomic
 claim-and-read, one strict rehydrate, takeover, malformed evidence, reset
 retry, and authority loss. The winning claim returns the exact aggregate;
 pending common identity, preference, and history changes are folded into that

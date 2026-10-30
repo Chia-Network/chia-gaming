@@ -1,4 +1,4 @@
-import { isElectronDistribution } from '../util/distribution';
+import { isElectronDistribution } from '../../util/distribution';
 
 const SESSION_MARKER_KEY = 'appState_savedSession';
 const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';

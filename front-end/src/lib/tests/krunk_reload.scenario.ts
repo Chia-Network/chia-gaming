@@ -1,14 +1,14 @@
-import { Program } from 'clvm-lib';
 import {
   KrunkHandler,
   type KrunkGameState,
   type KrunkHand,
   type KrunkHandState,
 } from '@games/krunk/ui/serialize';
-import { krunkStateCodec } from './game_state_helpers';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { Program } from 'clvm-lib';
 import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
 import type { HandProposal } from '../session/types';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { krunkStateCodec } from './game_state_helpers';
 import { createActivePair, exchangeUntilIdle, flushWrapperDrain } from './load_wasm.harness';
 import {
   createReloadableSessionLane,
@@ -54,12 +54,14 @@ function makeMove(
   next: (current: KrunkGameState) => KrunkGameState,
   readable: Program | null,
 ): void {
-  (lane.runtime.getGameHand() as KrunkHand).updateGame(memberIndex(lane, id), next);
-  lane.runtime.commitLocalGameAction({
+  const rejected = lane.runtime.commitLocalGameAction({
     gameType: 'krunk',
     id,
     command: { type: 'make-move', readable },
   });
+  assert.equal(rejected, undefined);
+  (lane.runtime.getGameHand() as KrunkHand).updateGame(memberIndex(lane, id), next);
+  lane.runtime.commitHandStateChanged('krunk');
 }
 
 function commitWord(lane: ReloadableSessionLane, id: string): void {

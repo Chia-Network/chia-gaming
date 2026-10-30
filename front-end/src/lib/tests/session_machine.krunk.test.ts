@@ -371,8 +371,7 @@ describe('session machine behavior sequences', () => {
     const hand = krunkStateCodec.decode(state.model.game.handState)!;
 
     state = send(state, {
-      type: 'local-game-action-committed',
-      id: '1',
+      type: 'hand-state-changed',
       handState: krunkStateCodec.encode({
         ...hand,
         members: [
@@ -383,8 +382,7 @@ describe('session machine behavior sequences', () => {
     });
     const afterFirst = krunkStateCodec.decode(state.model.game.handState)!;
     state = send(state, {
-      type: 'local-game-action-committed',
-      id: '2',
+      type: 'hand-state-changed',
       handState: krunkStateCodec.encode({
         ...afterFirst,
         members: [afterFirst.members[0], { ...afterFirst.members[1], handler: 4n, myTurn: false }],

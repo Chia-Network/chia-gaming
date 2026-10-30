@@ -1,15 +1,11 @@
-import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
-import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import {
-  destroySessionController,
-  getOrCreateSessionController,
-  isTransactionPublishNerfed,
-  setTransactionPublishNerfed,
-  subscribeTransactionPublishNerfed,
-} from '../../hooks/blobSingleton';
+import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { rewriteFeeRateRejection, SessionController } from '../session/SessionController';
+import { createSessionController } from '../session/sessionHost';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { pollOnce } from './blockchain_poller.driver';
 import {
   attachTestCommitCoordinator,
   channelStatus,
@@ -26,7 +22,6 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
-import { pollOnce } from './blockchain_poller.driver';
 
 describe('terminal protocol cleanup', () => {
   // Reliable terminal handoff permutations are covered by peer_session::session::tests.
@@ -109,34 +104,30 @@ describe('terminal protocol cleanup', () => {
 });
 
 describe('transaction submission', () => {
-  it('routes controller nerfs through the singleton policy and notifies subscribers', () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  it('publishes controller nerfs through the ordered session event pipe', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const updates: boolean[] = [];
-    const unsubscribe = subscribeTransactionPublishNerfed((nerfed) => updates.push(nerfed));
-    const { sessionController: blob } = getOrCreateSessionController(
+    const blob = createSessionController(
       null,
       makePeerConn(sentMessages, sentAcks),
-      () => {},
       'test',
       100n,
       100n,
       true,
     );
 
-    expect(isTransactionPublishNerfed()).toBe(false);
+    const unsubscribe = blob.frontend.subscribe((event) => {
+      if (event.type === 'publishing-policy') updates.push(event.nerfed);
+    });
     blob.nerf();
-    expect(isTransactionPublishNerfed()).toBe(true);
     expect(blob.isTransactionPublishNerfed()).toBe(true);
-    setTransactionPublishNerfed(false);
-    expect(isTransactionPublishNerfed()).toBe(false);
+    blob.setTransactionPublishNerfed(false);
     expect(blob.isTransactionPublishNerfed()).toBe(false);
-    expect(updates).toEqual([false, true, false]);
+    expect(updates).toEqual([true, false]);
 
     unsubscribe();
-    destroySessionController();
-    errorSpy.mockRestore();
+    blob.cleanup();
   });
 
   it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
@@ -227,6 +218,7 @@ describe('transaction submission', () => {
         {
           getHeightInfo: () => Promise.resolve(1n),
           getWalletOfferProvider: () => null,
+          onPlayReadinessChange: () => () => {},
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -255,7 +247,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     (cradle.snapshot_watched_coins as jest.Mock).mockClear();
 
     blob.processResult({
@@ -277,7 +269,7 @@ describe('transaction submission', () => {
 
     expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
@@ -287,6 +279,7 @@ describe('transaction submission', () => {
         {
           getHeightInfo: () => Promise.resolve(1n),
           getWalletOfferProvider: () => null,
+          onPlayReadinessChange: () => () => {},
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -321,15 +314,15 @@ describe('transaction submission', () => {
     blob.setGameSession(cradle);
     expect(queriedNames).toEqual([]);
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await pollOnce(blockchain);
 
     expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
     expect(queriedNames).toEqual([['bb']]);
 
-    blob.attachBlockchain(blockchain);
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(blockchain);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
+    blob.setWallet(null);
   });
 
   it('hydrates without blockchain and replays retained submissions on later attach', async () => {
@@ -377,14 +370,14 @@ describe('transaction submission', () => {
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).not.toHaveBeenCalled();
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await pollOnce(blockchain);
     await transactionSubmitQueue(blob);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(5);
     expect(spend).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
     errorSpy.mockRestore();
   });
 
@@ -399,7 +392,7 @@ describe('transaction submission', () => {
     );
     attachTestCommitCoordinator(blob);
     const recoverableErrors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableErrors.push(event.error);
     });
     const cradle = {
@@ -443,7 +436,7 @@ describe('transaction submission', () => {
     blob.loadWasm(mockWasmConnection);
     // Blockchain attachment can complete while restore is still deserializing
     // the cradle, so this height must remain buffered.
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
 
@@ -454,7 +447,7 @@ describe('transaction submission', () => {
     blob.reportChainSnapshotReady(1n);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('uses height-only sync to resubmit only restored sessions with no watches', () => {
@@ -473,13 +466,13 @@ describe('transaction submission', () => {
     const cradle = makeMockCradle();
 
     blob.loadWasm(mockWasmConnection);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
     blob.reportChainSnapshotReady(1n);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
@@ -536,7 +529,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
 
     // report_coin_states queues the first copy in processResult, then the
     // fresh-sync resubmit drains the same retained ID before promise jobs run.
@@ -550,7 +543,7 @@ describe('transaction submission', () => {
     expect(spend).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(submission.id);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('submits drained transactions sequentially', async () => {
@@ -672,7 +665,7 @@ describe('transaction submission', () => {
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     const cradle = {
@@ -723,7 +716,7 @@ describe('transaction submission', () => {
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     const cradle = {
@@ -786,7 +779,7 @@ describe('transaction submission', () => {
 
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('retains unavailable submissions and silently acknowledges an exact duplicate', async () => {
@@ -817,7 +810,7 @@ describe('transaction submission', () => {
     setActiveBlob(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((evt) => {
+    observeWasmEvents(blob).subscribe((evt) => {
       if (evt.type === 'error') errors.push(evt.error);
     });
     const cradle = {

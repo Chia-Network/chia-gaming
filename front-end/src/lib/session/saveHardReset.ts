@@ -1,4 +1,4 @@
-import { SESSION_DB_NAME, type DurableStorageAuthority } from '../lib/session/indexedDb';
+import { SESSION_DB_NAME, type DurableStorageAuthority } from './indexedDb';
 import { signalHardResetToOtherTabs } from './saveCoordination';
 
 const KNOWN_INDEXED_DB_NAMES = [

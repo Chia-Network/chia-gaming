@@ -1,4 +1,3 @@
-import { log } from './log';
 import {
   decode as decodeBencodex,
   encode as encodeBencodex,
@@ -10,6 +9,7 @@ import {
   type BencodexValue,
 } from 'chia-gaming-bencodex';
 import type { BusyReason, HubPresence } from '../lib/hubPresence';
+import { log } from './log';
 
 export interface AdvisoryStartParams {
   peer_id: string;
@@ -20,22 +20,14 @@ export interface AdvisoryStartParams {
   unroll_timeout?: string;
 }
 
-export interface HubConnectionCallbacks {
-  onAdvisoryStart: (params: AdvisoryStartParams) => void;
-  onPeerMessage: (from_id: string, from_alias: string, payload: Uint8Array) => void;
-  onDeliveryFailure: (to: string) => void;
-  onRegistered: (player_id: string) => void;
-  onAliasUpdated: (alias: string) => void;
-  onPeerAvailable: (player_id: string) => void;
-  onPeerUnavailable: (player_id: string) => void;
-  onClosed: () => void;
-  onHubAttention: () => void;
-  onHubDisconnected: () => void;
-  onHubReconnected: () => void;
-  onHubActivity: () => void;
-  onHubKeepalive?: () => void;
-  getPresence: () => HubPresence;
-}
+export type HubEvent =
+  | { type: 'advisory-start'; params: AdvisoryStartParams }
+  | { type: 'peer-message'; fromId: string; fromAlias: string; payload: Uint8Array }
+  | { type: 'delivery-failure'; to: string }
+  | { type: 'registered' | 'peer-available' | 'peer-unavailable'; playerId: string }
+  | { type: 'alias-updated'; alias: string }
+  | { type: 'closed' | 'attention' | 'disconnected' | 'reconnected' | 'activity' | 'keepalive' };
+export type PeerCarrier = Pick<HubConnection, 'sendToPeer'>;
 
 type HubEnvelope =
   | {
@@ -219,7 +211,6 @@ function decodeGameEnvelope(input: ArrayBuffer): HubEnvelope | null {
 export class HubConnection {
   private hubUrl: string;
   private sessionId: string;
-  private callbacks: HubConnectionCallbacks;
   private ws: WebSocket | null = null;
   private closed = false;
   private wasDisconnected = false;
@@ -236,11 +227,15 @@ export class HubConnection {
   private closePending = false;
   private myPlayerId: string | null = null;
 
-  constructor(hubUrl: string, sessionId: string, callbacks: HubConnectionCallbacks) {
+  constructor(
+    hubUrl: string,
+    sessionId: string,
+    private readonly emit: (event: HubEvent) => void,
+    private readonly getPresence: () => HubPresence,
+  ) {
     this.hubUrl = hubUrl;
     this.sessionId = sessionId;
-    this.callbacks = callbacks;
-    this.presence = callbacks.getPresence();
+    this.presence = this.getPresence();
     this.connectWs();
   }
 
@@ -305,14 +300,14 @@ export class HubConnection {
       globalThis.clearTimeout(connectTimeout);
       this.ws = ws;
       this.reconnectAttempt = 0;
-      this.presence = this.callbacks.getPresence();
+      this.presence = this.getPresence();
       this.sendWs(this.presencePayload('identify'));
       if (this.closePending) {
         this.sendCloseRequest();
       }
       if (this.wasDisconnected) {
         log('[hub] reconnected to hub');
-        this.callbacks.onHubReconnected();
+        this.emit({ type: 'reconnected' });
       }
       this.wasDisconnected = false;
       if (this.reconnectTimer !== null) {
@@ -326,7 +321,7 @@ export class HubConnection {
 
     ws.onmessage = (evt: MessageEvent) => {
       if (this.ws !== ws) return;
-      this.callbacks.onHubActivity();
+      this.emit({ type: 'activity' });
 
       if (evt.data instanceof ArrayBuffer) {
         if (this.closed) return;
@@ -343,7 +338,7 @@ export class HubConnection {
       if (!this.closed && !this.wasDisconnected) {
         this.wasDisconnected = true;
         log('[hub] WS connection error, will auto-reconnect');
-        this.callbacks.onHubDisconnected();
+        this.emit({ type: 'disconnected' });
       }
     };
 
@@ -353,7 +348,7 @@ export class HubConnection {
       if (this.closed) return;
       if (!this.wasDisconnected) {
         this.wasDisconnected = true;
-        this.callbacks.onHubDisconnected();
+        this.emit({ type: 'disconnected' });
       }
       if (this.ws === ws) {
         this.ws = null;
@@ -362,7 +357,7 @@ export class HubConnection {
         if (this.reconnectAttempt >= HubConnection.MAX_RECONNECT_ATTEMPTS) {
           log('[hub] reconnect budget exhausted, declaring connection dead');
           this.closed = true;
-          this.callbacks.onClosed();
+          this.emit({ type: 'closed' });
           return;
         }
         const base =
@@ -407,39 +402,39 @@ export class HubConnection {
         log(
           `[hub] advisory_start peer=${params.peer_id} alias=${params.peer_alias} my_amount=${params.my_amount} their_amount=${params.their_amount}`,
         );
-        this.callbacks.onAdvisoryStart(params);
+        this.emit({ type: 'advisory-start', params: params });
         break;
       }
       case 'registered':
         this.myPlayerId = msg.player_id;
         log(`[hub] registered as player_id=${msg.player_id}`);
-        this.callbacks.onRegistered(msg.player_id);
+        this.emit({ type: 'registered', playerId: msg.player_id });
         break;
       case 'delivery_failure':
         log(`[hub] delivery_failure to=${msg.to}`);
-        this.callbacks.onDeliveryFailure(msg.to);
+        this.emit({ type: 'delivery-failure', to: msg.to });
         break;
       case 'alias_updated':
-        this.callbacks.onAliasUpdated(msg.alias);
+        this.emit({ type: 'alias-updated', alias: msg.alias });
         break;
       case 'peer_available':
-        this.callbacks.onPeerAvailable(msg.player_id);
+        this.emit({ type: 'peer-available', playerId: msg.player_id });
         break;
       case 'peer_unavailable':
-        this.callbacks.onPeerUnavailable(msg.player_id);
+        this.emit({ type: 'peer-unavailable', playerId: msg.player_id });
         break;
       case 'relay':
         this.dispatchRelay(msg.from, msg.alias, msg.payload);
         break;
       case 'hub_attention':
-        this.callbacks.onHubAttention();
+        this.emit({ type: 'attention' });
         break;
       case 'closed':
         this.closePending = false;
-        this.callbacks.onClosed();
+        this.emit({ type: 'closed' });
         break;
       case 'keepalive':
-        this.callbacks.onHubKeepalive?.();
+        this.emit({ type: 'keepalive' });
         break;
       default:
         break;
@@ -502,7 +497,7 @@ export class HubConnection {
 
   private dispatchRelay(fromId: string, fromAlias: string, payload: Uint8Array): void {
     log(`[hub] recv from=${fromId} len=${payload.byteLength}`);
-    this.callbacks.onPeerMessage(fromId, fromAlias, payload);
+    this.emit({ type: 'peer-message', fromId: fromId, fromAlias: fromAlias, payload: payload });
   }
 
   private startKeepaliveTimer() {

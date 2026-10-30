@@ -118,7 +118,8 @@ Delivery operations are methods on that owning session, with the host passed per
 call. State and channel borrows end before any host callback.
 TypeScript invokes gameplay, chain observations and serialization as methods
 on that same exported object, with no numeric channel lookup or forwarding wrapper.
-Retirement releases the channel; a carrier replacement preserves the same owner.
+Retirement releases the channel; a carrier replacement preserves the same Rust
+owner, TypeScript host adapter, consumer callbacks, and checkpoint coordinator.
 The constructor receives fresh seed material directly. The channel owns its RNG;
 seed and RNG are excluded from persistence. Wallet bundles and fee-source results
 cross as structured values with exact `BigInt` amounts.
@@ -137,11 +138,14 @@ fail while the process continues—such as untrusted peer validation, a chain
 observation, or synchronous game-hand mutation—and its temporary working copy
 must disappear before capture.
 
-The live `SessionMachineRuntime` is the only dirty/coalescing scheduler. It owns
+Application owns the TypeScript session instance and its startup/retirement;
+wallet connection attempts do not own or clear that session. WASM initialization
+uses a shared loader, and restore invokes the existing Rust session directly.
+The live `SessionController` is the only dirty/coalescing scheduler. It owns
 protocol/controller/UI/transport drains and folds preference, history, funding,
 fee, and rejection mutations into the same quiescent snapshot. Channel-funding
 and fee-attachment owners still checkpoint a reservation before mutating the
-provider. Before a committed runtime has serializable WASM fields and becomes
+provider. Before session execution has serializable WASM fields and becomes
 the persistence owner, reliable negotiation, rejection, and other explicit
 product boundaries build and write a whole-root snapshot immediately.
 `StorageRepository` owns the in-memory aggregate, storage authority, and exact
@@ -860,13 +864,15 @@ Shared frontend state owns only lifecycle facts: membership and protocol IDs,
 origins, keyed presentation, active-game type, and terminal facts. Each game
 package alone owns its concrete mutable hand and opaque saved state. Fresh hands
 come from accepted initialization terms; restored hands come directly from that
-package's current saved state. `SessionMachineRuntime.activeHand` is only a
+package's current saved state. `SessionController.activeHand` is only a
 cache rebuilt from and snapshotted back into canonical `handState`, never a
-second authority. For a protocol action the package mutates its hand first and
-the browser retains the previous canonical hand only as a synchronous rollback
-checkpoint. Rust rejection restores both cache and model; acceptance snapshots
-the complete hand and persists it atomically with Rust's prepared-action queue.
-There is no durable candidate layer or shared inspection of package fields.
+second authority. For a protocol action the package calls Rust first. Rejection
+returns to the calling game UI for feedback and local draft cleanup; acceptance lets the
+package apply its local update and report `state-changed` in the same synchronous
+turn. The browser batches the hand and Rust's prepared-action queue into one
+checkpoint and UI publication. Rust's `LocalActionApplied` event independently
+advances the general turn/banner state. There is no optimistic hand rollback,
+durable candidate layer, or shared inspection of package fields.
 
 Proposal persistence stores the exact opaque Bencodex parameter value together
 with the generic player-A/player-B terms and sender orientation. Each package
@@ -906,17 +912,25 @@ one-shot execution of Rust-issued opaque attempts, and its fee-specific
 owners. They share provider adapters and readiness epochs, but there is no
 generic wallet-operation, settlement, or session cancellation owner.
 
-`SessionMachineRuntime` is constructed inert, so render-time construction
-cannot claim protocol ownership. Its committed React layout effect installs the
-render callback and activates runtime processing; the controller attaches
-persistence and reliable-commit ownership only after serializable WASM fields
-exist. React cleanup clears only that render callback. Protocol retirement belongs to `SessionController`
-cleanup, including terminal cleanup and replacement of the committed runtime.
-The controller retains the committed runtime across presentation unmounts, so a
-renderer remount resumes the same accumulated model rather than reconstructing
-one from an older checkpoint.
+The TypeScript backend lives in `lib/application`, `lib/wallet`, and
+`lib/session`; React presentation lives in components and hooks. Application
+composes wallet, hub, recovery and Rust session execution and publishes ordered
+view batches. Its GUI surface is snapshot/subscription/typed intent dispatch;
+views receive no provider, controller, transport or persistence bootstrap.
+`HubConnection` emits tagged events; peer reliability receives only the carrier's
+send capability. WalletConnect normalization remains in the wallet adapter.
+Application selects the wallet through `SessionController.setWallet`; the session
+owns the binding and readiness subscription across transient reconnects.
 
-Once activated, `SessionMachineRuntime` is the sole active browser commit
+`SessionController` owns both session execution and checkpoint ordering. Backend
+session setup activates this single owner; it does not install a second runtime
+or command interpreter. Persistence and reliable-commit ownership attach when
+serializable WASM fields exist. View unsubscribe/remount only changes presentation
+subscriptions. Checkpoint assembly is pure, while session and terminal completion
+install the captured root before writing, retaining existing notification and
+failure ordering.
+
+Once activated, `SessionController` is the sole active browser commit
 coordinator. It drains every consequence of a stimulus to a fixed point:
 reducer work, commands, controller/WASM results, generated events, UX-model
 updates, and reliable transport changes. It then synchronously captures one
@@ -930,12 +944,11 @@ and flicker. The runtime directly provides the peer
 serialized boundary and returns a typed promise that resolves or rejects when
 that work executes, including work queued behind an in-progress commit.
 
-The controller's single committed runtime slot is the exclusive, retire-aware
-authority. Committing a replacement retires the previous runtime; takeover,
-reload, and controller cleanup retire the current one. Retirement discards
-queued work and rejects pending promises and not-yet-launched effects, so an
-obsolete owner cannot publish, persist, release, or transfer work into a later
-authority generation. A known reservation returned late may be cancelled
+The session owns its execution authority for its entire lifetime. Takeover,
+reload, terminal sealing, and cleanup retire that authority; there is no
+replaceable runtime slot. Retirement discards queued work and rejects pending
+promises and not-yet-launched effects, so an obsolete owner cannot publish,
+persist, release, or transfer work into a later authority generation. A known reservation returned late may be cancelled
 best-effort through its original provider, but the new owner resumes only
 obligations present in its claimed durable snapshot.
 
@@ -1023,7 +1036,7 @@ pre-ID Cloud or WalletConnect uncertainty launches exactly one automatic new
 attempt on each later provider-readiness epoch, including after reload, with no
 timer or immediate loop.
 
-`BootRecoveryBoundary` owns pending wipe, read-only preclaim inspection,
+`Recovery` (`lib/application/Recovery.ts`) owns pending wipe, read-only preclaim inspection,
 atomic claim-and-read, one strict rehydrate, takeover, reset retry, and
 authority loss. Takeover is the old owner's death, not a handoff. The winning
 claim returns the exact durable aggregate read in the claim transaction; only
@@ -1046,7 +1059,7 @@ deletion remains on recovery UI with Retry.
 Ordinary IndexedDB I/O failure never gates use, transaction release, or
 cancellation; the in-memory aggregate remains pending for a later checkpoint.
 `StorageAuthorityLostError` and `StorageAuthorityRequiredError` instead mean
-the old owner is dead: Shell destroys its controller and suppresses its pending
+the old owner is dead: Application destroys its controller and suppresses its pending
 writes/effects. A new claimant independently rehydrates the latest flushed
 durable whole root; no controller snapshot or transient work crosses the
 authority generation. Failed cancellation may leave an optional retry hint while the session remains

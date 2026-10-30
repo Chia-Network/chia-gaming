@@ -314,8 +314,7 @@ export interface PeerConnectionResult {
   sendAck: (ackMsgno: number) => boolean;
   /** Returns false when the hub WS is not OPEN. */
   sendKeepalive: () => boolean;
-  hostLog: (msg: string) => void;
-  close: () => void;
+
   receivePolicy?: import('../lib/session/receivePolicy').ReadonlySessionReceivePolicy;
 }
 

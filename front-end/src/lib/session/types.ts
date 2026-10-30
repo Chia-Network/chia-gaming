@@ -1,4 +1,10 @@
 import type {
+  HandProposal as HostHandProposal,
+  PersistedGameState,
+  SettlementOutcome,
+} from '@games/host';
+import type { CatalogGameType } from '../../generated/gamePresets';
+import type {
   ChannelStatus,
   ChannelStatusPayload,
   GameConnectionState,
@@ -6,18 +12,15 @@ import type {
   SessionDisposition,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import type { RestoreStatus } from '../../hooks/SessionController';
+import type { RestoreStatus } from './SessionController';
 import type { ComposeDraftState } from './composeDraft';
-import type { PersistedGameState, SettlementOutcome } from '@games/host';
+import type { ProposalOrigin } from './proposalOrigin';
 
 export type { HandProposalBase } from '@games/host';
 export type { ProposalOrigin } from './proposalOrigin';
-import type { HandProposal as HostHandProposal } from '@games/host';
-import type { ProposalOrigin } from './proposalOrigin';
-import type { CatalogGameType } from '../../generated/gamePresets';
+export type { CatalogGameType };
 
 export type RegisteredGameType = CatalogGameType;
-export type { CatalogGameType };
 
 export type LocalActionKind = 'make_move' | 'accept_settlement' | 'cheat';
 
@@ -251,5 +254,5 @@ export interface StatusBarBalanceSegment {
   value2?: string;
 }
 
-export type { PeerLiveness, SessionPhase };
 export type { PersistedGameState } from '@games/host';
+export type { PeerLiveness, SessionPhase };

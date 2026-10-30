@@ -179,10 +179,13 @@ describe('PeerSession', () => {
       const msgPayload = reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]));
       ps.deliverRawPeerMessage('peer1', msgPayload);
 
-      ps.registerMessageHandler({
-        handler: (msgno, data) => received.push({ type: 'msg', msgno, data }),
-        ackHandler: (msgno) => received.push({ type: 'ack', msgno }),
-        keepaliveHandler: () => received.push({ type: 'keepalive', msgno: 0 }),
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        failure: () => {},
+        deliver: (msgno, data) => received.push({ type: 'msg', msgno: Number(msgno), data }),
+        acknowledged: (msgno) => received.push({ type: 'ack', msgno: Number(msgno) }),
+        keepalive: () => received.push({ type: 'keepalive', msgno: 0 }),
       });
 
       expect(received).toEqual([{ type: 'msg', msgno: 1, data: new Uint8Array([0xaa, 0xbb]) }]);
@@ -193,10 +196,13 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<{ type: string; msgno: number }> = [];
 
-      ps.registerMessageHandler({
-        handler: (msgno) => received.push({ type: 'msg', msgno }),
-        ackHandler: (msgno) => received.push({ type: 'ack', msgno }),
-        keepaliveHandler: () => received.push({ type: 'keepalive', msgno: 0 }),
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        failure: () => {},
+        deliver: (msgno) => received.push({ type: 'msg', msgno: Number(msgno) }),
+        acknowledged: (msgno) => received.push({ type: 'ack', msgno: Number(msgno) }),
+        keepalive: () => received.push({ type: 'keepalive', msgno: 0 }),
       });
 
       const payload = reliableFrame(0x01, 1, new Uint8Array([0xff]));
@@ -209,10 +215,13 @@ describe('PeerSession', () => {
       const ps = new PeerSession('peer1', 'session1', conn);
       const received: Array<unknown> = [];
 
-      ps.registerMessageHandler({
-        handler: (msgno, data) => received.push({ msgno, data }),
-        ackHandler: () => {},
-        keepaliveHandler: () => {},
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        failure: () => {},
+        deliver: (msgno, data) => received.push({ msgno, data }),
+        acknowledged: () => {},
+        keepalive: () => {},
       });
 
       const payload = reliableFrame(0x01, 1, new Uint8Array([0xaa]));
@@ -256,12 +265,16 @@ describe('PeerSession', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
       const handlers = {
-        handler: jest.fn(),
-        ackHandler: jest.fn(),
-        keepaliveHandler: jest.fn(),
-        failureHandler: jest.fn(),
+        deliver: jest.fn(),
+        acknowledged: jest.fn(),
+        keepalive: jest.fn(),
+        failure: jest.fn(),
       };
-      ps.registerMessageHandler(handlers);
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        ...handlers,
+      });
       const otherSession = new Uint8Array(16).fill(0xff);
 
       expect(
@@ -270,21 +283,23 @@ describe('PeerSession', () => {
       expect(
         ps.deliverRawPeerMessage('peer1', reliableFrame(0x03, 0, undefined, otherSession)),
       ).toBe(false);
-      expect(handlers.ackHandler).not.toHaveBeenCalled();
-      expect(handlers.keepaliveHandler).not.toHaveBeenCalled();
-      expect(handlers.failureHandler).not.toHaveBeenCalled();
+      expect(handlers.acknowledged).not.toHaveBeenCalled();
+      expect(handlers.keepalive).not.toHaveBeenCalled();
+      expect(handlers.failure).not.toHaveBeenCalled();
       expect(ps.liveness).toBeNull();
     });
 
     it('escalates mismatched data from the selected peer', () => {
       const conn = mockHubConnection();
       const ps = new PeerSession('peer1', 'session1', conn);
-      const failureHandler = jest.fn();
-      ps.registerMessageHandler({
-        handler: jest.fn(),
-        ackHandler: jest.fn(),
-        keepaliveHandler: jest.fn(),
-        failureHandler,
+      const failure = jest.fn();
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        deliver: jest.fn(),
+        acknowledged: jest.fn(),
+        keepalive: jest.fn(),
+        failure,
       });
 
       expect(
@@ -293,13 +308,13 @@ describe('PeerSession', () => {
           reliableFrame(0x01, 1, new Uint8Array([0xaa]), new Uint8Array(16).fill(0xff)),
         ),
       ).toBe(false);
-      expect(failureHandler).toHaveBeenCalledWith(expect.stringContaining('session mismatch'));
+      expect(failure).toHaveBeenCalledWith(expect.stringContaining('session mismatch'));
       expect(ps.liveness).toBe('dead');
       ps.deliverRawPeerMessage(
         'peer1',
         reliableFrame(0x01, 1, new Uint8Array([0xaa]), new Uint8Array(16).fill(0xff)),
       );
-      expect(failureHandler).toHaveBeenCalledTimes(1);
+      expect(failure).toHaveBeenCalledTimes(1);
     });
 
     it.each(['proposal', 'active'] as const)(
@@ -385,6 +400,11 @@ describe('PeerSession', () => {
         sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 10 }),
       );
       const failures: string[] = [];
+      const reportFailure = ps.reliableTransport.reportFailure.bind(ps.reliableTransport);
+      jest.spyOn(ps.reliableTransport, 'reportFailure').mockImplementation((reason) => {
+        failures.push(reason);
+        reportFailure(reason);
+      });
 
       expect(
         ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]))),
@@ -392,11 +412,13 @@ describe('PeerSession', () => {
       expect(
         ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 2, new Uint8Array([0xcc]))),
       ).toBe(false);
-      ps.registerMessageHandler({
-        handler: () => fail('cleared data must not drain'),
-        ackHandler: () => fail('cleared ack must not drain'),
-        keepaliveHandler: () => fail('cleared keepalive must not drain'),
-        failureHandler: (reason) => failures.push(reason),
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        deliver: () => fail('cleared data must not drain'),
+        acknowledged: () => fail('cleared ack must not drain'),
+        keepalive: () => fail('cleared keepalive must not drain'),
+        failure: () => {},
       });
 
       expect(ps.liveness).toBe('dead');
@@ -416,10 +438,13 @@ describe('PeerSession', () => {
 
       expect(ps.deliverRawPeerMessage('peer1', frame)).toBe(true);
       expect(ps.deliverRawPeerMessage('peer1', frame)).toBe(true);
-      ps.registerMessageHandler({
-        handler: (msgno) => received.push(msgno),
-        ackHandler: () => {},
-        keepaliveHandler: () => {},
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        failure: () => {},
+        deliver: (msgno) => received.push(Number(msgno)),
+        acknowledged: () => {},
+        keepalive: () => {},
       });
 
       expect(received).toEqual([1]);
@@ -691,15 +716,22 @@ describe('PeerSession', () => {
         sessionReceivePolicy({ maxPeerBodyBytes: 1 }),
       );
       const failures: string[] = [];
+      const reportFailure = ps.reliableTransport.reportFailure.bind(ps.reliableTransport);
+      jest.spyOn(ps.reliableTransport, 'reportFailure').mockImplementation((reason) => {
+        failures.push(reason);
+        reportFailure(reason);
+      });
 
       expect(
         ps.deliverRawPeerMessage('peer1', reliableFrame(0x01, 1, new Uint8Array([0xaa, 0xbb]))),
       ).toBe(false);
-      ps.registerMessageHandler({
-        handler: () => {},
-        ackHandler: () => {},
-        keepaliveHandler: () => {},
-        failureHandler: (reason) => failures.push(reason),
+      ps.reliableTransport.attachConsumer({
+        isReady: () => true,
+        persist: async () => {},
+        deliver: () => {},
+        acknowledged: () => {},
+        keepalive: () => {},
+        failure: () => {},
       });
 
       expect(failures[0]).toContain('message body');

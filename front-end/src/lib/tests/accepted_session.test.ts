@@ -1,5 +1,4 @@
-import { ReliablePeerTransport } from '../../services/PeerSession';
-import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { PeerSession } from '../../services/PeerSession';
 import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
 import { setTestPersistence } from './message_protocol.harness';
 
@@ -28,28 +27,25 @@ test('the accepted Rust owner delivers a handshake and checkpoints its ACK witho
   projection.mockRestore();
 });
 
-test('replacing the carrier keeps the existing accepted Rust owner and its channel', async () => {
-  const { blob, cradle } = await createAcceptedBlob();
+test('attaching a hub route after restore preserves the accepted adapter and its callbacks', async () => {
+  const { blob, cradle, sentAcks } = await createAcceptedBlob();
   const owner = blob.getPeerProtocol();
-  const checkpoint = owner.snapshot();
+  const transport = blob.reliableTransport;
   const before = cradle.serialize();
-  const acks: bigint[] = [];
-  const replacement = new ReliablePeerTransport(
-    checkpoint,
-    DEFAULT_SESSION_RECEIVE_POLICY,
-    () => true,
-    (ack) => {
-      acks.push(ack);
-      return true;
-    },
+  const peer = new PeerSession(
+    'peer',
+    owner.snapshot().sessionId,
+    { sendToPeer: () => false },
+    undefined,
+    transport,
   );
-  blob.attachReliableTransport(replacement);
-  expect(blob.getPeerProtocol()).toBe(owner);
+  expect(peer.reliableTransport).toBe(transport);
+  expect(peer.reliableTransport.protocol).toBe(owner);
   expect(cradle.serialize()).toEqual(before);
 
-  blob.deliverMessage(1n, await handshakeA());
+  peer.reliableTransport.receiveData(1n, await handshakeA());
   await blob.flushPendingWork();
-  expect(acks).toEqual([1n]);
+  expect(sentAcks).toEqual([1]);
   expect(cradle.serialize()).not.toEqual(before);
 });
 

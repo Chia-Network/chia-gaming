@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { RestoreStatus } from '../../hooks/SessionController';
-import { terminalGameHandSource, type GameHandSource } from '../gameHandSource';
-import type { GameConnectionState, SessionPhase } from '../../types/ChiaGaming';
-import type { ComposeDraftState } from './composeDraft';
+import { terminalGameHandSource, type GameHandSource } from '../lib/gameHandSource';
+import { restoreRegisteredGameHand } from '../lib/gameRegistry';
+import type { ComposeDraftState } from '../lib/session/composeDraft';
+import type { selectGameSpecificView } from '../lib/session/selectors';
+import {
+  selectGameSessionView,
+  selectIProposedHand,
+  selectIncomingProposal,
+  selectSessionPhase,
+  selectGameSpecificView as selectTerminalGameSpecificView,
+} from '../lib/session/selectors';
+import type { RestoreStatus } from '../lib/session/SessionController';
+import type { TerminalSessionPresentation } from '../lib/session/sessionFrontend';
 import type {
   BetweenHandModeModel,
   ChannelStatusModel,
@@ -12,16 +21,9 @@ import type {
   PendingProposalModel,
   QueuedNotificationModel,
   SessionModel,
-} from './types';
-import type { selectGameSpecificView } from './selectors';
-import {
-  selectGameSessionView,
-  selectIProposedHand,
-  selectIncomingProposal,
-  selectGameSpecificView as selectTerminalGameSpecificView,
-  selectSessionPhase,
-} from './selectors';
-import { restoreRegisteredGameHand } from '../gameRegistry';
+} from '../lib/session/types';
+import type { GameConnectionState, SessionPhase } from '../types/ChiaGaming';
+export type { TerminalSessionPresentation } from '../lib/session/sessionFrontend';
 
 export interface UseGameSessionResult {
   sessionModel: SessionModel;
@@ -68,13 +70,6 @@ export interface UseGameSessionResult {
   dismissChannel: () => void;
   dismissGame: () => void;
   gameSpecificView: ReturnType<typeof selectGameSpecificView>;
-}
-
-export interface TerminalSessionPresentation {
-  model: SessionModel;
-  myName?: string;
-  opponentName?: string;
-  iStarted: boolean;
 }
 
 const NOOP = () => {};

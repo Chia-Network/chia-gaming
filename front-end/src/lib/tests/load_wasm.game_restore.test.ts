@@ -1,10 +1,6 @@
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { SessionController } from '../../hooks/SessionController';
-import { restoreSession } from '../../hooks/blobSingleton';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { storageRepository } from '../session/storageRepository';
-import { decodePersistedGameState } from '../gameRegistry';
+import { observeWasmEvents } from './session_execution.harness';
 import { protocolIdForCatalog } from '../gameIdentities';
+import { decodePersistedGameState } from '../gameRegistry';
 import { SESSION_DB_NAME } from '../session/indexedDb';
 import {
   channelStatusModelFromPayload,
@@ -12,8 +8,13 @@ import {
   INITIAL_GAME_TERMINAL_MODEL,
   snapshotFromSessionModel,
 } from '../session/model';
-import { krunkStateCodec } from './game_state_helpers';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { restoreSession } from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
 import type { HandProposal } from '../session/types';
+import { ensureWasmLoaded } from '../session/wasmLoader';
+import { krunkStateCodec } from './game_state_helpers';
 import {
   createActivePair,
   exchangeUntilIdle,
@@ -65,14 +66,14 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
     const mover = cradles[1].blob!;
     let proposerActiveIds: string[] = [];
     let moverActiveIds: string[] = [];
-    const proposerSubscription = proposer.getObservable().subscribe((event) => {
+    const proposerSubscription = observeWasmEvents(proposer).subscribe((event) => {
       if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
         proposerActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
           String(member.id),
         );
       }
     });
-    const moverSubscription = mover.getObservable().subscribe((event) => {
+    const moverSubscription = observeWasmEvents(mover).subscribe((event) => {
       if (event.type === 'notification' && event.data.ProposalAcceptedGroup) {
         moverActiveIds = event.data.ProposalAcceptedGroup.members.map((member) =>
           String(member.id),
@@ -162,13 +163,11 @@ async function runRealGameRestoreCases(poller: BlockchainPoller): Promise<void> 
       sendMessage: () => true,
       sendAck: () => true,
       sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
     });
     try {
       const bootstrap = rehydrateDurableApplicationState(reloaded);
       await restored.beginRestore(
-        restoreSession(restored, bootstrap, new WasmStateInit(fetchPreset)),
+        restoreSession(restored, bootstrap, await ensureWasmLoaded(fetchPreset)),
       );
       assert.equal(restored.getRestoreStatus(), 'restored');
       assert.deepEqual(

@@ -1,13 +1,13 @@
-import { restorePeerState } from './peer_protocol.harness';
 import { createElement } from 'react';
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { act, create } from 'react-test-renderer';
+import { restorePeerState } from './peer_protocol.harness';
 
-import { useSessionRejection } from '../../hooks/useSessionRejection';
 import type { HubConnection } from '../../services/HubConnection';
 import { PeerSession } from '../../services/PeerSession';
-import { storageRepository } from '../session/storageRepository';
-import type { DurableRejectionTransport } from '../session/saveEnvelope';
+import { createSessionRejection } from '../application/sessionRejection';
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from '../session/indexedDb';
+import type { DurableRejectionTransport } from '../session/saveEnvelope';
+import { storageRepository } from '../session/storageRepository';
 
 function mockHub(): HubConnection & { sendToPeer: jest.Mock } {
   return {
@@ -21,13 +21,12 @@ function mockRootPatching(): void {
     .mockImplementation((transform) => transform(storageRepository.loadState()));
 }
 
-describe('useSessionRejection authority owner', () => {
-  let renderer: ReactTestRenderer | undefined;
+describe('createSessionRejection authority owner', () => {
   let primary: PeerSession | null;
-  let api: ReturnType<typeof useSessionRejection>;
+  let api: ReturnType<typeof createSessionRejection>;
 
   function Harness() {
-    api = useSessionRejection({
+    api = createSessionRejection({
       getPrimaryPeer: () => primary,
       releasePrimaryPeer: (peer) => {
         if (primary === peer) primary = null;
@@ -37,7 +36,7 @@ describe('useSessionRejection authority owner', () => {
   }
 
   afterEach(() => {
-    act(() => renderer?.unmount());
+    api?.dispose();
     jest.restoreAllMocks();
   });
 
@@ -53,7 +52,7 @@ describe('useSessionRejection authority owner', () => {
       unackedMessages: [{ msgno: 1n, msg: new Uint8Array([0x64, 0x65]) }],
     };
     act(() => {
-      renderer = create(createElement(Harness));
+      Harness();
     });
     await act(async () => {
       await api.restore(hub, [tombstone]);
