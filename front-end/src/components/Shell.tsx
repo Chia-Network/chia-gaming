@@ -85,6 +85,7 @@ import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockc
 import {
   BALANCE_POLL_INTERVAL_MS,
   CHAIN_POLL_INTERVAL_MS,
+  TOP_UP_BALANCE_POLL_INTERVAL_MS,
   type BlockchainPoller,
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
@@ -146,6 +147,7 @@ import { needsConnectionSetupPrompt, needsWalletPairing } from '../util/connecti
 import { isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
+import { fundingShortfall, WalletTopUp } from './WalletTopUp';
 
 import { HubPicker } from './HubPicker';
 
@@ -1828,6 +1830,19 @@ const Shell = () => {
       stopBalancePolling();
     };
   }, [stopBalancePolling]);
+
+  // Shortfall for the session the user is being asked to accept. Accepting
+  // without it would only fail later at channel funding.
+  const consentBuyIn = pendingAdvisory?.my_amount ?? pendingProposal?.responder_amount ?? null;
+  const consentShortfall =
+    consentBuyIn === null ? 0n : fundingShortfall(balance, consentBuyIn, defaultFee);
+  const awaitingTopUp = consentShortfall > 0n;
+  useEffect(() => {
+    if (!awaitingTopUp || !activeBlockchainPoller) return;
+    activeBlockchainPoller.setBalanceInterval(TOP_UP_BALANCE_POLL_INTERVAL_MS);
+    return () => activeBlockchainPoller.setBalanceInterval(BALANCE_POLL_INTERVAL_MS);
+  }, [awaitingTopUp, activeBlockchainPoller]);
+  const topUpOptions = activeBlockchainRef.current?.getTopUpOptions?.() ?? null;
 
   // QR code generation (inline in wallet tab, type-agnostic)
   useEffect(() => {
@@ -3702,11 +3717,16 @@ const Shell = () => {
             unrollTimeout={pendingAdvisory.unroll_timeout}
           />
         </p>
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
-            disabled={!walletConnected || !blockchainReady}
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Accept
           </button>
@@ -3732,11 +3752,16 @@ const Shell = () => {
             unrollTimeout={pendingProposal.unroll_timeout}
           />
         </p>
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
-            disabled={!walletConnected || !blockchainReady}
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Accept
           </button>
@@ -3923,6 +3948,7 @@ const Shell = () => {
                     {balance.toLocaleString()} {currency.mojos}
                   </p>
                 )}
+                {topUpOptions && <WalletTopUp options={topUpOptions} shortfall={0n} />}
                 <div className="w-full max-w-xs text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>

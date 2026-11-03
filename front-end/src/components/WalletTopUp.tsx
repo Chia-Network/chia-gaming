@@ -124,6 +124,11 @@ export function WalletTopUp(props: WalletTopUpProps) {
       }
       return;
     }
+    // Reopening by name would reload the page and lose the purchase in progress.
+    if (popupRef.current && !popupRef.current.closed) {
+      popupRef.current.focus();
+      return;
+    }
     const popup = openBuyPopup(url);
     popupRef.current = popup;
     setBuyState(popup ? 'idle' : 'popup-blocked');

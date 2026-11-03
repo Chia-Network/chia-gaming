@@ -83,16 +83,16 @@ describe('WalletTopUp Buy', () => {
     return renderer!;
   }
 
+  function textOf(node: ReactTestInstance | string): string {
+    return typeof node === 'string' ? node : node.children.map(textOf).join('');
+  }
+
   function text(r: ReactTestRenderer): string {
-    const collect = (node: ReactTestInstance | string): string =>
-      typeof node === 'string' ? node : node.children.map(collect).join('');
-    return collect(r.root);
+    return textOf(r.root);
   }
 
   async function clickBuy(r: ReactTestRenderer): Promise<void> {
-    const buy = r.root.find(
-      (node) => node.type === 'button' && text({ root: node } as ReactTestRenderer) === 'Buy XCH',
-    );
+    const buy = r.root.find((node) => node.type === 'button' && textOf(node) === 'Buy XCH');
     await act(async () => {
       buy.props.onClick();
     });
@@ -106,7 +106,7 @@ describe('WalletTopUp Buy', () => {
   }
 
   it('opens a popup and shows the purchase once that popup reports it', async () => {
-    const popup = {};
+    const popup = { closed: false, focus: jest.fn() };
     const open = jest.fn(() => popup);
     win.open = open;
     const r = render();
@@ -117,6 +117,10 @@ describe('WalletTopUp Buy', () => {
       'chia-gaming-cloud-wallet-buy',
       expect.stringContaining('popup=yes'),
     );
+    // A second click brings back the open purchase instead of reloading it.
+    await clickBuy(r);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.focus).toHaveBeenCalledTimes(1);
 
     const submitted = { type: 'chia-cloud-wallet/buy-order', status: 'submitted' };
     postMessage('https://evil.example', popup, submitted);
