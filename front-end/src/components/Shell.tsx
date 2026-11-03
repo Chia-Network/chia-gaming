@@ -4007,18 +4007,28 @@ const Shell = () => {
                 {walletIdentity && grantedWallets.length > 1 ? (
                   <label className="flex flex-col gap-1 w-full max-w-xs text-sm text-canvas-text">
                     <span>Play with</span>
-                    <select
-                      value={walletIdentity.id}
-                      disabled={sessionPhase !== 'none' || connecting || switchingWallet}
-                      onChange={(event) => void handleSwitchWallet(event.target.value)}
-                      className="px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {grantedWallets.map((wallet) => (
-                        <option key={wallet.id} value={wallet.id}>
-                          {walletLabel(wallet)}
-                        </option>
-                      ))}
-                    </select>
+                    {/* appearance-none drops the platform chrome, which ignores padding, so
+                        the select sizes like the inputs; the chevron replaces its arrow. */}
+                    <div className="relative">
+                      <select
+                        value={walletIdentity.id}
+                        disabled={sessionPhase !== 'none' || connecting || switchingWallet}
+                        onChange={(event) => void handleSwitchWallet(event.target.value)}
+                        className="w-full appearance-none pl-3 pr-8 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {grantedWallets.map((wallet) => (
+                          <option key={wallet.id} value={wallet.id}>
+                            {walletLabel(wallet)}
+                          </option>
+                        ))}
+                      </select>
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-canvas-text"
+                      >
+                        ▾
+                      </span>
+                    </div>
                     {sessionPhase !== 'none' && (
                       <span className="text-xs">Finish the session to switch wallets.</span>
                     )}
