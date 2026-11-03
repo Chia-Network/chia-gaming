@@ -143,6 +143,12 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
   private depositAddress: string | null = null;
   private walletName: string | null = null;
+  /**
+   * Bumped whenever the signed-in session ends or is replaced. A wallet read
+   * that started under an earlier session must not apply to the current one.
+   * Token refresh keeps the session, so it does not bump this.
+   */
+  private sessionGeneration = 0;
 
   private auth: CloudWalletAuthState | null = null;
   private walletOfferProvider: WalletOfferProvider | null = null;
@@ -299,6 +305,20 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   /** `beforeReady` runs once the wallet is fetched and may throw to stop. */
   async startMonitoring(beforeReady: () => void = () => {}): Promise<void> {
     const walletId = this.requireWalletId();
+    const wallet = await this.readWallet(walletId);
+    beforeReady();
+    this.applyWallet(wallet);
+    this.monitoringReady = true;
+    this.fireConnectionChange(true);
+    log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${wallet.puzzleHash}`);
+  }
+
+  /** Reads a wallet through the grant without changing any state. */
+  private async readWallet(walletId: string): Promise<{
+    puzzleHash: string;
+    name: string | null;
+    address: string | null;
+  }> {
     const data = await this.gql<{
       wallet: {
         id: string;
@@ -322,13 +342,17 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (!ph || ph.length !== 64) {
       throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
-    beforeReady();
-    this.blockchainAddressData = { puzzleHash: ph };
-    this.depositAddress = data.wallet.address?.address || null;
-    this.walletName = data.wallet.name || null;
-    this.monitoringReady = true;
-    this.fireConnectionChange(true);
-    log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${ph}`);
+    return {
+      puzzleHash: ph,
+      name: data.wallet.name || null,
+      address: data.wallet.address?.address || null,
+    };
+  }
+
+  private applyWallet(wallet: { puzzleHash: string; name: string | null; address: string | null }) {
+    this.blockchainAddressData = { puzzleHash: wallet.puzzleHash };
+    this.depositAddress = wallet.address;
+    this.walletName = wallet.name;
   }
 
   // spendableAmount excludes coins locked in pending offers and clawback
@@ -385,21 +409,22 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     }));
   }
 
-  // Monitoring reads the wallet through the grant, so a wallet outside it
-  // fails here. Monitoring state only changes once that read succeeds, so a
-  // failure restores the previous wallet and leaves it fully in use.
+  // The new wallet is read through the grant first, so one outside it fails
+  // before anything changes. Its id, address, and name then switch together,
+  // with no await between them for a render to see a mix of two wallets.
   async selectWallet(walletId: string): Promise<void> {
-    const auth = this.auth;
-    if (!auth) {
+    if (!this.auth) {
       throw new Error('Cloud Wallet is not signed in');
     }
-    this.persistAuth({ ...auth, walletId });
-    try {
-      await this.startMonitoring();
-    } catch (err) {
-      this.persistAuth({ ...this.auth!, walletId: auth.walletId });
-      throw err;
+    const generation = this.sessionGeneration;
+    const wallet = await this.readWallet(walletId);
+    // A disconnect, or a new sign-in after one, during the read ends this switch.
+    if (generation !== this.sessionGeneration || !this.auth) {
+      throw new Error('Cloud Wallet was disconnected while switching wallets');
     }
+    this.persistAuth({ ...this.auth, walletId });
+    this.applyWallet(wallet);
+    log(`[cloud-blockchain] switched wallet=${walletId} ph=${wallet.puzzleHash}`);
   }
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
@@ -878,6 +903,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (fresh) {
       clearCloudWalletAuth();
       this.auth = null;
+      this.sessionGeneration++;
       this.monitoringReady = false;
       this.fireConnectionChange(false);
     }
@@ -957,6 +983,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     this.loginAbort = null;
     clearCloudWalletAuth();
     this.auth = null;
+    this.sessionGeneration++;
     this.walletOfferProvider = null;
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: '' };

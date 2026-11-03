@@ -613,6 +613,123 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_other');
   });
 
+  describe('while the new wallet is still being read', () => {
+    const wallets: Record<string, { name: string; address: string }> = {
+      Wallet_stored: { name: 'Main', address: 'xch1main' },
+      Wallet_other: { name: 'Game Vault', address: 'xch1game' },
+    };
+    let releaseHeldRead: () => void = () => {};
+    let heldReadStarted: Promise<void> = Promise.resolve();
+
+    /** Answers every wallet read, holding the first read of `held` until released. */
+    function mockGrant(held: string) {
+      let holding = true;
+      let started: () => void = () => {};
+      heldReadStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      setTestGlobal(
+        'fetch',
+        jest.fn(async (_url: string, init?: { body?: string }) => {
+          const body = JSON.parse(String(init?.body ?? '{}')) as {
+            variables?: { id?: string };
+          };
+          const walletId = body.variables?.id ?? '';
+          if (walletId === held && holding) {
+            holding = false;
+            started();
+            await new Promise<void>((resolve) => {
+              releaseHeldRead = resolve;
+            });
+          }
+          const wallet = wallets[walletId];
+          const data = {
+            wallet: wallet
+              ? {
+                  id: walletId,
+                  name: wallet.name,
+                  address: { puzzleHash: 'ab'.repeat(32), address: wallet.address },
+                }
+              : null,
+          };
+          return { status: 200, ok: true, text: async () => JSON.stringify({ data }) };
+        }),
+      );
+    }
+
+    const main = { id: 'Wallet_stored', name: 'Main', address: 'xch1main' };
+
+    it('keeps showing the current wallet in full until the switch completes', async () => {
+      mockGrant('Wallet_other');
+      void storageRepository.updatePreference({ key: 'network', value: 'mainnet' });
+      const iface = new CloudBlockchainInterface();
+      await (await iface.beginConnect('uid')).finalize();
+
+      const switching = iface.selectWallet('Wallet_other');
+      await heldReadStarted;
+      // No mix of the new id with the old address or Buy link.
+      expect(iface.getWalletIdentity()).toEqual(main);
+      expect(iface.getTopUpOptions()).toEqual({
+        buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_stored',
+        depositAddress: 'xch1main',
+      });
+      expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_stored');
+
+      releaseHeldRead();
+      await switching;
+      expect(iface.getWalletIdentity()).toEqual({
+        id: 'Wallet_other',
+        name: 'Game Vault',
+        address: 'xch1game',
+      });
+      expect(iface.getTopUpOptions()).toEqual({
+        buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_other',
+        depositAddress: 'xch1game',
+      });
+      storageRepository._resetForTests();
+    });
+
+    it('drops the switch when the wallet disconnects during the read', async () => {
+      mockGrant('Wallet_other');
+      const iface = new CloudBlockchainInterface();
+      await (await iface.beginConnect('uid')).finalize();
+
+      const switching = iface.selectWallet('Wallet_other');
+      await heldReadStarted;
+      await iface.disconnect();
+      releaseHeldRead();
+
+      await expect(switching).rejects.toThrow(/disconnected while switching/);
+      // The late read neither reconnects nor writes the signed-out session back.
+      expect(iface.isConnected()).toBe(false);
+      expect(iface.getWalletIdentity()).toBeNull();
+      expect(loadCloudWalletAuth()).toBeNull();
+    });
+
+    it('drops the switch when the user signs in again during the read', async () => {
+      mockGrant('Wallet_other');
+      const iface = new CloudBlockchainInterface();
+      await (await iface.beginConnect('uid')).finalize();
+
+      const switching = iface.selectWallet('Wallet_other');
+      await heldReadStarted;
+      await iface.disconnect();
+      saveCloudWalletAuth({
+        accessToken: 'access-token-2',
+        refreshToken: 'refresh-token-2',
+        expiresAt: Date.now() + 10 * 60_000,
+        walletId: 'Wallet_stored',
+      });
+      await (await iface.beginConnect('uid')).finalize();
+      releaseHeldRead();
+
+      // The read began under the earlier session, so it must not move the new one.
+      await expect(switching).rejects.toThrow(/disconnected while switching/);
+      expect(iface.getWalletIdentity()).toEqual(main);
+      expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_stored');
+    });
+  });
+
   it('fails the balance read when the wallet reports no XCH asset', async () => {
     mockEndpoints((_url, query) => {
       if (query.includes('spendableAmount')) {
