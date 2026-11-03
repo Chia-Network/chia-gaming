@@ -1,6 +1,11 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 
-import { fundingShortfall, isBuyOrderSubmitted, WalletTopUp } from '../../components/WalletTopUp';
+import {
+  _resetBuyPopupForTests,
+  fundingShortfall,
+  isBuyOrderSubmitted,
+  WalletTopUp,
+} from '../../components/WalletTopUp';
 
 describe('fundingShortfall', () => {
   it('counts the opening fee on top of the buy-in', () => {
@@ -73,6 +78,7 @@ describe('WalletTopUp Buy', () => {
   afterEach(() => {
     if (renderer) act(() => renderer?.unmount());
     renderer = null;
+    _resetBuyPopupForTests();
     Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
   });
 
@@ -81,6 +87,21 @@ describe('WalletTopUp Buy', () => {
       renderer = create(<WalletTopUp options={options} shortfall={100n} />);
     });
     return renderer!;
+  }
+
+  /** The Wallet tab and the New Session dialog each mount a WalletTopUp at once. */
+  function renderTwo(): [ReactTestRenderer, ReactTestRenderer] {
+    act(() => {
+      renderer = create(
+        <>
+          <WalletTopUp options={options} shortfall={0n} />
+          <WalletTopUp options={options} shortfall={100n} />
+        </>,
+      );
+    });
+    const [walletTab, dialog] = renderer!.root.findAllByType(WalletTopUp);
+    const asRenderer = (root: ReactTestInstance) => ({ root }) as ReactTestRenderer;
+    return [asRenderer(walletTab!), asRenderer(dialog!)];
   }
 
   function textOf(node: ReactTestInstance | string): string {
@@ -129,6 +150,40 @@ describe('WalletTopUp Buy', () => {
 
     postMessage('https://vault.chia.net', popup, submitted);
     expect(text(r)).toContain('Purchase placed.');
+  });
+
+  it('shares one buy window between the Wallet tab and the New Session dialog', async () => {
+    const popup = { closed: false, focus: jest.fn() };
+    const open = jest.fn(() => popup);
+    win.open = open;
+    const [walletTab, dialog] = renderTwo();
+
+    await clickBuy(walletTab);
+    // Buy in the dialog brings back the purchase the tab opened instead of reloading it.
+    await clickBuy(dialog);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.focus).toHaveBeenCalledTimes(1);
+
+    // The dialog reports a purchase made in the window the tab opened.
+    postMessage('https://vault.chia.net', popup, {
+      type: 'chia-cloud-wallet/buy-order',
+      status: 'submitted',
+    });
+    expect(textOf(dialog.root)).toContain('Purchase placed.');
+  });
+
+  it('opens a new buy window once the previous one was closed', async () => {
+    const first = { closed: false, focus: jest.fn() };
+    const second = { closed: false, focus: jest.fn() };
+    const open = jest.fn().mockReturnValueOnce(first).mockReturnValueOnce(second);
+    win.open = open;
+    const r = render();
+
+    await clickBuy(r);
+    first.closed = true;
+    await clickBuy(r);
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(first.focus).not.toHaveBeenCalled();
   });
 
   it('says so when the browser blocks the popup', async () => {

@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { getCurrencyLabels } from '../constants/currency';
 import { desktopCloudWalletBridge } from '../hooks/cloudWalletOAuth';
@@ -46,6 +46,18 @@ function formatXch(mojos: bigint): string {
   return frac ? `${whole}.${frac}` : whole;
 }
 
+/**
+ * The one buy window, shared by every WalletTopUp. The Wallet tab and the New
+ * Session dialog each mount one, and the window is opened by a fixed name, so
+ * a per-instance handle would let the second reopen it and reload a purchase
+ * in progress, or ignore the purchase message from a window the other opened.
+ */
+let buyPopup: Window | null = null;
+
+export function _resetBuyPopupForTests(): void {
+  buyPopup = null;
+}
+
 // Sized for the purchase wizard; the sign-in and approval popups are narrower.
 function openBuyPopup(url: string): Window | null {
   const width = 1000;
@@ -73,7 +85,6 @@ export function WalletTopUp(props: WalletTopUpProps) {
   const [showDeposit, setShowDeposit] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [buyState, setBuyState] = useState<BuyState>('idle');
-  const popupRef = useRef<Window | null>(null);
   const { state: copyState, copy } = useCopyToClipboard();
   const depositAddress = options?.depositAddress ?? null;
   const buyUrl = options?.buyUrl ?? null;
@@ -82,7 +93,7 @@ export function WalletTopUp(props: WalletTopUpProps) {
     if (!buyUrl) return;
     const buyOrigin = new URL(buyUrl).origin;
     const onMessage = (event: MessageEvent) => {
-      if (isBuyOrderSubmitted(event, buyOrigin, popupRef.current)) setBuyState('placed');
+      if (isBuyOrderSubmitted(event, buyOrigin, buyPopup)) setBuyState('placed');
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -125,13 +136,12 @@ export function WalletTopUp(props: WalletTopUpProps) {
       return;
     }
     // Reopening by name would reload the page and lose the purchase in progress.
-    if (popupRef.current && !popupRef.current.closed) {
-      popupRef.current.focus();
+    if (buyPopup && !buyPopup.closed) {
+      buyPopup.focus();
       return;
     }
-    const popup = openBuyPopup(url);
-    popupRef.current = popup;
-    setBuyState(popup ? 'idle' : 'popup-blocked');
+    buyPopup = openBuyPopup(url);
+    setBuyState(buyPopup ? 'idle' : 'popup-blocked');
   };
 
   if (!buyUrl && !depositAddress) {
