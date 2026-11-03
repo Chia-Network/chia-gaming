@@ -16,12 +16,21 @@ import { storageRepository } from '../session/storageRepository';
 import * as wasmInit from '../session/wasmLoader';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
-import { TERMINAL_INSTANCE, activeSave, baseSave } from './session_save_envelope.fixtures';
+import {
+  ACTIVE_INSTANCE,
+  TERMINAL_INSTANCE,
+  activeSave,
+  baseSave,
+} from './session_save_envelope.fixtures';
 
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { HubConnection } from '../../services/HubConnection';
 import { PeerSession, decodeReliableFrame, encodePeerAppMessage } from '../../services/PeerSession';
-import { INITIAL_CHANNEL_STATUS_MODEL, createSessionModel } from '../session/model';
+import {
+  INITIAL_CHANNEL_STATUS_MODEL,
+  INITIAL_GAME_TERMINAL_MODEL,
+  createSessionModel,
+} from '../session/model';
 
 jest.mock('../../components/GameSession', () => {
   const actual = jest.requireActual('../../components/GameSession');
@@ -183,6 +192,7 @@ describe('Shell production restore composition', () => {
       });
       renderer = null;
     }
+    jest.useRealTimers();
     jest.restoreAllMocks();
     process.off('unhandledRejection', onUnhandledRejection);
     storageRepository._resetForTests();
@@ -251,6 +261,89 @@ describe('Shell production restore composition', () => {
     await flushEffects();
     expect(unhandledRejections).toEqual([]);
   });
+
+  it.each([
+    { state: 'ResolvedUnrolled', restored: false },
+    { state: 'ResolvedStale', restored: false },
+    { state: 'ResolvedUnrolled', restored: true },
+    { state: 'ResolvedStale', restored: true },
+  ] as const)(
+    'matures abandonment while the game payout is pending in $state (restored=$restored)',
+    async ({ state, restored }) => {
+      const initialState = restored ? state : 'Active';
+      const pendingPayout = {
+        ...ACTIVE_INSTANCE,
+        presentation: 'finishing-spending' as const,
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      };
+      const model = createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: initialState } },
+        restore: { status: 'restored', error: null },
+        game: {
+          activeIds: ['game-1'],
+          currentHandIds: ['game-1'],
+          currentHandOrigin: 'local',
+          instances: { 'game-1': pendingPayout },
+        },
+      });
+      const session = stubApplicationSession(model);
+      session.controller.abandon = jest.fn();
+      jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+      await storageRepository.claimApplicationState();
+      const save = activeSave({
+        blockchainType: 'walletconnect',
+        hubUrl: 'https://hub.example.test',
+        activeTab: 'game',
+        sessionPeerId: 'p_' + '22'.repeat(16),
+        channelStatus: { state: initialState },
+        gameInstances: { 'game-1': pendingPayout },
+        waitingStateEnteredAt: restored ? BigInt(Date.now()) - 120_000n : null,
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      act(() => {
+        const application = createApplication();
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      });
+
+      if (!restored) {
+        jest.useFakeTimers();
+        act(() => {
+          session.publish({
+            ...model,
+            channel: { ...model.channel, status: { ...model.channel.status, state: 'Unrolling' } },
+          });
+          session.publish({
+            ...model,
+            channel: { ...model.channel, status: { ...model.channel.status, state } },
+          });
+        });
+        act(() => jest.advanceTimersByTime(119_999));
+        expect(renderer!.root.findByProps({ children: 'Waiting' }).props.disabled).toBe(true);
+        act(() => jest.advanceTimersByTime(1));
+      }
+
+      const abandon = renderer!.root.findByProps({ children: 'Abandon' });
+      expect(abandon.props.disabled).toBe(false);
+      act(() => abandon.props.onClick());
+      expect(renderer!.root.findByProps({ children: 'Abandon session?' })).toBeDefined();
+      expect(session.controller.abandon).not.toHaveBeenCalled();
+      act(() => {
+        const buttons = renderer!.root.findAll(
+          (node) => node.type === 'button' && node.props.children === 'Abandon',
+        );
+        buttons[buttons.length - 1].props.onClick();
+      });
+      expect(session.controller.abandon).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each([
     { peerId: undefined, ready: true, busy: false, presence: { busy: false } },

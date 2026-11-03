@@ -137,7 +137,11 @@ function isAbandonWaitingState(
   return !!state && ABANDON_WAITING_STATES.has(state);
 }
 function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolean): boolean {
-  return isChannelAbandonable(model?.channel.status, abandonEnabled);
+  return isChannelAbandonable(
+    model?.channel.status,
+    abandonEnabled,
+    (model?.game.activeIds.length ?? 0) > 0,
+  );
 }
 function savedChannelStatus(
   save: DurableApplicationState,
