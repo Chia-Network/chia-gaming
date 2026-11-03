@@ -355,24 +355,33 @@ describe('Shell production restore composition', () => {
     for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
     await flushEffects();
     const walletTab = () => renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' });
+    const selectTab = (id: string) =>
+      renderer!.root
+        .findAll(
+          (node) =>
+            node.props['data-slot'] === 'tabs' && typeof node.props.onValueChange === 'function',
+        )[0]
+        .props.onValueChange(id);
     expect(walletTab()).toBeDefined();
     act(() => connectionChanged(false, true));
     expect(walletTab()).toBeDefined();
     expect(storageRepository.query('walletAlert')).toBe(false);
     expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
-    act(() => walletTab().props.onClick());
+    expect(walletTab()).toBeDefined();
+    act(() => selectTab('wallet'));
     await waitForText(renderer!, 'Connected');
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' })).toHaveLength(0);
     act(() => connectionChanged(true, false));
     expect(walletTab()).toBeDefined();
     expect(storageRepository.query('walletAlert')).toBe(false);
     // Failure of automatic recovery, including session deletion, is actionable.
-    act(() => renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' }).props.onClick());
+    expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
+    act(() => selectTab('hub'));
     act(() => connectionChanged(false, true));
     act(() => connectionChanged(false, false));
     expect(storageRepository.query('walletAlert')).toBe(true);
-    const lostTab = renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' });
-    act(() => lostTab.props.onClick());
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' })).toBeDefined();
+    act(() => selectTab('wallet'));
     await waitForText(renderer!, 'Connection was lost');
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' }).length).toBeGreaterThan(0);
   });
