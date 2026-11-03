@@ -36,6 +36,8 @@ import { HubIframe } from './HubIframe';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 import { Setup2048Provider } from './Setup2048';
 import WalletRecoveryNotice from './WalletRecoveryNotice';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
+import { ChevronDownIcon } from 'lucide-react';
 
 import { HubPicker } from './HubPicker';
 import { Input } from './ui/input';
@@ -1179,32 +1181,6 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             ) : (
               <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">
                 <p className="text-lg font-semibold text-canvas-text-contrast">Choose Connection</p>
-                <div className="w-full max-w-sm flex flex-col items-center gap-1">
-                  <span className="text-sm text-canvas-text">Network</span>
-                  <ToggleGroup
-                    type="single"
-                    variant="outline"
-                    size="sm"
-                    aria-label="Network"
-                    disabled={networkLocked}
-                    value={network}
-                    onValueChange={(next) => {
-                      if (next === 'mainnet' || next === 'testnet') dispatch({ type: 'network', network: next });
-                    }}
-                  >
-                    <ToggleGroupItem value="mainnet" className="h-7 px-3 text-xs">
-                      Mainnet
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value="testnet" className="h-7 px-3 text-xs">
-                      Testnet
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  {networkLocked && (
-                    <p className="text-xs text-canvas-text text-center">
-                      Network is locked for this session
-                    </p>
-                  )}
-                </div>
                 <div className="w-full max-w-sm flex flex-col gap-3">
                   <Button
                     variant="outline"
@@ -1240,18 +1216,53 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   >
                     Sage Wallet
                   </Button>
-                  {!isElectronDistribution() && (
-                    <Button
-                      className="w-full"
-                      variant="outline"
-                      onClick={() =>
-                        dispatch({ type: 'wallet-connect', wallet: 'simulator', fresh: true })
-                      }
-                    >
-                      Continue with Simulator
-                    </Button>
-                  )}
                 </div>
+                <Collapsible className="w-full max-w-sm">
+                  <CollapsibleTrigger className="group mx-auto flex items-center gap-1 text-sm text-canvas-text hover:text-canvas-text-contrast transition-colors">
+                    Advanced options
+                    <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="flex flex-col items-center gap-3 pt-3">
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-sm text-canvas-text">Network</span>
+                      <ToggleGroup
+                        type="single"
+                        variant="outline"
+                        size="sm"
+                        aria-label="Network"
+                        disabled={networkLocked}
+                        value={network}
+                        onValueChange={(next) => {
+                          if (next === 'mainnet' || next === 'testnet')
+                            dispatch({ type: 'network', network: next });
+                        }}
+                      >
+                        <ToggleGroupItem value="mainnet" className="h-7 px-3 text-xs">
+                          Mainnet
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value="testnet" className="h-7 px-3 text-xs">
+                          Testnet
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                      {networkLocked && (
+                        <p className="text-xs text-canvas-text text-center">
+                          Network is locked for this session
+                        </p>
+                      )}
+                    </div>
+                    {!isElectronDistribution() && (
+                      <Button
+                        className="w-full"
+                        variant="outline"
+                        onClick={() =>
+                          dispatch({ type: 'wallet-connect', wallet: 'simulator', fresh: true })
+                        }
+                      >
+                        Continue with Simulator
+                      </Button>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
                 {connectError ? (
                   <p className="w-full max-w-sm text-sm text-alert-text text-center break-words">
                     {connectError}
