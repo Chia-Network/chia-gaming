@@ -1,5 +1,8 @@
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
+import { protocolIdForCatalog } from '../gameIdentities';
+import { SessionController } from '../session/SessionController';
+import { getGenesisChallenge } from '../../constants/wallet-connect';
 import { ensureWasmLoaded, storeInitArgs } from '../session/wasmLoader';
 import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
@@ -12,6 +15,7 @@ import {
   action_with_messages,
   addActiveCradle,
   assertCradleRoundTrip,
+  exchangeUntilIdle,
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
@@ -233,6 +237,68 @@ it(
     } catch (e) {
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
+it(
+  'opens both channels without acceptance and gives the receiver the first potato',
+  async () => {
+    const poller = await startSimulator(['d1ec7000', 'd1ec7001']);
+    if (!poller) return;
+    const wasm = await ensureWasmLoaded(fetchPreset);
+    const cradles = [
+      addActiveCradle(new SessionControllerAdapter()),
+      addActiveCradle(new SessionControllerAdapter()),
+    ];
+    const acceptanceCalls = [];
+    for (const [index, cradle] of cradles.entries()) {
+      const id = `d1ec700${index}`;
+      const address = await fakeBlockchainInfo.registerUser(id);
+      const controller = new SessionController(poller, id, 100n, 100n, cradle.peerConnection);
+      controller.setWallet(poller);
+      const peer = controller.getPeerProtocol();
+      acceptanceCalls.push(jest.spyOn(peer, 'accept_session'));
+      controller.loadWasm(wasm);
+      controller.iStarted = index === 0;
+      const channel = await peer.open_channel(
+        { proposer_amount: '100', responder_amount: '100' },
+        index === 0,
+        getGenesisChallenge(),
+        async () => address,
+      );
+      expect(channel).toBeDefined();
+      // Opening constructs the engine; starting its handshake is a separate step.
+      expect(peer.snapshot().messageNumber).toBe(1n);
+      expect(peer.snapshot().unackedMessages).toEqual([]);
+      controller.rewardPuzzleHash = channel!.rewardPuzzleHash;
+      controller.setGameSession(peer);
+      controller.activateSpend();
+      controller.pairingToken = id;
+      cradle.set_blob(controller);
+    }
+
+    await action_with_messages(poller, cradles[0], cradles[1]);
+    await exchangeUntilIdle(cradles);
+    const [initiator, receiver] = cradles.map((cradle) => cradle.blob!);
+    expect(initiator.lastChannelStatus?.have_potato).toBe(false);
+    expect(receiver.lastChannelStatus?.have_potato).toBe(true);
+    expect(initiator.lastChannelStatus?.state_number).toBe(1n);
+    expect(receiver.lastChannelStatus?.state_number).toBe(1n);
+
+    const ids = receiver.proposeGame({
+      game_type: protocolIdForCatalog('calpoker'),
+      timeout: 15n,
+      sender_is_player_a: false,
+      parameters: 20n,
+    });
+    expect(ids).toHaveLength(1);
+    await exchangeUntilIdle(cradles);
+    expect(initiator.lastChannelStatus?.have_potato).toBe(true);
+    expect(receiver.lastChannelStatus?.have_potato).toBe(false);
+    expect(initiator.lastChannelStatus?.state_number).toBe(2n);
+    expect(receiver.lastChannelStatus?.state_number).toBe(2n);
+    for (const acceptance of acceptanceCalls) expect(acceptance).not.toHaveBeenCalled();
   },
   LONG_WASM_TEST_TIMEOUT,
 );

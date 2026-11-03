@@ -137,6 +137,16 @@ A replacement carrier retains that owner; retirement releases its channel.
 The host reports consumer availability and performs persistence and application
 effects requested by Rust. WalletConnect normalization remains in the TypeScript adapter.
 
+Hosts that agree session terms outside the invitation protocol can call
+`open_channel` directly on both peers without `accept_session`. They supply
+matching terms, opposite initiator roles, and consistent reliable counters.
+Opening creates the local engine without sending a proposal. The initiator
+then starts the normal channel handshake; completing it gives the receiver
+the first potato. Data and ACKs still enter through `receive`, and hosts must
+serialize checkpoint writes and completions. A prepared checkpoint identifies
+the last outgoing and incoming message numbers it covers; completing it
+releases pending messages and ACKs only through those numbers.
+
 A session is an **obligation**, not a connection. Once started, it runs to
 completion. Funds are locked in the channel coin and must be distributed
 through the protocol — either cooperatively (clean shutdown) or unilaterally

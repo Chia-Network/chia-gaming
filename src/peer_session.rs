@@ -41,8 +41,7 @@ pub struct ReceivePolicy {
 #[serde(rename_all = "camelCase")]
 pub struct PreparedCommit {
     pub generation: u32,
-    pub outbound_count: usize,
-    pub ack_count: usize,
+    pub outbound_msgno: u64,
     pub remote_number: u64,
 }
 
@@ -92,8 +91,8 @@ struct SessionState {
     pub failed: bool,
     policy: ReceivePolicy,
     pub reorder_queue: BTreeMap<u64, Vec<u8>>,
-    pending_outbound: Vec<Message>,
-    pending_acks: Vec<u64>,
+    pending_outbound: BTreeMap<u64, Vec<u8>>,
+    pending_acks: BTreeSet<u64>,
     unsent_outbound: BTreeSet<u64>,
     retry_acks: BTreeSet<u64>,
     generation: u32,
@@ -114,8 +113,8 @@ impl SessionState {
             failed: false,
             policy,
             reorder_queue: BTreeMap::new(),
-            pending_outbound: Vec::new(),
-            pending_acks: Vec::new(),
+            pending_outbound: BTreeMap::new(),
+            pending_acks: BTreeSet::new(),
             unsent_outbound: BTreeSet::new(),
             retry_acks: BTreeSet::new(),
             generation: 0,
@@ -177,7 +176,7 @@ impl SessionState {
         self.state.disposition = disposition;
         let message = Message { msgno, msg };
         self.state.unacked_messages.push(message.clone());
-        self.pending_outbound.push(message);
+        self.pending_outbound.insert(msgno, message.msg);
         self.generation += 1;
         Ok(msgno)
     }
@@ -244,9 +243,7 @@ impl SessionState {
             if msgno <= self.released_remote_number {
                 return Ok(ReceiveAction::Ack);
             }
-            if !self.pending_acks.contains(&msgno) {
-                self.pending_acks.push(msgno);
-            }
+            self.pending_acks.insert(msgno);
             return Ok(ReceiveAction::Queued);
         }
         let gap = msgno - (self.state.remote_number + 1);
@@ -281,7 +278,7 @@ impl SessionState {
     pub fn delivered(&mut self, msgno: u64) {
         self.reorder_queue.remove(&msgno);
         self.state.remote_number = msgno;
-        self.pending_acks.push(msgno);
+        self.pending_acks.insert(msgno);
         self.generation += 1;
     }
 
@@ -304,10 +301,7 @@ impl SessionState {
         self.state.unacked_messages.retain(|message| {
             message.msgno > ack
                 || self.unsent_outbound.contains(&message.msgno)
-                || self
-                    .pending_outbound
-                    .iter()
-                    .any(|pending| pending.msgno == message.msgno)
+                || self.pending_outbound.contains_key(&message.msgno)
         });
         if self.state.unacked_messages.len() != before {
             self.generation += 1;
@@ -339,12 +333,7 @@ impl SessionState {
             self.state
                 .unacked_messages
                 .iter()
-                .filter(|message| {
-                    !self
-                        .pending_outbound
-                        .iter()
-                        .any(|pending| pending.msgno == message.msgno)
-                })
+                .filter(|message| !self.pending_outbound.contains_key(&message.msgno))
                 .cloned()
                 .collect(),
         ))
@@ -374,8 +363,7 @@ impl SessionState {
     pub fn prepare_commit(&self) -> PreparedCommit {
         PreparedCommit {
             generation: self.generation,
-            outbound_count: self.pending_outbound.len(),
-            ack_count: self.pending_acks.len(),
+            outbound_msgno: self.state.message_number - 1,
             remote_number: self.state.remote_number,
         }
     }
@@ -387,12 +375,19 @@ impl SessionState {
         if commit.generation <= self.released_generation {
             return ReleasedFrames::default();
         }
-        // Cancellation can discard work during a pre-runtime write. Match the
-        // host's former splice semantics rather than indexing discarded work.
-        let outbound_count = commit.outbound_count.min(self.pending_outbound.len());
-        let ack_count = commit.ack_count.min(self.pending_acks.len());
-        let outbound: Vec<_> = self.pending_outbound.drain(..outbound_count).collect();
-        let acks = self.pending_acks.drain(..ack_count).collect();
+        // Queue membership may change while saving. Release by captured message
+        // number, so cancelled work cannot be replaced by newer messages.
+        let later_outbound = self
+            .pending_outbound
+            .split_off(&(commit.outbound_msgno + 1));
+        let outbound: Vec<_> = std::mem::replace(&mut self.pending_outbound, later_outbound)
+            .into_iter()
+            .map(|(msgno, msg)| Message { msgno, msg })
+            .collect();
+        let later_acks = self.pending_acks.split_off(&(commit.remote_number + 1));
+        let acks = std::mem::replace(&mut self.pending_acks, later_acks)
+            .into_iter()
+            .collect();
         self.released_generation = commit.generation;
         self.released_remote_number = commit.remote_number;
         self.unsent_outbound
@@ -637,6 +632,25 @@ mod tests {
         let frames = peer.complete_commit(commit, true);
         assert!(frames.outbound.is_empty());
         assert!(peer.dirty());
+    }
+
+    #[test]
+    fn cancelled_checkpoint_does_not_release_replacement_messages() {
+        let mut peer = peer();
+        peer.allocate(vec![1], "active".into()).unwrap();
+        let commit = peer.prepare_commit();
+        peer.discard_outbound();
+        peer.allocate(vec![2], "active".into()).unwrap();
+
+        let frames = peer.complete_commit(commit, true);
+        assert!(frames.outbound.is_empty());
+        assert!(peer.dirty());
+
+        let frames = peer.complete_commit(peer.prepare_commit(), true);
+        assert_eq!(frames.outbound.len(), 1);
+        assert_eq!(frames.outbound[0].msgno, 2);
+        assert_eq!(frames.outbound[0].msg, vec![2]);
+        assert!(!peer.dirty());
     }
 
     #[test]

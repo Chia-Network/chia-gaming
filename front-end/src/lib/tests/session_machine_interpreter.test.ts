@@ -80,8 +80,7 @@ function fakeController(overrides: Partial<SessionController> = {}): SessionCont
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
       generation: 0,
-      outboundCount: 0,
-      ackCount: 0,
+      outboundMsgno: 0n,
       remoteNumber: 0n,
     })),
     completeReliableCommit: jest.fn(),

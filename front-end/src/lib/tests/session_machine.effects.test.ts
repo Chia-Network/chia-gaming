@@ -29,8 +29,7 @@ describe('session machine behavior sequences', () => {
       flushDeferredWork,
       prepareReliableCommit: () => ({
         generation: 0,
-        outboundCount: 0,
-        ackCount: 0,
+        outboundMsgno: 0n,
         remoteNumber: 0n,
       }),
       completeReliableCommit: () => {},
@@ -174,8 +173,7 @@ describe('session machine behavior sequences', () => {
       getWasmFields: () => null,
       prepareReliableCommit: () => ({
         generation: 1,
-        outboundCount: 1,
-        ackCount: 1,
+        outboundMsgno: 1n,
         remoteNumber: 1n,
       }),
       completeReliableCommit,
@@ -413,8 +411,7 @@ describe('session machine behavior sequences', () => {
       flushDeferredWork: jest.fn(),
       prepareReliableCommit: jest.fn(() => ({
         generation: 0,
-        outboundCount: 0,
-        ackCount: 0,
+        outboundMsgno: 0n,
         remoteNumber: 0n,
       })),
       completeReliableCommit: jest.fn(),

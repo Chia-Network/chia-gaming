@@ -27,8 +27,7 @@ function controller(acceptProposal: (id: string) => void): SessionController {
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
       generation: 0,
-      outboundCount: 0,
-      ackCount: 0,
+      outboundMsgno: 0n,
       remoteNumber: 0n,
     })),
     completeReliableCommit: jest.fn(),
@@ -481,14 +480,12 @@ describe('SessionController quiescent projection', () => {
     const mockController = controller(jest.fn());
     const firstReliableCommit = {
       generation: 1,
-      outboundCount: 0,
-      ackCount: 0,
+      outboundMsgno: 0n,
       remoteNumber: 0n,
     };
     const nextReliableCommit = {
       generation: 2,
-      outboundCount: 1,
-      ackCount: 1,
+      outboundMsgno: 1n,
       remoteNumber: 1n,
     };
     (mockController.prepareReliableCommit as jest.Mock)
@@ -570,7 +567,7 @@ describe('SessionController quiescent projection', () => {
     });
     (mockController.prepareReliableCommit as jest.Mock).mockImplementation(() => {
       order.push('prepare-transport');
-      return { generation: 1, outboundCount: 1, ackCount: 0, remoteNumber: 0n };
+      return { generation: 1, outboundMsgno: 1n, remoteNumber: 0n };
     });
     const runtime = configureSessionExecution(initialState(), {
       controller: mockController,

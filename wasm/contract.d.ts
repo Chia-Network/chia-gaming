@@ -19,7 +19,8 @@ export interface PeerSessionTerms {
   network?: string;
 }
 
-/** Captured by Rust and returned unchanged after the host's checkpoint write. */
+/** Captured by Rust and returned unchanged after the host's checkpoint write.
+ * The host must serialize checkpoint writes and completions. */
 export type PeerPreparedCommit = unknown;
 
 export interface PeerTerminalHandoff {
@@ -65,6 +66,9 @@ export interface PeerProtocolApi extends GameSessionApi {
   failure(reason: string, host: PeerHost): void;
   restore_channel(data: Uint8Array): void;
   accept_session(terms: PeerSessionTerms, initiator: boolean): void;
+  /** Construct the engine with agreed terms and roles, without emitting a proposal.
+   * Hosts that negotiate externally may omit accept_session. The initiator starts
+   * the channel handshake; its completion gives the receiver the first potato. */
   open_channel(terms: PeerSessionTerms, initiator: boolean, genesisChallenge: string, addressProvider: () => Promise<string>): Promise<{ puzzle_hash: string; rewardPuzzleHash: string } | undefined>;
   free(): void;
 }
