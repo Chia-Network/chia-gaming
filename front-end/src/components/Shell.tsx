@@ -145,6 +145,7 @@ import {
 import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { needsConnectionSetupPrompt, needsWalletPairing } from '../util/connectionSetup';
+import { canSwitchWallet } from '../util/walletSwitch';
 import { isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
@@ -2565,13 +2566,22 @@ const Shell = () => {
   }, [walletConnected, activeBlockchainPoller]);
 
   // Channel funding and fee reservations belong to the wallet that made them,
-  // so the wallet only changes while no session holds funds.
+  // so the wallet only changes while no session, live or saved, holds funds.
+  const sessionHoldsWallet = (phase: SessionPhase): boolean =>
+    !canSwitchWallet({
+      sessionPhase: phase,
+      durableSession: storageRepository.loadState().session,
+      hasPairingToken: !!sessionConfigRef.current?.pairingToken,
+      busy: false,
+    });
   const [switchingWallet, setSwitchingWallet] = useState(false);
   const [switchWalletError, setSwitchWalletError] = useState<string | null>(null);
   const handleSwitchWallet = useCallback(
     async (walletId: string) => {
       const iface = activeBlockchainRef.current;
-      if (!iface?.selectWallet || !blockchainType || sessionPhaseRef.current !== 'none') return;
+      if (!iface?.selectWallet || !blockchainType || sessionHoldsWallet(sessionPhaseRef.current)) {
+        return;
+      }
       setSwitchingWallet(true);
       setSwitchWalletError(null);
       // Stopped interest drops in-flight replies, so no old-wallet balance lands late.
@@ -4012,7 +4022,7 @@ const Shell = () => {
                     <div className="relative">
                       <select
                         value={walletIdentity.id}
-                        disabled={sessionPhase !== 'none' || connecting || switchingWallet}
+                        disabled={sessionHoldsWallet(sessionPhase) || connecting || switchingWallet}
                         onChange={(event) => void handleSwitchWallet(event.target.value)}
                         className="w-full appearance-none pl-3 pr-8 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                       >
@@ -4029,7 +4039,7 @@ const Shell = () => {
                         ▾
                       </span>
                     </div>
-                    {sessionPhase !== 'none' && (
+                    {sessionHoldsWallet(sessionPhase) && (
                       <span className="text-xs">Finish the session to switch wallets.</span>
                     )}
                     {switchWalletError && (
