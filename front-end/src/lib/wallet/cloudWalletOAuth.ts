@@ -588,17 +588,20 @@ export type TokenProvider = {
 export function createAuthTokenProvider(
   getState: () => CloudWalletAuthState | null,
   setState: (next: CloudWalletAuthState) => void,
+  getAuthEpoch: () => number,
 ): TokenProvider {
-  let refresh: { state: CloudWalletAuthState; promise: Promise<string> } | null = null;
+  let refresh: { epoch: number; promise: Promise<string> } | null = null;
 
   const doRefresh = async (state: CloudWalletAuthState): Promise<string> => {
-    if (!refresh || refresh.state !== state) {
+    const epoch = getAuthEpoch();
+    if (!refresh || refresh.epoch !== epoch) {
       const promise = refreshAccessToken(state.refreshToken)
         .then((tokens) => {
-          // Disconnect or another login retired the credentials being refreshed.
-          if (getState() !== state) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
+          const current = getState();
+          // Only credential retirement/replacement ends this refresh's lifetime.
+          if (!current || getAuthEpoch() !== epoch) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
           const next: CloudWalletAuthState = {
-            ...state,
+            ...current,
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
             expiresAt: tokens.expiresAt,
@@ -609,7 +612,7 @@ export function createAuthTokenProvider(
         .finally(() => {
           if (refresh?.promise === promise) refresh = null;
         });
-      refresh = { state, promise };
+      refresh = { epoch, promise };
     }
     return refresh.promise;
   };

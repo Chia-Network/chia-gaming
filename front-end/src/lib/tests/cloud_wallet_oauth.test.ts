@@ -389,6 +389,86 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     return iface.beginConnect('uid').then((setup) => setup.finalize());
   }
 
+  it.each(['connection attempt', 'wallet query'] as const)(
+    'reuses a rotating token refresh from a pending %s when reconnect reloads the same login',
+    async (source) => {
+      saveCloudWalletAuth({ ...loadCloudWalletAuth()!, expiresAt: 0 });
+      let release!: () => void;
+      let reached!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let tokenRequests = 0;
+      setTestGlobal(
+        'fetch',
+        jest.fn(async (url: string) => {
+          if (url.endsWith('/token')) {
+            // The first request consumes this refresh token. Reusing it is rejected.
+            if (++tokenRequests > 1) {
+              return {
+                status: 400,
+                ok: false,
+                text: async () => JSON.stringify({ error: 'invalid_grant' }),
+              };
+            }
+            reached();
+            await held;
+            return {
+              status: 200,
+              ok: true,
+              text: async () =>
+                JSON.stringify({
+                  access_token: 'rotated-access',
+                  refresh_token: 'rotated-refresh',
+                  expires_in: 3600,
+                }),
+            };
+          }
+          return {
+            status: 200,
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                data: {
+                  wallet: {
+                    id: 'Wallet_stored',
+                    balance: '7',
+                    address: { puzzleHash: 'ab'.repeat(32) },
+                  },
+                },
+              }),
+          };
+        }),
+      );
+      const iface = new CloudBlockchainInterface();
+      const setup = await iface.beginConnect('uid');
+      const first = source === 'connection attempt' ? setup.finalize() : iface.getBalance();
+      await waiting;
+      const retry = await iface.beginConnect('uid');
+      const second = retry.finalize();
+      const settled = Promise.allSettled([first, second]);
+      release();
+      const [original, resumed] = await settled;
+      expect(resumed).toEqual({ status: 'fulfilled', value: undefined });
+      expect(original).toEqual(
+        source === 'connection attempt'
+          ? { status: 'rejected', reason: new Error(CLOUD_WALLET_LOGIN_CANCELLED) }
+          : { status: 'fulfilled', value: 7n },
+      );
+      expect(tokenRequests).toBe(1);
+      expect(loadCloudWalletAuth()).toMatchObject({
+        walletId: 'Wallet_stored',
+        accessToken: 'rotated-access',
+        refreshToken: 'rotated-refresh',
+      });
+      expect(iface.isConnected()).toBe(true);
+      await iface.disconnect();
+    },
+  );
+
   it.each(['refreshing tokens', 'resolving the wallet', 'starting monitoring'])(
     'does not restore a canceled login after %s finishes',
     async (stage) => {

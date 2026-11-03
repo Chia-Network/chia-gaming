@@ -190,6 +190,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
 
   private auth: CloudWalletAuthState | null = null;
+  private authEpoch = 0;
   private walletOfferProvider: WalletOfferProvider | null = null;
   private readonly approvalsOpenedInBrowser = new Set<string>();
   private connectionListeners = new Set<(connected: boolean) => void>();
@@ -208,6 +209,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         this.auth = next;
         saveCloudWalletAuth(next);
       },
+      () => this.authEpoch,
     );
   }
 
@@ -287,6 +289,12 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         // ignore
       }
     }
+  }
+
+  private clearAuth(): void {
+    ++this.authEpoch;
+    clearCloudWalletAuth();
+    this.auth = null;
   }
 
   private persistAuth(
@@ -948,14 +956,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     this.loginAbort?.abort();
     this.loginAbort = null;
     if (fresh) {
-      clearCloudWalletAuth();
-      this.auth = null;
+      this.clearAuth();
       this.monitoringReady = false;
       this.fireConnectionChange(false);
     }
 
     const existing = loadCloudWalletAuth();
     if (existing && !fresh) {
+      // Reloading the same grant must share its pending token refresh.
+      if (this.auth?.refreshToken !== existing.refreshToken) ++this.authEpoch;
       this.auth = existing;
       return {
         qrUri: 'cloud-wallet://session',
@@ -982,8 +991,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
             // or GraphQL failure during silent resume must stay retryable, or a
             // momentary outage forces the user back through a popup login.
             if (e instanceof CloudWalletAuthError) {
-              clearCloudWalletAuth();
-              this.auth = null;
+              this.clearAuth();
             }
             this.monitoringReady = false;
             this.fireConnectionChange(false);
@@ -1017,6 +1025,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         try {
           const tokens = await beginOAuthLogin(loginAbort.signal);
           throwIfCancelled();
+          ++this.authEpoch;
           this.auth = {
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
@@ -1039,8 +1048,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   async disconnect(): Promise<void> {
     this.loginAbort?.abort();
     this.loginAbort = null;
-    clearCloudWalletAuth();
-    this.auth = null;
+    this.clearAuth();
     this.walletOfferProvider = null;
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: '' };
