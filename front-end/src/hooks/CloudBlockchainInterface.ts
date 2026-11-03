@@ -9,6 +9,7 @@ import {
   WalletOfferProvider,
   WalletOfferCancellationOutcome,
   WalletOfferCancellationBeginOutcome,
+  WalletIdentity,
   WalletSubmitOutcome,
   WalletTopUpOptions,
 } from '../types/ChiaGaming';
@@ -141,6 +142,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   readonly fundingMode = 'offer-settlement' as const;
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
   private depositAddress: string | null = null;
+  private walletName: string | null = null;
 
   private auth: CloudWalletAuthState | null = null;
   private walletOfferProvider: WalletOfferProvider | null = null;
@@ -300,12 +302,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const data = await this.gql<{
       wallet: {
         id: string;
+        name: string | null;
         address: { puzzleHash: string; address: string } | null;
       } | null;
     }>(
       `query($id: ID!) {
         wallet(id: $id) {
           id
+          name
           address { puzzleHash address }
         }
       }`,
@@ -321,6 +325,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     beforeReady();
     this.blockchainAddressData = { puzzleHash: ph };
     this.depositAddress = data.wallet.address?.address || null;
+    this.walletName = data.wallet.name || null;
     this.monitoringReady = true;
     this.fireConnectionChange(true);
     log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${ph}`);
@@ -356,6 +361,45 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           : null,
       depositAddress: this.depositAddress,
     };
+  }
+
+  // A grant can cover several wallets; this names the one the game funds from.
+  getWalletIdentity(): WalletIdentity | null {
+    const walletId = this.auth?.walletId;
+    if (!this.monitoringReady || !walletId) return null;
+    return { id: walletId, name: this.walletName, address: this.depositAddress };
+  }
+
+  async listWallets(): Promise<WalletIdentity[]> {
+    const data = await this.gql<{
+      oauthConsentedWallets: Array<{
+        id: string;
+        name: string | null;
+        address: { address: string } | null;
+      }> | null;
+    }>(`query { oauthConsentedWallets { id name address { address } } }`);
+    return (data.oauthConsentedWallets ?? []).map((wallet) => ({
+      id: wallet.id,
+      name: wallet.name || null,
+      address: wallet.address?.address || null,
+    }));
+  }
+
+  // Monitoring reads the wallet through the grant, so a wallet outside it
+  // fails here. Monitoring state only changes once that read succeeds, so a
+  // failure restores the previous wallet and leaves it fully in use.
+  async selectWallet(walletId: string): Promise<void> {
+    const auth = this.auth;
+    if (!auth) {
+      throw new Error('Cloud Wallet is not signed in');
+    }
+    this.persistAuth({ ...auth, walletId });
+    try {
+      await this.startMonitoring();
+    } catch (err) {
+      this.persistAuth({ ...this.auth!, walletId: auth.walletId });
+      throw err;
+    }
   }
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
@@ -917,6 +961,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: '' };
     this.depositAddress = null;
+    this.walletName = null;
     this.fireConnectionChange(false);
   }
 

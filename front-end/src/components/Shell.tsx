@@ -37,6 +37,7 @@ import {
   SessionPhase,
   PeerLiveness,
   CoinOfInterestEntry,
+  WalletIdentity,
 } from '../types/ChiaGaming';
 import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
 import { deriveHubSessionId } from '../services/hubSessionCredential';
@@ -277,6 +278,13 @@ function SessionBuyIn({
       Unroll timeout: <strong>{effectiveUnrollTimeout.toString()}</strong> blocks
     </>
   );
+}
+
+function walletLabel(wallet: WalletIdentity): string {
+  const name = wallet.name ?? 'Wallet';
+  return wallet.address
+    ? `${name} (${wallet.address.slice(0, 8)}…${wallet.address.slice(-4)})`
+    : name;
 }
 
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
@@ -1843,6 +1851,7 @@ const Shell = () => {
     return () => activeBlockchainPoller.setBalanceInterval(BALANCE_POLL_INTERVAL_MS);
   }, [awaitingTopUp, activeBlockchainPoller]);
   const topUpOptions = activeBlockchainRef.current?.getTopUpOptions?.() ?? null;
+  const walletIdentity = activeBlockchainRef.current?.getWalletIdentity?.() ?? null;
 
   // QR code generation (inline in wallet tab, type-agnostic)
   useEffect(() => {
@@ -2528,6 +2537,58 @@ const Shell = () => {
       }
     },
     [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting, setWalletAlert],
+  );
+
+  // Wallets the user granted the game, for backends that grant several.
+  const [grantedWallets, setGrantedWallets] = useState<WalletIdentity[]>([]);
+  useEffect(() => {
+    const iface = activeBlockchainRef.current;
+    if (!walletConnected || !iface?.listWallets) {
+      setGrantedWallets([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const wallets = await iface.listWallets!();
+        if (!cancelled) setGrantedWallets(wallets);
+      } catch (err) {
+        // Without the list the tab still names the connected wallet; only switching is lost.
+        console.error('[Shell] listing granted wallets failed', err);
+        if (!cancelled) setGrantedWallets([]);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletConnected, activeBlockchainPoller]);
+
+  // Channel funding and fee reservations belong to the wallet that made them,
+  // so the wallet only changes while no session holds funds.
+  const [switchingWallet, setSwitchingWallet] = useState(false);
+  const [switchWalletError, setSwitchWalletError] = useState<string | null>(null);
+  const handleSwitchWallet = useCallback(
+    async (walletId: string) => {
+      const iface = activeBlockchainRef.current;
+      if (!iface?.selectWallet || !blockchainType || sessionPhaseRef.current !== 'none') return;
+      setSwitchingWallet(true);
+      setSwitchWalletError(null);
+      // Stopped interest drops in-flight replies, so no old-wallet balance lands late.
+      stopBalancePolling();
+      setBalance(undefined);
+      try {
+        await iface.selectWallet(walletId);
+      } catch (err) {
+        console.error('[Shell] switching wallets failed', err);
+        setSwitchWalletError(err instanceof Error ? err.message : String(err));
+      } finally {
+        // Restarting interest polls whichever wallet is now in use right away.
+        startBalancePolling(blockchainType);
+        setSwitchingWallet(false);
+      }
+    },
+    [blockchainType, startBalancePolling, stopBalancePolling],
   );
 
   const handleFinalize = useCallback(
@@ -3943,6 +4004,40 @@ const Shell = () => {
                   <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
                   <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
                 </div>
+                {walletIdentity && grantedWallets.length > 1 ? (
+                  <label className="flex flex-col gap-1 w-full max-w-xs text-sm text-canvas-text">
+                    <span>Play with</span>
+                    <select
+                      value={walletIdentity.id}
+                      disabled={sessionPhase !== 'none' || connecting || switchingWallet}
+                      onChange={(event) => void handleSwitchWallet(event.target.value)}
+                      className="px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {grantedWallets.map((wallet) => (
+                        <option key={wallet.id} value={wallet.id}>
+                          {walletLabel(wallet)}
+                        </option>
+                      ))}
+                    </select>
+                    {sessionPhase !== 'none' && (
+                      <span className="text-xs">Finish the session to switch wallets.</span>
+                    )}
+                    {switchWalletError && (
+                      <span className="text-xs text-alert-text break-words">
+                        Could not switch wallets: {switchWalletError}
+                      </span>
+                    )}
+                  </label>
+                ) : (
+                  walletIdentity && (
+                    <p
+                      className="text-sm text-canvas-text"
+                      title={walletIdentity.address ?? undefined}
+                    >
+                      {walletLabel(walletIdentity)}
+                    </p>
+                  )
+                )}
                 {balance !== undefined && (
                   <p className="text-2xl font-bold text-canvas-text-contrast">
                     {balance.toLocaleString()} {currency.mojos}

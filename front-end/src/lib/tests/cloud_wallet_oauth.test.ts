@@ -501,6 +501,7 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
           data: {
             wallet: {
               id: 'Wallet_stored',
+              name: 'Game Vault',
               address: { puzzleHash: 'ab'.repeat(32), address: 'xch1deposit' },
             },
           },
@@ -509,8 +510,15 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     });
 
     const iface = new CloudBlockchainInterface();
+    expect(iface.getWalletIdentity()).toBeNull();
     await (await iface.beginConnect('uid')).finalize();
 
+    // A grant can cover several wallets, so the one in use is shown by name.
+    expect(iface.getWalletIdentity()).toEqual({
+      id: 'Wallet_stored',
+      name: 'Game Vault',
+      address: 'xch1deposit',
+    });
     await expect(iface.getBalance()).resolves.toBe(1500n);
     // The settled total would count purchases still inside their clawback window.
     expect(queries.some((q) => q.includes('asset(assetHash: null)'))).toBe(true);
@@ -534,7 +542,75 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
 
     await iface.disconnect();
     expect(iface.getTopUpOptions()).toEqual({ buyUrl: null, depositAddress: null });
+    expect(iface.getWalletIdentity()).toBeNull();
     storageRepository._resetForTests();
+  });
+
+  it('lists the granted wallets and switches between them', async () => {
+    const wallets: Record<string, { name: string; address: string } | undefined> = {
+      Wallet_stored: { name: 'Main', address: 'xch1main' },
+      Wallet_other: { name: 'Game Vault', address: 'xch1game' },
+    };
+    // The grant answers for its own wallets only; any other id reads back null.
+    setTestGlobal(
+      'fetch',
+      jest.fn(async (_url: string, init?: { body?: string }) => {
+        const body = JSON.parse(String(init?.body ?? '{}')) as {
+          query?: string;
+          variables?: { id?: string };
+        };
+        const query = String(body.query ?? '');
+        let data: unknown;
+        if (query.includes('oauthConsentedWallets')) {
+          data = {
+            oauthConsentedWallets: Object.entries(wallets).map(([id, w]) => ({
+              id,
+              name: w!.name,
+              address: { address: w!.address },
+            })),
+          };
+        } else {
+          const walletId = body.variables?.id ?? '';
+          const wallet = wallets[walletId];
+          data = {
+            wallet: wallet
+              ? {
+                  id: walletId,
+                  name: wallet.name,
+                  address: { puzzleHash: 'ab'.repeat(32), address: wallet.address },
+                }
+              : null,
+          };
+        }
+        return { status: 200, ok: true, text: async () => JSON.stringify({ data }) };
+      }),
+    );
+
+    const iface = new CloudBlockchainInterface();
+    await (await iface.beginConnect('uid')).finalize();
+    await expect(iface.listWallets()).resolves.toEqual([
+      { id: 'Wallet_stored', name: 'Main', address: 'xch1main' },
+      { id: 'Wallet_other', name: 'Game Vault', address: 'xch1game' },
+    ]);
+
+    await iface.selectWallet('Wallet_other');
+    expect(iface.getWalletIdentity()).toEqual({
+      id: 'Wallet_other',
+      name: 'Game Vault',
+      address: 'xch1game',
+    });
+    // The choice survives a reload.
+    expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_other');
+
+    // A wallet outside the grant reads back as null: the switch fails and the
+    // wallet in use stays exactly as it was.
+    await expect(iface.selectWallet('Wallet_revoked')).rejects.toThrow(/not found/);
+    expect(iface.getWalletIdentity()).toEqual({
+      id: 'Wallet_other',
+      name: 'Game Vault',
+      address: 'xch1game',
+    });
+    expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_other');
   });
 
   it('fails the balance read when the wallet reports no XCH asset', async () => {

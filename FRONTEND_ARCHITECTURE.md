@@ -1529,6 +1529,13 @@ Shell manages wallet connections through two abstractions defined in
   never counts as funds: only the balance enables Accept. The desktop app opens
   the page in the system browser through `openInBrowser`, as it does for
   signature approval, so there the balance poll alone reports the result.
+  A grant can cover several wallets and the game funds from one of them, so
+  `getWalletIdentity()` gives the Wallet tab that wallet's name and address.
+  When the grant covers more than one, the tab lists them (`listWallets()`)
+  and switches with `selectWallet()`, only while no session is live, because
+  channel funding and fee reservations belong to the wallet that made them.
+  The switch restarts monitoring on the new wallet and keeps the previous one
+  if that read fails.
 
   **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
   (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
