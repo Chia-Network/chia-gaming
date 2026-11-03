@@ -26,12 +26,12 @@ used_linker = []
 [dependencies]
 bencodex = { path = "bencodex" }
 blst = { version = "=0.3.17", features = ["portable"] }
-chia-bls = "=0.52.1"
-chia-consensus = "=0.52.1"
-chia-protocol = "=0.52.1"
+chia-bls = "=0.53.0"
+chia-consensus = "=0.53.0"
+chia-protocol = "=0.53.0"
 chia-puzzles = "=0.20.3"
-clvm-traits = "=0.52.1"
-clvm-utils = "=0.52.1"
+clvm-traits = "=0.53.0"
+clvm-utils = "=0.53.0"
 clvmr = { version = "=0.21.0", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.1"
@@ -53,7 +53,7 @@ chialisp = "0.6.0"
 
 [build-dependencies]
 chialisp = "0.6.0"
-clvm-utils = "=0.52.1"
+clvm-utils = "=0.53.0"
 clvmr = { version = "=0.21.0" }
 hex = "=0.4.3"
 serde_json = "=1.0.154"
