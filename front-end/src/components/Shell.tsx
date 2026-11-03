@@ -2566,14 +2566,21 @@ const Shell = () => {
   }, [walletConnected, activeBlockchainPoller]);
 
   // Channel funding and fee reservations belong to the wallet that made them,
-  // so the wallet only changes while no session, live or saved, holds funds.
-  const sessionHoldsWallet = (phase: SessionPhase): boolean =>
-    !canSwitchWallet({
-      sessionPhase: phase,
-      durableSession: storageRepository.loadState().session,
-      hasPairingToken: !!sessionConfigRef.current?.pairingToken,
-      busy: false,
-    });
+  // so the wallet only changes while no session, starting, live or saved,
+  // holds funds. Reads refs and the in-memory save, so it is current when called.
+  const sessionHoldsWallet = useCallback(
+    (phase: SessionPhase): boolean =>
+      !canSwitchWallet({
+        sessionPhase: phase,
+        durableSession: storageRepository.loadState().session,
+        hasPairingToken: !!sessionConfigRef.current?.pairingToken,
+        acceptInFlight:
+          isAcceptSessionTransition(shellTransitionRef.current) ||
+          freshStartPersistInFlightRef.current,
+        busy: false,
+      }),
+    [freshStartPersistInFlightRef],
+  );
   const [switchingWallet, setSwitchingWallet] = useState(false);
   const [switchWalletError, setSwitchWalletError] = useState<string | null>(null);
   const handleSwitchWallet = useCallback(
@@ -2598,7 +2605,7 @@ const Shell = () => {
         setSwitchingWallet(false);
       }
     },
-    [blockchainType, startBalancePolling, stopBalancePolling],
+    [blockchainType, sessionHoldsWallet, startBalancePolling, stopBalancePolling],
   );
 
   const handleFinalize = useCallback(
@@ -3796,7 +3803,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
-            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp || switchingWallet}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Accept
@@ -3831,7 +3838,7 @@ const Shell = () => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
-            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp || switchingWallet}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Accept

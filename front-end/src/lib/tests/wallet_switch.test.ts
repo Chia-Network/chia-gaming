@@ -5,6 +5,7 @@ const idle: WalletSwitchState = {
   sessionPhase: 'none',
   durableSession: null,
   hasPairingToken: false,
+  acceptInFlight: false,
   busy: false,
 };
 
@@ -26,6 +27,11 @@ describe('canSwitchWallet', () => {
       expect(canSwitchWallet({ ...idle, durableSession: { phase } })).toBe(false);
     },
   );
+
+  it('refuses while Accept is starting a session that is not saved yet', () => {
+    // The session already holds this wallet's scope, though phase and save still look idle.
+    expect(canSwitchWallet({ ...idle, acceptInFlight: true })).toBe(false);
+  });
 
   it('allows a switch when the saved session is terminal', () => {
     expect(canSwitchWallet({ ...idle, durableSession: { phase: 'terminal' } })).toBe(true);
