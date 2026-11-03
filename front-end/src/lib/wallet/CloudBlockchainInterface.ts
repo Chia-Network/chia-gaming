@@ -196,7 +196,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private monitoringReady = false;
-  /** The sign-in in progress; `disconnect` (the modal's Cancel) aborts it. */
+  /** The fresh or restored sign-in in progress; Cancel aborts either. */
   private loginAbort: AbortController | null = null;
   private tokenProvider: TokenProvider;
 
@@ -945,6 +945,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   }
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
+    this.loginAbort?.abort();
+    this.loginAbort = null;
     if (fresh) {
       clearCloudWalletAuth();
       this.auth = null;
@@ -959,13 +961,23 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         qrUri: 'cloud-wallet://session',
         skipQr: true,
         finalize: async () => {
+          this.loginAbort?.abort();
+          const loginAbort = new AbortController();
+          this.loginAbort = loginAbort;
+          const throwIfCancelled = () => {
+            if (loginAbort.signal.aborted) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
+          };
           try {
             // Refresh if needed via token provider, then resolve wallet + monitor.
             await this.tokenProvider.getAccessToken();
+            throwIfCancelled();
             const walletId = await this.resolveWalletId();
+            throwIfCancelled();
             this.persistAuth({ ...this.auth!, walletId });
-            await this.startMonitoring();
+            await this.startMonitoring(throwIfCancelled);
           } catch (e) {
+            // A late failure belongs to the old login, not a replacement login.
+            throwIfCancelled();
             // Only a dead grant costs the durable refresh token. A network blip
             // or GraphQL failure during silent resume must stay retryable, or a
             // momentary outage forces the user back through a popup login.
@@ -976,6 +988,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
             this.monitoringReady = false;
             this.fireConnectionChange(false);
             throw e;
+          } finally {
+            if (this.loginAbort === loginAbort) this.loginAbort = null;
           }
         },
       };

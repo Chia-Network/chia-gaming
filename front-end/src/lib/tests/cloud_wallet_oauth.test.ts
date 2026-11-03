@@ -67,6 +67,7 @@ import { conditionsForGraphql, jsonSafeVariables } from '../wallet/cloudWalletHe
 import {
   buildAuthorizeUrl,
   CloudWalletAuthError,
+  CLOUD_WALLET_LOGIN_CANCELLED,
   createPkceChallenge,
   encodeRelayGlobalId,
   fetchFirstConsentedWalletId,
@@ -387,6 +388,128 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     const iface = new CloudBlockchainInterface();
     return iface.beginConnect('uid').then((setup) => setup.finalize());
   }
+
+  it.each(['refreshing tokens', 'resolving the wallet', 'starting monitoring'])(
+    'does not restore a canceled login after %s finishes',
+    async (stage) => {
+      if (stage === 'refreshing tokens') {
+        saveCloudWalletAuth({ ...loadCloudWalletAuth()!, expiresAt: 0 });
+      }
+      let release!: () => void;
+      let reached!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      setTestGlobal(
+        'fetch',
+        jest.fn(async (url: string, init?: { body?: string }) => {
+          const body = String(init?.body ?? '');
+          if (
+            (stage === 'refreshing tokens' && url.endsWith('/token')) ||
+            (stage === 'resolving the wallet' && body.includes('wallet(id: $id) { id }')) ||
+            (stage === 'starting monitoring' && body.includes('address { puzzleHash }'))
+          ) {
+            reached();
+            await held;
+          }
+          const payload = url.endsWith('/token')
+            ? { access_token: 'refreshed', refresh_token: 'new-refresh', expires_in: 3600 }
+            : {
+                data: { wallet: { id: 'Wallet_stored', address: { puzzleHash: 'ab'.repeat(32) } } },
+              };
+          return { status: 200, ok: true, text: async () => JSON.stringify(payload) };
+        }),
+      );
+      const iface = new CloudBlockchainInterface();
+      const connected = jest.fn();
+      iface.onConnectionChange(connected);
+      const setup = await iface.beginConnect('uid');
+      const pending = setup.finalize();
+      await waiting;
+      await iface.disconnect();
+      release();
+      await expect(pending).rejects.toThrow(CLOUD_WALLET_LOGIN_CANCELLED);
+      expect(loadCloudWalletAuth()).toBeNull();
+      expect(iface.isConnected()).toBe(false);
+      expect(await iface.getAddress()).toEqual({ puzzleHash: '' });
+      expect(connected).not.toHaveBeenCalledWith(true);
+    },
+  );
+
+  it.each([200, 400])(
+    'an old token response (%s) cannot replace or erase a newer login',
+    async (oldStatus) => {
+      saveCloudWalletAuth({ ...loadCloudWalletAuth()!, expiresAt: 0 });
+      let release!: () => void;
+      let reached!: () => void;
+      const waiting = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let tokenRequests = 0;
+      setTestGlobal(
+        'fetch',
+        jest.fn(async (url: string) => {
+          if (url.endsWith('/token')) {
+            const old = ++tokenRequests === 1;
+            if (old) {
+              reached();
+              await held;
+            }
+            const status = old ? oldStatus : 200;
+            const payload =
+              status === 400
+                ? { error: 'invalid_grant' }
+                : {
+                    access_token: old ? 'old-access' : 'new-access',
+                    refresh_token: old ? 'old-refresh' : 'new-refresh',
+                    expires_in: 3600,
+                  };
+            return { status, ok: status === 200, text: async () => JSON.stringify(payload) };
+          }
+          return {
+            status: 200,
+            ok: true,
+            text: async () =>
+              JSON.stringify({
+                data: { wallet: { id: 'Wallet_new', address: { puzzleHash: 'cd'.repeat(32) } } },
+              }),
+          };
+        }),
+      );
+      const iface = new CloudBlockchainInterface();
+      const old = await iface.beginConnect('uid');
+      const pending = old.finalize();
+      const rejected = expect(pending).rejects.toThrow(CLOUD_WALLET_LOGIN_CANCELLED);
+      await waiting;
+      await iface.disconnect();
+      saveCloudWalletAuth({
+        accessToken: 'new-expired',
+        refreshToken: 'new-login',
+        expiresAt: 0,
+        walletId: 'Wallet_new',
+      });
+      const next = await iface.beginConnect('uid');
+      const newPending = next.finalize();
+      // Release the old request after the new attempt has requested its own token.
+      await Promise.resolve();
+      release();
+      await Promise.all([rejected, newPending]);
+      expect(tokenRequests).toBe(2);
+      expect(loadCloudWalletAuth()).toMatchObject({
+        walletId: 'Wallet_new',
+        accessToken: 'new-access',
+        refreshToken: 'new-refresh',
+      });
+      expect(iface.isConnected()).toBe(true);
+      await iface.disconnect();
+    },
+  );
 
   it('keeps durable tokens when a transient server error interrupts resume', async () => {
     mockEndpoints(() => ({

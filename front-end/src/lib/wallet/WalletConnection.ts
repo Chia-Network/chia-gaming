@@ -63,7 +63,8 @@ export class WalletConnection {
   };
   private provider: InternalBlockchainInterface | null = null;
   private setup: ConnectionSetup | null = null;
-  private aborted = false;
+  // A retry must not make a canceled attempt current again.
+  private connectionAttempt = 0;
   private detachConnection: (() => void) | null = null;
   private detachReadiness: (() => void) | null = null;
   private poller: BlockchainPoller | null = null;
@@ -173,14 +174,14 @@ export class WalletConnection {
   }
 
   async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
-    this.aborted = false;
+    const attempt = ++this.connectionAttempt;
     if (!silent) this.update({ error: null });
     const { provider, interval } = providerFor(type);
     try {
       this.select(type);
       this.update({ connecting: true });
       const setup = await provider.beginConnect(this.playerId, fresh);
-      if (this.aborted) return false;
+      if (attempt !== this.connectionAttempt) return false;
       if (needsWalletPairing(setup)) {
         this.presentSetup(setup);
         this.update({ connected: false, connecting: false });
@@ -196,14 +197,13 @@ export class WalletConnection {
         return false;
       }
       await setup.finalize();
-      if (this.aborted) return false;
+      if (attempt !== this.connectionAttempt) return false;
       this.complete(provider, type, interval);
       return true;
     } catch (error) {
-      if (!this.aborted) {
-        console.error(`[wallet] ${type} connect failed`, error);
-        this.update({ error: error instanceof Error ? error.message : String(error) });
-      }
+      if (attempt !== this.connectionAttempt) return false;
+      console.error(`[wallet] ${type} connect failed`, error);
+      this.update({ error: error instanceof Error ? error.message : String(error) });
       if (silent) {
         if (type === 'simulator') this.complete(provider, type, interval);
         else this.update({ connecting: false });
@@ -222,26 +222,27 @@ export class WalletConnection {
     const type = this.view.walletType;
     if (!this.setup || !type) return false;
     const { provider, interval } = providerFor(type);
-    this.aborted = false;
+    const attempt = ++this.connectionAttempt;
     this.update({ error: null, connecting: true });
     try {
       await this.setup.finalize(values);
-      if (this.aborted) return false;
+      if (attempt !== this.connectionAttempt) return false;
       this.emit({ type: 'fee-changed' });
       this.update({ showSetup: false });
       this.complete(provider, type, interval);
       return true;
     } catch (error) {
-      if (this.aborted) return false;
+      if (attempt !== this.connectionAttempt) return false;
       console.error(`[wallet] ${type} finalize failed`, error);
       this.update({ error: error instanceof Error ? error.message : String(error) });
     } finally {
-      this.update({ connecting: false });
+      if (attempt === this.connectionAttempt) this.update({ connecting: false });
     }
     return false;
   }
 
   async resume(type: BlockchainType): Promise<void> {
+    const attempt = ++this.connectionAttempt;
     const { provider, interval } = providerFor(type);
     this.provider = provider;
     this.update({
@@ -252,6 +253,7 @@ export class WalletConnection {
     });
     try {
       const setup = await provider.beginConnect(this.playerId);
+      if (attempt !== this.connectionAttempt) return;
       if (needsWalletPairing(setup) || needsConnectionSetupPrompt(setup)) {
         this.presentSetup(setup);
         this.update({
@@ -263,8 +265,10 @@ export class WalletConnection {
         return;
       }
       if (setup.skipQr || setup.fields) await setup.finalize();
+      if (attempt !== this.connectionAttempt) return;
       this.complete(provider, type, interval);
     } catch (error) {
+      if (attempt !== this.connectionAttempt) return;
       console.warn('[wallet] resume connect failed, falling back', error);
       if (!this.poller && type === 'simulator') this.complete(provider, type, interval);
       else this.update({ connecting: false });
@@ -272,15 +276,9 @@ export class WalletConnection {
   }
 
   async cancel(): Promise<void> {
-    this.aborted = true;
-    this.stopPoller();
     const provider =
       this.provider ?? (this.view.walletType ? providerFor(this.view.walletType).provider : null);
-    try {
-      await provider?.disconnect();
-    } catch {
-      /* Cancellation is best effort. */
-    }
+    // Retire local work before awaiting teardown, which may outlive a retry.
     this.stopLocalActivity();
     this.presentSetup(null);
     this.update({
@@ -290,18 +288,29 @@ export class WalletConnection {
       showSetup: false,
       error: null,
     });
+    try {
+      await provider?.disconnect();
+    } catch {
+      /* Cancellation is best effort. */
+    }
   }
 
   async disconnect(): Promise<void> {
-    this.stopPoller();
-    this.update({ connected: false, recovering: false });
+    const provider = this.provider;
+    this.stopLocalActivity();
+    this.presentSetup(null);
+    this.update({
+      walletType: undefined,
+      connected: false,
+      connecting: false,
+      showSetup: false,
+      balance: undefined,
+    });
     try {
-      await this.provider?.disconnect();
+      await provider?.disconnect();
     } catch {
       /* Preserve local disconnect. */
     }
-    this.stopLocalActivity();
-    this.update({ walletType: undefined, connected: false, balance: undefined });
   }
 
   private stopPoller(): void {
@@ -315,6 +324,7 @@ export class WalletConnection {
   }
 
   stopLocalActivity(): void {
+    ++this.connectionAttempt;
     this.detachConnection?.();
     this.detachConnection = null;
     this.detachReadiness?.();

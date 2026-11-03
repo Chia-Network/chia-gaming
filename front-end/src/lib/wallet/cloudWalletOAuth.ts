@@ -589,12 +589,14 @@ export function createAuthTokenProvider(
   getState: () => CloudWalletAuthState | null,
   setState: (next: CloudWalletAuthState) => void,
 ): TokenProvider {
-  let refreshPromise: Promise<string> | null = null;
+  let refresh: { state: CloudWalletAuthState; promise: Promise<string> } | null = null;
 
   const doRefresh = async (state: CloudWalletAuthState): Promise<string> => {
-    if (!refreshPromise) {
-      refreshPromise = refreshAccessToken(state.refreshToken)
+    if (!refresh || refresh.state !== state) {
+      const promise = refreshAccessToken(state.refreshToken)
         .then((tokens) => {
+          // Disconnect or another login retired the credentials being refreshed.
+          if (getState() !== state) throw new Error(CLOUD_WALLET_LOGIN_CANCELLED);
           const next: CloudWalletAuthState = {
             ...state,
             accessToken: tokens.accessToken,
@@ -605,10 +607,11 @@ export function createAuthTokenProvider(
           return tokens.accessToken;
         })
         .finally(() => {
-          refreshPromise = null;
+          if (refresh?.promise === promise) refresh = null;
         });
+      refresh = { state, promise };
     }
-    return refreshPromise;
+    return refresh.promise;
   };
 
   return {
