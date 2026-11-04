@@ -186,6 +186,62 @@ describe('WalletTopUp Buy', () => {
     expect(first.focus).not.toHaveBeenCalled();
   });
 
+  it('moves an open buy window to the wallet now connected', async () => {
+    const OTHER_URL = 'https://vault.chia.net/buy-xch?walletId=Wallet_other';
+    // Opening by the same name navigates the existing window and returns it.
+    const popup = { closed: false, focus: jest.fn() };
+    const open = jest.fn(() => popup);
+    win.open = open;
+    const submitted = { type: 'chia-cloud-wallet/buy-order', status: 'submitted' };
+    const r = render();
+
+    await clickBuy(r);
+    postMessage('https://vault.chia.net', popup, submitted);
+    expect(text(r)).toContain('Purchase placed.');
+
+    // The user switched wallets: the earlier purchase no longer describes this one.
+    act(() => {
+      r.update(
+        <WalletTopUp options={{ buyUrl: OTHER_URL, depositAddress: null }} shortfall={100n} />,
+      );
+    });
+    expect(text(r)).not.toContain('Purchase placed');
+
+    // Buy loads this wallet's page instead of bringing back the earlier wallet's.
+    await clickBuy(r);
+    expect(open).toHaveBeenLastCalledWith(
+      OTHER_URL,
+      'chia-gaming-cloud-wallet-buy',
+      expect.stringContaining('popup=yes'),
+    );
+    expect(popup.focus).not.toHaveBeenCalled();
+  });
+
+  it('ignores a purchase from a window still buying for an earlier wallet', async () => {
+    const popup = { closed: false, focus: jest.fn() };
+    win.open = jest.fn(() => popup);
+    const r = render();
+    await clickBuy(r);
+
+    // Switched wallets, but the window still shows the earlier wallet's page.
+    act(() => {
+      r.update(
+        <WalletTopUp
+          options={{
+            buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_other',
+            depositAddress: null,
+          }}
+          shortfall={100n}
+        />,
+      );
+    });
+    postMessage('https://vault.chia.net', popup, {
+      type: 'chia-cloud-wallet/buy-order',
+      status: 'submitted',
+    });
+    expect(text(r)).not.toContain('Purchase placed');
+  });
+
   it('says so when the browser blocks the popup', async () => {
     win.open = jest.fn(() => null);
     const r = render();

@@ -51,8 +51,10 @@ function formatXch(mojos: bigint): string {
  * Session dialog each mount one, and the window is opened by a fixed name, so
  * a per-instance handle would let the second reopen it and reload a purchase
  * in progress, or ignore the purchase message from a window the other opened.
+ * `url` names the wallet it buys for: the window outlives a wallet switch or
+ * disconnect, and a purchase finished there would fund that earlier wallet.
  */
-let buyPopup: Window | null = null;
+let buyPopup: { window: Window; url: string } | null = null;
 
 export function _resetBuyPopupForTests(): void {
   buyPopup = null;
@@ -84,16 +86,23 @@ export function WalletTopUp(props: WalletTopUpProps) {
   const currency = getCurrencyLabels();
   const [showDeposit, setShowDeposit] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
-  const [buyState, setBuyState] = useState<BuyState>('idle');
   const { state: copyState, copy } = useCopyToClipboard();
   const depositAddress = options?.depositAddress ?? null;
   const buyUrl = options?.buyUrl ?? null;
+  // Each result is about the wallet whose page it came from; after a switch the
+  // earlier wallet's "placed" or error no longer describes this one.
+  const [buyResult, setBuyResult] = useState<{ state: BuyState; url: string } | null>(null);
+  const buyState: BuyState = buyResult && buyResult.url === buyUrl ? buyResult.state : 'idle';
 
   useEffect(() => {
     if (!buyUrl) return;
     const buyOrigin = new URL(buyUrl).origin;
     const onMessage = (event: MessageEvent) => {
-      if (isBuyOrderSubmitted(event, buyOrigin, buyPopup)) setBuyState('placed');
+      // Only the window buying for this wallet speaks for it.
+      const popup = buyPopup?.url === buyUrl ? buyPopup.window : null;
+      if (isBuyOrderSubmitted(event, buyOrigin, popup)) {
+        setBuyResult({ state: 'placed', url: buyUrl });
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -128,20 +137,25 @@ export function WalletTopUp(props: WalletTopUpProps) {
     const desktop = desktopCloudWalletBridge();
     if (desktop) {
       try {
-        setBuyState((await desktop.openInBrowser(url)) ? 'in-browser' : 'browser-failed');
+        const opened = await desktop.openInBrowser(url);
+        setBuyResult({ state: opened ? 'in-browser' : 'browser-failed', url });
       } catch (err) {
         console.error('[WalletTopUp] opening the browser failed', err);
-        setBuyState('browser-failed');
+        setBuyResult({ state: 'browser-failed', url });
       }
       return;
     }
-    // Reopening by name would reload the page and lose the purchase in progress.
-    if (buyPopup && !buyPopup.closed) {
-      buyPopup.focus();
+    // Reopening by name would reload the page and lose the purchase in progress,
+    // so an open window for this wallet only comes forward. One opened for an
+    // earlier wallet is reloaded with this wallet's page: opening by the same
+    // name navigates it.
+    if (buyPopup && !buyPopup.window.closed && buyPopup.url === url) {
+      buyPopup.window.focus();
       return;
     }
-    buyPopup = openBuyPopup(url);
-    setBuyState(buyPopup ? 'idle' : 'popup-blocked');
+    const opened = openBuyPopup(url);
+    buyPopup = opened ? { window: opened, url } : null;
+    setBuyResult({ state: opened ? 'idle' : 'popup-blocked', url });
   };
 
   if (!buyUrl && !depositAddress) {
