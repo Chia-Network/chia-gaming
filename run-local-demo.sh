@@ -140,6 +140,27 @@ GAME_SERVE="$FE_DIR/serve"
 # running static server never serves a half-deleted deploy.
 mkdir -p "$GAME_SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/public/index.html" "$GAME_SERVE/index.html"
+# Point the player app at a non-default Cloud Wallet (e.g. a local ent stack)
+# by exporting CHIA_GAMING_CLOUD_WALLET_{API_URL,UI_URL,CLIENT_ID}.
+if [ -n "${CHIA_GAMING_CLOUD_WALLET_API_URL:-}${CHIA_GAMING_CLOUD_WALLET_UI_URL:-}${CHIA_GAMING_CLOUD_WALLET_CLIENT_ID:-}" ]; then
+    echo "=== Injecting Cloud Wallet override ==="
+    node -e '
+      const fs = require("node:fs");
+      const file = process.argv[1];
+      const globals = {
+        __CLOUD_WALLET_API_URL__: process.env.CHIA_GAMING_CLOUD_WALLET_API_URL,
+        __CLOUD_WALLET_UI_URL__: process.env.CHIA_GAMING_CLOUD_WALLET_UI_URL,
+        __CLOUD_WALLET_CLIENT_ID__: process.env.CHIA_GAMING_CLOUD_WALLET_CLIENT_ID,
+      };
+      const assignments = Object.entries(globals)
+        .filter(([, value]) => value)
+        .map(([key, value]) => `window.${key}=${JSON.stringify(value).replace(/</g, "\\u003c")};`)
+        .join("");
+      const html = fs.readFileSync(file, "utf8");
+      if (!html.includes("</head>")) throw new Error(`${file} has no </head>`);
+      fs.writeFileSync(file, html.replace("</head>", `<script>${assignments}</script></head>`));
+    ' "$GAME_SERVE/index.html"
+fi
 if [ -f "$FE_DIR/public/favicon.svg" ]; then
     cp "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
 fi
