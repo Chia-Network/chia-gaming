@@ -37,6 +37,7 @@ import {
   SessionPhase,
   PeerLiveness,
   CoinOfInterestEntry,
+  WalletIdentity,
 } from '../types/ChiaGaming';
 import { HubConnection, AdvisoryStartParams } from '../services/HubConnection';
 import { deriveHubSessionId } from '../services/hubSessionCredential';
@@ -85,6 +86,7 @@ import { activate, deactivate, getActiveBlockchain } from '../hooks/activeBlockc
 import {
   BALANCE_POLL_INTERVAL_MS,
   CHAIN_POLL_INTERVAL_MS,
+  TOP_UP_BALANCE_POLL_INTERVAL_MS,
   type BlockchainPoller,
 } from '../hooks/BlockchainPoller';
 import { RestoreStatus } from '../hooks/SessionController';
@@ -143,9 +145,11 @@ import {
 import { log } from '../services/log';
 import { formatMojos } from '../util';
 import { needsConnectionSetupPrompt, needsWalletPairing } from '../util/connectionSetup';
+import { canSwitchWallet } from '../util/walletSwitch';
 import { isElectronDistribution } from '../util/distribution';
 import { hubTrustError, requestHubTrust } from '../util/hubTrust';
 import { Button } from './button';
+import { fundingShortfall, WalletTopUp } from './WalletTopUp';
 
 import { HubPicker } from './HubPicker';
 
@@ -275,6 +279,13 @@ function SessionBuyIn({
       Unroll timeout: <strong>{effectiveUnrollTimeout.toString()}</strong> blocks
     </>
   );
+}
+
+function walletLabel(wallet: WalletIdentity): string {
+  const name = wallet.name ?? 'Wallet';
+  return wallet.address
+    ? `${name} (${wallet.address.slice(0, 8)}…${wallet.address.slice(-4)})`
+    : name;
 }
 
 const IDLE_PEER_CONNECTION: PeerConnectionResult = {
@@ -1829,6 +1840,20 @@ const Shell = () => {
     };
   }, [stopBalancePolling]);
 
+  // Shortfall for the session the user is being asked to accept. Accepting
+  // without it would only fail later at channel funding.
+  const consentBuyIn = pendingAdvisory?.my_amount ?? pendingProposal?.responder_amount ?? null;
+  const consentShortfall =
+    consentBuyIn === null ? 0n : fundingShortfall(balance, consentBuyIn, defaultFee);
+  const awaitingTopUp = consentShortfall > 0n;
+  useEffect(() => {
+    if (!awaitingTopUp || !activeBlockchainPoller) return;
+    activeBlockchainPoller.setBalanceInterval(TOP_UP_BALANCE_POLL_INTERVAL_MS);
+    return () => activeBlockchainPoller.setBalanceInterval(BALANCE_POLL_INTERVAL_MS);
+  }, [awaitingTopUp, activeBlockchainPoller]);
+  const topUpOptions = activeBlockchainRef.current?.getTopUpOptions?.() ?? null;
+  const walletIdentity = activeBlockchainRef.current?.getWalletIdentity?.() ?? null;
+
   // QR code generation (inline in wallet tab, type-agnostic)
   useEffect(() => {
     if (!connectionSetup?.qrUri) {
@@ -2513,6 +2538,74 @@ const Shell = () => {
       }
     },
     [uniqueId, clearSessionPreservingHistory, completeConnection, setConnecting, setWalletAlert],
+  );
+
+  // Wallets the user granted the game, for backends that grant several.
+  const [grantedWallets, setGrantedWallets] = useState<WalletIdentity[]>([]);
+  useEffect(() => {
+    const iface = activeBlockchainRef.current;
+    if (!walletConnected || !iface?.listWallets) {
+      setGrantedWallets([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const wallets = await iface.listWallets!();
+        if (!cancelled) setGrantedWallets(wallets);
+      } catch (err) {
+        // Without the list the tab still names the connected wallet; only switching is lost.
+        console.error('[Shell] listing granted wallets failed', err);
+        if (!cancelled) setGrantedWallets([]);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletConnected, activeBlockchainPoller]);
+
+  // Channel funding and fee reservations belong to the wallet that made them,
+  // so the wallet only changes while no session, starting, live or saved,
+  // holds funds. Reads refs and the in-memory save, so it is current when called.
+  const sessionHoldsWallet = useCallback(
+    (phase: SessionPhase): boolean =>
+      !canSwitchWallet({
+        sessionPhase: phase,
+        durableSession: storageRepository.loadState().session,
+        hasPairingToken: !!sessionConfigRef.current?.pairingToken,
+        acceptInFlight:
+          isAcceptSessionTransition(shellTransitionRef.current) ||
+          freshStartPersistInFlightRef.current,
+        busy: false,
+      }),
+    [freshStartPersistInFlightRef],
+  );
+  const [switchingWallet, setSwitchingWallet] = useState(false);
+  const [switchWalletError, setSwitchWalletError] = useState<string | null>(null);
+  const handleSwitchWallet = useCallback(
+    async (walletId: string) => {
+      const iface = activeBlockchainRef.current;
+      if (!iface?.selectWallet || !blockchainType || sessionHoldsWallet(sessionPhaseRef.current)) {
+        return;
+      }
+      setSwitchingWallet(true);
+      setSwitchWalletError(null);
+      // Stopped interest drops in-flight replies, so no old-wallet balance lands late.
+      stopBalancePolling();
+      setBalance(undefined);
+      try {
+        await iface.selectWallet(walletId);
+      } catch (err) {
+        console.error('[Shell] switching wallets failed', err);
+        setSwitchWalletError(err instanceof Error ? err.message : String(err));
+      } finally {
+        // Restarting interest polls whichever wallet is now in use right away.
+        startBalancePolling(blockchainType);
+        setSwitchingWallet(false);
+      }
+    },
+    [blockchainType, sessionHoldsWallet, startBalancePolling, stopBalancePolling],
   );
 
   const handleFinalize = useCallback(
@@ -3702,11 +3795,16 @@ const Shell = () => {
             unrollTimeout={pendingAdvisory.unroll_timeout}
           />
         </p>
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingAdvisory(pendingAdvisory)}
-            disabled={!walletConnected || !blockchainReady}
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp || switchingWallet}
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Accept
           </button>
@@ -3732,11 +3830,16 @@ const Shell = () => {
             unrollTimeout={pendingProposal.unroll_timeout}
           />
         </p>
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => acceptPendingProposal(pendingProposal)}
-            disabled={!walletConnected || !blockchainReady}
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp || switchingWallet}
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Accept
           </button>
@@ -3918,11 +4021,56 @@ const Shell = () => {
                   <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
                   <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
                 </div>
+                {walletIdentity && grantedWallets.length > 1 ? (
+                  <label className="flex flex-col gap-1 w-full max-w-xs text-sm text-canvas-text">
+                    <span>Play with</span>
+                    {/* appearance-none drops the platform chrome, which ignores padding, so
+                        the select sizes like the inputs; the chevron replaces its arrow. */}
+                    <div className="relative">
+                      <select
+                        value={walletIdentity.id}
+                        disabled={sessionHoldsWallet(sessionPhase) || connecting || switchingWallet}
+                        onChange={(event) => void handleSwitchWallet(event.target.value)}
+                        className="w-full appearance-none pl-3 pr-8 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {grantedWallets.map((wallet) => (
+                          <option key={wallet.id} value={wallet.id}>
+                            {walletLabel(wallet)}
+                          </option>
+                        ))}
+                      </select>
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-canvas-text"
+                      >
+                        ▾
+                      </span>
+                    </div>
+                    {sessionHoldsWallet(sessionPhase) && (
+                      <span className="text-xs">Finish the session to switch wallets.</span>
+                    )}
+                    {switchWalletError && (
+                      <span className="text-xs text-alert-text break-words">
+                        Could not switch wallets: {switchWalletError}
+                      </span>
+                    )}
+                  </label>
+                ) : (
+                  walletIdentity && (
+                    <p
+                      className="text-sm text-canvas-text"
+                      title={walletIdentity.address ?? undefined}
+                    >
+                      {walletLabel(walletIdentity)}
+                    </p>
+                  )
+                )}
                 {balance !== undefined && (
                   <p className="text-2xl font-bold text-canvas-text-contrast">
                     {balance.toLocaleString()} {currency.mojos}
                   </p>
                 )}
+                {topUpOptions && <WalletTopUp options={topUpOptions} shortfall={0n} />}
                 <div className="w-full max-w-xs text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>

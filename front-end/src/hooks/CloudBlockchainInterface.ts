@@ -9,7 +9,9 @@ import {
   WalletOfferProvider,
   WalletOfferCancellationOutcome,
   WalletOfferCancellationBeginOutcome,
+  WalletIdentity,
   WalletSubmitOutcome,
+  WalletTopUpOptions,
 } from '../types/ChiaGaming';
 import { CoinRecord } from '../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../types/rpc/PushTransactions';
@@ -34,6 +36,8 @@ import {
   type TokenProvider,
 } from './cloudWalletOAuth';
 import { getCloudWalletUiUrl } from './cloudWalletConfig';
+import { isTestnet } from '../constants/currency';
+import { CLOUD_WALLET_OVERRIDE } from '../constants/env';
 import {
   clearCloudWalletAuth,
   loadCloudWalletAuth,
@@ -137,6 +141,14 @@ export function classifyCloudWalletSubmitError(error: unknown): WalletSubmitOutc
 export class CloudBlockchainInterface implements InternalBlockchainInterface {
   readonly fundingMode = 'offer-settlement' as const;
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
+  private depositAddress: string | null = null;
+  private walletName: string | null = null;
+  /**
+   * Bumped whenever the signed-in session ends or is replaced. A wallet read
+   * that started under an earlier session must not apply to the current one.
+   * Token refresh keeps the session, so it does not bump this.
+   */
+  private sessionGeneration = 0;
 
   private auth: CloudWalletAuthState | null = null;
   private walletOfferProvider: WalletOfferProvider | null = null;
@@ -293,16 +305,32 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   /** `beforeReady` runs once the wallet is fetched and may throw to stop. */
   async startMonitoring(beforeReady: () => void = () => {}): Promise<void> {
     const walletId = this.requireWalletId();
+    const wallet = await this.readWallet(walletId);
+    beforeReady();
+    this.applyWallet(wallet);
+    this.monitoringReady = true;
+    this.fireConnectionChange(true);
+    log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${wallet.puzzleHash}`);
+  }
+
+  /** Reads a wallet through the grant without changing any state. */
+  private async readWallet(walletId: string): Promise<{
+    puzzleHash: string;
+    name: string | null;
+    address: string | null;
+  }> {
     const data = await this.gql<{
       wallet: {
         id: string;
-        address: { puzzleHash: string } | null;
+        name: string | null;
+        address: { puzzleHash: string; address: string } | null;
       } | null;
     }>(
       `query($id: ID!) {
         wallet(id: $id) {
           id
-          address { puzzleHash }
+          name
+          address { puzzleHash address }
         }
       }`,
       { id: walletId },
@@ -314,22 +342,89 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (!ph || ph.length !== 64) {
       throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
-    beforeReady();
-    this.blockchainAddressData = { puzzleHash: ph };
-    this.monitoringReady = true;
-    this.fireConnectionChange(true);
-    log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${ph}`);
+    return {
+      puzzleHash: ph,
+      name: data.wallet.name || null,
+      address: data.wallet.address?.address || null,
+    };
   }
 
+  private applyWallet(wallet: { puzzleHash: string; name: string | null; address: string | null }) {
+    this.blockchainAddressData = { puzzleHash: wallet.puzzleHash };
+    this.depositAddress = wallet.address;
+    this.walletName = wallet.name;
+  }
+
+  // spendableAmount excludes coins locked in pending offers and clawback
+  // payouts that have not matured, so a purchase still settling is not
+  // reported as playable.
   async getBalance(): Promise<bigint> {
     const walletId = this.requireWalletId();
     const data = await this.gql<{
-      wallet: { balance: string | number | bigint } | null;
-    }>(`query($id: ID!) { wallet(id: $id) { balance } }`, { id: walletId });
-    if (!data.wallet || data.wallet.balance == null) {
+      wallet: { asset: { spendableAmount: string | number | bigint } | null } | null;
+    }>(`query($id: ID!) { wallet(id: $id) { asset(assetHash: null) { spendableAmount } } }`, {
+      id: walletId,
+    });
+    const spendable = data.wallet?.asset?.spendableAmount;
+    if (spendable == null) {
       throw new Error('Cloud Wallet balance unavailable');
     }
-    return BigInt(data.wallet.balance);
+    return BigInt(spendable);
+  }
+
+  // The public testnet Cloud Wallet sells no XCH. An overridden (local) Cloud
+  // Wallet runs on testnet but may enable Buy XCH, so it keeps the link. The
+  // walletId preselects the vault the game funds from.
+  getTopUpOptions(): WalletTopUpOptions {
+    const sellsXch = !isTestnet() || !!CLOUD_WALLET_OVERRIDE.uiUrl;
+    const walletId = this.auth?.walletId;
+    return {
+      buyUrl:
+        sellsXch && walletId
+          ? `${getCloudWalletUiUrl()}/buy-xch?walletId=${encodeURIComponent(walletId)}`
+          : null,
+      depositAddress: this.depositAddress,
+    };
+  }
+
+  // A grant can cover several wallets; this names the one the game funds from.
+  getWalletIdentity(): WalletIdentity | null {
+    const walletId = this.auth?.walletId;
+    if (!this.monitoringReady || !walletId) return null;
+    return { id: walletId, name: this.walletName, address: this.depositAddress };
+  }
+
+  async listWallets(): Promise<WalletIdentity[]> {
+    const data = await this.gql<{
+      oauthConsentedWallets: Array<{
+        id: string;
+        name: string | null;
+        address: { address: string } | null;
+      }> | null;
+    }>(`query { oauthConsentedWallets { id name address { address } } }`);
+    return (data.oauthConsentedWallets ?? []).map((wallet) => ({
+      id: wallet.id,
+      name: wallet.name || null,
+      address: wallet.address?.address || null,
+    }));
+  }
+
+  // The new wallet is read through the grant first, so one outside it fails
+  // before anything changes. Its id, address, and name then switch together,
+  // with no await between them for a render to see a mix of two wallets.
+  async selectWallet(walletId: string): Promise<void> {
+    if (!this.auth) {
+      throw new Error('Cloud Wallet is not signed in');
+    }
+    const generation = this.sessionGeneration;
+    const wallet = await this.readWallet(walletId);
+    // A disconnect, or a new sign-in after one, during the read ends this switch.
+    if (generation !== this.sessionGeneration || !this.auth) {
+      throw new Error('Cloud Wallet was disconnected while switching wallets');
+    }
+    this.persistAuth({ ...this.auth, walletId });
+    this.applyWallet(wallet);
+    log(`[cloud-blockchain] switched wallet=${walletId} ph=${wallet.puzzleHash}`);
   }
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
@@ -808,6 +903,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (fresh) {
       clearCloudWalletAuth();
       this.auth = null;
+      this.sessionGeneration++;
       this.monitoringReady = false;
       this.fireConnectionChange(false);
     }
@@ -887,9 +983,12 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     this.loginAbort = null;
     clearCloudWalletAuth();
     this.auth = null;
+    this.sessionGeneration++;
     this.walletOfferProvider = null;
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: '' };
+    this.depositAddress = null;
+    this.walletName = null;
     this.fireConnectionChange(false);
   }
 
