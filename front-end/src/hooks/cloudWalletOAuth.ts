@@ -595,13 +595,21 @@ export function createAuthTokenProvider(
     if (!refreshPromise) {
       refreshPromise = refreshAccessToken(state.refreshToken)
         .then((tokens) => {
-          const next: CloudWalletAuthState = {
-            ...state,
+          // The state may have changed while the refresh ran. Merge the tokens
+          // into the current state, never the snapshot, so a wallet switch made
+          // meanwhile is kept. A sign-out, or a new sign-in after one, ended the
+          // refreshed session: its tokens must not bring it back. This is not a
+          // CloudWalletAuthError, which would clear the current session's auth.
+          const current = getState();
+          if (!current || current.refreshToken !== state.refreshToken) {
+            throw new Error('Cloud Wallet session changed during token refresh');
+          }
+          setState({
+            ...current,
             accessToken: tokens.accessToken,
             refreshToken: tokens.refreshToken,
             expiresAt: tokens.expiresAt,
-          };
-          setState(next);
+          });
           return tokens.accessToken;
         })
         .finally(() => {

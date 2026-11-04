@@ -53,6 +53,7 @@ setTestGlobal('window', globalThis);
 import {
   buildAuthorizeUrl,
   CloudWalletAuthError,
+  createAuthTokenProvider,
   createPkceChallenge,
   encodeRelayGlobalId,
   fetchFirstConsentedWalletId,
@@ -751,6 +752,111 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     const iface = new CloudBlockchainInterface();
     await (await iface.beginConnect('uid')).finalize();
     await expect(iface.getBalance()).rejects.toThrow(/balance unavailable/);
+  });
+});
+
+describe('createAuthTokenProvider refresh', () => {
+  type AuthState = NonNullable<ReturnType<typeof loadCloudWalletAuth>>;
+  const expired: AuthState = {
+    accessToken: 'access-old',
+    refreshToken: 'refresh-old',
+    expiresAt: Date.now() - 1,
+    walletId: 'Wallet_a',
+  };
+
+  afterEach(() => {
+    setTestGlobal('fetch', undefined);
+  });
+
+  /** Holds the token endpoint open until the returned release is called. */
+  function holdTokenEndpoint(): () => void {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setTestGlobal(
+      'fetch',
+      jest.fn(async () => {
+        await held;
+        return {
+          status: 200,
+          ok: true,
+          text: async () =>
+            JSON.stringify({
+              access_token: 'access-new',
+              refresh_token: 'refresh-new',
+              expires_in: 3600,
+            }),
+        };
+      }),
+    );
+    return release;
+  }
+
+  it('keeps a wallet switched while the refresh ran', async () => {
+    let state: AuthState | null = { ...expired };
+    const provider = createAuthTokenProvider(
+      () => state,
+      (next) => {
+        state = next;
+      },
+    );
+    const release = holdTokenEndpoint();
+    const token = provider.getAccessToken();
+    state = { ...state!, walletId: 'Wallet_b' };
+    release();
+
+    await expect(token).resolves.toBe('access-new');
+    // The refresh began with Wallet_a but must not write it back over the switch.
+    expect(state).toEqual({
+      accessToken: 'access-new',
+      refreshToken: 'refresh-new',
+      expiresAt: expect.any(Number),
+      walletId: 'Wallet_b',
+    });
+  });
+
+  it('does not bring back a session signed out while the refresh ran', async () => {
+    let state: AuthState | null = { ...expired };
+    const provider = createAuthTokenProvider(
+      () => state,
+      (next) => {
+        state = next;
+      },
+    );
+    const release = holdTokenEndpoint();
+    const token = provider.getAccessToken();
+    state = null;
+    release();
+
+    await expect(token).rejects.toThrow(/session changed during token refresh/);
+    expect(state).toBeNull();
+  });
+
+  it('does not overwrite a new sign-in with the old grant', async () => {
+    let state: AuthState | null = { ...expired };
+    const provider = createAuthTokenProvider(
+      () => state,
+      (next) => {
+        state = next;
+      },
+    );
+    const release = holdTokenEndpoint();
+    const token = provider.getAccessToken();
+    const signedInAgain: AuthState = {
+      accessToken: 'access-2',
+      refreshToken: 'refresh-2',
+      expiresAt: Date.now() + 10 * 60_000,
+      walletId: 'Wallet_c',
+    };
+    state = signedInAgain;
+    release();
+
+    const failure = await token.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    // Not a dead-grant error, which would make the caller clear the new session.
+    expect(failure).not.toBeInstanceOf(CloudWalletAuthError);
+    expect(state).toEqual(signedInAgain);
   });
 });
 
