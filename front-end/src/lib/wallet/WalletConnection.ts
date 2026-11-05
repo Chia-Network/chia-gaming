@@ -18,6 +18,7 @@ import {
 import { cloudBlockchainInfo } from './CloudBlockchainInterface';
 import { fakeBlockchainInfo } from './FakeBlockchainInterface';
 import { realBlockchainInfo } from './RealBlockchainInterface';
+import { sageBlockchainInfo } from './SageBlockchainInterface';
 import type { SessionWallet } from './sessionWallet';
 
 export interface WalletView {
@@ -42,9 +43,11 @@ export type WalletEvent =
 function providerFor(type: BlockchainType) {
   return type === 'walletconnect'
     ? { provider: realBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
-    : type === 'cloud'
-      ? { provider: cloudBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
-      : { provider: fakeBlockchainInfo, interval: 5000 };
+    : type === 'sage'
+      ? { provider: sageBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
+      : type === 'cloud'
+        ? { provider: cloudBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
+        : { provider: fakeBlockchainInfo, interval: 5000 };
 }
 
 /** Provider lifetime and normalization. Session and hub policy belongs to the host. */

@@ -3,6 +3,7 @@ import { createApplication } from '../application/Application';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { storageRepository } from '../session/storageRepository';
 import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
+import { sageBlockchainInfo } from '../wallet/SageBlockchainInterface';
 import { WalletConnection } from '../wallet/WalletConnection';
 
 beforeEach(async () => {
@@ -43,4 +44,27 @@ it('keeps publishing policy in its owning application', async () => {
   await first.dispatch({ type: 'confirm' });
   expect(first.snapshot().transactionPublishNerfed).toBe(true);
   expect(second.snapshot().transactionPublishNerfed).toBe(false);
+});
+
+it('connects Sage through the wallet owner and publishes the selected provider', async () => {
+  const finalize = jest.fn(async () => {});
+  const begin = jest.spyOn(sageBlockchainInfo, 'beginConnect').mockResolvedValue({
+    qrUri: '',
+    skipQr: true,
+    finalize,
+  });
+  jest.spyOn(sageBlockchainInfo, 'getHeightInfo').mockReturnValue(new Promise(() => {}));
+  jest.spyOn(sageBlockchainInfo, 'getBalance').mockReturnValue(new Promise(() => {}));
+  jest.spyOn(sageBlockchainInfo, 'onConnectionChange').mockReturnValue(() => {});
+  jest.spyOn(sageBlockchainInfo, 'onPlayReadinessChange').mockReturnValue(() => {});
+  const wallet = new WalletConnection('player', jest.fn());
+  try {
+    await expect(wallet.connect('sage', false, true)).resolves.toBe(true);
+    expect(begin).toHaveBeenCalledWith('player', true);
+    expect(finalize).toHaveBeenCalledTimes(1);
+    expect(wallet.view).toMatchObject({ walletType: 'sage', connected: true, hasProvider: true });
+    expect(storageRepository.query('blockchainType')).toBe('sage');
+  } finally {
+    wallet.stopLocalActivity();
+  }
 });
