@@ -2254,6 +2254,7 @@ export function createApplication() {
       return;
     }
     if (state.terminalPresentation || sessionFinishedCleanup) return;
+    if (params.restoring && sessions.state.restoreStatus === 'failed') return;
     const mount = shouldMountGameSession(
       true,
       state.walletView.connected,
@@ -2317,7 +2318,18 @@ export function createApplication() {
         } catch (error) {
           console.error('[sessionController] restoreSession error:', error);
           log(`[sessionController] restoreSession error: ${String(error)}`);
-          if (sessionController === controller) destroySessionController();
+          if (sessionController === controller) {
+            batch(() => {
+              detachSessionEvents?.();
+              detachSessionEvents = undefined;
+              frontend = null;
+              destroySessionController();
+              handleRestoreStatusChange(
+                'failed',
+                error instanceof Error ? error.message : String(error),
+              );
+            });
+          }
           throw error;
         }
       };

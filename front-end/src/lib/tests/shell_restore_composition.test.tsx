@@ -262,6 +262,59 @@ describe('Shell production restore composition', () => {
     expect(unhandledRejections).toEqual([]);
   });
 
+  it('keeps a failed live restore retired across later application publications', async () => {
+    jest.mocked(sessionHost.createSessionController).mockRestore();
+    const createController = jest.spyOn(sessionHost, 'createSessionController');
+    jest.mocked(wasmInit.ensureWasmLoaded).mockResolvedValue({} as typeof mockWasmConnection);
+    const restore = jest
+      .mocked(sessionHost.restoreSession)
+      .mockRejectedValueOnce(new Error('saved cradle cannot be decoded'))
+      .mockImplementation(() => new Promise<never>(() => {}));
+    requestTrust.mockResolvedValue('trusted');
+    await storageRepository.claimApplicationState();
+    const save = activeSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+      gameSessionId: '33'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    expectConsoleError('[sessionController] restoreSession error:');
+    await act(async () => {
+      await application.dispatch({ type: 'resume' });
+    });
+    for (let n = 0; n < 10; n++) await flushEffects();
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(createController).toHaveBeenCalledTimes(1);
+    await waitForText(renderer!, 'Restore failed');
+    expect(application.snapshot()).toMatchObject({
+      restoreStatus: 'failed',
+      restoreError: 'saved cradle cannot be decoded',
+      sessionFrontend: null,
+    });
+    await act(async () => {
+      await application.dispatch({ type: 'theme', theme: 'dark' });
+      await application.dispatch({ type: 'fee', fee: 7n });
+      mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
+      await application.dispatch({ type: 'wallet-cancel' });
+      await storageRepository.checkpointDomainMutations();
+    });
+    await flushEffects();
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(createController).toHaveBeenCalledTimes(1);
+    expect(storageRepository.loadState().session).toEqual(save.session);
+    expect(unhandledRejections).toEqual([]);
+  });
+
   it('keeps wallet setup visibly pending after pairing until approvals finish', async () => {
     let paired!: () => void;
     let finish!: () => void;
