@@ -818,11 +818,14 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 pipeConnected = selectGameTabConnected({ sessionPhase, peerLiveness });
                 break;
             }
-            const walletDisconnected = tab.id === 'wallet' && !walletConnected && !walletRecovering;
+            const walletConnecting =
+              tab.id === 'wallet' && connecting && !walletConnected && !walletRecovering;
+            const walletDisconnected =
+              tab.id === 'wallet' && !walletConnected && !walletRecovering && !walletConnecting;
             const pipeLabel =
               pipeConnected === null
                 ? tab.label
-                : `${tab.label}, ${pipeConnected ? 'connected' : 'disconnected'}`;
+                : `${tab.label}, ${walletConnecting ? 'connecting' : pipeConnected ? 'connected' : 'disconnected'}`;
 
             return (
               <button
@@ -847,8 +850,19 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 }
               >
                 {pipeConnected !== null && (
-                  <span aria-hidden="true" className="text-base leading-none">
-                    {pipeConnected ? TAB_PIPE_CONNECTED : TAB_PIPE_DISCONNECTED}
+                  <span
+                    aria-hidden="true"
+                    className={
+                      walletConnecting
+                        ? 'w-4 h-4 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin'
+                        : 'text-base leading-none'
+                    }
+                  >
+                    {walletConnecting
+                      ? null
+                      : pipeConnected
+                        ? TAB_PIPE_CONNECTED
+                        : TAB_PIPE_DISCONNECTED}
                   </span>
                 )}
                 <span className={walletDisconnected ? 'text-alert-text' : undefined}>
@@ -1005,7 +1019,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               </div>
             ) : connectionSetup && !connectionSetup.skipQr ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
-                <p className="text-lg font-semibold text-canvas-text-contrast">Scan QR Code</p>
+                <p className="text-lg font-semibold text-canvas-text-contrast" role="status">
+                  Connecting wallet…
+                </p>
                 <p className="text-sm text-canvas-text text-center">
                   Open your Chia wallet and scan this QR code to connect
                 </p>
@@ -1098,7 +1114,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   )}
                 </div>
                 <p className="text-sm text-canvas-text animate-pulse">
-                  Waiting for wallet to connect…
+                  Waiting for approval in your wallet…
                 </p>
                 <Button variant="solid" onClick={() => dispatch({ type: 'wallet-cancel' })}>
                   Cancel
@@ -1107,7 +1123,12 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             ) : connecting ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
-                <p className="text-sm text-canvas-text animate-pulse">Connecting…</p>
+                <p className="text-sm text-canvas-text animate-pulse" role="status">
+                  Connecting…
+                </p>
+                <p className="text-sm text-canvas-text text-center">
+                  Check your wallet for any remaining approval requests.
+                </p>
                 <Button variant="solid" onClick={() => dispatch({ type: 'wallet-cancel' })}>
                   Cancel
                 </Button>

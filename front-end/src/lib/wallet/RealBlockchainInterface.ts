@@ -1072,7 +1072,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       return {
         qrUri: '',
         skipQr: true,
-        finalize: async () => {
+        finalize: async (_values, onPaired) => {
+          onPaired?.();
           // A prior reload attempt may still be stuck in waitForRemoteWallet;
           // drop it so this reconnect starts a fresh monitoring pass.
           this.resetMonitoringAttempt();
@@ -1085,8 +1086,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     return {
       qrUri: uri,
       skipQr,
-      finalize: async () => {
+      finalize: async (_values, onPaired) => {
         if (!skipQr) await walletConnectState.connect(approval);
+        onPaired?.();
         await this.startMonitoring();
       },
     };

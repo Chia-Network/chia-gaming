@@ -58,6 +58,83 @@ it('keeps publishing policy in its owning application', async () => {
   expect(second.snapshot().transactionPublishNerfed).toBe(false);
 });
 
+it.each([false, true])(
+  'keeps pairing and wallet setup pending through completion, silent=%s',
+  async (silent) => {
+    const finish = deferred<void>();
+    let paired!: () => void;
+    jest.spyOn(realBlockchainInfo, 'beginConnect').mockResolvedValue({
+      qrUri: 'wc:pairing',
+      finalize: (_values, onPaired) => {
+        paired = onPaired!;
+        return finish.promise;
+      },
+    });
+    jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockReturnValue(new Promise(() => {}));
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockReturnValue(new Promise(() => {}));
+    jest.spyOn(realBlockchainInfo, 'onConnectionChange').mockReturnValue(() => {});
+    jest.spyOn(realBlockchainInfo, 'onPlayReadinessChange').mockReturnValue(() => {});
+    const emit = jest.fn();
+    const wallet = new WalletConnection('player', emit);
+    try {
+      let pending = wallet.connect('walletconnect', silent);
+      await Promise.resolve();
+      expect(wallet.view).toMatchObject({
+        connected: false,
+        connecting: !silent,
+        setup: { qrUri: 'wc:pairing' },
+      });
+      if (silent) {
+        await pending;
+        pending = wallet.finalize();
+      }
+      paired();
+      expect(wallet.view).toMatchObject({ connected: false, connecting: true, setup: null });
+      expect(emit).not.toHaveBeenCalledWith({ type: 'connected' });
+      finish.resolve();
+      await expect(pending).resolves.toBe(true);
+      expect(wallet.view).toMatchObject({ connected: true, connecting: false, setup: null });
+    } finally {
+      wallet.stopLocalActivity();
+    }
+  },
+);
+
+it('ignores an old pairing callback after cancellation and a new attempt', async () => {
+  const finish = deferred<void>();
+  const next = deferred<ConnectionSetup>();
+  let paired!: () => void;
+  jest
+    .spyOn(realBlockchainInfo, 'beginConnect')
+    .mockResolvedValueOnce({
+      qrUri: 'wc:old',
+      finalize: (_values, onPaired) => {
+        paired = onPaired!;
+        return finish.promise;
+      },
+    })
+    .mockReturnValueOnce(next.promise);
+  jest.spyOn(realBlockchainInfo, 'disconnect').mockResolvedValue();
+  const emit = jest.fn();
+  const wallet = new WalletConnection('player', emit);
+  try {
+    const old = wallet.connect('walletconnect');
+    await Promise.resolve();
+    await wallet.cancel();
+    const current = wallet.connect('walletconnect', true);
+    next.resolve({ qrUri: 'wc:current', finalize: jest.fn() });
+    await current;
+    emit.mockClear();
+    paired();
+    finish.resolve();
+    await old;
+    expect(wallet.view.setup?.qrUri).toBe('wc:current');
+    expect(emit).not.toHaveBeenCalled();
+  } finally {
+    wallet.stopLocalActivity();
+  }
+});
+
 describe.each([
   ['simulator', fakeBlockchainInfo],
   ['walletconnect', realBlockchainInfo],

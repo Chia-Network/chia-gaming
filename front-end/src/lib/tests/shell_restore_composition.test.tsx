@@ -251,7 +251,7 @@ describe('Shell production restore composition', () => {
     expect(
       renderer!.root.findByProps({ 'data-testid': 'finished-session-game-view' }),
     ).toBeDefined();
-    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' })).toBeDefined();
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Connecting…' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Connect to Hub' })).toBeDefined();
@@ -260,6 +260,54 @@ describe('Shell production restore composition', () => {
     expect(requestTrust).toHaveBeenCalledWith('https://hub.example.test');
     await flushEffects();
     expect(unhandledRejections).toEqual([]);
+  });
+
+  it('keeps wallet setup visibly pending after pairing until approvals finish', async () => {
+    let paired!: () => void;
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+      qrUri: 'wc:test-pairing',
+      finalize: (_values, onPaired) => {
+        paired = onPaired!;
+        return pending;
+      },
+    });
+    jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockReturnValue(new Promise(() => {}));
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockReturnValue(new Promise(() => {}));
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Link Wallet');
+    let connecting!: Promise<void>;
+    await act(async () => {
+      connecting = application.dispatch({
+        type: 'wallet-connect',
+        wallet: 'walletconnect',
+        fresh: true,
+      });
+      await Promise.resolve();
+    });
+    await waitForText(renderer!, 'Connecting wallet…');
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ children: 'Link Wallet' })).toHaveLength(0);
+    act(() => {
+      paired();
+    });
+    await waitForText(renderer!, 'Connecting…');
+    expect(renderer!.root.findAllByProps({ children: 'Connecting wallet…' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ children: 'Link Wallet' })).toHaveLength(0);
+    await act(async () => {
+      finish();
+      await connecting;
+      await storageRepository.checkpointDomainMutations();
+    });
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' })).toBeDefined();
   });
 
   it.each([

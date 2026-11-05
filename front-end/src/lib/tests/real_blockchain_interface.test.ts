@@ -180,6 +180,40 @@ describe('RealBlockchainInterface', () => {
     await Promise.resolve();
   }
 
+  it('reports pairing before monitoring setup completes', async () => {
+    let approve!: () => void;
+    let finishMonitoring!: () => void;
+    mockWalletConnectState.connect.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          approve = resolve;
+        }),
+    );
+    const blockchain = new RealBlockchainInterface();
+    const monitoring = jest.spyOn(blockchain, 'startMonitoring').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishMonitoring = resolve;
+        }),
+    );
+    const paired = jest.fn();
+    try {
+      const setup = await blockchain.beginConnect('id');
+      const finalizing = setup.finalize(undefined, paired);
+      expect(paired).not.toHaveBeenCalled();
+      expect(monitoring).not.toHaveBeenCalled();
+      approve();
+      await Promise.resolve();
+      expect(paired).toHaveBeenCalledTimes(1);
+      expect(monitoring).toHaveBeenCalledTimes(1);
+      finishMonitoring();
+      await finalizing;
+    } finally {
+      monitoring.mockRestore();
+      await blockchain.disconnect();
+    }
+  });
+
   it('reissues a QR on repeated fresh Link Wallet without wiping IndexedDB', async () => {
     const deleteDatabase = jest.fn();
     const priorIndexedDb = (globalThis as { indexedDB?: unknown }).indexedDB;

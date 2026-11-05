@@ -345,7 +345,8 @@ export interface ConnectionSetup {
   title?: string;
   description?: string;
   fields?: Record<string, ConnectionField>;
-  finalize(values?: ConnectionFieldValues): Promise<void>;
+  /** Pairing can finish before wallet setup and its remaining approvals complete. */
+  finalize(values?: ConnectionFieldValues, onPaired?: () => void): Promise<void>;
 }
 
 export type WalletOfferCancellationOutcome =

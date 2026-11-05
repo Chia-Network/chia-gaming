@@ -184,8 +184,9 @@ export class WalletConnection {
       if (attempt !== this.connectionAttempt) return false;
       if (needsWalletPairing(setup)) {
         this.presentSetup(setup);
-        this.update({ connected: false, connecting: false });
+        this.update({ connected: false });
         if (silent) {
+          this.update({ connecting: false });
           this.emit({ type: 'attention' });
           return false;
         }
@@ -196,7 +197,9 @@ export class WalletConnection {
         if (silent) this.emit({ type: 'attention' });
         return false;
       }
-      await setup.finalize();
+      await setup.finalize(undefined, () => {
+        if (attempt === this.connectionAttempt) this.presentSetup(null);
+      });
       if (attempt !== this.connectionAttempt) return false;
       this.complete(provider, type, interval);
       return true;
@@ -225,7 +228,9 @@ export class WalletConnection {
     const attempt = ++this.connectionAttempt;
     this.update({ error: null, connecting: true });
     try {
-      await this.setup.finalize(values);
+      await this.setup.finalize(values, () => {
+        if (attempt === this.connectionAttempt) this.presentSetup(null);
+      });
       if (attempt !== this.connectionAttempt) return false;
       this.emit({ type: 'fee-changed' });
       this.update({ showSetup: false });
