@@ -253,7 +253,7 @@ describe('Shell production restore composition', () => {
     ).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
-    expect(renderer!.root.findByProps({ children: 'Connecting…' })).toBeDefined();
+    expect(renderer!.root.findByProps({ children: 'Setting up connection.' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Connect to Hub' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Done' }).props.disabled).toBe(true);
     expect(realBlockchainInfo.beginConnect).toHaveBeenCalledTimes(1);
@@ -298,7 +298,7 @@ describe('Shell production restore composition', () => {
     act(() => {
       paired();
     });
-    await waitForText(renderer!, 'Connecting…');
+    await waitForText(renderer!, 'Setting up connection.');
     expect(renderer!.root.findAllByProps({ children: 'Connecting wallet…' })).toHaveLength(0);
     expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
     expect(renderer!.root.findAllByProps({ children: 'Link Wallet' })).toHaveLength(0);

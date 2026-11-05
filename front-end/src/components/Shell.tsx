@@ -1124,10 +1124,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
                 <p className="text-sm text-canvas-text animate-pulse" role="status">
-                  Connecting…
+                  Setting up connection.
                 </p>
                 <p className="text-sm text-canvas-text text-center">
-                  Check your wallet for any remaining approval requests.
+                  You may have to approve some operations in your wallet.
                 </p>
                 <Button variant="solid" onClick={() => dispatch({ type: 'wallet-cancel' })}>
                   Cancel
