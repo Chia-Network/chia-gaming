@@ -103,6 +103,8 @@ describe('WalletConnect pairing teardown', () => {
     // The wallet state is a singleton; drop any pairing left pending by an
     // earlier test so each case starts with nothing outstanding.
     await walletConnectState.disconnect();
+    await walletConnectState.selectProfile('chia-wallet');
+    localStorage.clear();
     mockClient.on.mockClear();
     mockClient.disconnect.mockClear();
     mockClient.core.pairing.disconnect.mockClear();
@@ -251,19 +253,124 @@ describe('WalletConnect pairing teardown', () => {
     expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'fff666' });
   });
 
-  it('disconnects every known session topic on forgetSessions', async () => {
+  it("disconnects the selected profile's stored sessions on forgetSessions", async () => {
     await walletConnectState.init();
-    mockClient.session.keys = ['topic-1', 'topic-2'];
+    mockClient.session.keys = ['topic-1', 'topic-2', 'sage-topic'];
+    const methods: Record<string, string[]> = {
+      'topic-1': ['chia_createOfferForIds'],
+      'topic-2': ['chia_createOfferForIds'],
+      'sage-topic': ['chip0002_signCoinSpends'],
+    };
+    mockClient.session.get.mockImplementation((topic: string) => ({
+      topic,
+      namespaces: { chia: { methods: methods[topic], accounts: [], events: [] } },
+    }));
 
+    // A fresh Chia-wallet pairing must not drop the stored Sage session.
     await walletConnectState.forgetSessions();
 
-    expect(mockClient.disconnect).toHaveBeenCalledTimes(2);
+    expect(mockClient.disconnect.mock.calls.map(([args]) => args.topic)).toEqual([
+      'topic-1',
+      'topic-2',
+    ]);
+  });
+
+  it('switches profiles while approval is pending and discards a late approval', async () => {
+    await walletConnectState.init();
+    let approve!: (session: SessionTypes.Struct) => void;
+    const approval = new Promise<SessionTypes.Struct>((resolve) => {
+      approve = resolve;
+    });
+    mockClient.connect.mockResolvedValue({
+      uri: 'wc:aaa111@2?relay-protocol=irn&symKey=deadbeef',
+      approval: () => approval,
+    });
+    const setup = await walletConnectState.startConnect();
+    expectConsoleError('connect() approval FAILED or rejected');
+    const connecting = walletConnectState.connect(setup.approval);
+    const rejected = expect(connecting).rejects.toThrow('connection attempt was cancelled');
+
+    await walletConnectState.selectProfile('sage');
+    expect(walletConnectState.getProfile()).toBe('sage');
+    expect(walletConnectState.getSession()).toBeUndefined();
+    expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'aaa111' });
+
+    approve(connectedSession);
+    await rejected;
+    expect(walletConnectState.getSession()).toBeUndefined();
     expect(mockClient.disconnect).toHaveBeenCalledWith(
-      expect.objectContaining({ topic: 'topic-1' }),
+      expect.objectContaining({ topic: connectedSession.topic }),
     );
+  });
+
+  it('restores each profile independently and forgets only the selected wallet', async () => {
+    await establishSession();
+    const sageSession = {
+      ...connectedSession,
+      topic: 'sage-topic',
+      namespaces: {
+        chia: {
+          ...connectedSession.namespaces.chia,
+          accounts: ['chia:mainnet:sage-address'],
+          methods: ['chip0002_signCoinSpends'],
+        },
+      },
+    } as SessionTypes.Struct;
+    const sessions = new Map([
+      [connectedSession.topic, connectedSession],
+      [sageSession.topic, sageSession],
+    ]);
+    mockClient.session.keys = [...sessions.keys()];
+    mockClient.session.get.mockImplementation((topic: string) => sessions.get(topic));
+
+    await walletConnectState.selectProfile('sage');
+    expect(walletConnectState.getSession()?.topic).toBe(sageSession.topic);
+    await walletConnectState.selectProfile('chia-wallet');
+    expect(walletConnectState.getSession()?.topic).toBe(connectedSession.topic);
+    await walletConnectState.forgetSessions();
+    expect(walletConnectState.getSession()).toBeUndefined();
     expect(mockClient.disconnect).toHaveBeenCalledWith(
-      expect.objectContaining({ topic: 'topic-2' }),
+      expect.objectContaining({ topic: connectedSession.topic }),
     );
+    expect(mockClient.disconnect).not.toHaveBeenCalledWith(
+      expect.objectContaining({ topic: sageSession.topic }),
+    );
+    await walletConnectState.selectProfile('sage');
+    expect(walletConnectState.getSession()?.topic).toBe(sageSession.topic);
+    await walletConnectState.selectProfile('chia-wallet');
+    expect(walletConnectState.getSession()).toBeUndefined();
+  });
+
+  it('waits for relay replacement before restoring a different wallet profile', async () => {
+    await establishSession();
+    let finishClose!: () => void;
+    mockClient.core.relayer.transportClose.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishClose = resolve;
+        }),
+    );
+    const recovery = walletConnectState.recoverRelay(
+      walletConnectState.getClient()!,
+      connectedSession.topic,
+    );
+    const rejected = expect(recovery).rejects.toThrow('session changed during relay recovery');
+    const sageSession = {
+      ...connectedSession,
+      topic: 'sage-topic',
+      namespaces: {
+        chia: { ...connectedSession.namespaces.chia, methods: ['chip0002_signCoinSpends'] },
+      },
+    } as SessionTypes.Struct;
+    mockClient.session.keys = [sageSession.topic];
+    mockClient.session.get.mockReturnValue(sageSession);
+    const switched = walletConnectState.selectProfile('sage');
+    expect(walletConnectState.getSession()).toBeUndefined();
+    finishClose();
+    await rejected;
+    await switched;
+    expect(mockClient.core.relayer.transportOpen).toHaveBeenCalledTimes(1);
+    expect(walletConnectState.getSession()?.topic).toBe(sageSession.topic);
   });
 
   it('replaces the relay in order while preserving the approved session and pairing', async () => {

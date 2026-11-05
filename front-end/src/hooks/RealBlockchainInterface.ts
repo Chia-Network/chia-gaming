@@ -1026,6 +1026,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     if (this.wcSubscription) return;
     this.wcSubscription = walletConnectState.getObservable().subscribe({
       next: (evt) => {
+        // Sage shares the WalletConnect client. While it holds the client this
+        // adapter has no session, so a later switch back reports a fresh connect.
+        if (walletConnectState.getProfile() !== 'chia-wallet') {
+          this.markDisconnected();
+          return;
+        }
         if (evt.timedOutMethod === ChiaMethod.GetFullNodePeerCount) {
           this.unsupportedPeerCountScope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
           log(
@@ -1054,6 +1060,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async beginConnect(_uniqueId: string, fresh = false): Promise<ConnectionSetup> {
     await walletConnectState.init();
+    await walletConnectState.selectProfile('chia-wallet');
     this.subscribeToWcEvents();
     if (fresh) {
       await walletConnectState.forgetSessions();
@@ -1098,7 +1105,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   }
 
   isConnected(): boolean {
-    return walletConnectState.getSession() !== undefined;
+    // Sage shares the WalletConnect client; its session is not this wallet's.
+    return (
+      walletConnectState.getProfile() === 'chia-wallet' &&
+      walletConnectState.getSession() !== undefined
+    );
   }
 
   onConnectionChange(cb: (connected: boolean, recovering?: boolean) => void): () => void {

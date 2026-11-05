@@ -7,6 +7,8 @@ import {
   getChainId,
   getOptionalNamespaces,
   getRequiredNamespaces,
+  SageMethod,
+  type WalletConnectProfile,
 } from '../constants/wallet-connect';
 import { log } from '../services/log';
 import { walletConnectDappMetadata } from '../util/walletConnectMetadata';
@@ -58,6 +60,7 @@ class WalletState {
   observable: Subject<WalletConnectOutboundState>;
   private initPromise: Promise<void> | null = null;
   private pendingPairingTopic?: string;
+  private profile: WalletConnectProfile = 'chia-wallet';
   private relayAvailable = true;
   private requestEpoch = 0;
   private relayRecovery: Promise<void> | null = null;
@@ -186,6 +189,33 @@ class WalletState {
     return this.address;
   }
 
+  getProfile(): WalletConnectProfile {
+    return this.profile;
+  }
+
+  /**
+   * Select which wallet RPC surface sessions must grant. Switching profiles
+   * adopts the newest stored session that grants the new surface, or reports
+   * disconnected if none does; sessions for the other profile stay stored.
+   */
+  async selectProfile(profile: WalletConnectProfile): Promise<void> {
+    if (profile === this.profile) return;
+    this.profile = profile;
+    this.connectionAttempt++;
+    this.resetSession();
+    const client = this.client;
+    if (!client) return;
+    await this.cancelPairing(this.pendingPairingTopic, client);
+    await this.runRelayLifecycle('profile selection', () => {
+      if (this.client !== client || this.profile !== profile) return;
+      this.restoreExistingSession(client);
+    });
+  }
+
+  private sessionAuthorityKey(): string {
+    return `${WC_SESSION_AUTHORITY_KEY}:${this.profile}`;
+  }
+
   supportsMethod(method: string): boolean {
     return this.session?.namespaces.chia?.methods?.includes(method) ?? false;
   }
@@ -206,14 +236,14 @@ class WalletState {
     const chainId = getChainId();
     const account = accounts.find((candidate) => candidate.startsWith(`${chainId}:`)) ?? null;
     const chainGranted = chains.includes(chainId) || !!account;
-    const requiredMethods = getRequiredNamespaces().chia.methods ?? [];
+    const requiredMethods = getRequiredNamespaces(this.profile).chia.methods ?? [];
     const methodsGranted = requiredMethods.every((method) => methods.includes(method));
 
     return account && chainGranted && methodsGranted ? account : null;
   }
 
-  private async restoreExistingSession(signClient: InstanceType<typeof Client>): Promise<boolean> {
-    const authorizedTopic = localStorage.getItem(WC_SESSION_AUTHORITY_KEY);
+  private restoreExistingSession(signClient: InstanceType<typeof Client>): boolean {
+    const authorizedTopic = localStorage.getItem(this.sessionAuthorityKey());
     const sessions = signClient.session.keys.map((key) => signClient.session.get(key));
     for (const session of sessions.reverse()) {
       if (authorizedTopic !== null && session.topic !== authorizedTopic) continue;
@@ -236,7 +266,7 @@ class WalletState {
     const accountParts = account.split(':');
     const address = accountParts[2];
     const detectedChain = `${accountParts[0]}:${accountParts[1]}`;
-    localStorage.setItem(WC_SESSION_AUTHORITY_KEY, session.topic);
+    localStorage.setItem(this.sessionAuthorityKey(), session.topic);
 
     this.isConnected = true;
     this.relayAvailable = true;
@@ -296,16 +326,28 @@ class WalletState {
     );
   }
 
+  /** Which wallet RPC surface a stored session was paired for. */
+  private profileOf(session: SessionTypes.Struct): WalletConnectProfile {
+    return session.namespaces.chia?.methods?.includes(SageMethod.SignCoinSpends)
+      ? 'sage'
+      : 'chia-wallet';
+  }
+
+  /** Disconnect the stored sessions of the selected profile; the other's stay. */
   async forgetSessions() {
     const client = this.client;
-    localStorage.setItem(WC_SESSION_AUTHORITY_KEY, '');
+    const profile = this.profile;
+    localStorage.setItem(this.sessionAuthorityKey(), '');
     this.connectionAttempt++;
     this.resetSession();
     if (client) {
       await this.runRelayLifecycle(
         'session removal',
         async () => {
-          for (const topic of client.session.keys) {
+          const topics = client.session.keys.filter(
+            (topic) => this.profileOf(client.session.get(topic)) === profile,
+          );
+          for (const topic of topics) {
             try {
               await client.disconnect({
                 topic,
@@ -349,6 +391,8 @@ class WalletState {
 
       this.client = signClient;
 
+      // Stored sessions for the other wallet profile stay paired; only the
+      // active session's lifecycle changes the connection state.
       signClient.on('session_update', ({ topic, params }) => {
         if (this.session?.topic !== topic) return;
         const updated = signClient.session.get(topic);
@@ -380,7 +424,7 @@ class WalletState {
       });
 
       if (signClient.session.length) {
-        const restored = await this.restoreExistingSession(signClient);
+        const restored = this.restoreExistingSession(signClient);
         if (!restored) {
           log('[WC session] no compatible restored Chia sessions found');
         }
@@ -400,7 +444,7 @@ class WalletState {
   async disconnect() {
     const client = this.client;
     const sessionTopic = this.session?.topic;
-    localStorage.setItem(WC_SESSION_AUTHORITY_KEY, '');
+    localStorage.setItem(this.sessionAuthorityKey(), '');
     this.connectionAttempt++;
     this.resetSession();
     if (!client) return;
@@ -460,11 +504,11 @@ class WalletState {
           throw new Error(
             'WalletConnect relay is unavailable; reload to restore the approved session',
           );
-        localStorage.setItem(WC_SESSION_AUTHORITY_KEY, '');
+        localStorage.setItem(this.sessionAuthorityKey(), '');
         this.observable.next({ stateName: 'connecting', connecting: true });
         if (!isCurrent()) throw new Error('WalletConnect connection attempt was cancelled');
         const { uri, approval } = await client.connect({
-          optionalNamespaces: getOptionalNamespaces(),
+          optionalNamespaces: getOptionalNamespaces(this.profile),
         });
         if (!uri) throw new Error('WalletConnect connect() returned no URI');
         const topic = pairingTopicFromUri(uri);

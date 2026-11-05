@@ -26,6 +26,7 @@ const mockReplacementClient = { ...mockClient };
 
 jest.mock('../../hooks/useWalletConnect', () => ({
   walletConnectState: {
+    getProfile: () => 'chia-wallet',
     getClient: () =>
       mockClientAvailable
         ? mockUseReplacementClient
@@ -50,6 +51,7 @@ import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
 import type { PushTransactionsRequest } from '../../types/rpc/PushTransactions';
 import {
   rpc,
+  sageRpc,
   WalletConnectResponseError,
   WalletConnectTransportError,
 } from '../../hooks/WalletConnectRpc';
@@ -74,6 +76,17 @@ describe('WalletConnect RPC adapter', () => {
     });
   });
 
+  it('sends Sage reads with its address account rather than a Chia fingerprint', async () => {
+    mockFingerprint = 'sage-address';
+    requestMock.mockResolvedValueOnce({ address: 'xch1address' });
+    await expect(sageRpc.getAddress()).resolves.toEqual({ address: 'xch1address' });
+    expect(requestMock).toHaveBeenCalledWith({
+      topic: 'topic-1',
+      chainId: 'chia:mainnet',
+      request: { method: 'chia_getAddress', params: {} },
+    });
+  });
+
   it('formats WalletConnect requests with fingerprint and chain context', async () => {
     requestMock.mockResolvedValueOnce({ height: 7n, success: true });
 
@@ -91,6 +104,27 @@ describe('WalletConnect RPC adapter', () => {
         },
       },
     });
+  });
+
+  it('returns a Sage mempool failure as the sendTransaction result', async () => {
+    requestMock.mockResolvedValueOnce({ status: 3, error: 'Err.DOUBLE_SPEND' });
+
+    await expect(
+      sageRpc.sendTransaction({ coin_spends: [], aggregated_signature: '0xc0' }),
+    ).resolves.toEqual({ status: 3n, error: 'Err.DOUBLE_SPEND' });
+    // Sage validates params strictly and serves its active wallet: no fingerprint.
+    expect(requestMock.mock.calls[0][0].request).toEqual({
+      method: 'chip0002_sendTransaction',
+      params: { spendBundle: { coin_spends: [], aggregated_signature: '0xc0' } },
+    });
+  });
+
+  it('still rejects an error field from methods whose result cannot carry one', async () => {
+    requestMock.mockResolvedValueOnce({ error: 'coins locked' });
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(sageRpc.signCoinSpends([])).rejects.toBeInstanceOf(WalletConnectResponseError);
+    consoleError.mockRestore();
   });
 
   it('unwraps WalletConnect data payloads', async () => {
@@ -242,7 +276,7 @@ describe('WalletConnect RPC adapter', () => {
     },
   );
 
-  it.each(['client', 'topic', 'fingerprint', 'chain'] as const)(
+  it.each(['client', 'topic', 'fingerprint', 'chain', 'sage-address'] as const)(
     'rejects queued work when its %s context changes',
     async (context) => {
       jest.useFakeTimers();
@@ -257,13 +291,14 @@ describe('WalletConnect RPC adapter', () => {
       try {
         const first = rpc.getHeightInfo({});
         await jest.advanceTimersByTimeAsync(100);
-        const queued = rpc.getHeightInfo({});
+        const queued = context === 'sage-address' ? sageRpc.getAddress() : rpc.getHeightInfo({});
         const rejected = expect(queued).rejects.toThrow(
           'Wallet context changed before request could start',
         );
         if (context === 'client') mockUseReplacementClient = true;
         if (context === 'topic') mockTopic = 'topic-2';
         if (context === 'fingerprint') mockFingerprint = '456';
+        if (context === 'sage-address') mockFingerprint = 'sage-address';
         if (context === 'chain') mockChainId = 'chia:testnet11';
         finish({ height: 7 });
         await jest.advanceTimersByTimeAsync(100);

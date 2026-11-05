@@ -140,7 +140,7 @@ function busyReasonFields(message: {
   return { br: [...message.reasons] };
 }
 
-function encodeGameEnvelope(message: HubOutboundEnvelope): Uint8Array {
+function encodeGameEnvelope(message: HubOutboundEnvelope): Uint8Array<ArrayBuffer> {
   switch (message.type) {
     case 'identify':
       return encodeBencodex({
