@@ -35,11 +35,11 @@ setTestGlobal('sessionStorage', makeStorage());
 setTestGlobal('window', globalThis);
 
 import 'fake-indexeddb/auto';
-import { CloudBlockchainInterface } from '../../hooks/CloudBlockchainInterface';
-import { clearCloudWalletAuth, saveCloudWalletAuth } from '../../hooks/cloudWalletAuth';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import { storageRepository } from '../session/storageRepository';
 import { WalletProviderRegistry } from '../session/walletProviderRegistry';
+import { CloudBlockchainInterface } from '../wallet/CloudBlockchainInterface';
+import { clearCloudWalletAuth, saveCloudWalletAuth } from '../wallet/cloudWalletAuth';
 
 const testOperation = {
   owner: {

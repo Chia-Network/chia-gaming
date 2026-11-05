@@ -97,14 +97,16 @@ export function useSpacepokerHand(
   const commitLocalAction = useCallback(
     (update: (current: SpacepokerHandState) => SpacepokerHandState, command: LocalGameCommand) => {
       const live = requireLiveGameMount(viewRef.current);
-      live.hand.update(update);
-      live.port.dispatch(
+      const rejected = live.port.dispatch(
         command.type === 'make-move'
           ? { type: 'make-move', memberIndex: 0, readable: command.readable }
           : command.type === 'accept-settlement'
             ? { type: 'accept-settlement', memberIndex: 0 }
             : { type: 'cheat', memberIndex: 0, moverShare: command.moverShare },
       );
+      if (rejected) return;
+      live.hand.update(update);
+      live.port.dispatch({ type: 'state-changed' });
     },
     [],
   );

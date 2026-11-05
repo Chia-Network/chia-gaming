@@ -1,4 +1,10 @@
 import { WebSocket } from 'ws';
+import { installPeerProtocol } from '../src/services/peerProtocol';
+
+// Transport unit tests exercise the same Rust engine as the browser adapter.
+// The local/CI test entry points build this Node WASM package first.
+import { create_peer_protocol } from '../node-pkg/chia_gaming_wasm';
+installPeerProtocol(create_peer_protocol);
 
 (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
 

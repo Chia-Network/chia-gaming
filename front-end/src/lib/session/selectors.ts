@@ -485,19 +485,24 @@ export const ABANDON_WAITING_STATES = new Set<ChannelStatus>([
   'ShutdownTransactionPending',
   'GoingOnChain',
   'Unrolling',
+  'ResolvedUnrolled',
+  'ResolvedStale',
 ]);
 
 export function isChannelAbandonable(
   status: ChannelStatusModel | null | undefined,
   abandonEnabled: boolean,
+  hasActiveGames = false,
 ): boolean {
   return (
     status?.sessionDisposition !== 'AwaitOutboundTerminal' &&
+    status?.sessionDisposition !== 'Abandoned' &&
     ((status?.state === 'ShuttingDown' && status.zeroPayout === true) ||
       (abandonEnabled &&
         status !== null &&
         status !== undefined &&
-        ABANDON_WAITING_STATES.has(status.state)))
+        ABANDON_WAITING_STATES.has(status.state) &&
+        (!UNROLL_COMPLETED_HAND_STATES.has(status.state) || hasActiveGames)))
   );
 }
 
@@ -511,6 +516,9 @@ function dashboardActionFor(
       model.channel.status.state === 'ResolvedStale') &&
     model.game.activeIds.length > 0
   ) {
+    if (isChannelAbandonable(model.channel.status, abandonEnabled, true)) {
+      return { actionLabel: 'Abandon', actionEnabled: true, actionKind: 'abandon' };
+    }
     return { actionLabel: 'Waiting', actionEnabled: false, actionKind: 'none' };
   }
   if (isTerminalChannelSnapshot(model.channel.status)) {

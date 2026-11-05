@@ -1,26 +1,29 @@
+import { observeWasmEvents } from './session_execution.harness';
+import { configureSessionExecution } from './session_execution.harness';
 import type { Subscription } from 'rxjs';
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { SessionController } from '../../hooks/SessionController';
-import { restoreSession } from '../../hooks/blobSingleton';
+import { SessionController } from '../session/SessionController';
+import { ensureWasmLoaded } from '../session/wasmLoader';
+import { dispatchWasmNotification } from '../session/gameSessionEvents';
 import { rehydrateDurableApplicationState } from '../session/persistence';
 import { type DurableApplicationState, type LiveSessionSave } from '../session/saveEnvelope';
-import { storageRepository } from '../session/storageRepository';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { dispatchWasmNotification } from '../session/gameSessionEvents';
+import { restoreSession } from '../session/sessionHost';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { buildDurableApplicationState } from '../session/sessionMachinePersist';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
+import { storageRepository } from '../session/storageRepository';
 import type { SessionModel } from '../session/types';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { installCapturedState } from './checkpoint_capture.harness';
 import {
   addActiveSubscription,
   fetchPreset,
   type SessionControllerAdapter,
 } from './load_wasm.harness';
+import { observeSessionProjection } from './session_frontend.harness';
 
 export interface ReloadableSessionLane {
   adapter: SessionControllerAdapter;
   controller: SessionController;
-  runtime: SessionMachineRuntime;
+  runtime: SessionController;
   subscription: Subscription;
 }
 
@@ -31,8 +34,7 @@ function bindRuntime(
   iStarted: boolean,
   restoring: boolean,
 ): ReloadableSessionLane {
-  adapter.retireRuntime();
-  const runtime = new SessionMachineRuntime(
+  const runtime = configureSessionExecution(
     createSessionMachineState(model, {
       firstGameAccepted: model.channel.status.state === 'Active',
     }),
@@ -62,7 +64,7 @@ function bindRuntime(
   };
   dispatchHostProjection();
   const subscription = addActiveSubscription(
-    controller.getObservable().subscribe((event) => {
+    observeWasmEvents(controller).subscribe((event) => {
       switch (event.type) {
         case 'notification':
           dispatchWasmNotification(
@@ -113,17 +115,17 @@ export function createReloadableSessionLane(
 export async function injectSessionReload(
   lane: ReloadableSessionLane,
   poller: BlockchainPoller,
-  wasmStateInit = new WasmStateInit(fetchPreset),
+  wasmConnection?: import('../../types/ChiaGaming').WasmConnection,
   whileReloaded?: () => Promise<void>,
 ): Promise<{
   lane: ReloadableSessionLane;
   save: DurableApplicationState & { session: LiveSessionSave };
 }> {
-  await lane.runtime.persist();
+  await lane.runtime.flush();
   await lane.controller.flushPendingWork();
-  await lane.runtime.persist();
-  await lane.runtime.persist();
-  const snapshot = buildDurableApplicationState({
+  await lane.runtime.flush();
+  await lane.runtime.flush();
+  const snapshot = installCapturedState({
     kind: 'live',
     controller: lane.controller,
     state: lane.runtime.getState(),
@@ -134,7 +136,7 @@ export async function injectSessionReload(
   if (snapshot) await storageRepository.write(snapshot);
   await storageRepository.checkpointDomainMutations();
   lane.subscription.unsubscribe();
-  lane.runtime.setRender(() => {});
+  observeSessionProjection(lane.runtime, () => {});
   lane.controller.cleanup();
   await lane.controller.flushPendingWork();
   storageRepository._resetForTests();
@@ -170,9 +172,11 @@ export async function injectSessionReload(
     live.pairing.iStarted,
     true,
   );
-  controller.attachBlockchain(poller);
+  controller.setWallet(poller);
   controller.kickSystem(2);
-  await controller.beginRestore(restoreSession(controller, bootstrap, wasmStateInit));
+  await controller.beginRestore(
+    restoreSession(controller, bootstrap, wasmConnection ?? (await ensureWasmLoaded(fetchPreset))),
+  );
 
   return {
     lane: restoredLane,

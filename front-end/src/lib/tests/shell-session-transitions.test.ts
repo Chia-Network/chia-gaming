@@ -113,8 +113,6 @@ describe('shellSessionReducer', () => {
       sendMessage: () => false,
       sendAck: () => false,
       sendKeepalive: () => false,
-      hostLog: () => {},
-      close: () => {},
     };
 
     const connection = peerConnectionForSavedSession(idleConnection, save.session);

@@ -1,25 +1,24 @@
-import { activeSave } from './session_save_envelope.fixtures';
 import { expectConsoleError } from '../../../scripts/testSetup';
+import { activeSave } from './session_save_envelope.fixtures';
 
-import { storageRepository } from '../session/storageRepository';
-import {
-  hasSavedSessionMarker,
-  markSavedSession,
-  clearSavedSessionMarker,
-  markAutoResumeOnce,
-  peekAutoResumeOnce,
-  clearAutoResumeOnce,
-} from '../../hooks/saveCoordination';
 import {
   indexedDbStoragePort,
   readApplicationState,
   SESSION_DB_NAME,
   StorageAuthorityLostError,
 } from '../session/indexedDb';
-import { activeSave, baseSave } from './session_save_envelope.fixtures';
-import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
-import { freshSessionState } from '../session/sessionStateTransitions';
+import {
+  clearAutoResumeOnce,
+  clearSavedSessionMarker,
+  hasSavedSessionMarker,
+  markAutoResumeOnce,
+  markSavedSession,
+  peekAutoResumeOnce,
+} from '../session/saveCoordination';
 import type { DurableApplicationState } from '../session/saveEnvelope';
+import { freshSessionState } from '../session/sessionStateTransitions';
+import { storageRepository } from '../session/storageRepository';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 import {
   requireLive,
   sampleSession,
@@ -27,6 +26,7 @@ import {
   saveLiveFields,
   savePreferences,
 } from './save.harness';
+import { baseSave } from './session_save_envelope.fixtures';
 
 async function writeRootTransform(
   transform: (state: DurableApplicationState) => DurableApplicationState,

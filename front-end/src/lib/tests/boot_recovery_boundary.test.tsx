@@ -1,26 +1,27 @@
 import 'fake-indexeddb/auto';
+import { useEffect, useRef } from 'react';
+import { Recovery } from '../application/Recovery';
 
 import { createElement, useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import {
-  useBootRecoveryBoundary,
   type BootRecoveryBoundaryDependencies,
   type BootRestoreSource,
-} from '../../components/BootRecoveryBoundary';
-import { storageRepository } from '../session/storageRepository';
-import { releaseLeaseIfOwner } from '../../hooks/saveCoordination';
-import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
+} from '../application/Recovery';
 import {
   _encodeRawApplicationStateForTests,
   indexedDbStoragePort,
   readApplicationState,
   SESSION_DB_NAME,
 } from '../session/indexedDb';
-import { baseSave, liveSave } from './session_save_envelope.fixtures';
-import { SessionController } from '../../hooks/SessionController';
-import { ControlledRuntime, commitRuntime } from './runtime_capability.harness';
 import { rehydrateDurableApplicationState } from '../session/persistence';
+import { releaseLeaseIfOwner } from '../session/saveCoordination';
+import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset';
+import { SessionController } from '../session/SessionController';
+import { storageRepository } from '../session/storageRepository';
+import { commitRuntime, ControlledRuntime } from './runtime_capability.harness';
+import { baseSave, liveSave } from './session_save_envelope.fixtures';
 
 function storage(): Storage {
   const values = new Map<string, string>();
@@ -706,7 +707,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 
     act(() => storageRepository.loseAuthority('takeover'));
     await waitForRender(renderer!, 'Tab conflict');
-    expect(oldController.getCommittedSessionRuntime()).toBeNull();
+    expect(oldController.executionActive).toBe(false);
 
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Take over' }).props.onClick();
@@ -889,3 +890,24 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(onFreshClaim).not.toHaveBeenCalled();
   });
 });
+
+function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDependencies) {
+  const [view, setView] = useState<RecoveryView>({
+    state: { kind: 'loading' },
+    resuming: false,
+    startingOver: false,
+  });
+  const owner = useRef<Recovery | null>(null);
+  if (!owner.current) owner.current = new Recovery(dependencies, setView);
+  const recovery = owner.current;
+  recovery.dependencies = dependencies;
+  useEffect(() => recovery.start(), [recovery]);
+  return {
+    ...view,
+    resume: recovery.resume,
+    takeOver: recovery.takeOver,
+    closeTab: recovery.closeTab,
+    retryHardReset: recovery.retryHardReset,
+    revealReady: recovery.revealReady,
+  };
+}

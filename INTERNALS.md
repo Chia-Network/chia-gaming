@@ -6,6 +6,7 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 ## Table of Contents
 
 - [Timeouts](#timeouts)
+- [Peer Setup and Reliable Delivery](#peer-setup-and-reliable-delivery)
 - [Peer Disconnect Invariant](#peer-disconnect-invariant)
 - [Peer Error Escalation](#peer-error-escalation)
 - [Local Action Errors](#local-action-errors)
@@ -19,6 +20,54 @@ Protocol mechanisms and internal invariants. For the conceptual overview, see
 - [Invariant Assertions: game_assert! / game_assert_eq!](#invariant-assertions-game_assert--game_assert_eq)
 
 ---
+
+## Peer Setup and Reliable Delivery
+
+Local acceptance begins the Rust session in `src/peer_session.rs`. Rust
+constructs the initiating proposal and records `WaitingForWalletAddress`;
+`wasm/src/peer.rs` calls the TypeScript address provider and awaits its result.
+Retiring setup cancels channel construction while that request is in flight. Rust then creates `TransactionManager<GameSession>` and
+marks setup `ChannelStarted`. `peer_session::session::Session` directly owns
+the reliability state and optional channel, including its allocator, RNG and
+`TransactionManager<GameSession>`. Retirement or drop releases the channel.
+Its private `SessionState` groups mutable reliability and setup fields with
+callback-free update helpers. Callers use `Session` operations for construction,
+snapshot/restore, setup and retirement; they cannot access this state container.
+Channel calls return native output to their owner, which numbers and journals
+outbound messages before projecting UI/wallet effects. Pending incoming proposals and retained rejection
+records use reliability without implying an accepted session.
+
+The same Rust delivery owner allocates message numbers, buffers out-of-order
+input, retires acknowledged messages, and chooses reconnect replay. Its methods
+in `src/peer_session/session.rs` run the entire delivery turn with a host passed
+per call. It calls the owned channel directly for
+accepted messages and terminal acknowledgements; no internal host notification,
+JavaScript conversion, registry lookup or back-reference connects the two.
+Only the resulting UI/wallet effects are converted at the JavaScript boundary.
+Native results and carrier acceptance drive Rust's delivery and send
+bookkeeping; TypeScript never selects, removes, or confirms queued
+messages. Host callbacks run with no session borrow held because a delivered
+message can synchronously produce a reply on the same session. The host reports
+connection events and checkpoint outcomes. `coordination.rs` also owns consent
+delivery gates, rejection recognition and the terminal handoff binding. Its
+three host capabilities are frame sending, consumer availability,
+and notifications; TypeScript supplies no per-message delivery policy.
+Gameplay, chain observations and channel serialization are methods on that
+same exported Rust session object. There is no channel ID registry or second
+TypeScript wrapper; `ChiaGame` is its gameplay interface. Channel restore attaches
+to the existing owner after restoring its reliability checkpoint. The constructor
+takes fresh seed material directly; the channel owns the RNG, and neither is
+persisted. Wallet bundles and fee-source results cross as structured JavaScript
+values, preserving `BigInt` amounts without a JSON round trip.
+Checkpoint capture freezes a generation and frame/ACK counts: release sends
+only that boundary, once. An ordinary failed write leaves it dirty while still
+releasing once; authority loss is fenced by the host before release. A failed
+carrier send remains unacknowledgeable until the carrier accepts a later send.
+
+Hub socket loss and reopening are observations, distinct from the channel's
+terminal `peer_disconnected` flag described below. Registration with the same
+identity or matching peer availability selects replay; a raw socket opening,
+keepalive, or duplicate input does not replay outgoing data.
 
 ## Timeouts
 
@@ -102,8 +151,8 @@ The same ownership applies to submission intent: Rust
 `TransactionManager` is its durable retained owner. `SubmissionPump` owns one
 browser map and ordered promise tail from persistence-gated launch through
 optional fee acquisition, exact broadcast, typed completion, and
-relinquishment. Committed-runtime replacement reschedules only unlaunched work;
-launched work remains queue-owned through terminal quiescence. Duplicate IDs
+relinquishment. The same session execution owner gates unlaunched work and
+retains launched work through terminal quiescence. Duplicate IDs
 must carry the immutable Rust-issued lineage for the same retained intent.
 
 **Retained transaction rebroadcast.** When the manager drains a transaction for
@@ -447,14 +496,14 @@ policy. Durability follows fixed-point durable residue and a named restore
 consumer; rehydrating the latest successful boundary supplies implicit crash
 rollback. Importance alone does not admit a field to the aggregate.
 
-`SessionMachineRuntime` construction is inert. The committed React layout
-effect installs its render callback and calls `activate()`; only then does it
-become the controller's exclusive committed runtime. Layout-effect cleanup calls
-only `clearRender()`. It does not retire the runtime or protocol. Replacement of
-the committed runtime and `SessionController` cleanup—including terminal
-cleanup—own retirement. The controller retains the committed runtime while no
-renderer is mounted; a later renderer reads and reattaches that same runtime
-without changing protocol ownership during render.
+`SessionController` owns Rust interaction, reducer execution, command results,
+checkpoint ordering, and terminal sealing in one object. Backend session setup
+activates execution; no React lifecycle drives it. Application consumes ordered
+batch/readiness events and exposes data plus session-bound intents to the GUI.
+Unsubscribing a view leaves execution running. Cleanup and terminal sealing
+retire execution; no independently replaceable runtime remains. The snapshot
+assembler receives captured values and the current aggregate; session/terminal
+callers own root installation and exact writes.
 
 Local restore and external recovery are separate. A valid IndexedDB envelope
 and WASM cradle may project the restored shell/game/dashboard immediately,
@@ -505,11 +554,10 @@ a newly installed external obligation, and repository-owned preference/history
 mutations use a coalesced repository drain. Those distinct owners retain the
 last complete session capture and never serialize a partial runtime drain.
 
-`SessionMachineRuntime` directly provides the peer transport's narrow
+`SessionController` directly provides the peer transport's narrow
 `ReliableCommitCoordinator` facet and `snapshotModel()` returns its
-authoritative model. Replacing a committed runtime or cleaning up its controller
-retires the old runtime, discards queued
-events and fire-and-forget controller work, and rejects queued result promises
+authoritative model. Cleanup or terminal sealing retires execution, discards
+queued events and fire-and-forget work, and rejects queued result promises
 and persistence-gated effects. Completion callbacks from an in-flight write
 also become inert after retirement. Final controller cleanup settles unlaunched
 submission deliveries and queued jobs and removes tracked effects from
@@ -524,7 +572,7 @@ offer from it, and Rust validates the returned offer. Rejection ends the
 handshake; it never creates controller-owned successor or predecessor requests.
 
 The current app-owned contracts are `DurableApplicationState` v5, opaque
-Rust/WASM cradle schema 23, and app IndexedDB v5. Internally, that means a
+Rust/WASM cradle schema 24, and app IndexedDB v5. Internally, that means a
 non-current version is an unsupported root, not an alternate restore path; see
 the canonical
 [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
@@ -575,7 +623,7 @@ Both WalletConnect uncertainty and pre-ID Cloud uncertainty persist across
 reload and automatically get exactly one new attempt on each later
 `WalletProviderRegistry` readiness epoch, with no timer or immediate loop.
 
-`BootRecoveryBoundary` owns pending wipe, read-only inspection, atomic
+`Recovery` (`lib/application/Recovery.ts`) owns pending wipe, read-only inspection, atomic
 claim-and-read, one strict rehydrate, takeover, malformed evidence, reset
 retry, and authority loss. The winning claim returns the exact aggregate;
 pending common identity, preference, and history changes are folded into that
@@ -630,8 +678,9 @@ residue stays durable and may survive capture.
 
 The live transport checkpoint includes the cooperative terminal handoff's Rust
 command identity, exact reliable frame bytes and message number, sent state, and
-ACK state. Restore strictly reconciles that binding with both Rust and the
-unacknowledged frame journal. An ACKed binding completes Rust without
+ACK state. The Rust peer owner tracks the binding and reconciles it with the
+channel command and unacknowledged frame journal during restore, entirely inside
+Rust. An ACKed binding completes the channel without
 retransmission; an unacknowledged binding reuses the same frame. The receive
 reorder queue is not persisted: retransmission from the sender's durable
 unacknowledged journal reconstructs the gap. Outstanding puzzle/solution host

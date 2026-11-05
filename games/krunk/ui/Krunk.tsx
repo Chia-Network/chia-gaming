@@ -538,7 +538,7 @@ const Krunk: React.FC<KrunkProps> = ({
     canQueueKrunkGuess(wordCommitted, bobHand.gameState.handler, filledGuessCount);
 
   // Submit queued input when protocol authority advances to Bob's guess turn.
-  // The durable queued hand remains the rollback checkpoint until Rust accepts.
+  // Rust confirms the move before the hand removes its queued draft.
   useEffect(() => {
     if (!interactive) return;
     if (!isBobGuessPhase || guessQueue.length === 0) return;
@@ -567,7 +567,7 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const commitWord = useCallback(() => {
     if (wordDraft.length !== 5) return false;
-    setAliceSecretWord(wordDraft);
+    if (!setAliceSecretWord(wordDraft)) return false;
     setWordDraft('');
     return true;
   }, [wordDraft, setAliceSecretWord]);
@@ -578,7 +578,7 @@ const Krunk: React.FC<KrunkProps> = ({
     // commit or clue). Send immediately only when it is our guess turn
     // and the queue is empty.
     if (isBobGuessPhase && guessQueue.length === 0) {
-      submitBobGuessMove(guessDraft);
+      if (!submitBobGuessMove(guessDraft)) return false;
     } else if (canQueueGuess || (isBobGuessPhase && guessQueue.length > 0)) {
       if (filledGuessCount >= MAX_GUESSES) return false;
       queueBobGuess(guessDraft);
@@ -611,22 +611,18 @@ const Krunk: React.FC<KrunkProps> = ({
 
   const bobBoardNotice = useMemo(
     () =>
-      krunkBoardNotice(
-        bobHand.gameState,
-        themLabel,
-        handState.perPlayerStake,
-      ),
-    [bobHand.gameState, themLabel, handState.perPlayerStake],
+      bobHand.rejection
+        ? { text: bobHand.rejection, kind: 'error' as const }
+        : krunkBoardNotice(bobHand.gameState, themLabel, handState.perPlayerStake),
+    [bobHand.gameState, bobHand.rejection, themLabel, handState.perPlayerStake],
   );
 
   const aliceBoardNotice = useMemo(
     () =>
-      krunkBoardNotice(
-        aliceHand.gameState,
-        themLabel,
-        handState.perPlayerStake,
-      ),
-    [aliceHand.gameState, themLabel, handState.perPlayerStake],
+      aliceHand.rejection
+        ? { text: aliceHand.rejection, kind: 'error' as const }
+        : krunkBoardNotice(aliceHand.gameState, themLabel, handState.perPlayerStake),
+    [aliceHand.gameState, aliceHand.rejection, themLabel, handState.perPlayerStake],
   );
 
   const sharedStatusNotice = useMemo(() => {

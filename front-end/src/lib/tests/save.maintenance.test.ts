@@ -1,12 +1,12 @@
-import { checkLease, isLeaseConflict, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
 import { SESSION_DB_NAME, StorageAuthorityLostError } from '../session/indexedDb';
-import { liveSave } from './session_save_envelope.fixtures';
-import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
+import { checkLease, isLeaseConflict, releaseLeaseIfOwner } from '../session/saveCoordination';
 import {
-  startPendingWalletConnectWipe,
   _resetPendingWalletConnectWipeForTests,
   reloadAfterSuccessfulHardReset,
-} from '../../hooks/saveHardReset';
+  startPendingWalletConnectWipe,
+} from '../session/saveHardReset';
+import { storageRepository } from '../session/storageRepository';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 import {
   clearTestGlobal,
   makeStorage,
@@ -15,7 +15,7 @@ import {
   setTestGlobal,
   testIndexedDb,
 } from './save.harness';
-import { storageRepository } from '../session/storageRepository';
+import { liveSave } from './session_save_envelope.fixtures';
 
 describe('tab lease', () => {
   it('detects a conflicting active-tab owner', async () => {

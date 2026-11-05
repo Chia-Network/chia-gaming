@@ -5,52 +5,37 @@ import {
   useEffect,
   useRef,
   useState,
-  type RefObject,
-  type ReactNode,
   type ErrorInfo,
+  type ReactNode,
+  type RefObject,
 } from 'react';
-import {
-  useGameSession,
-  useSessionControllerAfterCommit,
-  QueuedNotification,
-} from '../hooks/useGameSession';
+import type { TerminalSessionPresentation } from '../hooks/sessionView';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
-import { formatMojos } from '../util';
-import { SessionPhase } from '../types/ChiaGaming';
-import { RestoreStatus, type SessionController } from '../hooks/SessionController';
-import type { BlockchainPoller } from '../hooks/BlockchainPoller';
+import { QueuedNotification, useGameSession } from '../hooks/useGameSession';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
-import { isErrorSettlementOutcome } from '../lib/settlement';
-import {
-  acceptedHandNeedsGameTabAttention,
-  channelStateNeedsGameTabAttention,
-  gameModelNeedsGameTabAttention,
-  peerProposalIdNeedsGameTabAttention,
-} from '../lib/gameTabAttention';
-import { shouldReportSessionPhase } from '../lib/restoreLifecycle';
-import { SessionTransitionSurface } from './SessionTransitionSurface';
-import { CopyIcon, COPY_FAILED_TITLE } from './CopyIcon';
 import { channelSetupCoverCopy, showChannelSetupChallenge } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
   selectInertGameInterfaceForBetweenHandDialog,
   type ChannelStatusModel,
-  type SessionModel,
 } from '../lib/session/model';
-import type { TerminalSessionPresentation } from '../lib/session/sessionResult';
+import type { SessionFrontend } from '../lib/session/sessionFrontend';
+import { formatMojos } from '../util';
+import { COPY_FAILED_TITLE, CopyIcon } from './CopyIcon';
+import { SessionTransitionSurface } from './SessionTransitionSurface';
 
-import { motion, useMotionValue, useDragControls } from 'framer-motion';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Separator } from './ui/separator';
-import { Button } from './button';
+import { motion, useDragControls, useMotionValue } from 'framer-motion';
 import {
   browserErrorReport,
   markClientErrorReported,
   wasClientErrorReported,
 } from '../lib/clientError';
 import { log, recentLogText } from '../services/log';
+import { Button } from './button';
 import { ComposeProposalDialog, ReviewProposalDialog } from './GameProposalDialogs';
 import { bindNotificationOverlayDismissKeys } from './notificationOverlayKeyboard';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Separator } from './ui/separator';
 
 const FOCUSABLE_SELECTOR =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -530,189 +515,29 @@ function BetweenHandOverlay({
 
 export interface GameSessionProps {
   params: import('../types/ChiaGaming').GameSessionParams;
-  peerConn: import('../types/ChiaGaming').PeerConnectionResult;
-  registerMessageHandler: (
-    handler: (msgno: number, msg: Uint8Array) => void,
-    ackHandler: (ack: number) => void,
-    keepaliveHandler: () => void,
-    failureHandler: (reason: string) => void,
-  ) => void;
+  presentation: import('../lib/session/sessionFrontend').SessionPresentation;
+  sessionFrontend: Pick<SessionFrontend, 'dispatch' | 'game'>;
   appendGameLog: (line: string) => void;
-  sessionSave?: import('../lib/session/persistence').RehydratedDurableApplicationState;
-  onGameActivity?: () => void;
-  onSessionPhaseChange?: (
-    phase: Exclude<SessionPhase, 'none'>,
-    hasError: boolean,
-  ) => void | boolean | Promise<boolean>;
-  onRestoreStatusChange?: (status: RestoreStatus, error: string | null) => void;
-  onSessionModelChange?: (model: SessionModel) => void;
-  onCoinsChange?: (coins: import('../types/ChiaGaming').CoinOfInterestEntry[]) => void;
   suppressPhaseReporting?: boolean;
-  blockchain: BlockchainPoller | null;
   terminalPresentation?: TerminalSessionPresentation | null;
-  /** Cover game content during session-pane setup; stays under notification z-index. */
   showTransitionSurface?: boolean;
 }
-
-const MountedGameSession: React.FC<GameSessionProps & { sessionController: SessionController }> = ({
+const GameSession: React.FC<GameSessionProps> = ({
   params,
+  presentation,
+  sessionFrontend,
   appendGameLog,
-  sessionSave,
-  onGameActivity,
-  onSessionPhaseChange,
-  onRestoreStatusChange,
-  onSessionModelChange,
-  onCoinsChange,
   suppressPhaseReporting,
-  blockchain,
-  sessionController,
   terminalPresentation,
   showTransitionSurface = false,
 }) => {
   const session = useGameSession(
     params,
-    sessionController,
+    sessionFrontend,
     appendGameLog,
-    sessionSave,
-    blockchain,
     terminalPresentation,
+    presentation,
   );
-  const terminalMode = session.handSource.frozen;
-
-  useEffect(() => {
-    onRestoreStatusChange?.(session.restoreStatus, session.restoreError);
-  }, [session.restoreStatus, session.restoreError, onRestoreStatusChange]);
-
-  useEffect(() => {
-    onSessionModelChange?.(session.sessionModel);
-  }, [session.sessionModel, onSessionModelChange]);
-
-  useEffect(() => {
-    if (!onCoinsChange || terminalMode) return;
-    onCoinsChange(sessionController.getCoinsOfInterest());
-  }, [sessionController, session.sessionModel, onCoinsChange, terminalMode]);
-
-  const resolvedPhaseReportedRef = useRef(false);
-  const resolvedPhaseReportInFlightRef = useRef<Promise<void> | null>(null);
-  const [terminalRetryRevision, setTerminalRetryRevision] = useState(0);
-  useEffect(
-    () =>
-      sessionController.onTerminalFinalizationRetry(() => {
-        setTerminalRetryRevision((revision) => revision + 1);
-      }),
-    [sessionController],
-  );
-  useEffect(() => {
-    const phase = session.sessionPhase;
-    if (
-      !onSessionPhaseChange ||
-      !shouldReportSessionPhase(phase, !!suppressPhaseReporting, resolvedPhaseReportedRef.current)
-    ) {
-      return;
-    }
-    const settledOutcome = session.gameTerminal.outcome;
-    const hasError =
-      session.channelStatus.state === 'Failed' ||
-      session.channelStatus.state === 'ResolvedStale' ||
-      session.gameTerminal.type === 'game-error' ||
-      (session.gameTerminal.type === 'settled' &&
-        settledOutcome != null &&
-        isErrorSettlementOutcome(settledOutcome));
-    if (phase === 'resolved') {
-      if (resolvedPhaseReportInFlightRef.current) return;
-      const report = Promise.resolve(onSessionPhaseChange(phase, hasError))
-        .then((completed) => {
-          if (completed === true) resolvedPhaseReportedRef.current = true;
-        })
-        .finally(() => {
-          if (resolvedPhaseReportInFlightRef.current === report) {
-            resolvedPhaseReportInFlightRef.current = null;
-          }
-        });
-      resolvedPhaseReportInFlightRef.current = report;
-      return;
-    }
-    onSessionPhaseChange(phase, hasError);
-  }, [
-    session.sessionPhase,
-    session.channelStatus.state,
-    session.gameTerminal.type,
-    session.gameTerminal.outcome,
-    session.sessionModel,
-    onSessionPhaseChange,
-    suppressPhaseReporting,
-    terminalRetryRevision,
-  ]);
-
-  const previousGameModel = useRef(session.sessionModel.game);
-  useEffect(() => {
-    const previous = previousGameModel.current;
-    previousGameModel.current = session.sessionModel.game;
-    if (onGameActivity && gameModelNeedsGameTabAttention(previous, session.sessionModel.game)) {
-      onGameActivity();
-    }
-  }, [session.sessionModel.game, onGameActivity]);
-
-  // A new accepted hand is session activity, not a gameplay event.
-  const prevHandKey = useRef(session.handKey);
-  useEffect(() => {
-    const previous = prevHandKey.current;
-    prevHandKey.current = session.handKey;
-    if (acceptedHandNeedsGameTabAttention(previous, session.handKey, session.currentHandGameIds)) {
-      onGameActivity?.();
-    }
-  }, [session.handKey, session.currentHandGameIds, onGameActivity]);
-
-  const prevGameQueueLen = useRef(session.gameQueue.length);
-  const prevChannelQueueLen = useRef(session.channelQueue.length);
-  useEffect(() => {
-    const grew =
-      session.gameQueue.length > prevGameQueueLen.current ||
-      session.channelQueue.length > prevChannelQueueLen.current;
-    prevGameQueueLen.current = session.gameQueue.length;
-    prevChannelQueueLen.current = session.channelQueue.length;
-    if (grew) onGameActivity?.();
-  }, [session.gameQueue.length, session.channelQueue.length, onGameActivity]);
-
-  // Rising edge: peer hand proposal enters review (skip restore/hydration).
-  const prevBetweenHandMode = useRef(session.betweenHandMode);
-  useEffect(() => {
-    const prev = prevBetweenHandMode.current;
-    prevBetweenHandMode.current = session.betweenHandMode;
-    if (
-      session.betweenHandMode === 'review-incoming-proposal' &&
-      prev !== 'review-incoming-proposal'
-    ) {
-      onGameActivity?.();
-    }
-  }, [session.betweenHandMode, onGameActivity]);
-
-  // Rising edge: proposal cached in decision mode, or replaced while reviewing.
-  // Combined id so promoting cache → review does not double-fire.
-  const attentionProposalId = session.incomingProposal?.id ?? null;
-  const prevAttentionProposalId = useRef(attentionProposalId);
-  useEffect(() => {
-    const prev = prevAttentionProposalId.current;
-    prevAttentionProposalId.current = attentionProposalId;
-    if (peerProposalIdNeedsGameTabAttention(prev, attentionProposalId)) {
-      onGameActivity?.();
-    }
-  }, [attentionProposalId, onGameActivity]);
-
-  // Rising edge: clean shutdown / going on-chain begins (skip restore and
-  // transitions between already-attention channel states).
-  const prevChannelAttention = useRef(
-    channelStateNeedsGameTabAttention(session.channelStatus.state),
-  );
-  useEffect(() => {
-    const next = channelStateNeedsGameTabAttention(session.channelStatus.state);
-    const prev = prevChannelAttention.current;
-    prevChannelAttention.current = next;
-    if (next && !prev) {
-      onGameActivity?.();
-    }
-  }, [session.channelStatus.state, onGameActivity]);
-
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const restoreGameAreaFocus = useCallback(() => gameAreaRef.current?.focus(), []);
@@ -888,23 +713,6 @@ const MountedGameSession: React.FC<GameSessionProps & { sessionController: Sessi
       )}
     </div>
   );
-};
-
-const GameSession: React.FC<GameSessionProps> = (props) => {
-  const sessionController = useSessionControllerAfterCommit(
-    props.params,
-    props.peerConn,
-    props.registerMessageHandler,
-    props.sessionSave,
-    props.blockchain,
-    props.terminalPresentation != null,
-  );
-  if (!sessionController) {
-    // keepSession mounts us before the post-commit controller exists; keep the
-    // session-pane cover visible so accept does not flash a blank pane.
-    return props.showTransitionSurface ? <SessionTransitionSurface /> : null;
-  }
-  return <MountedGameSession {...props} sessionController={sessionController} />;
 };
 
 export default GameSession;

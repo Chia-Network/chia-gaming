@@ -1,0 +1,177 @@
+import { useCallback, useEffect, useState } from 'react';
+import { terminalGameHandSource, type GameHandSource } from '../lib/gameHandSource';
+import { restoreRegisteredGameHand } from '../lib/gameRegistry';
+import type { ComposeDraftState } from '../lib/session/composeDraft';
+import type { selectGameSpecificView } from '../lib/session/selectors';
+import {
+  selectGameSessionView,
+  selectIProposedHand,
+  selectIncomingProposal,
+  selectSessionPhase,
+  selectGameSpecificView as selectTerminalGameSpecificView,
+} from '../lib/session/selectors';
+import type { RestoreStatus } from '../lib/session/SessionController';
+import type { TerminalSessionPresentation } from '../lib/session/sessionFrontend';
+import type {
+  BetweenHandModeModel,
+  ChannelStatusModel,
+  GameCoinModel,
+  GameTerminalModel,
+  HandProposal,
+  PendingProposalModel,
+  QueuedNotificationModel,
+  SessionModel,
+} from '../lib/session/types';
+import type { GameConnectionState, SessionPhase } from '../types/ChiaGaming';
+export type { TerminalSessionPresentation } from '../lib/session/sessionFrontend';
+
+export interface UseGameSessionResult {
+  sessionModel: SessionModel;
+  gameConnectionState: GameConnectionState;
+  perGameAmount: bigint;
+  currentHandAmount: bigint;
+  iStarted: boolean;
+  playerNumber: number;
+  channelStatus: ChannelStatusModel;
+  gameCoin: GameCoinModel;
+  gameTerminal: GameTerminalModel;
+  handKey: number;
+  activeGameId: string | null;
+  activeGameIds: string[];
+  currentHandGameIds: string[];
+  iProposedHand: boolean;
+  activeGameType: HandProposal['gameType'];
+  displayGameId: string | null;
+  handSource: GameHandSource;
+  appendGameLog: (line: string) => void;
+  betweenHandMode: BetweenHandModeModel;
+  incomingProposal: PendingProposalModel | null;
+  lastHandProposal: HandProposal | null;
+  composeDraftState: ComposeDraftState;
+  chooseNewHandSameTerms: () => void;
+  chooseDoNotUseCurrentProposal: () => void;
+  openComposeProposal: () => void;
+  setComposeGameTimeout: (value: bigint) => void;
+  setComposeGameType: (value: HandProposal['gameType']) => void;
+  composeProposalSent: boolean;
+  newHandRequested: boolean;
+  submitComposedProposal: (handProposal: HandProposal) => void;
+  acceptReviewedProposal: (id: string) => void;
+  rejectReviewedProposal: () => void;
+  startCleanShutdown: () => void;
+  cleanShutdownStarted: boolean;
+  goOnChain: () => void;
+  betweenHands: boolean;
+  restoreStatus: RestoreStatus;
+  restoreError: string | null;
+  sessionPhase: Exclude<SessionPhase, 'none'>;
+  channelQueue: QueuedNotificationModel[];
+  gameQueue: QueuedNotificationModel[];
+  dismissChannel: () => void;
+  dismissGame: () => void;
+  gameSpecificView: ReturnType<typeof selectGameSpecificView>;
+}
+
+const NOOP = () => {};
+
+export interface TerminalSessionPresentationState {
+  presentation: TerminalSessionPresentation | null;
+  dismissChannel: () => void;
+  dismissGame: () => void;
+}
+
+export function useTerminalSessionPresentation(
+  source: TerminalSessionPresentation | null | undefined,
+): TerminalSessionPresentationState {
+  const [model, setModel] = useState<SessionModel | null>(source?.model ?? null);
+  useEffect(() => {
+    if (!source) {
+      setModel(null);
+    } else {
+      setModel((current) => current ?? source.model);
+    }
+  }, [source]);
+  const dismissChannel = useCallback(() => {
+    setModel((current) => {
+      const terminal = current ?? source?.model;
+      return terminal
+        ? {
+            ...terminal,
+            channel: { ...terminal.channel, queue: terminal.channel.queue.slice(1) },
+          }
+        : current;
+    });
+  }, [source]);
+  const dismissGame = useCallback(() => {
+    setModel((current) => {
+      const terminal = current ?? source?.model;
+      return terminal
+        ? {
+            ...terminal,
+            game: { ...terminal.game, queue: terminal.game.queue.slice(1) },
+          }
+        : current;
+    });
+  }, [source]);
+  return {
+    presentation: source ? { ...source, model: model ?? source.model } : null,
+    dismissChannel,
+    dismissGame,
+  };
+}
+
+export function projectTerminalSessionResult(
+  live: UseGameSessionResult,
+  presentation: TerminalSessionPresentation,
+  dismissals?: Pick<TerminalSessionPresentationState, 'dismissChannel' | 'dismissGame'>,
+): UseGameSessionResult {
+  const { model, iStarted } = presentation;
+  const view = selectGameSessionView(model);
+
+  return {
+    ...live,
+    sessionModel: model,
+    gameConnectionState: model.channel.connection,
+    currentHandAmount: view.currentHandAmount,
+    iStarted,
+    playerNumber: iStarted ? 1 : 2,
+    channelStatus: view.channelStatus,
+    gameCoin: view.gameCoin,
+    gameTerminal: view.gameTerminal,
+    handKey: model.game.handKey,
+    activeGameId: view.activeGameId,
+    activeGameIds: view.activeGameIds,
+    currentHandGameIds: model.game.currentHandIds,
+    iProposedHand: selectIProposedHand(model),
+    activeGameType: view.activeGameType,
+    displayGameId: view.displayGameId,
+    handSource: terminalGameHandSource(restoreRegisteredGameHand(model)),
+    appendGameLog: NOOP,
+    betweenHandMode: model.betweenHand.mode,
+    incomingProposal: selectIncomingProposal(model),
+    lastHandProposal: model.betweenHand.lastHandProposal,
+    composeDraftState: model.betweenHand.compose,
+    chooseNewHandSameTerms: NOOP,
+    chooseDoNotUseCurrentProposal: NOOP,
+    openComposeProposal: NOOP,
+    setComposeGameTimeout: NOOP,
+    setComposeGameType: NOOP,
+    composeProposalSent: model.betweenHand.compose.proposalSent,
+    newHandRequested: model.betweenHand.newHandRequested,
+    submitComposedProposal: NOOP,
+    acceptReviewedProposal: NOOP,
+    rejectReviewedProposal: NOOP,
+    startCleanShutdown: NOOP,
+    cleanShutdownStarted: model.channel.cleanShutdownStarted,
+    goOnChain: NOOP,
+    betweenHands: view.betweenHands,
+    restoreStatus: model.restore.status,
+    restoreError: model.restore.error,
+    sessionPhase: selectSessionPhase(model, false),
+    channelQueue: view.channelQueue,
+    gameQueue: view.gameQueue,
+    dismissChannel: dismissals?.dismissChannel ?? NOOP,
+    dismissGame: dismissals?.dismissGame ?? NOOP,
+    gameSpecificView: selectTerminalGameSpecificView(model),
+  };
+}
