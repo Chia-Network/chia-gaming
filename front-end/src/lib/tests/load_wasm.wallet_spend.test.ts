@@ -2,15 +2,18 @@ import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 
 const SETTLEMENT_PAYMENT_HASH = 'cfbfdeed5c4ca2de3d0bf520b9cb4bb7743a359bd2e6a188d19ce7dffc21d3e7';
 
-function walletIdentity(): { puzzle: string; puzzle_hash: string } {
-  const rng = WholeWasmObject.create_rng('07'.repeat(32));
-  return WholeWasmObject.chia_identity(rng);
-}
+// Standard wallet puzzle_for_pk for private scalar 1. Wallet spend construction
+// takes externally owned wallet coins; it does not need a peer session or RNG.
+const WALLET_IDENTITY = {
+  puzzle:
+    'ff02ffff01ff02ffff01ff02ffff03ff0bffff01ff02ffff03ffff09ff05ffff1dff0bffff1effff0bff0bffff02ff06ffff04ff02ffff04ff17ff8080808080808080ffff01ff02ff17ff2f80ffff01ff088080ff0180ffff01ff04ffff04ff04ffff04ff05ffff04ffff02ff06ffff04ff02ffff04ff17ff80808080ff80808080ffff02ff17ff2f808080ff0180ffff04ffff01ff32ff02ffff03ffff07ff0580ffff01ff0bffff0102ffff02ff06ffff04ff02ffff04ff09ff80808080ffff02ff06ffff04ff02ffff04ff0dff8080808080ffff01ff0bffff0101ff058080ff0180ff018080ffff04ffff01b0a6207f5173ec41491d9f2c1b8fff5579e13703077e0eaca8fe587669dcccf51e9209a6b65576845ece5f7c2f3229e7e3ff018080',
+  puzzle_hash: '48068eb6150f738fe90a001c562f0c4b769b7d64a59915aa8c0886b978e38137',
+};
 
 it('builds an unsigned Sage funding spend over a standard wallet coin in real WASM', () => {
   // Above 2^53: the amount must come back as an exact decimal string.
   const coinAmount = '9007199254740993';
-  const identity = walletIdentity();
+  const identity = WALLET_IDENTITY;
   const unsigned = JSON.parse(
     WholeWasmObject.build_wallet_spend(
       JSON.stringify({
@@ -48,7 +51,7 @@ it('builds an unsigned Sage funding spend over a standard wallet coin in real WA
 });
 
 it('rejects a fee spend when no standard coin covers the fee in real WASM', () => {
-  const identity = walletIdentity();
+  const identity = WALLET_IDENTITY;
   expect(() =>
     WholeWasmObject.build_wallet_spend(
       JSON.stringify({
@@ -70,7 +73,7 @@ it('rejects a fee spend when no standard coin covers the fee in real WASM', () =
 });
 
 it('counts only spendable standard coins in real WASM', () => {
-  const identity = walletIdentity();
+  const identity = WALLET_IDENTITY;
   const total = WholeWasmObject.spendable_standard_total(
     JSON.stringify([
       {
