@@ -12,6 +12,8 @@ export function providerScopeKey(scope: WalletProviderScope): string {
       return tupleKey(['cloud', scope.walletId]);
     case 'walletconnect':
       return tupleKey(['walletconnect', scope.fingerprint, scope.chainId]);
+    case 'sage':
+      return tupleKey(['sage', scope.fingerprint, scope.chainId]);
     case 'simulator':
       return tupleKey(['simulator', scope.identity]);
   }

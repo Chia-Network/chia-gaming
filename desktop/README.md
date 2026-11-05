@@ -56,8 +56,9 @@ The desktop build hides the local simulator. The preload sets
 `window.__chiaDistribution = 'electron'`, and `front-end/src/util/distribution.ts`
 uses it to hide the "Continue with Simulator" button and to resume a saved
 session with no recorded `blockchainType` as WalletConnect rather than
-simulator. WalletConnect and Cloud Wallet remain available. The simulator
-stays in the web build.
+simulator. WalletConnect, Sage, and Cloud Wallet remain available; Sage's chain
+reads go to `api.coinset.org` (or `testnet11.api.coinset.org`), which the
+network policy allows. The simulator stays in the web build.
 
 The same flag suppresses the front end's multi-tab lease. That lease records its
 owner in `localStorage` but identifies itself from `sessionStorage`, so a quit

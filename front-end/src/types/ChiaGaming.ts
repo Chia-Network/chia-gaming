@@ -224,6 +224,7 @@ export type WalletOfferOperation = {
 export type WalletProviderScope =
   | { provider: 'cloud'; walletId: string }
   | { provider: 'walletconnect'; fingerprint: string; chainId: string }
+  | { provider: 'sage'; fingerprint: string; chainId: string }
   | { provider: 'simulator'; identity: string };
 
 export type WalletOfferRequest =
@@ -276,6 +277,8 @@ export interface WasmConnection {
   registered_game_packages: () => Array<{ key: string; id: string }>;
   convert_spend_to_coinset_org: (spend: string) => unknown;
   convert_offer_to_coinset_org: (offer: string) => unknown;
+  build_wallet_spend: (request_json: string) => string;
+  spendable_standard_total: (coins_json: string) => string;
   convert_coinset_to_coin_string: (
     parent_coin_info: string,
     puzzle_hash: string,

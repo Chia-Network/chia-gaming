@@ -50,13 +50,13 @@ describe('WalletConnect chain id follows the network preference', () => {
 
   it('defaults to mainnet', () => {
     expect(getChainId()).toBe('chia:mainnet');
-    expect(getRequiredNamespaces().chia.chains).toEqual(['chia:mainnet']);
+    expect(getRequiredNamespaces('chia-wallet').chia.chains).toEqual(['chia:mainnet']);
   });
 
   it('uses the testnet chain id when the preference is testnet', () => {
     storageRepository.updatePreference({ key: 'network', value: 'testnet' });
     expect(getChainId()).toBe('chia:testnet');
-    expect(getRequiredNamespaces().chia.chains).toEqual(['chia:testnet']);
+    expect(getRequiredNamespaces('chia-wallet').chia.chains).toEqual(['chia:testnet']);
   });
 
   it('switches back to mainnet when the preference changes', () => {
@@ -67,10 +67,10 @@ describe('WalletConnect chain id follows the network preference', () => {
   });
 
   it('proposes every method as optional while retaining required-method validation', () => {
-    expect(getRequiredNamespaces().chia.methods).toEqual(
+    expect(getRequiredNamespaces('chia-wallet').chia.methods).toEqual(
       Object.values(ChiaMethod).filter((method) => method !== ChiaMethod.GetFullNodePeerCount),
     );
-    expect(getOptionalNamespaces().chia).toEqual({
+    expect(getOptionalNamespaces('chia-wallet').chia).toEqual({
       methods: Object.values(ChiaMethod),
       chains: ['chia:mainnet'],
       events: [],

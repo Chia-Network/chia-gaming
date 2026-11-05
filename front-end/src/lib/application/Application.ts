@@ -115,7 +115,7 @@ import { createAcceptLifecycle, createShellSessionState } from './applicationSes
 import { Recovery } from './Recovery';
 import { createSessionRejection } from './sessionRejection';
 type TabId = 'wallet' | 'hub' | 'game' | 'history' | 'log';
-type ShellBlockchainType = 'simulator' | 'walletconnect' | 'cloud';
+type ShellBlockchainType = 'simulator' | 'walletconnect' | 'sage' | 'cloud';
 type SessionStartRequest = {
   peerId: string;
   opponentAlias?: string;

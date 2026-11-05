@@ -1205,6 +1205,15 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     variant="solid"
                     fullWidth
                     onClick={() =>
+                      dispatch({ type: 'wallet-connect', wallet: 'sage', fresh: true })
+                    }
+                  >
+                    Sage Wallet
+                  </Button>
+                  <Button
+                    variant="solid"
+                    fullWidth
+                    onClick={() =>
                       dispatch({ type: 'wallet-connect', wallet: 'cloud', fresh: true })
                     }
                   >

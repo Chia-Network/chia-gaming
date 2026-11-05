@@ -65,9 +65,12 @@ export function decodeProviderScope(value: unknown, label: string): WalletProvid
       walletId: boundedString(fields.walletId, `${label}.walletId`),
     };
   }
-  if (fields.provider === 'walletconnect' && Object.keys(fields).length === 3) {
+  if (
+    (fields.provider === 'walletconnect' || fields.provider === 'sage') &&
+    Object.keys(fields).length === 3
+  ) {
     return {
-      provider: 'walletconnect',
+      provider: fields.provider,
       fingerprint: boundedString(fields.fingerprint, `${label}.fingerprint`),
       chainId: boundedString(fields.chainId, `${label}.chainId`),
     };
