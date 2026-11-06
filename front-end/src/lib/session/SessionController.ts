@@ -35,6 +35,7 @@ import {
 } from '../../types/ChiaGaming';
 import { coerceToBytes } from '../../util';
 import { jsonStringify } from '../../util/jsonSafe';
+import { isPastDeadlineRejection } from '../../util/walletSubmit';
 import { markClientErrorReported, wasClientErrorReported } from '../clientError';
 import {
   protocolIdForCatalog,
@@ -204,6 +205,15 @@ export function rewriteFeeRateRejection(message: string): string {
     );
   }
   return message;
+}
+
+export function rewritePastDeadlineRejection(message: string): string {
+  if (!isPastDeadlineRejection(message)) return message;
+  return (
+    `This transaction was too late: its on-chain deadline has passed, so the network will ` +
+    `never accept it and it won't be retried. A game move that missed its deadline is now ` +
+    `settled by timeout. (${message})`
+  );
 }
 
 export type RestoreStatus = 'idle' | 'restoring' | 'restored' | 'failed';
@@ -450,7 +460,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       requestCommit: () => this.requestCommit(),
       reportWarning: (message) => {
         log(`[wasm] submitTransaction: ${message}`);
-        this.receiveEvent({ type: 'error', error: rewriteFeeRateRejection(message) });
+        this.receiveEvent({
+          type: 'error',
+          error: rewritePastDeadlineRejection(rewriteFeeRateRejection(message)),
+        });
       },
       reportLocalFailure: (submission, error) =>
         this.recordLocalSubmissionFailure(submission, error),

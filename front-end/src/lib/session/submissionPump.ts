@@ -8,6 +8,7 @@ import type {
   WalletSubmitOutcome,
 } from '../../types/ChiaGaming';
 import { spend_bundle_to_clvm } from '../../util';
+import { isPastDeadlineRejection } from '../../util/walletSubmit';
 import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
 import type { ProviderOwner } from './providerKeys';
 import { SessionRuntimeRetiredError } from './sessionMachineTypes';
@@ -293,6 +294,7 @@ export class SubmissionPump {
     let walletFeeSource: WalletFeeSource | undefined;
     let finalizedDisposition: FinalizedSubmission['fee_source_disposition'] | undefined;
     let outcome: WalletSubmitOutcome | undefined;
+    let abandoned = false;
     try {
       if (!this.ports.getRewardPuzzleHash()) {
         throw new Error('Submission execution requires a reward puzzle hash');
@@ -403,10 +405,17 @@ export class SubmissionPump {
               if (!activeCradle) {
                 throw new Error('WASM cradle became unavailable before recording wallet outcome');
               }
-              if (outcome!.status === 'acknowledged') {
+              const reported = outcome!;
+              if (reported.status === 'acknowledged') {
                 activeCradle.acknowledge_submission_attempt(submission.attempt_token);
-              } else if (outcome!.status === 'unavailable') {
+              } else if (reported.status === 'unavailable') {
                 activeCradle.submission_attempt_unavailable(submission.attempt_token);
+              } else if (isPastDeadlineRejection(reported.detail)) {
+                activeCradle.abandon_submission_attempt(submission.attempt_token);
+                this.ports.reportWarning(
+                  `Wallet rejected transaction ${submission.id}: ${reported.detail}`,
+                );
+                abandoned = true;
               } else {
                 activeCradle.reject_submission_attempt(submission.attempt_token);
               }
@@ -429,7 +438,7 @@ export class SubmissionPump {
       }
       await execution.broadcast;
       if (!outcome) return this.completion('skipped', false);
-      if (!this.isInactive(submission) && outcome.status === 'rejected') {
+      if (!abandoned && !this.isInactive(submission) && outcome.status === 'rejected') {
         this.ports.reportWarning(`Wallet rejected transaction ${submission.id}: ${outcome.detail}`);
       }
       return this.completion(outcome.status, outcome.status === 'unavailable');

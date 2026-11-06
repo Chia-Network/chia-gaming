@@ -9,6 +9,8 @@ import {
   feeAttachmentEntryKey,
   feeAttachmentForSubmission,
   identifiedFeeAttachment,
+  isFeeAttachmentCancellation,
+  isRetiringFeeAttachment,
   type FeeAttachment,
   type FeeAttachmentOwner,
   type FeeAttachmentRequest,
@@ -110,14 +112,8 @@ export class FeeAttachmentRuntime {
       return { kind: 'unavailable', reason: 'Fee runtime lost storage authority' };
     }
     const consumerDead = () => this.authorityRetired || this.ports.isRetired() || isInactive();
-    const completed = this.completed.get(submissionId);
-    if (completed) {
-      this.completed.delete(submissionId);
-      if (consumerDead()) {
-        return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
-      }
-      return completed;
-    }
+    const completed = this.takeCompleted(owner, submissionId, consumerDead);
+    if (completed) return completed;
     storageRepository.ensureWalletContext(owner.providerScope);
     const provider = this.providers.provider(owner.providerScope);
     if (!provider) {
@@ -126,15 +122,15 @@ export class FeeAttachmentRuntime {
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (current?.stage === 'best-effort-uncertain') {
       await this.flights.get(`replace:${submissionId}`)?.promise;
-      const replacement = this.completed.get(submissionId);
-      if (replacement) {
-        this.completed.delete(submissionId);
-        if (consumerDead()) {
-          return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+      return (
+        this.takeCompleted(owner, submissionId, consumerDead) ?? {
+          kind: 'unavailable',
+          reason: 'Fee replacement waits for wallet readiness',
         }
-        return replacement;
-      }
-      return { kind: 'unavailable', reason: 'Fee replacement waits for wallet readiness' };
+      );
+    }
+    if (current && isRetiringFeeAttachment(current)) {
+      return { kind: 'unavailable', reason: 'An earlier fee offer is still being retired' };
     }
     if (current && current.stage !== 'creating') {
       throw new Error('Fee attachment already owns a provider reservation');
@@ -228,16 +224,21 @@ export class FeeAttachmentRuntime {
     }
     if (outcome.kind === 'pending') {
       const pendingRecoveryId = outcome.recoveryId;
-      const pending = () => {
-        if (consumerDead()) return;
-        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+      if (!storageRepository.isGenerationCurrent(generation)) {
+        log(
+          `[fee-attachment] stale creation returned only recovery_id=${pendingRecoveryId}; reservation may remain orphaned submission_id=${submissionId}`,
+        );
+        return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
+      }
+      const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+      // An entry that vanished during the begin was explicitly retired, so it stays gone.
+      if (latest || !current) {
         this.replace(latest, {
           owner,
           submissionId,
           stage: 'creating',
           disposition:
-            (latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain') &&
-            latest.disposition === 'cancel-on-create'
+            consumerDead() || (latest && isRetiringFeeAttachment(latest))
               ? 'cancel-on-create'
               : 'active',
           request,
@@ -245,15 +246,7 @@ export class FeeAttachmentRuntime {
           reason: 'fee-creation-pending',
           ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
         });
-      };
-      if (!storageRepository.isGenerationCurrent(generation)) {
-        log(
-          `[fee-attachment] stale creation returned only recovery_id=${pendingRecoveryId}; reservation may remain orphaned submission_id=${submissionId}`,
-        );
-        return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
-      const pendingConsumerDead = consumerDead();
-      if (!pendingConsumerDead) pending();
       outcome = await advanceProviderCreation(
         generation,
         provider,
@@ -262,62 +255,33 @@ export class FeeAttachmentRuntime {
         pendingRecoveryId,
       );
       if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
-      if (consumerDead()) {
-        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-        if (storageRepository.isGenerationCurrent(generation) && latest) {
-          this.replace(latest, null);
-        }
-        if (outcome.kind === 'created-reserved') {
-          this.cancelLateReservation(provider, outcome.tradeId, submissionId);
-        } else if (outcome.kind === 'unavailable') {
-          log(
-            `[fee-attachment] dead consumer creation reconciliation unavailable; reservation may remain orphaned submission_id=${submissionId} recovery_id=${pendingRecoveryId}`,
-          );
-        }
-        return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
-      }
     }
-    const generationCurrent = storageRepository.isGenerationCurrent(generation);
-    const dead = consumerDead();
-    if (!generationCurrent || dead) {
-      if (generationCurrent && dead) {
-        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-        if (latest) this.replace(latest, null);
-      }
-      if (
-        outcome.kind === 'created-reserved' &&
-        (generationCurrent || hardResetEpoch === this.hardResetEpoch)
-      ) {
+    if (!storageRepository.isGenerationCurrent(generation)) {
+      if (outcome.kind === 'created-reserved' && hardResetEpoch === this.hardResetEpoch) {
         this.cancelLateReservation(provider, outcome.tradeId, submissionId);
       }
-      return {
-        kind: 'unavailable',
-        reason: generationCurrent
-          ? 'Fee consumer retired during wallet creation'
-          : 'Storage authority changed during fee creation',
-      };
+      return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
+    }
+    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    if (consumerDead() || (latest && isRetiringFeeAttachment(latest))) {
+      this.settleDeadCreation(owner, submissionId, outcome);
+      return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
     }
     if (outcome.kind === 'failure') {
-      const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
       if (latest) this.replace(latest, null);
       return outcome;
     }
     if (outcome.kind === 'unavailable') return outcome;
     if (outcome.kind === 'created-ephemeral')
       throw new Error('Fee provider returned unreserved material');
-    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-    const cancel =
-      (latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain') &&
-      latest.disposition === 'cancel-on-create';
     this.replace(latest, {
       owner,
       submissionId,
-      stage: cancel ? 'cancel-required' : 'reserved',
+      stage: 'reserved',
       providerReservationId: outcome.tradeId,
       reason: 'fee-offer-created',
       ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
     });
-    if (cancel) void this.scheduleCancellation(outcome.tradeId);
     try {
       await checkpointProviderState(generation);
     } catch (error) {
@@ -333,15 +297,7 @@ export class FeeAttachmentRuntime {
       throw error;
     }
     if (consumerDead()) {
-      const installed = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-      const cancellationStarted =
-        installed?.stage === 'cancel-required' ||
-        installed?.stage === 'cancelling' ||
-        installed?.stage === 'best-effort-cancellation-uncertain';
-      if (!cancellationStarted) {
-        if (installed) this.replace(installed, null);
-        this.cancelLateReservation(provider, outcome.tradeId, submissionId);
-      }
+      this.settleDeadCreation(owner, submissionId, outcome);
       return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
     }
     if (latest?.orphanRisk) {
@@ -351,6 +307,63 @@ export class FeeAttachmentRuntime {
       return { ...outcome, warning };
     }
     return outcome;
+  }
+
+  private takeCompleted(
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    consumerDead: () => boolean,
+  ): WalletOfferCompletion | null {
+    const completed = this.completed.get(submissionId);
+    if (!completed) return null;
+    this.completed.delete(submissionId);
+    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    if (latest && isRetiringFeeAttachment(latest)) {
+      return { kind: 'unavailable', reason: 'An earlier fee offer is still being retired' };
+    }
+    if (!consumerDead()) return completed;
+    this.settleDeadCreation(owner, submissionId, completed);
+    return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
+  }
+
+  /**
+   * The one dead-consumer transition. Only a completed cancellation removes an identified offer,
+   * so a refused or interrupted cancel still has its record to retry from.
+   */
+  private settleDeadCreation(
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    outcome: WalletOfferBeginOutcome,
+  ): void {
+    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    const unidentified = latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain';
+    const tradeId =
+      outcome.kind === 'created-reserved'
+        ? outcome.tradeId
+        : latest && !unidentified
+          ? latest.providerReservationId
+          : null;
+    if (tradeId === null) {
+      if (latest?.stage === 'creating' && outcome.kind !== 'failure') {
+        this.replace(latest, { ...latest, disposition: 'cancel-on-create' });
+      } else if (latest) {
+        this.replace(latest, null);
+      }
+      return;
+    }
+    // Replay owns an attached offer: this flight's consumer dying says nothing about it.
+    if (latest?.stage === 'retained-for-replay') return;
+    if (!latest || !isFeeAttachmentCancellation(latest)) {
+      this.replace(latest, {
+        owner,
+        submissionId,
+        stage: 'cancel-required',
+        providerReservationId: tradeId,
+        reason: 'fee-offer-created',
+        ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
+      });
+    }
+    void this.scheduleCancellation(tradeId);
   }
 
   private creationUncertain(
@@ -450,11 +463,7 @@ export class FeeAttachmentRuntime {
     if (this.authorityRetired) return Promise.resolve();
     const entry = identifiedFeeAttachment(this.entries(), id);
     const provider = entry && this.providers.provider(entry.owner.providerScope);
-    if (
-      !entry ||
-      !provider ||
-      !['cancel-required', 'cancelling', 'best-effort-cancellation-uncertain'].includes(entry.stage)
-    ) {
+    if (!entry || !provider || !isFeeAttachmentCancellation(entry)) {
       return Promise.resolve();
     }
     if (entry.stage === 'best-effort-cancellation-uncertain') {
@@ -586,6 +595,11 @@ export class FeeAttachmentRuntime {
           ? provider.cancel(id)
           : provider.beginCancellation(id),
       )
+      .then((outcome) =>
+        outcome.status === 'pending' && isRecoverableProvider(provider)
+          ? provider.reconcileCancellation(id, outcome.recoveryId)
+          : outcome,
+      )
       .then(
         (outcome) => {
           if (outcome.status !== 'cancelled' && outcome.status !== 'already-terminal') {
@@ -603,14 +617,7 @@ export class FeeAttachmentRuntime {
 
   private recoveredConsumerDead(owner: FeeAttachmentOwner, submissionId: string): boolean {
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-    return (
-      !current ||
-      current.stage === 'cancel-required' ||
-      current.stage === 'cancelling' ||
-      current.stage === 'best-effort-cancellation-uncertain' ||
-      ((current.stage === 'creating' || current.stage === 'best-effort-uncertain') &&
-        current.disposition === 'cancel-on-create')
-    );
+    return !current || isRetiringFeeAttachment(current);
   }
 
   private markRestoredUncertain(): void {

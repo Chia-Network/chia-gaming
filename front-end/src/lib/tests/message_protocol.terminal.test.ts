@@ -2,7 +2,11 @@ import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
-import { rewriteFeeRateRejection, SessionController } from '../session/SessionController';
+import {
+  rewriteFeeRateRejection,
+  rewritePastDeadlineRejection,
+  SessionController,
+} from '../session/SessionController';
 import { createSessionController } from '../session/sessionHost';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { pollOnce } from './blockchain_poller.driver';
@@ -741,6 +745,41 @@ describe('transaction submission', () => {
     expect(errors[0]).toMatch(/effectively zero/i);
   });
 
+  it('abandons a past-deadline rejection instead of waiting to rebroadcast it', async () => {
+    const detail = 'Failed to include transaction e3, error ASSERT_BEFORE_HEIGHT_RELATIVE_FAILED';
+    const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail });
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, spend, isConnected: () => true } as InternalBlockchainInterface,
+      60000,
+    );
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    const errors: string[] = [];
+    observeWasmEvents(blob).subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest
+        .fn()
+        .mockReturnValueOnce(
+          submissionDrain([{ id: 'late', bundle: testSpendBundle('03'), fee_request: null }]),
+        )
+        .mockReturnValue(submissionDrain([], ['late'])),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.abandon_submission_attempt).toHaveBeenCalledWith('late');
+    expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
+    expect(errors).toEqual([expect.stringMatching(/too late/i)]);
+    expect(errors[0]).toContain(detail);
+  });
+
   it('submits transactions already queued when a manager result is terminal', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const blockchain = new BlockchainPoller(
@@ -833,6 +872,15 @@ describe('transaction submission', () => {
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith('4');
     expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
+  });
+
+  it('explains past-deadline rejections and passes others through', () => {
+    const rewritten = rewritePastDeadlineRejection('error ASSERT_BEFORE_HEIGHT_ABSOLUTE_FAILED');
+    expect(rewritten).toMatch(/too late/i);
+    expect(rewritten).toContain('ASSERT_BEFORE_HEIGHT_ABSOLUTE_FAILED');
+    expect(rewritePastDeadlineRejection('error ASSERT_HEIGHT_RELATIVE_FAILED')).toBe(
+      'error ASSERT_HEIGHT_RELATIVE_FAILED',
+    );
   });
 
   it('rewrites fee-rate rejections into an actionable message and passes others through', () => {

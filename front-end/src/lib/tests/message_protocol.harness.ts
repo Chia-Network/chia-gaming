@@ -198,6 +198,7 @@ export function makeMockCradle(): ChiaGame {
     finalize_submission_attempt: finalizeSubmissionAttempt,
     acknowledge_submission_attempt: acknowledgeSubmissionAttempt,
     reject_submission_attempt: rejectSubmissionAttempt,
+    abandon_submission_attempt: jest.fn(),
     submission_attempt_unavailable: jest.fn(),
     relinquish_submission_attempt: jest.fn(),
     chain_snapshot_ready: jest.fn(),
