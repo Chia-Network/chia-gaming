@@ -361,6 +361,11 @@ export type WalletOfferCancellationOutcome =
 export type WalletOfferCancellationBeginOutcome =
   WalletOfferCancellationOutcome | { status: 'pending'; recoveryId: string };
 
+/** Transient ownership check; cleanup observes existing requests without requesting approval. */
+export interface WalletOfferReconciliationOptions {
+  allowApproval: () => boolean;
+}
+
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
 }
@@ -393,6 +398,7 @@ export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase 
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
   reconcileCancellation(
@@ -416,6 +422,7 @@ export interface RecoverableAfterBeginWalletOfferProvider extends WalletOfferPro
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
   reconcileCancellation(

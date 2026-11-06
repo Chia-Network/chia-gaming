@@ -682,8 +682,11 @@ obligations without acquiring active fees. Creation and reconciliation share one
 flight per submission, and return material directly to that requesting attempt;
 there is no independently recovered material cache to hand to a later attempt.
 Retiring an identified creation immediately reconciles its existing request for
-cleanup. Retiring pre-ID uncertainty preserves orphan evidence without creating
-a replacement offer solely to cancel it.
+cleanup. Creation reconciliation carries a transient approval permission from
+its requesting owner: a dead consumer may observe an existing signature request
+to identify and cancel its trade, but cannot open another fee-approval window.
+Retiring pre-ID uncertainty preserves orphan evidence without creating a
+replacement offer solely to cancel it.
 `FeeAttachmentRuntime` applies one rule to a dead consumer: once the offer is
 identified, its durable entry becomes `cancel-required`, and only a completed
 cancellation removes it. An offer that replay has attached stays retained,
@@ -744,7 +747,13 @@ and immutable predecessor/relationship metadata. Rust emits the no-fee base
 immediately when fee acquisition fails or is unavailable and continues seeking
 after base acknowledgement. Matching provider readiness or an explicit
 fresh-chain rebroadcast epoch may later upgrade that ID to a fee-bearing
-variant; chain terminality stops acquisition. Rust deduplicates only an exact canonical intent fingerprint; two
+variant; chain terminality stops acquisition. An ordinary fresh snapshot or
+provider-readiness edge leaves an already-running fee acquisition with its
+current attempt; it cannot cancel that approval and issue a replacement.
+Genuine browser restoration relinquishes abandoned delivery attempts at the
+explicit `restore_runtime` boundary before fresh-chain recovery resumes them.
+Transactional working-copy decoding does not relinquish live attempts.
+Rust deduplicates only an exact canonical intent fingerprint; two
 different transactions that spend the same inputs retain different IDs.
 Rejection retires only its exact ID. The manager separately retains wallet
 delivery acknowledgement and chain finality. JavaScript makes one wallet call
@@ -1556,6 +1565,12 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   controller cancels the rejected persisted offer off chain to release its
   channel-funding reservation. The wallet chooses the offer inputs, so Cloud no longer
   selects or pins a funding coin in JavaScript.
+
+  Cloud offer cleanup requests `cancelOffChain: true` with zero fee. Any existing
+  cancellation signature request, including one restored from an older build,
+  is polled without opening a popup, a system-browser approval, or an approval
+  notice. A wallet that cannot complete off-chain cleanup leaves an unresolved
+  cleanup record; the client never asks the player to sign a cancellation.
 
   `WalletOfferProvider` is a required discriminated capability, not optional
   methods. Cloud is `recoverable-after-begin`: transport loss before the begin

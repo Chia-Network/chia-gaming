@@ -187,9 +187,22 @@ export class FeeAttachmentRuntime {
     const recoveryId =
       !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
     const operation = { owner, purpose: { kind: 'fee' as const, operationId: submissionId } };
+    const reconciliation = {
+      allowApproval: () => {
+        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+        return !consumerDead() && !!latest && !isRetiringFeeAttachment(latest);
+      },
+    };
     let outcome: WalletOfferBeginOutcome;
     try {
-      outcome = await advanceProviderCreation(generation, provider, operation, request, recoveryId);
+      outcome = await advanceProviderCreation(
+        generation,
+        provider,
+        operation,
+        request,
+        recoveryId,
+        reconciliation,
+      );
     } catch (error) {
       if (error instanceof StorageAuthorityLostError) {
         return { kind: 'unavailable', reason: 'Storage authority changed before fee creation' };
@@ -250,6 +263,7 @@ export class FeeAttachmentRuntime {
         operation,
         request,
         pendingRecoveryId,
+        reconciliation,
       );
       if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
     }

@@ -552,6 +552,7 @@ describe('FeeAttachmentRuntime lifecycle', () => {
         expect.anything(),
         expect.anything(),
         'fee-request',
+        expect.objectContaining({ allowApproval: expect.any(Function) }),
       );
       expect(provider.beginCreation).toHaveBeenCalledTimes(1);
       expect(provider.beginCancellation).toHaveBeenCalledWith('late-trade');
@@ -1005,6 +1006,7 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       expect.anything(),
       expect.anything(),
       'dead-recovery-id',
+      expect.objectContaining({ allowApproval: expect.any(Function) }),
     );
     await waitFor(() => beginCancellation.mock.calls.length === 1);
     expect(beginCancellation).toHaveBeenCalledWith('dead-reconciled-trade');
