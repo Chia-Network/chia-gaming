@@ -4,7 +4,6 @@ import type {
   WalletOfferOperation,
   WalletOfferProvider,
   WalletOfferRequest,
-  WalletOfferReconciliationOptions,
 } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
 import { StorageAuthorityLostError } from './indexedDb';
@@ -62,14 +61,12 @@ export async function advanceProviderCreation(
   operation: WalletOfferOperation,
   request: WalletOfferRequest,
   recoveryId?: string,
-  options?: WalletOfferReconciliationOptions,
 ): Promise<WalletOfferBeginOutcome> {
   await checkpoint(generation);
   if (recoveryId === undefined) return provider.beginCreation(operation, request);
   if (!isRecoverableProvider(provider)) {
     throw new Error('Provider cannot reconcile persisted creation');
   }
-  if (options) return provider.reconcileCreation(operation, request, recoveryId, options);
   return provider.reconcileCreation(operation, request, recoveryId);
 }
 
