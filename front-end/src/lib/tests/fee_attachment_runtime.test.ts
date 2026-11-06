@@ -530,7 +530,129 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       runtime.detach();
     });
 
-    it('survives unavailable reconciliation and cancels when a later readiness finds the offer', async () => {
+    it.each(['begin', 'reconcile'] as const)(
+      'hands a delivery revoked during %s to one cleanup without waiting for readiness',
+      async (phase) => {
+        const begin = deferred<typeof pendingBegin>();
+        const delivery = deferred<typeof unavailable>();
+        const cleanup = deferred<typeof created>();
+        const provider = wallet();
+        if (phase === 'begin') provider.beginCreation.mockReturnValue(begin.promise);
+        provider.reconcileCreation
+          .mockReturnValueOnce(phase === 'begin' ? Promise.resolve(unavailable) : delivery.promise)
+          .mockReturnValueOnce(cleanup.promise);
+        const { providers, runtime } = attach(provider);
+        let inactive = false;
+        const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+        await waitFor(() =>
+          phase === 'begin'
+            ? provider.beginCreation.mock.calls.length === 1
+            : provider.reconcileCreation.mock.calls.length === 1,
+        );
+        inactive = true;
+        runtime.retire(owner, 'fee');
+        runtime.retire(owner, 'fee');
+        expect(provider.reconcileCreation).toHaveBeenCalledTimes(phase === 'begin' ? 0 : 1);
+        begin.resolve(pendingBegin);
+        delivery.resolve(unavailable);
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 2);
+        expect(provider.reconcileCreation).toHaveBeenLastCalledWith(
+          expect.anything(),
+          request,
+          'fee-request',
+          { mode: 'observe-only' },
+        );
+        expect(storageRepository.feeAttachments()).toEqual([retiredCreation]);
+        await expect(runtime.reserve(owner, 'fee', request, () => false)).resolves.toMatchObject({
+          kind: 'unavailable',
+        });
+
+        runtime.retire(owner, 'fee');
+        providers.ready(provider);
+        providers.reconnectReady(provider);
+        await readApplicationState();
+        expect(provider.reconcileCreation).toHaveBeenCalledTimes(2);
+        cleanup.resolve(created);
+        await runtime.awaitIdle();
+        expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+        expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        runtime.detach();
+      },
+    );
+
+    it('retains unavailable handed-off cleanup without immediately retrying it', async () => {
+      const delivery = deferred<typeof unavailable>();
+      const provider = wallet();
+      provider.reconcileCreation
+        .mockReturnValueOnce(delivery.promise)
+        .mockResolvedValueOnce(unavailable)
+        .mockResolvedValue(created);
+      const { providers, runtime } = attach(provider);
+      let inactive = false;
+      const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+      await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+      inactive = true;
+      runtime.retire(owner, 'fee');
+      delivery.resolve(unavailable);
+      await reservation;
+      await runtime.awaitIdle();
+      expect(provider.reconcileCreation).toHaveBeenCalledTimes(2);
+      expect(storageRepository.feeAttachments()).toEqual([retiredCreation]);
+      await readApplicationState();
+      expect(provider.reconcileCreation).toHaveBeenCalledTimes(2);
+      expect(provider.beginCancellation).not.toHaveBeenCalled();
+
+      providers.reconnectReady(provider);
+      await runtime.awaitIdle();
+      expect(provider.reconcileCreation).toHaveBeenCalledTimes(3);
+      expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+      expect(storageRepository.feeAttachments()).toEqual([]);
+      runtime.detach();
+    });
+
+    it.each(['detach', 'clear', 'hard-reset', 'retained-replay'] as const)(
+      'does not start a queued cleanup after %s changes its ownership',
+      async (ending) => {
+        const delivery = deferred<typeof unavailable>();
+        const provider = wallet();
+        provider.reconcileCreation.mockReturnValueOnce(delivery.promise);
+        const { runtime } = attach(provider);
+        let inactive = false;
+        const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+        inactive = true;
+        runtime.retire(owner, 'fee');
+        if (ending === 'detach') runtime.detach();
+        else if (ending === 'clear') await storageRepository.clearSession();
+        else if (ending === 'hard-reset') await storageRepository.hardReset();
+        else
+          install([
+            {
+              owner,
+              submissionId: 'fee',
+              stage: 'retained-for-replay',
+              providerReservationId: 'late-trade',
+              reason: 'fee-offer-created',
+            },
+          ]);
+        delivery.resolve(unavailable);
+        await reservation;
+        await runtime.awaitIdle();
+        expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+        expect(provider.beginCancellation).not.toHaveBeenCalled();
+        if (ending === 'clear' || ending === 'hard-reset')
+          expect(storageRepository.feeAttachments()).toEqual([]);
+        if (ending === 'retained-replay')
+          expect(storageRepository.feeAttachments()).toEqual([
+            expect.objectContaining({ stage: 'retained-for-replay' }),
+          ]);
+        runtime.detach();
+      },
+    );
+
+    it('preserves cleanup across readiness arriving as the revoked delivery settles', async () => {
       const reconcile = deferred<typeof unavailable>();
       const provider = wallet();
       provider.reconcileCreation.mockReturnValueOnce(reconcile.promise);

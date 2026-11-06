@@ -678,11 +678,12 @@ wallet acknowledgement does not retire it, and Rust submission retirement
 moves its exact `providerReservationId` through typed cancellation before removal.
 Active fee creation and recovery run only when `SubmissionPump` reserves a fee
 for a Rust-issued live submission. Restore and provider readiness drain cleanup
-obligations without acquiring active fees. Creation and reconciliation share one
-flight per submission, and return material directly to that requesting attempt;
-there is no independently recovered material cache to hand to a later attempt.
-Retiring an identified creation immediately reconciles its existing request for
-cleanup. Creation reconciliation carries a transient approval permission from
+obligations without acquiring active fees. Delivery returns material directly
+to its requesting attempt; there is no recovered-material cache. Retiring a
+known creation schedules one cleanup flight that waits for any active delivery
+to settle, rechecks the exact durable request and ownership, then observes it
+without requiring readiness, reconnect, or reload. Repeated cleanup requests
+join that same flight; delivery and cleanup never reconcile concurrently. Creation reconciliation carries a transient approval permission from
 its requesting owner: a dead consumer may observe an existing signature request
 to identify and cancel its trade, but cannot open another fee-approval window.
 Reconciliation explicitly selects `delivery` or `observe-only` mode; only
@@ -690,8 +691,9 @@ cleanup owners select observation without approval. The owner notifies approval
 observers when permission changes. Revocation immediately withdraws blocked
 prompts and completes the obsolete delivery as
 unavailable, so successors and pump quiescence do not wait on cleanup polling.
-The exact existing signature request remains durable for later observe-only
-reconciliation on matching readiness or restore. A queued live request remains
+The exact existing signature request remains durable through that automatic
+observe-only handoff. If observation is unavailable, the record remains for a
+later matching readiness or restore; cleanup does not immediately retry itself. A queued live request remains
 actionable. Terminal best-effort retirement also reconciles creation requests
 with approval explicitly disabled.
 Retiring pre-ID uncertainty preserves orphan evidence without creating a

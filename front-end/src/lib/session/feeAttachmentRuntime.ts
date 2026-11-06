@@ -328,7 +328,7 @@ export class FeeAttachmentRuntime {
     }
     const latest = findEntry();
     if (consumerDead() || (latest && isRetiringFeeAttachment(latest))) {
-      this.settleDeadCreation(owner, submissionId, outcome);
+      this.settleDeadCreation(owner, submissionId, outcome, mode);
       return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
     }
     if (outcome.kind === 'failure') {
@@ -366,7 +366,7 @@ export class FeeAttachmentRuntime {
       return { kind: 'unavailable', reason: 'Fee operation retired during wallet creation' };
     }
     if (consumerDead()) {
-      this.settleDeadCreation(owner, submissionId, outcome);
+      this.settleDeadCreation(owner, submissionId, outcome, mode);
       return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
     }
     if (latest?.orphanRisk) {
@@ -386,6 +386,7 @@ export class FeeAttachmentRuntime {
     owner: FeeAttachmentOwner,
     submissionId: string,
     outcome: WalletOfferBeginOutcome,
+    mode: WalletOfferReconciliationOptions['mode'],
   ): void {
     const latest = feeAttachmentForSubmission(
       storageRepository.feeAttachments(),
@@ -401,7 +402,9 @@ export class FeeAttachmentRuntime {
           : null;
     if (tradeId === null) {
       if (latest?.stage === 'creating' && outcome.kind !== 'failure') {
-        this.replace(latest, { ...latest, disposition: 'cancel-on-create' });
+        const retiring = { ...latest, disposition: 'cancel-on-create' } as const;
+        this.replace(latest, retiring);
+        if (mode === 'delivery') this.recover(retiring);
       } else if (latest) {
         this.replace(latest, null);
       }
@@ -468,17 +471,40 @@ export class FeeAttachmentRuntime {
     if (this.authorityRetired) return;
     const provider = this.providers.provider(entry.owner.providerScope);
     if (!provider || !isRecoverableProvider(provider)) return;
-    void this.flight(`create:${entry.submissionId}`, () =>
-      this.create(
-        provider,
+    const generation = storageRepository.lifecycleGeneration;
+    const delivery = this.flights.get(`create:${entry.submissionId}`)?.promise;
+    void this.flight(`recover:${entry.submissionId}`, async () => {
+      // The delivery owns its result and errors. Cleanup takes ownership only
+      // after that reconciliation has ended, without keeping the delivery open.
+      if (delivery) await Promise.allSettled([delivery]);
+      if (
+        this.detached ||
+        this.authorityRetired ||
+        this.ports.isRetired() ||
+        !storageRepository.isGenerationCurrent(generation)
+      )
+        return;
+      const current = feeAttachmentForSubmission(
+        storageRepository.feeAttachments(),
         entry.owner,
         entry.submissionId,
-        entry.request,
-        () => this.recoveredConsumerDead(entry.owner, entry.submissionId),
+      );
+      if (
+        current?.stage !== 'creating' ||
+        current.disposition !== 'cancel-on-create' ||
+        current.recoveryId !== entry.recoveryId
+      )
+        return;
+      await this.create(
+        provider,
+        current.owner,
+        current.submissionId,
+        current.request,
+        () => this.recoveredConsumerDead(current.owner, current.submissionId),
         false,
         'observe-only',
-      ),
-    );
+      );
+    });
   }
 
   private replaceUncertain(

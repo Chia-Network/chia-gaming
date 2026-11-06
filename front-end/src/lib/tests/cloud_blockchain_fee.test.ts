@@ -44,7 +44,7 @@ import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import { SubmissionPump } from '../session/submissionPump';
 import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
-import { WalletProviderRegistry, walletProviderRegistry } from '../session/walletProviderRegistry';
+import { WalletProviderRegistry } from '../session/walletProviderRegistry';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   classifyCloudWalletSubmitError,
@@ -701,6 +701,7 @@ describe('CloudBlockchainInterface fee support', () => {
       'settles a fee interrupted at %s without blocking delivery or independent cleanup',
       async (revokedAt) => {
         let feeStatus = 'PENDING';
+        let queriesBeforeCleanup = 0;
         let ownerRetired = false;
         let supersedeDuringCreate = () => {};
         const calls = mockGraphql((query) => {
@@ -726,7 +727,14 @@ describe('CloudBlockchainInterface fee support', () => {
         const height = jest.spyOn(iface, 'getHeightInfo').mockResolvedValue(123n);
         const blockchain = new BlockchainPoller(iface, 60_000);
         const provider = blockchain.rpc.getWalletOfferProvider();
-        if (!provider) throw new Error('expected queued Cloud provider');
+        if (!provider || provider.capability !== 'recoverable-after-begin') {
+          throw new Error('expected queued Cloud provider');
+        }
+        const reconcileCreation = jest.spyOn(provider, 'reconcileCreation');
+        const cleanupCalls = () =>
+          reconcileCreation.mock.calls.filter(
+            ([, , , options]) => options?.mode === 'observe-only',
+          );
         expect(provider).not.toBe(iface.getWalletOfferProvider());
         const owner = {
           installationPlayerId: 'player',
@@ -799,6 +807,9 @@ describe('CloudBlockchainInterface fee support', () => {
           pump.submit(submission);
           if (revokedAt === 'blocked-approval') {
             await settle(() => iface.getBlockedApprovals().length === 1);
+            queriesBeforeCleanup = calls.filter(
+              ({ variables }) => variables.id === 'SR_pump_fee',
+            ).length;
             pump.submit(successor);
           } else {
             await settle(() => calls.some(({ query }) => query.includes('createOffer')));
@@ -830,24 +841,21 @@ describe('CloudBlockchainInterface fee support', () => {
           expect(reportLocalFailure).not.toHaveBeenCalled();
           const creates = () => calls.filter(({ query }) => query.includes('createOffer'));
           expect(creates()).toHaveLength(1);
-          const before = calls.length;
-          const queriesBeforeCleanup =
-            revokedAt === 'teardown-before-response'
-              ? 0
-              : calls.filter(({ variables }) => variables.id === 'SR_pump_fee').length;
-          if (revokedAt !== 'teardown-before-response') {
-            await jest.advanceTimersByTimeAsync(3000);
-            expect(calls).toHaveLength(before);
-            walletProviderRegistry.ready(provider);
-          }
-
-          // Recovery observes the exact pending request through the connected poller wrapper.
-          // It must not hold either lane while unrelated chain work progresses.
+          // Revocation must start cleanup itself, without a readiness/reconnect/reload event.
           await settle(
             () =>
               calls.filter(({ variables }) => variables.id === 'SR_pump_fee').length >
               queriesBeforeCleanup,
           );
+          expect(cleanupCalls()).toHaveLength(1);
+          // Repeated cancellation joins the in-progress observer rather than starting another.
+          if (revokedAt !== 'teardown-before-response') {
+            pump.retire(submission.id);
+            pump.retire(submission.id);
+            await jest.advanceTimersByTimeAsync(0);
+            expect(cleanupCalls()).toHaveLength(1);
+          }
+          // Pending observation must not occupy the broadcast or chain-read lane.
           let readFinished = false;
           let independentBroadcastFinished = false;
           const read = blockchain.rpc.getHeightInfo().then((value) => {
@@ -883,6 +891,7 @@ describe('CloudBlockchainInterface fee support', () => {
           );
           expect(storageRepository.feeAttachments()).toEqual([]);
           expect(creates()).toHaveLength(1);
+          expect(cleanupCalls()).toHaveLength(1);
           expect(calls.filter(({ query }) => query.includes('cancelOffer'))).toHaveLength(1);
           expect(
             calls
