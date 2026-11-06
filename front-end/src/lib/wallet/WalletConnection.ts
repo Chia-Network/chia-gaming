@@ -27,6 +27,8 @@ export interface WalletView {
   connected: boolean;
   recovering: boolean;
   connecting: boolean;
+  /** True while the provider is still preparing setup, before any QR or wallet approval. */
+  preparingConnection: boolean;
   hasProvider: boolean;
   setup: Omit<ConnectionSetup, 'finalize'> | null;
   showSetup: boolean;
@@ -58,6 +60,7 @@ export class WalletConnection {
     connected: false,
     recovering: false,
     connecting: false,
+    preparingConnection: false,
     hasProvider: false,
     setup: null,
     showSetup: false,
@@ -153,6 +156,7 @@ export class WalletConnection {
       connected: true,
       recovering: false,
       connecting: false,
+      preparingConnection: false,
       setup: null,
     });
     this.emit({ type: 'connected' });
@@ -182,9 +186,10 @@ export class WalletConnection {
     const { provider, interval } = providerFor(type);
     try {
       this.select(type);
-      this.update({ connecting: true });
+      this.update({ connecting: true, preparingConnection: true });
       const setup = await provider.beginConnect(this.playerId, fresh);
       if (attempt !== this.connectionAttempt) return false;
+      this.update({ preparingConnection: false });
       if (needsWalletPairing(setup)) {
         this.presentSetup(setup);
         this.update({ connected: false });
@@ -209,7 +214,10 @@ export class WalletConnection {
     } catch (error) {
       if (attempt !== this.connectionAttempt) return false;
       console.error(`[wallet] ${type} connect failed`, error);
-      this.update({ error: error instanceof Error ? error.message : String(error) });
+      this.update({
+        error: error instanceof Error ? error.message : String(error),
+        preparingConnection: false,
+      });
       if (silent) {
         if (type === 'simulator') this.complete(provider, type, interval);
         else this.update({ connecting: false });
@@ -258,6 +266,7 @@ export class WalletConnection {
       hasProvider: true,
       connected: provider.isConnected(),
       connecting: true,
+      preparingConnection: false,
     });
     try {
       const setup = await provider.beginConnect(this.playerId);
@@ -292,6 +301,7 @@ export class WalletConnection {
     this.update({
       walletType: undefined,
       connecting: false,
+      preparingConnection: false,
       connected: false,
       showSetup: false,
       error: null,
@@ -311,6 +321,7 @@ export class WalletConnection {
       walletType: undefined,
       connected: false,
       connecting: false,
+      preparingConnection: false,
       showSetup: false,
       balance: undefined,
     });
