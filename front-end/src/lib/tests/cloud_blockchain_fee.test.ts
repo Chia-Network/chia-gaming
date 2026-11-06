@@ -41,8 +41,10 @@ import CloudWalletApprovalNotice from '../../components/CloudWalletApprovalNotic
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { ChannelFundingRuntime } from '../session/channelFundingRuntime';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
+import { SubmissionPump } from '../session/submissionPump';
+import type { ChiaGame, TransactionSubmission } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
-import { WalletProviderRegistry } from '../session/walletProviderRegistry';
+import { WalletProviderRegistry, walletProviderRegistry } from '../session/walletProviderRegistry';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   classifyCloudWalletSubmitError,
@@ -625,45 +627,276 @@ describe('CloudBlockchainInterface fee support', () => {
       expect(signatureRequestQueries(calls)).toBe(before);
     });
 
-    it('withdraws a revoked prompt and its approval deadline while continuing status observation', async () => {
-      let allowed = true;
-      let status = 'PENDING';
-      let notify = () => {};
-      const unsubscribe = jest.fn();
-      const onApprovalChange = jest.fn((listener: () => void) => {
-        notify = listener;
-        return unsubscribe;
-      });
-      mockGraphql(() => ({
-        signatureRequest: {
-          id: 'SR_fee',
-          status,
-          transaction: { offer: { bech32: 'offer1abc', offerId: 'Offer_1' } },
-        },
-      }));
-      const iface = new CloudBlockchainInterface();
-      let settled = false;
-      const completion = iface
-        .reconcileWalletOffer(feeOperation, feeRequest, 'SR_fee', {
-          allowApproval: () => allowed,
-          onApprovalChange,
-        })
-        .finally(() => {
-          settled = true;
+    it.each(['browser', 'desktop'] as const)(
+      'settles revoked %s delivery promptly and leaves the exact request available for observe-only recovery',
+      async (surface) => {
+        let allowed = true;
+        let status = 'PENDING';
+        let notify = () => {};
+        const unsubscribe = jest.fn();
+        const open = jest.fn(() => null);
+        const openInBrowser = jest.fn(async () => true);
+        setTestGlobal('open', open);
+        if (surface === 'desktop') setTestGlobal('__chiaCloudWallet', { openInBrowser });
+        const calls = mockGraphql(() => ({
+          signatureRequest: {
+            id: 'SR_fee',
+            status,
+            transaction: { offer: { bech32: 'offer1abc', offerId: 'Offer_1' } },
+          },
+        }));
+        const iface = new CloudBlockchainInterface();
+        let settled = false;
+        const completion = iface
+          .reconcileWalletOffer(feeOperation, feeRequest, 'SR_fee', {
+            mode: 'delivery',
+            allowApproval: () => allowed,
+            onApprovalChange: (listener) => {
+              notify = listener;
+              return unsubscribe;
+            },
+          })
+          .finally(() => {
+            settled = true;
+          });
+        try {
+          await jest.advanceTimersByTimeAsync(0);
+          allowed = false;
+          notify();
+          await jest.advanceTimersByTimeAsync(0);
+          expect(iface.getBlockedApprovals()).toEqual([]);
+          expect(settled).toBe(true);
+          await expect(completion).resolves.toMatchObject({
+            kind: 'unavailable',
+            reason: expect.stringMatching(/no longer needed/i),
+          });
+          expect(unsubscribe).toHaveBeenCalledTimes(1);
+          const requests = calls.length;
+          await jest.advanceTimersByTimeAsync(3000);
+          expect(calls).toHaveLength(requests);
+
+          let recovered = false;
+          const cleanup = iface
+            .reconcileWalletOffer(feeOperation, feeRequest, 'SR_fee', {
+              mode: 'observe-only',
+            })
+            .finally(() => {
+              recovered = true;
+            });
+          await jest.advanceTimersByTimeAsync(61_000);
+          expect(recovered).toBe(false);
+          status = 'SUBMITTED';
+          await jest.advanceTimersByTimeAsync(1500);
+          await expect(cleanup).resolves.toMatchObject({ kind: 'created-reserved' });
+          expect(open).toHaveBeenCalledTimes(surface === 'browser' ? 1 : 0);
+          expect(openInBrowser).toHaveBeenCalledTimes(surface === 'desktop' ? 1 : 0);
+          expect(calls.every(({ variables }) => variables.id === 'SR_fee')).toBe(true);
+        } finally {
+          Reflect.deleteProperty(globalThis, '__chiaCloudWallet');
+        }
+      },
+    );
+
+    it.each(['blocked-approval', 'begin-response', 'teardown-before-response'] as const)(
+      'settles a fee interrupted at %s without blocking delivery or independent cleanup',
+      async (revokedAt) => {
+        let feeStatus = 'PENDING';
+        let ownerRetired = false;
+        let supersedeDuringCreate = () => {};
+        const calls = mockGraphql((query) => {
+          if (query.includes('createOffer')) {
+            supersedeDuringCreate();
+            return { createOffer: { signatureRequest: { id: 'SR_pump_fee', status: 'PENDING' } } };
+          }
+          if (query.includes('cancelOffer')) return { cancelOffer: { signatureRequest: null } };
+          return {
+            signatureRequest: {
+              id: 'SR_pump_fee',
+              status: feeStatus,
+              transaction: { offer: { bech32: 'offer1abc', offerId: 'Offer_pump' } },
+            },
+          };
         });
-      await jest.advanceTimersByTimeAsync(0);
-      expect(iface.getBlockedApprovals()).toHaveLength(1);
-      allowed = false;
-      notify();
-      expect(iface.getBlockedApprovals()).toEqual([]);
-      await jest.advanceTimersByTimeAsync(61_000);
-      expect(settled).toBe(false);
-      status = 'SUBMITTED';
-      await jest.advanceTimersByTimeAsync(1500);
-      await expect(completion).resolves.toMatchObject({ kind: 'created-reserved' });
-      expect(onApprovalChange).toHaveBeenCalledTimes(1);
-      expect(unsubscribe).toHaveBeenCalledTimes(1);
-    });
+        const open = jest.fn(() => null);
+        setTestGlobal('open', open);
+        const iface = new CloudBlockchainInterface();
+        jest.spyOn(iface, 'isConnected').mockReturnValue(true);
+        jest.spyOn(iface, 'isReadyForPlay').mockReturnValue(true);
+        const spend = jest.spyOn(iface, 'spend').mockResolvedValue({ status: 'acknowledged' });
+        const height = jest.spyOn(iface, 'getHeightInfo').mockResolvedValue(123n);
+        const blockchain = new BlockchainPoller(iface, 60_000);
+        const provider = blockchain.rpc.getWalletOfferProvider();
+        if (!provider) throw new Error('expected queued Cloud provider');
+        expect(provider).not.toBe(iface.getWalletOfferProvider());
+        const owner = {
+          installationPlayerId: 'player',
+          peerSessionId: 'pump-session',
+          providerScope: provider.scope,
+        };
+        storageRepository.ensureWalletContext(owner.providerScope);
+        blockchain.refreshProviderReadiness();
+        const finalize = jest.fn(() => ({
+          protocol_bundle: { spends: [] },
+          bundle: {},
+          applied_fee: '0',
+          fee_source_disposition: 'unused',
+          variant_fingerprint: 'base',
+          should_broadcast: true,
+        }));
+        const cradle = {
+          finalize_submission_attempt: finalize,
+          acknowledge_submission_attempt: jest.fn(),
+          relinquish_submission_attempt: jest.fn(),
+        } as unknown as ChiaGame;
+        const reportLocalFailure = jest.fn();
+        const pump = new SubmissionPump({
+          getCradle: () => cradle,
+          getBlockchain: () => blockchain,
+          getRewardPuzzleHash: () => '11'.repeat(32),
+          getWalletOwner: () => (ownerRetired ? null : owner),
+          getInstallationPlayerId: () => owner.installationPlayerId,
+          isRetired: () => ownerRetired,
+          isPublishingDisabled: () => false,
+          enqueueResult: async (work) => work(),
+          releaseAfterPersistence: (_key, work) => Promise.resolve().then(work),
+          requestCommit: jest.fn(),
+          reportWarning: jest.fn(),
+          reportLocalFailure,
+          reportError: jest.fn(),
+          requestFreshSync: jest.fn(),
+        });
+        const submission: TransactionSubmission = {
+          id: 'pump-fee',
+          attempt_token: 'first',
+          predecessor_attempt_token: null,
+          relationship: 'initial',
+          bundle: { spends: [] },
+          fee_request: { amount: '10', target: 'ab'.repeat(32) },
+        };
+        const settle = async (done: () => boolean) => {
+          for (let turn = 0; turn < 100 && !done(); turn += 1) {
+            await jest.advanceTimersByTimeAsync(10);
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+          expect(done()).toBe(true);
+        };
+        const successor: TransactionSubmission = {
+          ...submission,
+          attempt_token: 'successor',
+          predecessor_attempt_token: 'first',
+          relationship: 'exact',
+        };
+        try {
+          if (revokedAt === 'begin-response') supersedeDuringCreate = () => pump.submit(successor);
+          if (revokedAt === 'teardown-before-response') {
+            supersedeDuringCreate = () => {
+              ownerRetired = true;
+              pump.retireAll();
+              storageRepository.replaceFeeAttachments([]);
+            };
+          }
+          pump.providerReady(true);
+          pump.submit(submission);
+          if (revokedAt === 'blocked-approval') {
+            await settle(() => iface.getBlockedApprovals().length === 1);
+            pump.submit(successor);
+          } else {
+            await settle(() => calls.some(({ query }) => query.includes('createOffer')));
+          }
+          let flushed = false;
+          const flush = pump.flush().then(() => {
+            flushed = true;
+          });
+          await settle(() => flushed && pump.isQuiescent());
+          await flush;
+          const deliveryCount = revokedAt === 'teardown-before-response' ? 0 : 1;
+          expect(spend).toHaveBeenCalledTimes(deliveryCount);
+          if (revokedAt === 'teardown-before-response') {
+            expect(finalize).not.toHaveBeenCalled();
+            expect(storageRepository.feeAttachments()).toEqual([]);
+          } else {
+            expect(finalize).toHaveBeenCalledWith(
+              'successor',
+              expect.objectContaining({ kind: 'failure' }),
+            );
+            expect(storageRepository.feeAttachments()).toEqual([
+              expect.objectContaining({
+                stage: 'creating',
+                disposition: 'cancel-on-create',
+                recoveryId: 'SR_pump_fee',
+              }),
+            ]);
+          }
+          expect(reportLocalFailure).not.toHaveBeenCalled();
+          const creates = () => calls.filter(({ query }) => query.includes('createOffer'));
+          expect(creates()).toHaveLength(1);
+          const before = calls.length;
+          const queriesBeforeCleanup =
+            revokedAt === 'teardown-before-response'
+              ? 0
+              : calls.filter(({ variables }) => variables.id === 'SR_pump_fee').length;
+          if (revokedAt !== 'teardown-before-response') {
+            await jest.advanceTimersByTimeAsync(3000);
+            expect(calls).toHaveLength(before);
+            walletProviderRegistry.ready(provider);
+          }
+
+          // Recovery observes the exact pending request through the connected poller wrapper.
+          // It must not hold either lane while unrelated chain work progresses.
+          await settle(
+            () =>
+              calls.filter(({ variables }) => variables.id === 'SR_pump_fee').length >
+              queriesBeforeCleanup,
+          );
+          let readFinished = false;
+          let independentBroadcastFinished = false;
+          const read = blockchain.rpc.getHeightInfo().then((value) => {
+            readFinished = true;
+            return value;
+          });
+          const broadcast = blockchain.rpc
+            .spend('80', {}, '11'.repeat(32), 'independent transaction')
+            .then((outcome) => {
+              independentBroadcastFinished = true;
+              return outcome;
+            });
+          await settle(() => readFinished && independentBroadcastFinished);
+          await expect(read).resolves.toBe(123n);
+          await expect(broadcast).resolves.toEqual({ status: 'acknowledged' });
+          expect(height).toHaveBeenCalledTimes(1);
+          expect(spend).toHaveBeenCalledTimes(deliveryCount + 1);
+          if (revokedAt === 'teardown-before-response') {
+            expect(storageRepository.feeAttachments()).toEqual([]);
+          } else {
+            expect(storageRepository.feeAttachments()).toEqual([
+              expect.objectContaining({
+                stage: 'creating',
+                disposition: 'cancel-on-create',
+                recoveryId: 'SR_pump_fee',
+              }),
+            ]);
+          }
+          feeStatus = 'SUBMITTED';
+          await jest.advanceTimersByTimeAsync(1500);
+          await settle(
+            () => calls.filter(({ query }) => query.includes('cancelOffer')).length === 1,
+          );
+          expect(storageRepository.feeAttachments()).toEqual([]);
+          expect(creates()).toHaveLength(1);
+          expect(calls.filter(({ query }) => query.includes('cancelOffer'))).toHaveLength(1);
+          expect(
+            calls
+              .filter(({ query }) => query.includes('signatureRequest(id: $id)'))
+              .every(({ variables }) => variables.id === 'SR_pump_fee'),
+          ).toBe(true);
+          expect(open).toHaveBeenCalledTimes(revokedAt === 'blocked-approval' ? 1 : 0);
+          expect(iface.getBlockedApprovals()).toEqual([]);
+        } finally {
+          pump.retireAll();
+          blockchain.detachProvider();
+        }
+      },
+    );
 
     it('opens the first live approval on the first click after an earlier owner is revoked', async () => {
       let oldOwnerActive = true;
@@ -677,6 +910,7 @@ describe('CloudBlockchainInterface fee support', () => {
       }));
       const iface = new CloudBlockchainInterface();
       const obsolete = iface.reconcileWalletOffer(feeOperation, feeRequest, 'SR_old', {
+        mode: 'delivery',
         allowApproval: () => oldOwnerActive,
       });
       const live = iface.reconcileWalletOffer(feeOperation, feeRequest, 'SR_live');
@@ -992,6 +1226,9 @@ describe('CloudBlockchainInterface fee support', () => {
           try {
             if (!restored) {
               reservation = runtime.reserve(wallet.owner, 'submission', feeRequest, () => inactive);
+              await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+              expect(storageRepository.feeAttachments()).toEqual([retiredRequest]);
+              wallet.providers.reconnectReady(wallet.provider);
             }
             await settle(() => wallet.calls.some(({ variables }) => variables.id === 'SR_fee'));
             expect(storageRepository.feeAttachments()).toEqual([retiredRequest]);
@@ -1040,7 +1277,9 @@ describe('CloudBlockchainInterface fee support', () => {
             await jest.advanceTimersByTimeAsync(500);
           }
           expect(wallet.iface.getBlockedApprovals()).toEqual([]);
+          await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
           wallet.statuses.fee = 'SUBMITTED';
+          wallet.providers.reconnectReady(wallet.provider);
           await settle(() =>
             storageRepository.feeAttachments().some(({ stage }) => stage === 'cancelling'),
           );
@@ -1072,7 +1311,9 @@ describe('CloudBlockchainInterface fee support', () => {
           act(() => runtime.retire(wallet.owner, 'submission'));
           expect(wallet.iface.getBlockedApprovals()).toEqual([]);
           expect(renderer!.toJSON()).toBeNull();
+          await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
           wallet.statuses.fee = 'SUBMITTED';
+          wallet.providers.reconnectReady(wallet.provider);
           await settle(() =>
             storageRepository.feeAttachments().some(({ stage }) => stage === 'cancelling'),
           );
@@ -1097,11 +1338,13 @@ describe('CloudBlockchainInterface fee support', () => {
           runtime.retire(wallet.owner, 'submission');
         };
         const reservation = runtime.reserve(wallet.owner, 'submission', feeRequest, () => inactive);
-        await settle(() => wallet.calls.some(({ variables }) => variables.id === 'SR_fee'));
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+        expect(wallet.calls.some(({ variables }) => variables.id === 'SR_fee')).toBe(false);
         expect(wallet.iface.getBlockedApprovals()).toEqual([]);
         expect(storageRepository.feeAttachments()).toEqual([retiredRequest]);
 
         wallet.statuses.fee = 'SUBMITTED';
+        wallet.providers.reconnectReady(wallet.provider);
         await settle(() =>
           storageRepository.feeAttachments().some(({ stage }) => stage === 'cancelling'),
         );
@@ -1115,19 +1358,13 @@ describe('CloudBlockchainInterface fee support', () => {
         runtime.detach();
       });
 
-      it('keeps the request when its approval window closes with no result', async () => {
-        saveCloudWalletAuth({
-          accessToken: 'access-token',
-          refreshToken: 'refresh-token',
-          expiresAt: Date.now() + 60 * 60_000,
-          walletId: 'Wallet_1',
-        });
+      it('keeps the known request after withdrawing its open approval', async () => {
         const { iface, reservation, runtime, popup, ...wallet } = await retiredWhileBlocked(true);
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+        expect(popup.close).toHaveBeenCalled();
         popup.closed = true;
         await jest.advanceTimersByTimeAsync(500);
         expect(iface.getBlockedApprovals()).toEqual([]);
-        await jest.advanceTimersByTimeAsync(10 * 60_000);
-        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
         expect(storageRepository.feeAttachments()).toEqual([retiredRequest]);
 
         setPopup(null);
@@ -1135,12 +1372,13 @@ describe('CloudBlockchainInterface fee support', () => {
         runtime.detach();
       });
 
-      it('keeps the request when one status read fails after approval', async () => {
+      it('keeps the retired request when an observe-only status read fails', async () => {
         const { reservation, runtime, ...wallet } = await retiredWhileBlocked(true);
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
         wallet.statuses.fee = 'SUBMITTED';
         wallet.statuses.feePollFails = true;
-        await jest.advanceTimersByTimeAsync(2_000);
-        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+        wallet.providers.reconnectReady(wallet.provider);
+        await runtime.awaitIdle();
         expect(storageRepository.feeAttachments()).toEqual([retiredRequest]);
 
         setPopup(null);
@@ -1179,7 +1417,8 @@ describe('CloudBlockchainInterface fee support', () => {
       });
 
       it('cancels durably without another approval until a terminal status', async () => {
-        const { calls, iface, reservation, runtime, statuses } = await retiredWhileBlocked();
+        const { calls, iface, reservation, runtime, statuses, providers, provider } =
+          await retiredWhileBlocked();
         const opened: string[] = [];
         (globalThis as unknown as { open: (url: string) => unknown }).open = (url) => {
           opened.push(url);
@@ -1187,7 +1426,9 @@ describe('CloudBlockchainInterface fee support', () => {
         };
         expect(iface.openBlockedApproval()).toBe(true);
         expect(iface.getBlockedApprovals()).toEqual([]);
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
         statuses.fee = 'SUBMITTED';
+        providers.reconnectReady(provider);
 
         await settle(() =>
           storageRepository.feeAttachments().some(({ stage }) => stage === 'cancelling'),
@@ -1210,10 +1451,13 @@ describe('CloudBlockchainInterface fee support', () => {
       });
 
       it('keeps cancellation pending without an approval prompt when popups are blocked', async () => {
-        const { iface, runtime, statuses } = await retiredWhileBlocked();
+        const { iface, reservation, runtime, statuses, providers, provider } =
+          await retiredWhileBlocked();
         const open = jest.fn(() => null);
         setTestGlobal('open', open);
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
         statuses.fee = 'SUBMITTED';
+        providers.reconnectReady(provider);
 
         await settle(() =>
           storageRepository.feeAttachments().some(({ stage }) => stage === 'cancelling'),

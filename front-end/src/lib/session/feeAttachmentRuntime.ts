@@ -2,6 +2,7 @@ import type {
   WalletOfferBeginOutcome,
   WalletOfferCompletion,
   WalletOfferProvider,
+  WalletOfferReconciliationOptions,
 } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
 import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './indexedDb';
@@ -26,6 +27,7 @@ import {
 } from './providerExecution';
 import { providerScopeKey } from './providerKeys';
 import { storageRepository } from './storageRepository';
+import { cancelRetiredWalletReservation } from './walletReservationRetirement';
 import {
   walletProviderRegistry,
   type WalletProviderRegistry,
@@ -140,7 +142,7 @@ export class FeeAttachmentRuntime {
       throw new Error('Fee attachment already owns a provider reservation');
     }
     return this.flight(`create:${submissionId}`, () =>
-      this.create(provider, owner, submissionId, request, isInactive, false),
+      this.create(provider, owner, submissionId, request, isInactive, false, 'delivery'),
     );
   }
 
@@ -189,6 +191,7 @@ export class FeeAttachmentRuntime {
     request: FeeAttachmentRequest,
     isInactive: () => boolean,
     replacement: boolean,
+    mode: WalletOfferReconciliationOptions['mode'],
   ): Promise<WalletOfferCompletion> {
     const generation = storageRepository.lifecycleGeneration;
     const hardResetEpoch = this.hardResetEpoch;
@@ -211,20 +214,24 @@ export class FeeAttachmentRuntime {
     const recoveryId =
       !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
     const operation = { owner, purpose: { kind: 'fee' as const, operationId: submissionId } };
-    const reconciliation = {
-      allowApproval: () => {
-        const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-        return !consumerDead() && !!latest && !isRetiringFeeAttachment(latest);
-      },
-      onApprovalChange: (listener: () => void) => {
-        this.approvalListeners.add(listener);
-        const unsubscribe = storageRepository.onWalletOperationsChange(listener);
-        return () => {
-          unsubscribe();
-          this.approvalListeners.delete(listener);
-        };
-      },
-    };
+    const reconciliation: WalletOfferReconciliationOptions =
+      mode === 'observe-only'
+        ? { mode }
+        : {
+            mode,
+            allowApproval: () => {
+              const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+              return !consumerDead() && !!latest && !isRetiringFeeAttachment(latest);
+            },
+            onApprovalChange: (listener: () => void) => {
+              this.approvalListeners.add(listener);
+              const unsubscribe = storageRepository.onWalletOperationsChange(listener);
+              return () => {
+                unsubscribe();
+                this.approvalListeners.delete(listener);
+              };
+            },
+          };
     let outcome: WalletOfferBeginOutcome;
     try {
       outcome = await advanceProviderCreation(
@@ -272,24 +279,33 @@ export class FeeAttachmentRuntime {
         );
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
-      const latest = findEntry();
-      // Explicit retirement removes the operation; an old flight cannot recreate it.
-      if (canPersist()) {
-        this.replace(latest, {
+      if (!canPersist()) {
+        cancelRetiredWalletReservation(provider, {
           owner,
           submissionId,
           stage: 'creating',
-          disposition:
-            consumerDead() || (latest && isRetiringFeeAttachment(latest))
-              ? 'cancel-on-create'
-              : 'active',
+          disposition: 'cancel-on-create',
           request,
           recoveryId: pendingRecoveryId,
-          reason: 'fee-creation-pending',
-          ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
+          reason: 'fee-consumer-retired',
         });
-        entryEstablished = true;
+        return { kind: 'unavailable', reason: 'Fee operation retired during wallet creation' };
       }
+      const latest = findEntry();
+      this.replace(latest, {
+        owner,
+        submissionId,
+        stage: 'creating',
+        disposition:
+          consumerDead() || (latest && isRetiringFeeAttachment(latest))
+            ? 'cancel-on-create'
+            : 'active',
+        request,
+        recoveryId: pendingRecoveryId,
+        reason: 'fee-creation-pending',
+        ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
+      });
+      entryEstablished = true;
       outcome = await advanceProviderCreation(
         generation,
         provider,
@@ -460,6 +476,7 @@ export class FeeAttachmentRuntime {
         entry.request,
         () => this.recoveredConsumerDead(entry.owner, entry.submissionId),
         false,
+        'observe-only',
       ),
     );
   }
@@ -485,6 +502,7 @@ export class FeeAttachmentRuntime {
         entry.request,
         () => isInactive() || this.recoveredConsumerDead(entry.owner, entry.submissionId),
         true,
+        'delivery',
       ),
     );
   }

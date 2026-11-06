@@ -685,9 +685,15 @@ Retiring an identified creation immediately reconciles its existing request for
 cleanup. Creation reconciliation carries a transient approval permission from
 its requesting owner: a dead consumer may observe an existing signature request
 to identify and cancel its trade, but cannot open another fee-approval window.
-The owner notifies approval observers when permission changes; revocation
-immediately withdraws blocked prompts and their approval-only deadlines while
-status observation continues. A queued live request remains actionable.
+Reconciliation explicitly selects `delivery` or `observe-only` mode; only
+cleanup owners select observation without approval. The owner notifies approval
+observers when permission changes. Revocation immediately withdraws blocked
+prompts and completes the obsolete delivery as
+unavailable, so successors and pump quiescence do not wait on cleanup polling.
+The exact existing signature request remains durable for later observe-only
+reconciliation on matching readiness or restore. A queued live request remains
+actionable. Terminal best-effort retirement also reconciles creation requests
+with approval explicitly disabled.
 Retiring pre-ID uncertainty preserves orphan evidence without creating a
 replacement offer solely to cancel it.
 While the session still owns a cleanup obligation, `FeeAttachmentRuntime`
@@ -1772,9 +1778,12 @@ host-side coordinator for chain observations. It separates three concerns:
    `AsyncJobQueue` lanes per active backend: one for reads and background polls,
    and one for wallet mutations. These adapter lanes run independently;
    WalletConnect additionally serializes its transport as described below.
-   Both lanes pass every adapter request through one global request-start gate,
-   which applies the backend's
-   requested gap between starts without waiting for prior requests to finish.
+   All adapter request starts share one global request-start gate, which applies
+   the backend's requested gap without waiting for prior requests to finish.
+   Reconciliation observes an existing creation or cancellation outside both
+   serialized lanes, forwarding the complete delivery/observation options.
+   Long cleanup polling therefore cannot hold up broadcasts or chain reads;
+   the existing connection-epoch and request-spacing rules still apply.
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
    work on the read lane. On disconnect, active reads are abandoned and queued
    mutations are cleared. An active mutation is allowed to finish; if it was an

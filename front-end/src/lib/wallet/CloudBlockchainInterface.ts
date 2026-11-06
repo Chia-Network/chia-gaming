@@ -550,34 +550,62 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     blockedPopupWaitMs = APPROVE_TIMEOUT_MS,
     options?: WalletOfferReconciliationOptions,
   ): Promise<T> {
-    const allowApproval = options?.allowApproval ?? (() => true);
     const polling = new AbortController();
-    if (!allowApproval()) return poll(polling.signal);
+    if (options?.mode === 'observe-only') return poll(polling.signal);
+    const allowApproval = options?.allowApproval ?? (() => true);
+    if (!allowApproval()) {
+      throw new SignatureRequestUnavailableError(
+        `Cloud Wallet ${source} approval is no longer needed`,
+      );
+    }
+    // Revocation ends this delivery; durable reservation recovery owns any later observation.
+    let withdrawApproval = () => {};
+    let rejectRevocation!: (error: Error) => void;
+    const approvalRevoked = new Promise<never>((_resolve, reject) => {
+      rejectRevocation = reject;
+    });
+    const revokeApproval = () => {
+      if (allowApproval()) return;
+      withdrawApproval();
+      rejectRevocation(
+        new SignatureRequestUnavailableError(`Cloud Wallet ${source} approval is no longer needed`),
+      );
+    };
+    const stopApprovalChanges = options?.onApprovalChange?.(revokeApproval);
     const desktop = desktopCloudWalletBridge();
     if (desktop) {
-      // Approval needs a passkey, so it runs in the system browser; polling
-      // observes the outcome, including rejection. Reconciliation retries this
-      // on every readiness epoch, so each request opens a browser tab once per
-      // run rather than on every retry.
-      const id = canonicalSignatureRequestId(signatureRequestId);
-      if (!this.approvalsOpenedInBrowser.has(id)) {
-        const opened = await desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId));
-        if (!opened) {
-          throw new SignatureRequestUnavailableError(
-            `Could not open the browser to approve Cloud Wallet ${source}`,
-          );
+      try {
+        revokeApproval();
+        if (!allowApproval()) return await approvalRevoked;
+        // Approval needs a passkey, so it runs in the system browser; polling
+        // observes the outcome, including rejection. Reconciliation retries this
+        // on every readiness epoch, so each request opens a browser tab once per
+        // run rather than on every retry.
+        const id = canonicalSignatureRequestId(signatureRequestId);
+        if (!this.approvalsOpenedInBrowser.has(id)) {
+          const opened = await Promise.race([
+            desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId)),
+            approvalRevoked,
+          ]);
+          if (!opened) {
+            throw new SignatureRequestUnavailableError(
+              `Could not open the browser to approve Cloud Wallet ${source}`,
+            );
+          }
+          this.approvalsOpenedInBrowser.add(id);
         }
-        this.approvalsOpenedInBrowser.add(id);
+        return await Promise.race([poll(polling.signal), approvalRevoked]);
+      } finally {
+        stopApprovalChanges?.();
+        polling.abort();
       }
-      return poll(polling.signal);
     }
     let openPopup: Window | null = null;
     let disposeApproval = () => {};
     let blockedApproval: PendingCloudWalletApproval | null = null;
     let blockedTimer: ReturnType<typeof setTimeout> | undefined;
     let closedWatch: ReturnType<typeof setInterval> | undefined;
-    const withdrawApproval = () => {
-      if (allowApproval()) return;
+    withdrawApproval = () => {
       clearTimeout(blockedTimer);
       if (blockedApproval && this.blockedApprovals.includes(blockedApproval)) {
         this.setBlockedApprovals(
@@ -622,7 +650,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           reason,
           attach,
           allowApproval,
-          withdraw: withdrawApproval,
+          withdraw: revokeApproval,
         };
         this.setBlockedApprovals([...this.blockedApprovals, blockedApproval]);
         blockedTimer = setTimeout(() => {
@@ -635,6 +663,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           );
         }, blockedPopupWaitMs);
       };
+      if (!allowApproval()) {
+        revokeApproval();
+        return;
+      }
       const popup = this.openApprovePopup(signatureRequestId);
       if (popup) {
         attach(popup);
@@ -642,10 +674,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         promptToOpen('blocked');
       }
     });
-    const stopApprovalChanges = options?.onApprovalChange?.(withdrawApproval);
-    withdrawApproval();
+    revokeApproval();
     try {
-      return await Promise.race([poll(polling.signal), approvalFailure]);
+      return await Promise.race([poll(polling.signal), approvalFailure, approvalRevoked]);
     } finally {
       stopApprovalChanges?.();
       polling.abort();

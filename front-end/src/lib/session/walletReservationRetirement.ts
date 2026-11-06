@@ -31,14 +31,20 @@ export function cancelRetiredWalletReservations(
 ): void {
   for (const entry of entries) {
     const provider = walletProviderRegistry.provider(entry.owner.providerScope);
-    if (provider)
-      // Let the retirement mutation remove its entries before checking live ownership.
-      void Promise.resolve()
-        .then(() => cancelReservation(provider, entry))
-        .catch((error) => {
-          log(`[wallet-retirement] best-effort cancellation failed: ${String(error)}`);
-        });
+    if (provider) cancelRetiredWalletReservation(provider, entry);
   }
+}
+
+export function cancelRetiredWalletReservation(
+  provider: WalletOfferProvider,
+  entry: ChannelFundingEntry | FeeAttachment,
+): void {
+  // Let the retirement mutation remove its entries before checking live ownership.
+  void Promise.resolve()
+    .then(() => cancelReservation(provider, entry))
+    .catch((error) => {
+      log(`[wallet-retirement] best-effort cancellation failed: ${String(error)}`);
+    });
 }
 
 async function cancelReservation(
@@ -61,6 +67,7 @@ async function cancelReservation(
       { owner: entry.owner, purpose },
       request,
       entry.recoveryId,
+      { mode: 'observe-only' },
     );
     if (outcome.kind !== 'created-reserved') return;
     id = outcome.tradeId;

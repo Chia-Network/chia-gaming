@@ -552,7 +552,7 @@ describe('FeeAttachmentRuntime lifecycle', () => {
         expect.anything(),
         expect.anything(),
         'fee-request',
-        expect.objectContaining({ allowApproval: expect.any(Function) }),
+        { mode: 'observe-only' },
       );
       expect(provider.beginCreation).toHaveBeenCalledTimes(1);
       expect(provider.beginCancellation).toHaveBeenCalledWith('late-trade');
@@ -875,6 +875,39 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       runtime.detach();
     });
 
+    it('hands a recovery ID returned after detach to independent retirement observation', async () => {
+      const begin = deferred<typeof pendingBegin>();
+      const observed = deferred<typeof created>();
+      const provider = wallet();
+      provider.beginCreation.mockReturnValue(begin.promise);
+      provider.reconcileCreation.mockImplementation((_operation, _request, _id, options) =>
+        options?.mode === 'observe-only'
+          ? observed.promise
+          : Promise.resolve({ kind: 'unavailable', reason: 'delivery retired' }),
+      );
+      const { runtime } = attach(provider);
+      const reservation = runtime.reserve(owner, 'fee', request, () => false);
+      await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+      runtime.detach();
+      begin.resolve(pendingBegin);
+      await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+      await runtime.awaitIdle();
+      expect(storageRepository.feeAttachments()).toEqual([]);
+      expect(provider.reconcileCreation).toHaveBeenCalledWith(
+        expect.anything(),
+        request,
+        'fee-request',
+        { mode: 'observe-only' },
+      );
+      expect(provider.beginCancellation).not.toHaveBeenCalled();
+
+      observed.resolve(created);
+      await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
+      expect(provider.beginCancellation).toHaveBeenCalledWith('late-trade');
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(storageRepository.feeAttachments()).toEqual([]);
+    });
+
     it.each(['clear', 'terminal'])(
       'does not resurrect a fee recovery after %s teardown',
       async (ending) => {
@@ -1050,7 +1083,7 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       expect.anything(),
       expect.anything(),
       'dead-recovery-id',
-      expect.objectContaining({ allowApproval: expect.any(Function) }),
+      expect.objectContaining({ mode: 'delivery', allowApproval: expect.any(Function) }),
     );
     await waitFor(() => beginCancellation.mock.calls.length === 1);
     expect(beginCancellation).toHaveBeenCalledWith('dead-reconciled-trade');

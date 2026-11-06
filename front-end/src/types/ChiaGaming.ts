@@ -362,10 +362,13 @@ export type WalletOfferCancellationBeginOutcome =
   WalletOfferCancellationOutcome | { status: 'pending'; recoveryId: string };
 
 /** Transient ownership check; cleanup observes existing requests without requesting approval. */
-export interface WalletOfferReconciliationOptions {
-  allowApproval: () => boolean;
-  onApprovalChange?: (listener: () => void) => () => void;
-}
+export type WalletOfferReconciliationOptions =
+  | {
+      mode: 'delivery';
+      allowApproval: () => boolean;
+      onApprovalChange?: (listener: () => void) => () => void;
+    }
+  | { mode: 'observe-only' };
 
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
