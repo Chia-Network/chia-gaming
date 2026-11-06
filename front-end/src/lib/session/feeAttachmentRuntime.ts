@@ -46,6 +46,7 @@ export class FeeAttachmentRuntime {
   private readonly restoredUncertain = new Set<string>();
   private readonly knownUncertain: Set<string>;
   private readonly unsubscribe: (() => void)[];
+  private readonly approvalListeners = new Set<() => void>();
   private detached = false;
   private authorityRetired = false;
   private hardResetEpoch = 0;
@@ -71,6 +72,7 @@ export class FeeAttachmentRuntime {
           if (event === 'hard-reset') {
             this.hardResetEpoch += 1;
           }
+          this.notifySubmissionChange();
           this.maybeDispose();
         }
       }),
@@ -94,7 +96,12 @@ export class FeeAttachmentRuntime {
 
   detach(): void {
     this.detached = true;
+    this.notifySubmissionChange();
     this.maybeDispose();
+  }
+
+  notifySubmissionChange(): void {
+    for (const listener of this.approvalListeners) listener();
   }
 
   async reserve(
@@ -106,7 +113,9 @@ export class FeeAttachmentRuntime {
     if (this.authorityRetired) {
       return { kind: 'unavailable', reason: 'Fee runtime lost storage authority' };
     }
-    const consumerDead = () => this.authorityRetired || this.ports.isRetired() || isInactive();
+    if (this.detached) return { kind: 'unavailable', reason: 'Fee runtime retired' };
+    const consumerDead = () =>
+      this.detached || this.authorityRetired || this.ports.isRetired() || isInactive();
     storageRepository.ensureWalletContext(owner.providerScope);
     const provider = this.providers.provider(owner.providerScope);
     if (!provider) {
@@ -146,6 +155,7 @@ export class FeeAttachmentRuntime {
 
   cancel(owner: FeeAttachmentOwner, submissionId: string, _reason: string): void {
     if (this.authorityRetired) return;
+    this.notifySubmissionChange();
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (!current) return;
     if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
@@ -182,8 +192,22 @@ export class FeeAttachmentRuntime {
   ): Promise<WalletOfferCompletion> {
     const generation = storageRepository.lifecycleGeneration;
     const hardResetEpoch = this.hardResetEpoch;
-    const consumerDead = () => this.authorityRetired || this.ports.isRetired() || isInactive();
-    const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    const findEntry = () =>
+      feeAttachmentForSubmission(storageRepository.feeAttachments(), owner, submissionId);
+    const current = findEntry();
+    let entryEstablished = current !== null;
+    const startedLive = storageRepository.loadState().session?.phase === 'live';
+    const canPersist = () =>
+      !this.detached &&
+      (!startedLive || storageRepository.loadState().session?.phase === 'live') &&
+      (!entryEstablished || findEntry() !== null);
+    const consumerDead = () =>
+      this.authorityRetired || this.ports.isRetired() || isInactive() || !canPersist();
+    const discardRetiredCreation = (result: WalletOfferBeginOutcome) => {
+      if (result.kind === 'created-reserved' && findEntry()?.stage !== 'retained-for-replay') {
+        this.cancelLateReservation(provider, result.tradeId, submissionId);
+      }
+    };
     const recoveryId =
       !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
     const operation = { owner, purpose: { kind: 'fee' as const, operationId: submissionId } };
@@ -191,6 +215,14 @@ export class FeeAttachmentRuntime {
       allowApproval: () => {
         const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
         return !consumerDead() && !!latest && !isRetiringFeeAttachment(latest);
+      },
+      onApprovalChange: (listener: () => void) => {
+        this.approvalListeners.add(listener);
+        const unsubscribe = storageRepository.onWalletOperationsChange(listener);
+        return () => {
+          unsubscribe();
+          this.approvalListeners.delete(listener);
+        };
       },
     };
     let outcome: WalletOfferBeginOutcome;
@@ -240,9 +272,9 @@ export class FeeAttachmentRuntime {
         );
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
-      const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-      // An entry that vanished during the begin was explicitly retired, so it stays gone.
-      if (latest || !current) {
+      const latest = findEntry();
+      // Explicit retirement removes the operation; an old flight cannot recreate it.
+      if (canPersist()) {
         this.replace(latest, {
           owner,
           submissionId,
@@ -256,6 +288,7 @@ export class FeeAttachmentRuntime {
           reason: 'fee-creation-pending',
           ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
         });
+        entryEstablished = true;
       }
       outcome = await advanceProviderCreation(
         generation,
@@ -273,7 +306,11 @@ export class FeeAttachmentRuntime {
       }
       return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
     }
-    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    if (!canPersist()) {
+      discardRetiredCreation(outcome);
+      return { kind: 'unavailable', reason: 'Fee operation retired during wallet creation' };
+    }
+    const latest = findEntry();
     if (consumerDead() || (latest && isRetiringFeeAttachment(latest))) {
       this.settleDeadCreation(owner, submissionId, outcome);
       return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
@@ -293,6 +330,7 @@ export class FeeAttachmentRuntime {
       reason: 'fee-offer-created',
       ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
     });
+    entryEstablished = true;
     try {
       await checkpointProviderState(generation);
     } catch (error) {
@@ -306,6 +344,10 @@ export class FeeAttachmentRuntime {
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
       throw error;
+    }
+    if (!canPersist()) {
+      discardRetiredCreation(outcome);
+      return { kind: 'unavailable', reason: 'Fee operation retired during wallet creation' };
     }
     if (consumerDead()) {
       this.settleDeadCreation(owner, submissionId, outcome);
@@ -329,7 +371,11 @@ export class FeeAttachmentRuntime {
     submissionId: string,
     outcome: WalletOfferBeginOutcome,
   ): void {
-    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
+    const latest = feeAttachmentForSubmission(
+      storageRepository.feeAttachments(),
+      owner,
+      submissionId,
+    );
     const unidentified = latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain';
     const tradeId =
       outcome.kind === 'created-reserved'

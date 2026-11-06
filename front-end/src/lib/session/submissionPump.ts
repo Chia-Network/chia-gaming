@@ -92,6 +92,7 @@ export class SubmissionPump {
 
     const displaced = existing.submission;
     existing.submission = submission;
+    this.feeAttachments.notifySubmissionChange();
     if (existing.state.kind === 'launched') {
       if (existing.state.attemptToken !== displaced.attempt_token) {
         this.queueRelinquishment(displaced);

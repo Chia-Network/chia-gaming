@@ -685,14 +685,20 @@ Retiring an identified creation immediately reconciles its existing request for
 cleanup. Creation reconciliation carries a transient approval permission from
 its requesting owner: a dead consumer may observe an existing signature request
 to identify and cancel its trade, but cannot open another fee-approval window.
+The owner notifies approval observers when permission changes; revocation
+immediately withdraws blocked prompts and their approval-only deadlines while
+status observation continues. A queued live request remains actionable.
 Retiring pre-ID uncertainty preserves orphan evidence without creating a
 replacement offer solely to cancel it.
-`FeeAttachmentRuntime` applies one rule to a dead consumer: once the offer is
-identified, its durable entry becomes `cancel-required`, and only a completed
-cancellation removes it. An offer that replay has attached stays retained,
-because a dying creation flight says nothing about the replay that owns it. An
-in-memory cancel remains only after storage authority is lost, where no durable
-write is possible, and a hard reset discards the offer without one.
+While the session still owns a cleanup obligation, `FeeAttachmentRuntime`
+moves an identified dead consumer's durable entry to `cancel-required`, and
+only a completed cancellation removes it. After explicit session retirement or
+clear has discarded that obligation, a late wallet result cannot recreate a
+durable row. A newly identified trade is cancelled best effort through its
+original provider. An offer that replay has attached stays retained,
+because a dying creation flight says nothing about the replay that owns it.
+After storage authority loss, cancellation is also best effort in memory because
+no durable write is possible. A hard reset discards the offer without one.
 A request whose consumer died stays durable in `creating` from the moment its
 recovery ID is known, through any `unavailable` reconciliation, until it
 identifies the offer or definitively fails. `reserve` never hands a retiring

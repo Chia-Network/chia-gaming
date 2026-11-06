@@ -127,6 +127,7 @@ export interface BlockedCloudWalletApproval {
 
 type PendingCloudWalletApproval = BlockedCloudWalletApproval & {
   allowApproval: () => boolean;
+  withdraw: () => void;
 };
 
 export interface RefusedCloudCancellation {
@@ -439,18 +440,20 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   /** Call from a click handler: browsers allow one popup per recent user gesture. */
   openBlockedApproval(): boolean {
+    for (const entry of this.blockedApprovals) {
+      if (!entry.allowApproval()) entry.withdraw();
+    }
     const next = this.blockedApprovals[0];
     if (!next) return true;
-    const current = this.blockedApprovals.filter((entry) => entry.allowApproval());
-    if (!next.allowApproval()) {
-      this.setBlockedApprovals(current);
-      return false;
-    }
     const popup = this.openApprovePopup(next.signatureRequestId);
     if (!popup) return false;
     const requestId = next.signatureRequestId;
-    const reopened = current.filter((entry) => entry.signatureRequestId === requestId);
-    this.setBlockedApprovals(current.filter((entry) => entry.signatureRequestId !== requestId));
+    const reopened = this.blockedApprovals.filter(
+      (entry) => entry.signatureRequestId === requestId,
+    );
+    this.setBlockedApprovals(
+      this.blockedApprovals.filter((entry) => entry.signatureRequestId !== requestId),
+    );
     for (const entry of reopened) entry.attach(popup);
     return true;
   }
@@ -545,8 +548,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     source: string,
     poll: (signal: AbortSignal) => Promise<T>,
     blockedPopupWaitMs = APPROVE_TIMEOUT_MS,
-    allowApproval = () => true,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<T> {
+    const allowApproval = options?.allowApproval ?? (() => true);
     const polling = new AbortController();
     if (!allowApproval()) return poll(polling.signal);
     const desktop = desktopCloudWalletBridge();
@@ -572,6 +576,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     let blockedApproval: PendingCloudWalletApproval | null = null;
     let blockedTimer: ReturnType<typeof setTimeout> | undefined;
     let closedWatch: ReturnType<typeof setInterval> | undefined;
+    const withdrawApproval = () => {
+      if (allowApproval()) return;
+      clearTimeout(blockedTimer);
+      if (blockedApproval && this.blockedApprovals.includes(blockedApproval)) {
+        this.setBlockedApprovals(
+          this.blockedApprovals.filter((entry) => entry !== blockedApproval),
+        );
+      }
+    };
     const approvalFailure = new Promise<never>((_resolve, reject) => {
       const attach = (popup: Window) => {
         clearTimeout(blockedTimer);
@@ -603,7 +616,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       };
       const promptToOpen = (reason: BlockedCloudWalletApproval['reason']) => {
         if (!allowApproval()) return;
-        blockedApproval = { signatureRequestId, source, reason, attach, allowApproval };
+        blockedApproval = {
+          signatureRequestId,
+          source,
+          reason,
+          attach,
+          allowApproval,
+          withdraw: withdrawApproval,
+        };
         this.setBlockedApprovals([...this.blockedApprovals, blockedApproval]);
         blockedTimer = setTimeout(() => {
           reject(
@@ -622,9 +642,12 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         promptToOpen('blocked');
       }
     });
+    const stopApprovalChanges = options?.onApprovalChange?.(withdrawApproval);
+    withdrawApproval();
     try {
       return await Promise.race([poll(polling.signal), approvalFailure]);
     } finally {
+      stopApprovalChanges?.();
       polling.abort();
       clearTimeout(blockedTimer);
       clearInterval(closedWatch);
@@ -802,7 +825,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         request.kind,
         (signal) => this.pollSignatureRequestOffer(recoveryId, signal),
         request.kind === 'fee' ? BLOCKED_FEE_POPUP_WAIT_MS : undefined,
-        options?.allowApproval,
+        options,
       );
       return {
         kind: 'created-reserved',

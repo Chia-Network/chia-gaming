@@ -364,6 +364,7 @@ export type WalletOfferCancellationBeginOutcome =
 /** Transient ownership check; cleanup observes existing requests without requesting approval. */
 export interface WalletOfferReconciliationOptions {
   allowApproval: () => boolean;
+  onApprovalChange?: (listener: () => void) => () => void;
 }
 
 interface WalletOfferProviderBase {
