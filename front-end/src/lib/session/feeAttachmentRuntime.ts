@@ -268,6 +268,9 @@ export class FeeAttachmentRuntime {
         kind: 'unavailable',
         reason: 'Fee consumer or original provider is no longer available',
       } as const;
+      // A live request remains available to the next Rust-issued fee attempt.
+      // Detach preserves checkpointed requests for restore; explicit session
+      // retirement owns their cleanup through retireWalletReservations.
       if (consumerDead() && canPersist())
         this.settleDeadCreation(owner, submissionId, result, 'delivery');
       return result;

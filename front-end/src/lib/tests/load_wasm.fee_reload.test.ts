@@ -1,4 +1,5 @@
 import { protocolIdForCatalog } from '../gameIdentities';
+import type { WalletOfferCompletion, WalletOfferProvider } from '../../types/ChiaGaming';
 import { observeWasmEvents } from './session_execution.harness';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { readApplicationState } from '../session/indexedDb';
@@ -16,6 +17,121 @@ import {
 import { createReloadableSessionLane, injectSessionReload } from './reload_injection.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+
+it(
+  'resumes the same pending fee after provider loss at its checkpoint and Rust base fallback',
+  async () => {
+    const poller = await startSimulator(['cafe00017', 'dead00017']);
+    if (!poller) return;
+    poller.pauseChainPolling();
+    await pollOnce(poller);
+    const adapters = await createActivePair(poller, 17);
+    const controller = adapters[0].blob!;
+    const status = controller.lastChannelStatus;
+    assert.ok(status);
+    const lane = createReloadableSessionLane(
+      adapters[0],
+      controller,
+      createSessionModel({ channel: { status: channelStatusModelFromPayload(status) } }),
+    );
+    // Both simulated peers share one repository; this lane owns its checkpoint.
+    const detachPersistence = storageRepository.attachRuntime(controller);
+    controller.getFee = () => 10n;
+    const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
+    const originalSpend = fakeBlockchainInfo.spend;
+    const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+    let material: WalletOfferCompletion | undefined;
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: controller.getWalletProviderScope(),
+      beginCreation: jest.fn(async (operation, request) => {
+        material = await fakeBlockchainInfo.beginWalletOffer(operation, request);
+        assert.equal(material.kind, 'created-reserved');
+        return { kind: 'pending', recoveryId: 'checkpoint-fee-recovery' };
+      }),
+      reconcileCreation: jest.fn(async () => {
+        assert.ok(material);
+        return material;
+      }),
+      beginCancellation: jest.fn((id) => fakeBlockchainInfo.beginWalletOfferCancellation(id)),
+      reconcileCancellation: jest.fn(),
+    };
+    fakeBlockchainInfo.getWalletOfferProvider = () => provider;
+    channelFundingRuntime.attachProvider(provider);
+    const fees: Array<bigint | undefined> = [];
+    fakeBlockchainInfo.spend = async (...args) => {
+      fees.push(args[4]);
+      return { status: 'acknowledged' };
+    };
+    let disconnected = false;
+    let checkpointedStage: string | undefined;
+    const checkpoint = jest
+      .spyOn(storageRepository, 'checkpointDomainMutations')
+      .mockImplementation(async () => {
+        await realCheckpoint();
+        if (!disconnected && storageRepository.feeAttachments()[0]?.stage === 'creating') {
+          const saved = await readApplicationState();
+          checkpointedStage = saved?.feeAttachments[0]?.stage;
+          disconnected = true;
+          channelFundingRuntime.detachProvider(provider);
+        }
+      });
+    try {
+      assert.equal(controller.goOnChain(), true);
+      await flushWrapperDrain(adapters);
+      assert.equal(disconnected, true);
+      assert.equal(checkpointedStage, 'creating', 'provider loss must follow the durable request');
+      assert.deepEqual(fees, [undefined], 'Rust must acknowledge the base fallback');
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).not.toHaveBeenCalled();
+      const pending = storageRepository.feeAttachments();
+      assert.equal(pending.length, 1);
+      assert.equal(pending[0]?.stage, 'creating');
+      assert.equal(pending[0]?.stage === 'creating' && pending[0].disposition, 'active');
+
+      controller.setWallet(null);
+      controller.setWallet(poller);
+      await flushWrapperDrain(adapters);
+      await lane.runtime.flush();
+
+      assert.deepEqual(
+        fees,
+        [undefined, 10n],
+        'wallet readiness must upgrade the same Rust intent',
+      );
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purpose: { kind: 'fee', operationId: pending[0]!.submissionId },
+        }),
+        expect.anything(),
+        'checkpoint-fee-recovery',
+        expect.objectContaining({ mode: 'delivery' }),
+      );
+      expect(provider.beginCancellation).not.toHaveBeenCalled();
+      assert.equal(storageRepository.feeAttachments()[0]?.stage, 'retained-for-replay');
+      assert.equal(storageRepository.feeAttachments()[0]?.submissionId, pending[0]!.submissionId);
+      assert.deepEqual(
+        (await readApplicationState())?.feeAttachments,
+        storageRepository.feeAttachments(),
+      );
+    } finally {
+      checkpoint.mockRestore();
+      for (const adapter of adapters) {
+        if (adapter.blob) poller.detachGameSession(adapter.blob);
+      }
+      poller.pauseChainPolling();
+      for (const adapter of adapters) adapter.blob?.cleanup();
+      lane.subscription.unsubscribe();
+      detachPersistence();
+      channelFundingRuntime.detachProvider(provider);
+      fakeBlockchainInfo.getWalletOfferProvider = originalProvider;
+      fakeBlockchainInfo.spend = originalSpend;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
 
 it(
   'broadcasts base, upgrades later under one intent, and exactly replays the upgrade',

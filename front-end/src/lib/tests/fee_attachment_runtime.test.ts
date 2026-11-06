@@ -1573,6 +1573,76 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       ]);
       runtime.detach();
     });
+
+    it('preserves a checkpointed active request across detach for the next live consumer', async () => {
+      storageRepository._replaceApplicationStateForTests({
+        ...storageRepository.loadState(),
+        session: activeSave().session,
+      });
+      const provider = wallet();
+      const { providers, runtime } = attach(provider);
+      const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+      const gate = deferred<void>();
+      let checkpointed = false;
+      const checkpoint = jest
+        .spyOn(storageRepository, 'checkpointDomainMutations')
+        .mockImplementation(async () => {
+          await realCheckpoint();
+          if (!checkpointed && storageRepository.feeAttachments()[0]?.stage === 'creating') {
+            checkpointed = true;
+            await gate.promise;
+          }
+        });
+      let replacement: FeeAttachmentRuntime | undefined;
+      try {
+        const reservation = runtime.reserve(owner, 'fee', request, () => false);
+        await waitFor(() => checkpointed);
+        const saved = await readApplicationState();
+        expect(saved?.feeAttachments).toEqual([{ ...restoredCreation, disposition: 'active' }]);
+
+        runtime.detach();
+        gate.resolve();
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+        await runtime.awaitIdle();
+        expect(provider.reconcileCreation).not.toHaveBeenCalled();
+        expect(provider.beginCancellation).not.toHaveBeenCalled();
+
+        await storageRepository.claimApplicationState();
+        expect(storageRepository.feeAttachments()).toEqual(saved?.feeAttachments);
+        replacement = new FeeAttachmentRuntime(ports(), providers);
+        providers.reconnectReady(provider);
+        await replacement.awaitIdle();
+        expect(provider.reconcileCreation).not.toHaveBeenCalled();
+        await expect(replacement.reserve(owner, 'fee', request, () => false)).resolves.toEqual(
+          created,
+        );
+        replacement.retain(owner, 'fee');
+        await replacement.awaitIdle();
+        providers.reconnectReady(provider);
+        await replacement.awaitIdle();
+
+        expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+        expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+        expect(provider.reconcileCreation).toHaveBeenCalledWith(
+          expect.anything(),
+          request,
+          'fee-request',
+          expect.objectContaining({ mode: 'delivery' }),
+        );
+        expect(provider.beginCancellation).not.toHaveBeenCalled();
+        expect(storageRepository.feeAttachments()).toEqual([
+          expect.objectContaining({
+            stage: 'retained-for-replay',
+            providerReservationId: created.tradeId,
+          }),
+        ]);
+      } finally {
+        gate.resolve();
+        checkpoint.mockRestore();
+        runtime.detach();
+        replacement?.detach();
+      }
+    });
   });
 
   it('cancels a direct reservation returned after its submission dies', async () => {

@@ -702,6 +702,17 @@ observe-only handoff. If observation is unavailable, the record remains for a
 later matching readiness or restore; cleanup does not immediately retry itself. A queued live request remains
 actionable. Terminal best-effort retirement also reconciles creation requests
 with approval explicitly disabled.
+
+An unavailable delivery does not itself retire Rust's fee intent. If the wallet
+disappears after an active request ID is checkpointed, that request stays active
+for the next Rust-issued fee attempt on readiness or a fresh chain snapshot.
+The next attempt reconciles the same ID without creating another offer. Detaching
+the controller also preserves an already-checkpointed active request for restore.
+If Rust retires the submission, it instead becomes `cancel-on-create`; explicit
+session retirement or clear hands known requests to best-effort cleanup before
+removing their durable records. A request ID arriving only after detach cannot
+be saved and is handed directly to best-effort cleanup.
+
 Retiring pre-ID uncertainty preserves orphan evidence without creating a
 replacement offer solely to cancel it.
 While the session still owns a cleanup obligation, `FeeAttachmentRuntime`

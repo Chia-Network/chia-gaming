@@ -1456,6 +1456,50 @@ describe('CloudBlockchainInterface fee support', () => {
       const cancelOffers = (calls: Array<{ query: string }>) =>
         calls.filter(({ query }) => query.includes('cancelOffer')).length;
 
+      it('cleans up a retired request when its provider disappears after the request-ID checkpoint', async () => {
+        const wallet = feeWallet();
+        const runtime = wallet.newRuntime();
+        const open = jest.fn(() => null);
+        setTestGlobal('open', open);
+        let inactive = false;
+        let interrupted = false;
+        const originalCheckpoint =
+          storageRepository.checkpointDomainMutations.bind(storageRepository);
+        const checkpoint = jest
+          .spyOn(storageRepository, 'checkpointDomainMutations')
+          .mockImplementation(async () => {
+            await originalCheckpoint();
+            if (!interrupted && storageRepository.feeAttachments()[0]?.stage === 'creating') {
+              interrupted = true;
+              wallet.providers.detach(wallet.provider);
+              inactive = true;
+              runtime.retire(wallet.owner, 'submission');
+            }
+          });
+        try {
+          await expect(
+            runtime.reserve(wallet.owner, 'submission', feeRequest, () => inactive),
+          ).resolves.toMatchObject({ kind: 'unavailable' });
+          await runtime.awaitIdle();
+          expect(interrupted).toBe(true);
+          expect(storageRepository.feeAttachments()).toEqual([retiredRequest]);
+          expect(signatureRequestQueries(wallet.calls)).toBe(0);
+
+          wallet.statuses.fee = 'SUBMITTED';
+          wallet.statuses.cancel = 'SUBMITTED';
+          wallet.providers.attach(wallet.provider);
+          await runtime.awaitIdle();
+          expect(storageRepository.feeAttachments()).toEqual([]);
+          expect(wallet.calls.filter(({ query }) => query.includes('createOffer'))).toHaveLength(1);
+          expect(cancelOffers(wallet.calls)).toBe(1);
+          expect(open).not.toHaveBeenCalled();
+          expect(wallet.iface.getBlockedApprovals()).toEqual([]);
+        } finally {
+          checkpoint.mockRestore();
+          runtime.detach();
+        }
+      });
+
       async function expectCancellationAfterLaterReadiness({
         calls,
         provider,
