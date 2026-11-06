@@ -1029,9 +1029,17 @@ Rust `ChannelCoinConfirmed` forgets it or `ChannelCreationTimedOut` requests
 cancellation of that exact `providerReservationId`. An attached fee offer
 survives wallet acknowledgement for exact transaction replay until Rust
 submission retirement requests cancellation of that exact
-`providerReservationId`; Cloud
-cancellation completes only after its signature request reaches a successful
-terminal state. Cloud is recoverable after begin: before a begin response
+`providerReservationId`. Cloud's off-chain cancel returns
+`signatureRequest: null` on success with no signature request: the wallet
+releases the reservation at once and broadcasts nothing, so a holder of the
+offer string can still take it. A signature request the wallet does return stays
+tracked to a terminal state. A taken, expired, untracked, or unknown offer is
+already terminal. Only a malformed success response or a definitively failed
+signature request deletes the entry as `rejected`; every other failure keeps it
+for a later retry, and only a wallet refusal raises a dismissible Cloud notice
+with the wallet's reason. Once a fee offer is identified and its consumer is
+dead, its durable entry becomes `cancel-required`, and only a completed
+cancellation removes it. Cloud is recoverable after begin: before a begin response
 supplies a `signatureRequest` ID, response loss is persisted uncertainty; once
 the ID is known, `creating`/`cancelling` persist it for exact paired
 reconciliation. The aggregate carries the typed provenance
@@ -1073,7 +1081,8 @@ writes/effects. A new claimant independently rehydrates the latest flushed
 durable whole root; no controller snapshot or transient work crosses the
 authority generation. Failed cancellation may leave an optional retry hint while the session remains
 active. Matching restore or wallet reconnect/readiness can retry it, without a
-timer, a reconnect requirement, or a persistent recovery banner. Cleanup is
+timer, a reconnect requirement, or a persistent recovery banner; a Cloud refusal
+shows only a dismissible notice. Cleanup is
 nonblocking and cancellation success is never required to switch wallets. Terminal finalization is blocked
 while reservation creation or identification is unresolved, or while funding
 material is still owed to Rust. Terminal completion and explicit abandonment discard session-owned reservation

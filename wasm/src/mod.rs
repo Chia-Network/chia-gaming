@@ -1526,6 +1526,18 @@ mod gaming_wasm {
             })
         }
 
+        pub fn abandon_submission_attempt(&self, attempt_token: &str) -> Result<String, JsValue> {
+            let token = attempt_token
+                .parse::<u64>()
+                .map_err(|e| JsValue::from_str(&format!("invalid delivery attempt token: {e}")))?;
+            self.with_game(move |cradle: &mut Channel| {
+                cradle
+                    .cradle
+                    .abandon_submission_attempt(token)
+                    .map(attempt_status_to_js)
+            })
+        }
+
         pub fn submission_attempt_unavailable(
             &self,
             attempt_token: &str,
