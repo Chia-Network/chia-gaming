@@ -907,6 +907,285 @@ describe('CloudBlockchainInterface fee support', () => {
       },
     );
 
+    it('uses the reconnected Cloud provider when cleanup waited for an old delivery', async () => {
+      let status = 'PENDING';
+      const calls = mockGraphql((query, variables) => {
+        if (query.includes('wallet(id:')) {
+          return { wallet: { id: 'Wallet_1', address: { puzzleHash: '11'.repeat(32) } } };
+        }
+        if (query.includes('createOffer')) {
+          return { createOffer: { signatureRequest: { id: 'SR_reconnect', status: 'PENDING' } } };
+        }
+        if (query.includes('cancelOffer')) return { cancelOffer: { signatureRequest: null } };
+        return {
+          signatureRequest: {
+            id: variables.id,
+            status,
+            transaction: { offer: { bech32: 'offer1abc', offerId: 'Offer_reconnect' } },
+          },
+        };
+      });
+      const open = jest.fn(() => null);
+      setTestGlobal('open', open);
+      const oldIface = new CloudBlockchainInterface();
+      const replacementIface = new CloudBlockchainInterface();
+      await oldIface.startMonitoring();
+      await replacementIface.startMonitoring();
+      const oldReconcile = jest.spyOn(oldIface, 'reconcileWalletOffer');
+      const replacementReconcile = jest.spyOn(replacementIface, 'reconcileWalletOffer');
+      const spend = jest
+        .spyOn(replacementIface, 'spend')
+        .mockResolvedValue({ status: 'acknowledged' });
+      const height = jest.spyOn(replacementIface, 'getHeightInfo').mockResolvedValue(123n);
+      const oldBlockchain = new BlockchainPoller(oldIface, 60_000);
+      const replacementBlockchain = new BlockchainPoller(replacementIface, 60_000);
+      let activeBlockchain = oldBlockchain;
+      const oldProvider = oldBlockchain.rpc.getWalletOfferProvider();
+      const replacementProvider = replacementBlockchain.rpc.getWalletOfferProvider();
+      if (!oldProvider || !replacementProvider) throw new Error('expected queued Cloud providers');
+      expect(replacementProvider.scope).toEqual(oldProvider.scope);
+      expect(replacementProvider).not.toBe(oldProvider);
+      const owner = {
+        installationPlayerId: 'player',
+        peerSessionId: 'reconnect-session',
+        providerScope: oldProvider.scope,
+      };
+      storageRepository.ensureWalletContext(owner.providerScope);
+      oldBlockchain.startBalanceInterest(60_000, { onBalance: jest.fn() });
+      oldBlockchain.refreshProviderReadiness();
+      const reportLocalFailure = jest.fn();
+      const pump = new SubmissionPump({
+        getCradle: () => undefined,
+        getBlockchain: () => activeBlockchain,
+        getRewardPuzzleHash: () => '11'.repeat(32),
+        getWalletOwner: () => owner,
+        getInstallationPlayerId: () => owner.installationPlayerId,
+        isRetired: () => false,
+        isPublishingDisabled: () => false,
+        enqueueResult: async (work) => work(),
+        releaseAfterPersistence: (_key, work) => Promise.resolve().then(work),
+        requestCommit: jest.fn(),
+        reportWarning: jest.fn(),
+        reportLocalFailure,
+        reportError: jest.fn(),
+        requestFreshSync: jest.fn(),
+      });
+      const settle = async (done: () => boolean) => {
+        for (let turn = 0; turn < 100 && !done(); turn += 1) {
+          await jest.advanceTimersByTimeAsync(10);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        expect(done()).toBe(true);
+      };
+      try {
+        pump.providerReady(true);
+        pump.submit({
+          id: 'reconnecting-fee',
+          attempt_token: 'original',
+          predecessor_attempt_token: null,
+          relationship: 'initial',
+          bundle: { spends: [] },
+          fee_request: { amount: '10', target: 'ab'.repeat(32) },
+        });
+        await settle(() => oldIface.getBlockedApprovals().length === 1);
+        pump.retire('reconnecting-fee');
+        // All three changes occur before the old delivery promise settles.
+        // The real disconnect event fences its poller; the replacement has the same wallet scope.
+        const disconnected = oldIface.disconnect();
+        activeBlockchain = replacementBlockchain;
+        replacementBlockchain.refreshProviderReadiness();
+        await disconnected;
+        await pump.flush();
+        expect(pump.isQuiescent()).toBe(true);
+        await settle(() => replacementReconcile.mock.calls.length === 1);
+        expect(replacementReconcile).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.anything(),
+          'SR_reconnect',
+          { mode: 'observe-only' },
+        );
+        expect(oldReconcile).toHaveBeenCalledTimes(1);
+        expect(storageRepository.feeAttachments()).toEqual([
+          expect.objectContaining({
+            stage: 'creating',
+            disposition: 'cancel-on-create',
+            recoveryId: 'SR_reconnect',
+          }),
+        ]);
+        await expect(replacementBlockchain.rpc.getHeightInfo()).resolves.toBe(123n);
+        await expect(
+          replacementBlockchain.rpc.spend('80', {}, '11'.repeat(32), 'independent'),
+        ).resolves.toEqual({ status: 'acknowledged' });
+        expect(height).toHaveBeenCalledTimes(1);
+        expect(spend).toHaveBeenCalledTimes(1);
+        status = 'SUBMITTED';
+        await jest.advanceTimersByTimeAsync(1500);
+        await settle(() => calls.filter(({ query }) => query.includes('cancelOffer')).length === 1);
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        expect(calls.filter(({ query }) => query.includes('createOffer'))).toHaveLength(1);
+        expect(open).toHaveBeenCalledTimes(1);
+        expect(reportLocalFailure).not.toHaveBeenCalled();
+      } finally {
+        // Finish any real adapter observation even when an assertion fails while it is pending.
+        status = 'SUBMITTED';
+        await jest.advanceTimersByTimeAsync(1500);
+        for (let turn = 0; turn < 5; turn += 1) {
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        pump.retireAll();
+        oldBlockchain.stopBalanceInterest();
+        oldBlockchain.detachProvider();
+        replacementBlockchain.detachProvider();
+      }
+    });
+
+    it('keeps captured Cloud providers bound to their original wallet across reconnects', async () => {
+      const calls = mockGraphql((query, variables) => {
+        if (query.includes('wallet(id:')) {
+          return { wallet: { id: variables.id, address: { puzzleHash: '11'.repeat(32) } } };
+        }
+        if (query.includes('createOffer')) {
+          return {
+            createOffer: { signatureRequest: { id: 'SR_original_wallet', status: 'PENDING' } },
+          };
+        }
+        if (query.includes('cancelOffer')) return { cancelOffer: { signatureRequest: null } };
+        return {
+          signatureRequest: {
+            id: variables.id,
+            status: 'SUBMITTED',
+            transaction: { offer: { bech32: 'offer1abc', offerId: 'Offer_original_wallet' } },
+          },
+        };
+      });
+      const open = jest.fn(() => null);
+      setTestGlobal('open', open);
+      const iface = new CloudBlockchainInterface();
+      await iface.startMonitoring();
+      const blockchain = new BlockchainPoller(iface, 60_000);
+      blockchain.startBalanceInterest(60_000, { onBalance: jest.fn() });
+      blockchain.refreshProviderReadiness();
+      const provider = blockchain.rpc.getWalletOfferProvider();
+      if (!provider || provider.capability !== 'recoverable-after-begin') {
+        throw new Error('expected queued Cloud provider');
+      }
+      const operation = {
+        owner: {
+          installationPlayerId: 'player',
+          peerSessionId: 'session',
+          providerScope: provider.scope,
+        },
+        purpose: { kind: 'fee' as const, operationId: 'original-wallet-fee' },
+      };
+      let releaseSpend = () => {};
+      let heldSpend: Promise<unknown> | undefined;
+      let queuedCancel: Promise<unknown> | undefined;
+      const spend = jest.spyOn(iface, 'spend').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releaseSpend = () => resolve({ status: 'acknowledged' });
+          }),
+      );
+      const reconnectAs = async (walletId: string) => {
+        await iface.disconnect();
+        saveCloudWalletAuth({
+          accessToken: `access-${walletId}`,
+          refreshToken: `refresh-${walletId}`,
+          expiresAt: Date.now() + 60 * 60_000,
+          walletId,
+        });
+        const setup = await iface.beginConnect('player');
+        await setup.finalize();
+        expect(iface.isConnected()).toBe(true);
+      };
+      try {
+        await expect(provider.beginCreation(operation, feeRequest)).resolves.toEqual({
+          kind: 'pending',
+          recoveryId: 'SR_original_wallet',
+        });
+        await expect(
+          provider.reconcileCreation(operation, feeRequest, 'SR_original_wallet', {
+            mode: 'observe-only',
+          }),
+        ).resolves.toMatchObject({ kind: 'created-reserved', tradeId: 'Offer_original_wallet' });
+        // Queue the cleanup under Wallet_1 but let its callback start only after the account changes.
+        heldSpend = blockchain.rpc.spend('80', {}, '11'.repeat(32), 'held mutation');
+        await jest.advanceTimersByTimeAsync(0);
+        expect(spend).toHaveBeenCalledTimes(1);
+        queuedCancel = provider.beginCancellation('Offer_original_wallet');
+        // This is WalletConnection.stopPoller's public shutdown order, followed by disconnect.
+        blockchain.detachProvider();
+        blockchain.stopBalanceInterest();
+        blockchain.pauseChainPolling();
+        await reconnectAs('Wallet_2');
+        const before = calls.length;
+        releaseSpend();
+        await heldSpend;
+        await expect(queuedCancel).resolves.toMatchObject({ status: 'unavailable' });
+        await expect(provider.beginCreation(operation, feeRequest)).resolves.toMatchObject({
+          kind: 'unavailable',
+        });
+        await expect(
+          provider.reconcileCreation(operation, feeRequest, 'SR_original_wallet', {
+            mode: 'delivery',
+            allowApproval: () => true,
+          }),
+        ).resolves.toMatchObject({ kind: 'unavailable' });
+        await expect(provider.beginCancellation('Offer_original_wallet')).resolves.toMatchObject({
+          status: 'unavailable',
+        });
+        await expect(
+          provider.reconcileCancellation('Offer_original_wallet', 'SR_cancel_old'),
+        ).resolves.toMatchObject({ status: 'unavailable' });
+        expect(calls).toHaveLength(before);
+        expect(open).not.toHaveBeenCalled();
+
+        const replacement = iface.getWalletOfferProvider();
+        if (!replacement) throw new Error('expected replacement wallet provider');
+        await expect(
+          replacement.beginCreation(
+            { ...operation, owner: { ...operation.owner, providerScope: replacement.scope } },
+            feeRequest,
+          ),
+        ).resolves.toMatchObject({ kind: 'pending' });
+        expect(
+          calls.filter(({ query }) => query.includes('createOffer')).at(-1)?.variables.input,
+        ).toMatchObject({ walletId: 'Wallet_2' });
+
+        // Returning to the original wallet permits its old scoped cleanup again.
+        await reconnectAs('Wallet_1');
+        await expect(provider.beginCreation(operation, feeRequest)).resolves.toMatchObject({
+          kind: 'pending',
+        });
+        await expect(
+          provider.reconcileCreation(operation, feeRequest, 'SR_original_wallet', {
+            mode: 'observe-only',
+          }),
+        ).resolves.toMatchObject({ kind: 'created-reserved' });
+        await expect(provider.beginCancellation('Offer_original_wallet')).resolves.toEqual({
+          status: 'cancelled',
+        });
+        await expect(
+          provider.reconcileCancellation('Offer_original_wallet', 'SR_cancel_original'),
+        ).resolves.toEqual({ status: 'cancelled', detail: 'SUBMITTED' });
+        const cancellations = calls.filter(({ query }) => query.includes('cancelOffer'));
+        expect(cancellations).toHaveLength(1);
+        expect(cancellations[0]?.variables.input).toMatchObject({
+          walletId: 'Wallet_1',
+          offerId: 'Offer_original_wallet',
+        });
+        expect(open).not.toHaveBeenCalled();
+      } finally {
+        releaseSpend();
+        await heldSpend?.catch(() => {});
+        await queuedCancel?.catch(() => {});
+        blockchain.stopBalanceInterest();
+        blockchain.pauseChainPolling();
+        blockchain.detachProvider();
+        await iface.disconnect();
+      }
+    });
+
     it('opens the first live approval on the first click after an earlier owner is revoked', async () => {
       let oldOwnerActive = true;
       let status = 'PENDING';

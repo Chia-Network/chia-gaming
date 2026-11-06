@@ -702,6 +702,7 @@ describe('submission pump delivery and lifecycle', () => {
           fee_request: { target: '22'.repeat(32), amount: '10' },
         });
         await lease.launch(`submission:retired-${landedVariant}`);
+        await controller.flushPendingWork();
         (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
           submissionDrain([], [`retired-${landedVariant}`]),
         );
@@ -742,6 +743,7 @@ describe('submission pump delivery and lifecycle', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:reconnect-cancel');
+      await controller.flushPendingWork();
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
         submissionDrain([], ['reconnect-cancel']),
       );

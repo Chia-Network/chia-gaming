@@ -683,7 +683,13 @@ to its requesting attempt; there is no recovered-material cache. Retiring a
 known creation schedules one cleanup flight that waits for any active delivery
 to settle, rechecks the exact durable request and ownership, then observes it
 without requiring readiness, reconnect, or reload. Repeated cleanup requests
-join that same flight; delivery and cleanup never reconcile concurrently. Creation reconciliation carries a transient approval permission from
+join that same flight; delivery and cleanup never reconcile concurrently.
+Cleanup selects the currently attached provider for the original wallet scope
+after waiting. A newer readiness epoch arriving during cleanup remains pending
+until the active request settles; an unavailable result cannot consume an epoch
+that its request never used. Cleanup rechecks its durable owner and lifecycle
+before continuing, and never retries itself within an unchanged readiness epoch.
+Creation reconciliation carries a transient approval permission from
 its requesting owner: a dead consumer may observe an existing signature request
 to identify and cancel its trade, but cannot open another fee-approval window.
 Reconciliation explicitly selects `delivery` or `observe-only` mode; only
@@ -699,8 +705,10 @@ with approval explicitly disabled.
 Retiring pre-ID uncertainty preserves orphan evidence without creating a
 replacement offer solely to cancel it.
 While the session still owns a cleanup obligation, `FeeAttachmentRuntime`
-moves an identified dead consumer's durable entry to `cancel-required`, and
-only a completed cancellation removes it. After explicit session retirement or
+moves an identified dead consumer's durable entry to `cancel-required`.
+Cancellation success or an already-terminal offer removes it; a definitive
+cancellation rejection also retires the record and reports a warning. An
+unavailable cancellation keeps its retry record. After explicit session retirement or
 clear has discarded that obligation, a late wallet result cannot recreate a
 durable row. A newly identified trade is cancelled best effort through its
 original provider. An offer that replay has attached stays retained,
@@ -719,7 +727,10 @@ where available, without awaiting success or retaining a recovery banner.
 Only reservation-creating offer, funding, or fee creation has this deliberate
 duplicate-reservation risk: before a provider returns an ID, a lost response
 can hide a successful external reservation, so one replacement is allowed on
-each later readiness epoch and the orphan warning remains. Broadcasting the
+each later readiness epoch and the orphan warning remains. Fee replacement
+requires live submission demand: fee creation uncertainty records the
+epoch actually used for the wallet call, so a reconnect during an old response
+remains available to the next live attempt. Broadcasting the
 same finalized spend through WalletConnect `pushTransactions` is instead
 idempotent exact-byte replay; it creates no provider-reservation entry and carries
 no orphan-risk provenance.
@@ -727,6 +738,9 @@ Wallet mutation starts only after the aggregate claim is installed. Malformation
 of any nested field rejects the whole root and remains visible on Resume /
 Start Over. A connected provider/account scope that differs from the durable
 operation owner is shown as a recovery mismatch rather than touching the wrong wallet.
+Cloud provider handles check their captured wallet ID on every offer operation,
+including operations queued before an account change. A handle for another
+account returns unavailable without issuing a wallet request.
 `walletContext` identifies the current session's connected wallet; unresolved
 operations keep their own original provider scopes across wallet changes,
 while their session still owns unresolved protocol work or exact replay.
@@ -1789,12 +1803,14 @@ host-side coordinator for chain observations. It separates three concerns:
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
    work on the read lane. On disconnect, active reads are abandoned and queued
    mutations are cleared. An active mutation is allowed to finish; if it was an
-   offer-creating call whose result became stale, the poller uses its trade ID
-   to cancel the exact provider reservation before rejecting the old-generation result.
+   offer-creating call whose result became stale, the poller preserves its result
+   for the reservation owner to identify and retire the exact offer. Cancellation
+   and ordinary RPC results retain the disconnect fence.
    A new generation may run immediately even if an unabortable old read never
    resolves. Each request revalidates its connection epoch after the shared
    start gate and after adapter completion, so stale work cannot start late or
-   publish a late old-generation result. Read polling fans session delivery out
+   publish a late old-generation result except for that deliberate creation
+   handoff. Read polling fans session delivery out
    with `allSettled`: one session's callback failure does not block healthy
    sessions and does not trigger global adapter backoff. Wallet mutations start
    only after the claimed aggregate is installed; malformed aggregate state

@@ -530,6 +530,444 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       runtime.detach();
     });
 
+    describe('cleanup readiness ownership', () => {
+      const cancellationUnavailable = { status: 'unavailable' as const, detail: 'old connection' };
+      function cancelEntry(stage: 'cancel-required' | 'cancelling'): FeeAttachment {
+        return {
+          owner,
+          submissionId: 'fee',
+          stage,
+          providerReservationId: 'late-trade',
+          reason: 'cleanup',
+          ...(stage === 'cancelling' ? { recoveryId: 'cancel-request' } : {}),
+        } as FeeAttachment;
+      }
+      function reconnect(
+        providers: WalletProviderRegistry,
+        old: ReturnType<typeof wallet>,
+        next: ReturnType<typeof wallet>,
+        sameObject: boolean,
+      ) {
+        if (sameObject) providers.reconnectReady(old);
+        else {
+          providers.detach(old);
+          providers.attach(next);
+        }
+      }
+
+      it('selects the current provider after waiting for revoked delivery', async () => {
+        const delivery = deferred<typeof unavailable>();
+        const old = wallet();
+        old.reconcileCreation.mockReturnValueOnce(delivery.promise).mockResolvedValue(unavailable);
+        const next = wallet();
+        const { providers, runtime } = attach(old);
+        let inactive = false;
+        const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+        await waitFor(() => old.reconcileCreation.mock.calls.length === 1);
+        inactive = true;
+        runtime.retire(owner, 'fee');
+        reconnect(providers, old, next, false);
+        delivery.resolve(unavailable);
+        await reservation;
+        await runtime.awaitIdle();
+        expect(old.reconcileCreation).toHaveBeenCalledTimes(1);
+        expect(next.reconcileCreation).toHaveBeenCalledWith(
+          expect.anything(),
+          request,
+          'fee-request',
+          { mode: 'observe-only' },
+        );
+        expect(next.beginCancellation).toHaveBeenCalledWith('late-trade');
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        runtime.detach();
+      });
+
+      it('waits for the original scope when delivery settles disconnected', async () => {
+        const delivery = deferred<typeof unavailable>();
+        const old = wallet();
+        old.reconcileCreation.mockReturnValueOnce(delivery.promise).mockResolvedValue(unavailable);
+        const { providers, runtime } = attach(old);
+        let inactive = false;
+        const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+        await waitFor(() => old.reconcileCreation.mock.calls.length === 1);
+        inactive = true;
+        runtime.retire(owner, 'fee');
+        providers.detach(old);
+        delivery.resolve(unavailable);
+        await reservation;
+        await runtime.awaitIdle();
+        expect(old.reconcileCreation).toHaveBeenCalledTimes(1);
+        const wrong = { ...wallet(), scope: { ...owner.providerScope, fingerprint: 'different' } };
+        providers.attach(wrong);
+        await runtime.awaitIdle();
+        expect(wrong.reconcileCreation).not.toHaveBeenCalled();
+        expect(storageRepository.feeAttachments()).toEqual([retiredCreation]);
+        old.reconcileCreation.mockResolvedValue(created);
+        providers.attach(old);
+        await runtime.awaitIdle();
+        expect(old.reconcileCreation).toHaveBeenCalledTimes(2);
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        runtime.detach();
+      });
+
+      it.each([false, true])(
+        'retains reconnect during cleanup observation (same provider object: %s)',
+        async (sameObject) => {
+          install([restoredCreation]);
+          const pending = deferred<typeof unavailable>();
+          const old = wallet();
+          old.reconcileCreation.mockReturnValueOnce(pending.promise).mockResolvedValue(created);
+          const next = wallet();
+          const { providers, runtime } = attach(old);
+          await waitFor(() => old.reconcileCreation.mock.calls.length === 1);
+          reconnect(providers, old, next, sameObject);
+          providers.ready(sameObject ? old : next);
+          pending.resolve(unavailable);
+          await runtime.awaitIdle();
+          expect(old.reconcileCreation).toHaveBeenCalledTimes(sameObject ? 2 : 1);
+          expect(next.reconcileCreation).toHaveBeenCalledTimes(sameObject ? 0 : 1);
+          expect(storageRepository.feeAttachments()).toEqual([]);
+          runtime.detach();
+        },
+      );
+
+      it.each(['cancel-required', 'cancelling'] as const)(
+        'retains reconnect during %s RPC including its attempted epoch',
+        async (stage) => {
+          install([cancelEntry(stage)]);
+          const pending = deferred<typeof cancellationUnavailable>();
+          const old = wallet();
+          const method = stage === 'cancelling' ? old.reconcileCancellation : old.beginCancellation;
+          method.mockReturnValueOnce(pending.promise).mockResolvedValue({ status: 'cancelled' });
+          const next = wallet();
+          const { providers, runtime } = attach(old);
+          await waitFor(() => method.mock.calls.length === 1);
+          reconnect(providers, old, next, false);
+          providers.ready(next);
+          pending.resolve(cancellationUnavailable);
+          await runtime.awaitIdle();
+          expect(
+            stage === 'cancelling' ? next.reconcileCancellation : next.beginCancellation,
+          ).toHaveBeenCalledTimes(1);
+          expect(storageRepository.feeAttachments()).toEqual([]);
+          runtime.detach();
+        },
+      );
+
+      it.each(['cancel-required', 'cancelling'] as const)(
+        'retains same-object reconnect during %s RPC',
+        async (stage) => {
+          install([cancelEntry(stage)]);
+          const pending = deferred<typeof cancellationUnavailable>();
+          const provider = wallet();
+          const method =
+            stage === 'cancelling' ? provider.reconcileCancellation : provider.beginCancellation;
+          method.mockReturnValueOnce(pending.promise).mockResolvedValue({ status: 'cancelled' });
+          const { providers, runtime } = attach(provider);
+          await waitFor(() => method.mock.calls.length === 1);
+          providers.reconnectReady(provider);
+          providers.ready(provider);
+          pending.resolve(cancellationUnavailable);
+          await runtime.awaitIdle();
+          expect(method).toHaveBeenCalledTimes(2);
+          expect(storageRepository.feeAttachments()).toEqual([]);
+          runtime.detach();
+        },
+      );
+
+      it('retains reconnect while uncertain cancellation is in flight and consumes only attempted epochs', async () => {
+        install([
+          {
+            owner,
+            submissionId: 'fee',
+            stage: 'best-effort-cancellation-uncertain',
+            providerReservationId: 'late-trade',
+            lastAttemptEpoch: 0n,
+            reason: 'uncertain',
+          },
+        ]);
+        const pending = deferred<typeof cancellationUnavailable>();
+        const old = wallet();
+        old.beginCancellation.mockReturnValueOnce(pending.promise);
+        const next = wallet();
+        next.beginCancellation
+          .mockResolvedValueOnce(cancellationUnavailable)
+          .mockResolvedValue({ status: 'cancelled' });
+        const { providers, runtime } = attach(old);
+        await waitFor(() => old.beginCancellation.mock.calls.length === 1);
+        reconnect(providers, old, next, false);
+        providers.ready(next);
+        pending.resolve(cancellationUnavailable);
+        await runtime.awaitIdle();
+        expect(next.beginCancellation).toHaveBeenCalledTimes(1);
+        expect(storageRepository.feeAttachments()).toEqual([
+          expect.objectContaining({
+            stage: 'best-effort-cancellation-uncertain',
+            lastAttemptEpoch: 2n,
+          }),
+        ]);
+        providers.ready(next);
+        await runtime.awaitIdle();
+        expect(next.beginCancellation).toHaveBeenCalledTimes(1);
+        providers.reconnectReady(next);
+        await runtime.awaitIdle();
+        expect(next.beginCancellation).toHaveBeenCalledTimes(2);
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        runtime.detach();
+      });
+
+      it.each(['cancel-required', 'cancelling'] as const)(
+        'does not repeat successful %s completion after reconnect',
+        async (stage) => {
+          install([cancelEntry(stage)]);
+          const pending = deferred<{ status: 'cancelled' }>();
+          const old = wallet();
+          const method = stage === 'cancelling' ? old.reconcileCancellation : old.beginCancellation;
+          method.mockReturnValueOnce(pending.promise);
+          const next = wallet();
+          const { providers, runtime } = attach(old);
+          await waitFor(() => method.mock.calls.length === 1);
+          reconnect(providers, old, next, false);
+          pending.resolve({ status: 'cancelled' });
+          await runtime.awaitIdle();
+          expect(method).toHaveBeenCalledTimes(1);
+          expect(next.beginCancellation).not.toHaveBeenCalled();
+          expect(next.reconcileCancellation).not.toHaveBeenCalled();
+          expect(storageRepository.feeAttachments()).toEqual([]);
+          runtime.detach();
+        },
+      );
+
+      it('does not repeat a successful old observation after reconnect', async () => {
+        install([restoredCreation]);
+        const pending = deferred<typeof created>();
+        const old = wallet();
+        old.reconcileCreation.mockReturnValueOnce(pending.promise);
+        const next = wallet();
+        const { providers, runtime } = attach(old);
+        await waitFor(() => old.reconcileCreation.mock.calls.length === 1);
+        reconnect(providers, old, next, false);
+        pending.resolve(created);
+        await runtime.awaitIdle();
+        expect(old.reconcileCreation).toHaveBeenCalledTimes(1);
+        expect(next.reconcileCreation).not.toHaveBeenCalled();
+        expect(next.beginCancellation).toHaveBeenCalledTimes(1);
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        runtime.detach();
+      });
+
+      it.each(['queued', 'checkpoint'] as const)(
+        'does not start an obsolete delivery at the %s boundary',
+        async (boundary) => {
+          const gate = deferred<void>();
+          const realCheckpoint =
+            storageRepository.checkpointDomainMutations.bind(storageRepository);
+          let entered = false;
+          const checkpoint =
+            boundary === 'checkpoint'
+              ? jest
+                  .spyOn(storageRepository, 'checkpointDomainMutations')
+                  .mockImplementationOnce(async () => {
+                    entered = true;
+                    await gate.promise;
+                    return realCheckpoint();
+                  })
+              : null;
+          const provider = wallet();
+          const { runtime } = attach(provider);
+          let inactive = false;
+          const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+          try {
+            if (checkpoint) await waitFor(() => entered);
+            inactive = true;
+            runtime.detach();
+            gate.resolve();
+            await reservation;
+            await runtime.awaitIdle();
+            expect(provider.beginCreation).not.toHaveBeenCalled();
+            expect(provider.reconcileCreation).not.toHaveBeenCalled();
+            expect(provider.beginCancellation).not.toHaveBeenCalled();
+          } finally {
+            gate.resolve();
+            checkpoint?.mockRestore();
+            runtime.detach();
+          }
+        },
+      );
+
+      it('uses the current provider to observe a cancellation ID returned across reconnect', async () => {
+        install([cancelEntry('cancel-required')]);
+        const pending = deferred<{ status: 'pending'; recoveryId: string }>();
+        const old = wallet();
+        old.beginCancellation.mockReturnValueOnce(pending.promise);
+        old.reconcileCancellation.mockResolvedValue(cancellationUnavailable);
+        const next = wallet();
+        const { providers, runtime } = attach(old);
+        await waitFor(() => old.beginCancellation.mock.calls.length === 1);
+        reconnect(providers, old, next, false);
+        pending.resolve({ status: 'pending', recoveryId: 'cancel-request' });
+        await runtime.awaitIdle();
+        expect(old.reconcileCancellation).not.toHaveBeenCalled();
+        expect(next.reconcileCancellation).toHaveBeenCalledWith('late-trade', 'cancel-request');
+        expect(next.beginCancellation).not.toHaveBeenCalled();
+        expect(storageRepository.feeAttachments()).toEqual([]);
+        runtime.detach();
+      });
+
+      it.each(['creating', 'cancel-required', 'cancelling'] as const)(
+        'does not retry unavailable %s cleanup for a consumed readiness epoch',
+        async (stage) => {
+          install([stage === 'creating' ? restoredCreation : cancelEntry(stage)]);
+          const pending = deferred<void>();
+          const provider = wallet();
+          const method =
+            stage === 'creating'
+              ? provider.reconcileCreation
+              : stage === 'cancelling'
+                ? provider.reconcileCancellation
+                : provider.beginCancellation;
+          method.mockImplementation(async () => {
+            await pending.promise;
+            return stage === 'creating' ? unavailable : cancellationUnavailable;
+          });
+          const { providers, runtime } = attach(provider);
+          await waitFor(() => method.mock.calls.length === 1);
+          providers.ready(provider);
+          providers.ready(provider);
+          pending.resolve();
+          await runtime.awaitIdle();
+          await readApplicationState();
+          expect(method).toHaveBeenCalledTimes(1);
+          expect(storageRepository.feeAttachments()).toHaveLength(1);
+          runtime.detach();
+        },
+      );
+
+      it.each([
+        ['creating', 1, false],
+        ['cancel-required', 1, false],
+        ['cancelling', 1, false],
+        ['uncertain', 1, false],
+        ['uncertain', 2, false],
+        ['uncertain', 2, true],
+      ] as const)(
+        'selects current provider after %s checkpoint %s (same object: %s)',
+        async (stage, checkpointNumber, sameObject) => {
+          install([
+            stage === 'creating'
+              ? restoredCreation
+              : stage === 'uncertain'
+                ? {
+                    owner,
+                    submissionId: 'fee',
+                    stage: 'best-effort-cancellation-uncertain',
+                    providerReservationId: 'late-trade',
+                    lastAttemptEpoch: 0n,
+                    reason: 'uncertain',
+                  }
+                : cancelEntry(stage),
+          ]);
+          const gate = deferred<void>();
+          const realCheckpoint =
+            storageRepository.checkpointDomainMutations.bind(storageRepository);
+          let checkpoints = 0;
+          let entered = false;
+          const checkpoint = jest
+            .spyOn(storageRepository, 'checkpointDomainMutations')
+            .mockImplementation(async () => {
+              checkpoints += 1;
+              if (checkpoints === checkpointNumber) {
+                entered = true;
+                await gate.promise;
+              }
+              return realCheckpoint();
+            });
+          const old = wallet();
+          const next = sameObject ? old : wallet();
+          const { providers, runtime } = attach(old);
+          try {
+            await waitFor(() => entered);
+            reconnect(providers, old, next, sameObject);
+            gate.resolve();
+            await runtime.awaitIdle();
+            if (!sameObject) {
+              expect(old.reconcileCreation).not.toHaveBeenCalled();
+              expect(old.beginCancellation).not.toHaveBeenCalled();
+              expect(old.reconcileCancellation).not.toHaveBeenCalled();
+            }
+            expect(
+              stage === 'creating'
+                ? next.reconcileCreation
+                : stage === 'cancelling'
+                  ? next.reconcileCancellation
+                  : next.beginCancellation,
+            ).toHaveBeenCalledTimes(1);
+            expect(storageRepository.feeAttachments()).toEqual([]);
+          } finally {
+            gate.resolve();
+            checkpoint.mockRestore();
+            runtime.detach();
+          }
+        },
+      );
+
+      it.each(['detach', 'clear', 'hard-reset'] as const)(
+        'does not launch a queued cancellation after %s',
+        async (ending) => {
+          install([
+            {
+              owner,
+              submissionId: 'fee',
+              stage: 'reserved',
+              providerReservationId: 'late-trade',
+              reason: 'reserved',
+            },
+          ]);
+          const provider = wallet();
+          const { runtime } = attach(provider);
+          runtime.cancel(owner, 'fee', 'retire');
+          if (ending === 'detach') runtime.detach();
+          else if (ending === 'clear') await storageRepository.clearSession();
+          else await storageRepository.hardReset();
+          await runtime.awaitIdle();
+          expect(provider.beginCancellation).not.toHaveBeenCalled();
+          runtime.detach();
+        },
+      );
+
+      it.each(['creating', 'cancel-required'] as const)(
+        'does not invoke %s cleanup after ownership is lost during checkpoint',
+        async (stage) => {
+          install([stage === 'creating' ? restoredCreation : cancelEntry(stage)]);
+          const gate = deferred<void>();
+          const realCheckpoint =
+            storageRepository.checkpointDomainMutations.bind(storageRepository);
+          let entered = false;
+          const checkpoint = jest
+            .spyOn(storageRepository, 'checkpointDomainMutations')
+            .mockImplementationOnce(async () => {
+              entered = true;
+              await gate.promise;
+              return realCheckpoint();
+            });
+          const provider = wallet();
+          const { runtime } = attach(provider);
+          try {
+            await waitFor(() => entered);
+            runtime.detach();
+            gate.resolve();
+            await runtime.awaitIdle();
+            expect(provider.reconcileCreation).not.toHaveBeenCalled();
+            expect(provider.beginCancellation).not.toHaveBeenCalled();
+          } finally {
+            gate.resolve();
+            checkpoint.mockRestore();
+            runtime.detach();
+          }
+        },
+      );
+    });
+
     it.each(['begin', 'reconcile'] as const)(
       'hands a delivery revoked during %s to one cleanup without waiting for readiness',
       async (phase) => {
@@ -696,10 +1134,16 @@ describe('FeeAttachmentRuntime lifecycle', () => {
 
     it('forgets a live flight only after the wallet definitively fails the request', async () => {
       const provider = wallet();
+      const begin = deferred<typeof pendingBegin>();
+      provider.beginCreation.mockReturnValue(begin.promise);
       provider.reconcileCreation.mockResolvedValue({ kind: 'failure', reason: 'rejected' });
       const { runtime } = attach(provider);
-
-      await runtime.reserve(owner, 'fee', request, () => true);
+      let inactive = false;
+      const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+      await waitFor(() => provider.beginCreation.mock.calls.length === 1);
+      inactive = true;
+      begin.resolve(pendingBegin);
+      await reservation;
       expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
       expect(storageRepository.feeAttachments()).toEqual([]);
       expect(provider.beginCancellation).not.toHaveBeenCalled();
@@ -1211,6 +1655,92 @@ describe('FeeAttachmentRuntime lifecycle', () => {
     expect(beginCancellation).toHaveBeenCalledWith('dead-reconciled-trade');
     expect(storageRepository.feeAttachments()).toEqual([]);
     runtime.detach();
+  });
+
+  it.each(['unavailable', 'throw'] as const)(
+    'records the attempted creation epoch when reconnect precedes its %s response',
+    async (outcome) => {
+      let finish!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const beginCreation = jest.fn(async () => {
+        await pending;
+        if (outcome === 'throw') throw new Error('lost response');
+        return { kind: 'unavailable' as const, reason: 'lost response' };
+      });
+      const provider: WalletOfferProvider = {
+        capability: 'best-effort',
+        scope: owner.providerScope,
+        beginCreation,
+        cancel: jest.fn(),
+      };
+      const providers = new WalletProviderRegistry();
+      providers.attach(provider);
+      const runtime = new FeeAttachmentRuntime(ports(), providers);
+      const first = runtime.reserve(owner, 'pre-id-epochs', request, () => false);
+      await waitFor(() => beginCreation.mock.calls.length === 1);
+      providers.reconnectReady(provider);
+      finish();
+      await first;
+      await runtime.awaitIdle();
+      expect(beginCreation).toHaveBeenCalledTimes(1);
+      expect(storageRepository.feeAttachments()).toEqual([
+        expect.objectContaining({ stage: 'best-effort-uncertain', lastAttemptEpoch: 1n }),
+      ]);
+      await runtime.reserve(owner, 'pre-id-epochs', request, () => false);
+      expect(beginCreation).toHaveBeenCalledTimes(2);
+      await runtime.reserve(owner, 'pre-id-epochs', request, () => false);
+      expect(beginCreation).toHaveBeenCalledTimes(2);
+      runtime.detach();
+    },
+  );
+
+  it('records the actual replacement epoch selected after its checkpoint', async () => {
+    const beginCreation = jest
+      .fn()
+      .mockResolvedValue({ kind: 'unavailable', reason: 'lost response' });
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation,
+      cancel: jest.fn(),
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    await runtime.reserve(owner, 'replacement-epochs', request, () => false);
+    providers.reconnectReady(provider);
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    let entered = false;
+    const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+    const checkpoint = jest
+      .spyOn(storageRepository, 'checkpointDomainMutations')
+      .mockImplementationOnce(async () => {
+        entered = true;
+        await gate;
+        return realCheckpoint();
+      });
+    try {
+      const replacement = runtime.reserve(owner, 'replacement-epochs', request, () => false);
+      await waitFor(() => entered);
+      providers.reconnectReady(provider);
+      finish();
+      await replacement;
+      expect(beginCreation).toHaveBeenCalledTimes(2);
+      expect(storageRepository.feeAttachments()).toEqual([
+        expect.objectContaining({ stage: 'best-effort-uncertain', lastAttemptEpoch: 3n }),
+      ]);
+      await runtime.reserve(owner, 'replacement-epochs', request, () => false);
+      expect(beginCreation).toHaveBeenCalledTimes(2);
+    } finally {
+      finish();
+      checkpoint.mockRestore();
+      runtime.detach();
+    }
   });
 
   it('does not install pre-id uncertainty after its submission dies', async () => {

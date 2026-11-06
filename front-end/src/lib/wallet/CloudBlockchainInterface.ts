@@ -180,15 +180,34 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       this.walletOfferProvider?.scope.provider !== 'cloud' ||
       this.walletOfferProvider.scope.walletId !== walletId
     ) {
+      const scopeUnavailable = 'Reconnect the original Cloud Wallet account to resume this offer';
       this.walletOfferProvider = {
         capability: 'recoverable-after-begin',
         scope: { provider: 'cloud', walletId },
-        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
-        reconcileCreation: (operation, request, recoveryId, options) =>
-          this.reconcileWalletOffer(operation, request, recoveryId, options),
-        beginCancellation: (tradeId) => this.beginWalletOfferCancellation(tradeId),
-        reconcileCancellation: (tradeId, recoveryId) =>
-          this.reconcileWalletOfferCancellation(tradeId, recoveryId),
+        beginCreation: async (operation, request) => {
+          if (this.auth?.walletId !== walletId) {
+            return { kind: 'unavailable', reason: scopeUnavailable };
+          }
+          return this.beginWalletOffer(operation, request);
+        },
+        reconcileCreation: async (operation, request, recoveryId, options) => {
+          if (this.auth?.walletId !== walletId) {
+            return { kind: 'unavailable', reason: scopeUnavailable };
+          }
+          return this.reconcileWalletOffer(operation, request, recoveryId, options);
+        },
+        beginCancellation: async (tradeId) => {
+          if (this.auth?.walletId !== walletId) {
+            return { status: 'unavailable', detail: scopeUnavailable };
+          }
+          return this.beginWalletOfferCancellation(tradeId);
+        },
+        reconcileCancellation: async (tradeId, recoveryId) => {
+          if (this.auth?.walletId !== walletId) {
+            return { status: 'unavailable', detail: scopeUnavailable };
+          }
+          return this.reconcileWalletOfferCancellation(tradeId, recoveryId);
+        },
       };
     }
     return this.walletOfferProvider;
