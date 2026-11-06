@@ -676,12 +676,56 @@ orphan evidence and cannot synthesize a cancellation ID. An attached fee
 source remains retained while Rust may replay its current exact variant;
 wallet acknowledgement does not retire it, and Rust submission retirement
 moves its exact `providerReservationId` through typed cancellation before removal.
-`FeeAttachmentRuntime` applies one rule to a dead consumer: once the offer is
-identified, its durable entry becomes `cancel-required`, and only a completed
-cancellation removes it. An offer that replay has attached stays retained,
-because a dying creation flight says nothing about the replay that owns it. An
-in-memory cancel remains only after storage authority is lost, where no durable
-write is possible, and a hard reset discards the offer without one.
+Active fee creation and recovery run only when `SubmissionPump` reserves a fee
+for a Rust-issued live submission. Restore and provider readiness drain cleanup
+obligations without acquiring active fees. Delivery returns material directly
+to its requesting attempt; there is no recovered-material cache. Retiring a
+known creation schedules one cleanup flight that waits for any active delivery
+to settle, rechecks the exact durable request and ownership, then observes it
+without requiring readiness, reconnect, or reload. Repeated cleanup requests
+join that same flight; delivery and cleanup never reconcile concurrently.
+Cleanup selects the currently attached provider for the original wallet scope
+after waiting. A newer readiness epoch arriving during cleanup remains pending
+until the active request settles; an unavailable result cannot consume an epoch
+that its request never used. Cleanup rechecks its durable owner and lifecycle
+before continuing, and never retries itself within an unchanged readiness epoch.
+Creation reconciliation carries a transient approval permission from
+its requesting owner: a dead consumer may observe an existing signature request
+to identify and cancel its trade, but cannot open another fee-approval window.
+Reconciliation explicitly selects `delivery` or `observe-only` mode; only
+cleanup owners select observation without approval. The owner notifies approval
+observers when permission changes. Revocation immediately withdraws blocked
+prompts and completes the obsolete delivery as
+unavailable, so successors and pump quiescence do not wait on cleanup polling.
+The exact existing signature request remains durable through that automatic
+observe-only handoff. If observation is unavailable, the record remains for a
+later matching readiness or restore; cleanup does not immediately retry itself. A queued live request remains
+actionable. Terminal best-effort retirement also reconciles creation requests
+with approval explicitly disabled.
+
+An unavailable delivery does not itself retire Rust's fee intent. If the wallet
+disappears after an active request ID is checkpointed, that request stays active
+for the next Rust-issued fee attempt on readiness or a fresh chain snapshot.
+The next attempt reconciles the same ID without creating another offer. Detaching
+the controller also preserves an already-checkpointed active request for restore.
+If Rust retires the submission, it instead becomes `cancel-on-create`; explicit
+session retirement or clear hands known requests to best-effort cleanup before
+removing their durable records. A request ID arriving only after detach cannot
+be saved and is handed directly to best-effort cleanup.
+
+Retiring pre-ID uncertainty preserves orphan evidence without creating a
+replacement offer solely to cancel it.
+While the session still owns a cleanup obligation, `FeeAttachmentRuntime`
+moves an identified dead consumer's durable entry to `cancel-required`.
+Cancellation success or an already-terminal offer removes it; a definitive
+cancellation rejection also retires the record and reports a warning. An
+unavailable cancellation keeps its retry record. After explicit session retirement or
+clear has discarded that obligation, a late wallet result cannot recreate a
+durable row. A newly identified trade is cancelled best effort through its
+original provider. An offer that replay has attached stays retained,
+because a dying creation flight says nothing about the replay that owns it.
+After storage authority loss, cancellation is also best effort in memory because
+no durable write is possible. A hard reset discards the offer without one.
 A request whose consumer died stays durable in `creating` from the moment its
 recovery ID is known, through any `unavailable` reconciliation, until it
 identifies the offer or definitively fails. `reserve` never hands a retiring
@@ -694,7 +738,10 @@ where available, without awaiting success or retaining a recovery banner.
 Only reservation-creating offer, funding, or fee creation has this deliberate
 duplicate-reservation risk: before a provider returns an ID, a lost response
 can hide a successful external reservation, so one replacement is allowed on
-each later readiness epoch and the orphan warning remains. Broadcasting the
+each later readiness epoch and the orphan warning remains. Fee replacement
+requires live submission demand: fee creation uncertainty records the
+epoch actually used for the wallet call, so a reconnect during an old response
+remains available to the next live attempt. Broadcasting the
 same finalized spend through WalletConnect `pushTransactions` is instead
 idempotent exact-byte replay; it creates no provider-reservation entry and carries
 no orphan-risk provenance.
@@ -702,6 +749,9 @@ Wallet mutation starts only after the aggregate claim is installed. Malformation
 of any nested field rejects the whole root and remains visible on Resume /
 Start Over. A connected provider/account scope that differs from the durable
 operation owner is shown as a recovery mismatch rather than touching the wrong wallet.
+Cloud provider handles check their captured wallet ID on every offer operation,
+including operations queued before an account change. A handle for another
+account returns unavailable without issuing a wallet request.
 `walletContext` identifies the current session's connected wallet; unresolved
 operations keep their own original provider scopes across wallet changes,
 while their session still owns unresolved protocol work or exact replay.
@@ -736,7 +786,13 @@ and immutable predecessor/relationship metadata. Rust emits the no-fee base
 immediately when fee acquisition fails or is unavailable and continues seeking
 after base acknowledgement. Matching provider readiness or an explicit
 fresh-chain rebroadcast epoch may later upgrade that ID to a fee-bearing
-variant; chain terminality stops acquisition. Rust deduplicates only an exact canonical intent fingerprint; two
+variant; chain terminality stops acquisition. An ordinary fresh snapshot or
+provider-readiness edge leaves an already-running fee acquisition with its
+current attempt; it cannot cancel that approval and issue a replacement.
+Genuine browser restoration relinquishes abandoned delivery attempts at the
+explicit `restore_runtime` boundary before fresh-chain recovery resumes them.
+Transactional working-copy decoding does not relinquish live attempts.
+Rust deduplicates only an exact canonical intent fingerprint; two
 different transactions that spend the same inputs retain different IDs.
 Rejection retires only its exact ID. The manager separately retains wallet
 delivery acknowledgement and chain finality. JavaScript makes one wallet call
@@ -1549,6 +1605,12 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   channel-funding reservation. The wallet chooses the offer inputs, so Cloud no longer
   selects or pins a funding coin in JavaScript.
 
+  Cloud offer cleanup requests `cancelOffChain: true` with zero fee. Any existing
+  cancellation signature request, including one restored from an older build,
+  is polled without opening a popup, a system-browser approval, or an approval
+  notice. A wallet that cannot complete off-chain cleanup leaves an unresolved
+  cleanup record; the client never asks the player to sign a cancellation.
+
   `WalletOfferProvider` is a required discriminated capability, not optional
   methods. Cloud is `recoverable-after-begin`: transport loss before the begin
   response supplies a `signatureRequest` ID is persisted as
@@ -1573,9 +1635,11 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   WalletConnect is best-effort throughout because it lacks end-to-end create
   idempotency and response-loss reconciliation. For either pre-ID Cloud
   uncertainty or WalletConnect uncertainty, `WalletProviderRegistry` readiness
-  epochs launch exactly one automatic new attempt per later reconnect,
-  including after reload. There is no timer or immediate retry loop. A lost
-  successful response may orphan an offer or signature request, so the UI and
+  epochs permit one new attempt per later reconnect, including after reload.
+  Active fee replacements additionally require a live Rust submission request;
+  wallet readiness alone cannot create a fee offer. There is no timer or
+  immediate retry loop. A lost successful response may orphan an offer or
+  signature request, so the UI and
   diagnostics retain an explicit orphan-risk warning even if a later attempt is
   accepted.
 
@@ -1741,18 +1805,23 @@ host-side coordinator for chain observations. It separates three concerns:
    `AsyncJobQueue` lanes per active backend: one for reads and background polls,
    and one for wallet mutations. These adapter lanes run independently;
    WalletConnect additionally serializes its transport as described below.
-   Both lanes pass every adapter request through one global request-start gate,
-   which applies the backend's
-   requested gap between starts without waiting for prior requests to finish.
+   All adapter request starts share one global request-start gate, which applies
+   the backend's requested gap without waiting for prior requests to finish.
+   Reconciliation observes an existing creation or cancellation outside both
+   serialized lanes, forwarding the complete delivery/observation options.
+   Long cleanup polling therefore cannot hold up broadcasts or chain reads;
+   the existing connection-epoch and request-spacing rules still apply.
    `AsyncPollingScheduler` enqueues repeating height, balance, and coin-sweep
    work on the read lane. On disconnect, active reads are abandoned and queued
    mutations are cleared. An active mutation is allowed to finish; if it was an
-   offer-creating call whose result became stale, the poller uses its trade ID
-   to cancel the exact provider reservation before rejecting the old-generation result.
+   offer-creating call whose result became stale, the poller preserves its result
+   for the reservation owner to identify and retire the exact offer. Cancellation
+   and ordinary RPC results retain the disconnect fence.
    A new generation may run immediately even if an unabortable old read never
    resolves. Each request revalidates its connection epoch after the shared
    start gate and after adapter completion, so stale work cannot start late or
-   publish a late old-generation result. Read polling fans session delivery out
+   publish a late old-generation result except for that deliberate creation
+   handoff. Read polling fans session delivery out
    with `allSettled`: one session's callback failure does not block healthy
    sessions and does not trigger global adapter backoff. Wallet mutations start
    only after the claimed aggregate is installed; malformed aggregate state

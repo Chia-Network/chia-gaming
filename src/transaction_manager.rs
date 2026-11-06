@@ -818,6 +818,7 @@ pub struct TransactionManager<C> {
 
 impl TransactionManager<GameSession> {
     pub fn restore_runtime(&mut self) {
+        self.submission_book.restore_runtime();
         self.cradle.restore_runtime();
     }
 
@@ -5092,6 +5093,7 @@ mod tests {
         let encoded = bencodex::to_vec(&manager).expect("serialize manager");
         let mut restored: TransactionManager<PersistableMockGameSession> =
             bencodex::from_slice(&encoded).expect("restore manager");
+        restored.submission_book.restore_runtime();
         restored.chain_snapshot_ready();
 
         let replay = restored
@@ -5148,6 +5150,10 @@ mod tests {
             SubmissionFeeIntent::Attach { amount, .. } if amount == &Amount::new(10)
         ));
 
+        // Retry only after the in-flight provider attempt has actually ended.
+        manager
+            .stop_submission_attempt(first.attempt_token)
+            .unwrap();
         manager.chain_snapshot_ready();
         let retry = manager.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(retry.id, first.id);
@@ -5698,6 +5704,7 @@ mod tests {
         let mut restored: TransactionManager<PersistableMockGameSession> =
             bencodex::from_slice(&encoded).unwrap();
 
+        restored.submission_book.restore_runtime();
         restored.chain_snapshot_ready();
         let replay = restored.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(replay.id, original.id);
@@ -5713,6 +5720,50 @@ mod tests {
             .expect("fresh replay attempt");
         assert!(finalized.should_broadcast);
         assert_eq!(finalized.applied_fee, 0);
+    }
+
+    #[test]
+    fn fresh_snapshot_does_not_supersede_live_fee_acquisition() {
+        let input = test_coin(0x7a);
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        manager.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: TransactionSubmission::attach_to(
+                test_bundle("live-fee-acquisition"),
+                None,
+                &input,
+            ),
+            fee_intent: SubmissionFeeIntent::Attach {
+                target: input.to_coin_id(),
+                amount: Amount::new(15),
+                attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+            },
+        });
+        let first = manager.drain_submissions().unwrap().submissions.remove(0);
+
+        // A coherent snapshot while the user is approving the wallet request
+        // must not retire that request and force a second fee approval.
+        let mut allocator = AllocEncoder::new();
+        manager.report_height(&mut allocator, 1).unwrap();
+        manager.chain_snapshot_ready();
+        assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+        manager.request_fee_upgrades();
+        assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+        assert!(manager
+            .submission_fee_intent_for_attempt(first.attempt_token)
+            .unwrap()
+            .is_some());
+
+        // Process loss does abandon the old wallet consumer; restore must still
+        // issue a successor that can reconcile its persisted reservation.
+        let encoded = bencodex::to_vec(&manager).unwrap();
+        let mut restored: TransactionManager<PersistableMockGameSession> =
+            bencodex::from_slice(&encoded).unwrap();
+        restored.submission_book.restore_runtime();
+        restored.chain_snapshot_ready();
+        let resumed = restored.drain_submissions().unwrap().submissions.remove(0);
+        assert_eq!(resumed.id, first.id);
+        assert_ne!(resumed.attempt_token, first.attempt_token);
     }
 
     #[test]

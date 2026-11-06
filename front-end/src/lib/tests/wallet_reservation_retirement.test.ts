@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import type { WalletOfferProvider } from '../../types/ChiaGaming';
+import type { WalletOfferProvider, WalletOfferReconciliationOptions } from '../../types/ChiaGaming';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import type { FeeAttachment } from '../session/feeAttachmentStore';
@@ -178,49 +178,75 @@ describe('wallet reservation retirement', () => {
     expect(cancel).not.toHaveBeenCalled();
   });
 
-  it('retired identified creation uses exact recovery without creating a replacement offer', async () => {
-    const reconcileCreation = jest.fn().mockResolvedValue({
-      kind: 'created-reserved',
-      material: { kind: 'offer', offer: 'offer1' },
-      tradeId: 'identified-trade',
-    });
-    const beginCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
-    const original: WalletOfferProvider = {
-      scope,
-      capability: 'recoverable-after-begin',
-      beginCreation: jest.fn(),
-      reconcileCreation,
-      beginCancellation,
-      reconcileCancellation: jest.fn(),
-    };
-    walletProviderRegistry.attach(original);
-    install([
-      {
-        owner,
-        submissionId: 'pending',
-        stage: 'creating',
-        disposition: 'cancel-on-create',
-        recoveryId: 'exact-request',
-        request: {
-          kind: 'fee',
-          uniqueId: 'pending',
-          fee: 1n,
-          concurrentSpendCoinId: '11'.repeat(32),
+  it.each(['fee', 'funding'])(
+    'retired %s creation observes exact recovery without requesting approval',
+    async (kind) => {
+      const openApproval = jest.fn();
+      const reconcileCreation = jest.fn(
+        (_operation, _request, _recoveryId, options?: WalletOfferReconciliationOptions) => {
+          if (!options || (options.mode === 'delivery' && options.allowApproval())) openApproval();
+          return Promise.resolve({
+            kind: 'created-reserved' as const,
+            material: { kind: 'offer' as const, offer: 'offer1' },
+            tradeId: 'identified-trade',
+          });
         },
-        reason: 'pending',
-      },
-    ]);
-    await storageRepository.clearSession();
-    await flush();
-    expect(reconcileCreation).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      'exact-request',
-    );
-    expect(original.beginCreation).not.toHaveBeenCalled();
-    expect(beginCancellation).toHaveBeenCalledWith('identified-trade');
-    expect(storageRepository.feeAttachments()).toEqual([]);
-  });
+      );
+      const beginCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+      const original: WalletOfferProvider = {
+        scope,
+        capability: 'recoverable-after-begin',
+        beginCreation: jest.fn(),
+        reconcileCreation,
+        beginCancellation,
+        reconcileCancellation: jest.fn(),
+      };
+      walletProviderRegistry.attach(original);
+      install([]);
+      if (kind === 'funding') {
+        storageRepository.replaceChannelFunding([
+          {
+            owner,
+            purpose: { kind: 'funding', operationId: 'pending' },
+            stage: 'creating',
+            disposition: 'cancel-on-create',
+            recoveryId: 'exact-request',
+            request: { kind: 'funding', canonical: { amount: '100', fee: '0', conditions: [] } },
+            reason: 'pending',
+          },
+        ]);
+      } else
+        storageRepository.replaceFeeAttachments([
+          {
+            owner,
+            submissionId: 'pending',
+            stage: 'creating',
+            disposition: 'cancel-on-create',
+            recoveryId: 'exact-request',
+            request: {
+              kind: 'fee',
+              uniqueId: 'pending',
+              fee: 1n,
+              concurrentSpendCoinId: '11'.repeat(32),
+            },
+            reason: 'pending',
+          },
+        ]);
+      await storageRepository.clearSession();
+      await flush();
+      expect(reconcileCreation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'exact-request',
+        { mode: 'observe-only' },
+      );
+      expect(openApproval).not.toHaveBeenCalled();
+      expect(original.beginCreation).not.toHaveBeenCalled();
+      expect(beginCancellation).toHaveBeenCalledWith('identified-trade');
+      expect(storageRepository.feeAttachments()).toEqual([]);
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
+    },
+  );
 
   it.each(['funding', 'fee'] as const)(
     'retired creation cannot cancel a newer %s reservation with a reused ID',

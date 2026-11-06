@@ -118,6 +118,16 @@ impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
 }
 
 impl SubmissionBook {
+    /// A genuine process restore has no surviving host delivery consumers. Keep
+    /// their tokens as predecessors, but let the fresh snapshot reclaim them.
+    pub(super) fn restore_runtime(&mut self) {
+        for submission in &mut self.submitted {
+            if let Some(attempt) = submission.active_attempt.take() {
+                submission.completed_attempt = Some(attempt);
+            }
+        }
+    }
+
     fn validate_restored_state(&self) -> Result<(), String> {
         let mut ids = HashSet::new();
         let mut intent_fingerprints = Vec::new();
@@ -930,12 +940,24 @@ impl SubmissionBook {
         {
             return;
         }
-        let has_active_attempt = self
-            .submitted
-            .iter()
-            .find(|tx| tx.id == id)
-            .and_then(|tx| tx.active_attempt.as_ref())
-            .is_some();
+        let Some(tx) = self.submitted.iter().find(|tx| tx.id == id) else {
+            return;
+        };
+        let has_active_attempt = tx.active_attempt.is_some();
+        // A new chain snapshot or readiness notification does not end an
+        // in-flight wallet approval for this exact fee intent. Real process
+        // restore relinquishes abandoned consumers in restore_runtime instead.
+        if matches!(
+            trigger,
+            DeliveryTrigger::FreshChain | DeliveryTrigger::ProviderReadiness
+        ) && tx.unresolved_fee_intent().is_some()
+            && tx
+                .active_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.finalized_variant_fingerprint.is_none())
+        {
+            return;
+        }
         if has_active_attempt
             && !matches!(
                 trigger,
@@ -946,9 +968,6 @@ impl SubmissionBook {
         {
             return;
         }
-        let Some(tx) = self.submitted.iter().find(|tx| tx.id == id) else {
-            return;
-        };
         if goal == SubmissionDeliveryGoal::FeeUpgrade && tx.unresolved_fee_intent().is_none() {
             return;
         }
