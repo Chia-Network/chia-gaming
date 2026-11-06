@@ -711,6 +711,41 @@ describe('CloudBlockchainInterface fee support', () => {
       expect(second.close).toHaveBeenCalled();
     });
 
+    it('keeps a shared approval window open until its last waiter finishes', async () => {
+      let status = 'PENDING';
+      mockGraphql(() => ({
+        signatureRequest: {
+          id: 'SR_fee',
+          status,
+          transaction: { offer: { bech32: 'offer1abc', offerId: 'Offer_1' } },
+        },
+      }));
+      const popup = {
+        closed: false,
+        close: jest.fn(() => {
+          popup.closed = true;
+        }),
+      };
+      setPopup(popup);
+      const iface = new CloudBlockchainInterface();
+      const first = iface.reconcileWalletOffer(feeOperation, feeRequest, 'SR_fee');
+      await jest.advanceTimersByTimeAsync(700);
+      const second = iface.reconcileWalletOffer(feeOperation, feeRequest, 'SR_fee');
+      await jest.advanceTimersByTimeAsync(100);
+
+      status = 'SUBMITTED';
+      await jest.advanceTimersByTimeAsync(800);
+      await expect(first).resolves.toMatchObject({ kind: 'created-reserved' });
+      expect(popup.close).not.toHaveBeenCalled();
+
+      await jest.advanceTimersByTimeAsync(500);
+      expect(iface.getBlockedApprovals()).toEqual([]);
+      await jest.advanceTimersByTimeAsync(300);
+      await expect(second).resolves.toMatchObject({ kind: 'created-reserved' });
+      expect(iface.getBlockedApprovals()).toEqual([]);
+      expect(popup.close).toHaveBeenCalledTimes(1);
+    });
+
     it('does not prompt again when the wallet closes its own window after approving', async () => {
       const popup = { close: jest.fn(), closed: false };
       setPopup(popup);

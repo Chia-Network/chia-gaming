@@ -137,6 +137,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   private authEpoch = 0;
   private walletOfferProvider: WalletOfferProvider | null = null;
   private readonly approvalsOpenedInBrowser = new Set<string>();
+  // Waiters for one signature request share its named window.
+  private readonly approvalWindowWaiters = new Map<Window, number>();
   private blockedApprovals: readonly BlockedCloudWalletApproval[] = [];
   private readonly blockedApprovalListeners = new Set<() => void>();
   private refusedCancellations: readonly RefusedCloudCancellation[] = [];
@@ -447,6 +449,24 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     return true;
   }
 
+  private claimApprovalWindow(popup: Window): void {
+    this.approvalWindowWaiters.set(popup, (this.approvalWindowWaiters.get(popup) ?? 0) + 1);
+  }
+
+  private releaseApprovalWindow(popup: Window): void {
+    const remaining = (this.approvalWindowWaiters.get(popup) ?? 1) - 1;
+    if (remaining > 0) {
+      this.approvalWindowWaiters.set(popup, remaining);
+      return;
+    }
+    this.approvalWindowWaiters.delete(popup);
+    try {
+      popup.close();
+    } catch {
+      // ignore
+    }
+  }
+
   private waitForSignatureApproval(
     signatureRequestId: string,
     source: string,
@@ -548,12 +568,14 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       const attach = (popup: Window) => {
         clearTimeout(blockedTimer);
         openPopup = popup;
+        this.claimApprovalWindow(popup);
         const approval = this.waitForSignatureApproval(signatureRequestId, source, popup);
         disposeApproval = approval.dispose;
         closedWatch = setInterval(() => {
           if (!popup.closed) return;
           clearInterval(closedWatch);
           approval.dispose();
+          this.releaseApprovalWindow(popup);
           openPopup = null;
           promptToOpen('closed');
         }, POPUP_CLOSED_POLL_MS);
@@ -603,11 +625,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           this.blockedApprovals.filter((entry) => entry !== blockedApproval),
         );
       }
-      try {
-        (openPopup as Window | null)?.close();
-      } catch {
-        // ignore
-      }
+      const popup = openPopup as Window | null;
+      if (popup) this.releaseApprovalWindow(popup);
     }
   }
 
