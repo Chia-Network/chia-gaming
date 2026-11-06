@@ -676,6 +676,14 @@ orphan evidence and cannot synthesize a cancellation ID. An attached fee
 source remains retained while Rust may replay its current exact variant;
 wallet acknowledgement does not retire it, and Rust submission retirement
 moves its exact `providerReservationId` through typed cancellation before removal.
+Active fee creation and recovery run only when `SubmissionPump` reserves a fee
+for a Rust-issued live submission. Restore and provider readiness drain cleanup
+obligations without acquiring active fees. Creation and reconciliation share one
+flight per submission, and return material directly to that requesting attempt;
+there is no independently recovered material cache to hand to a later attempt.
+Retiring an identified creation immediately reconciles its existing request for
+cleanup. Retiring pre-ID uncertainty preserves orphan evidence without creating
+a replacement offer solely to cancel it.
 `FeeAttachmentRuntime` applies one rule to a dead consumer: once the offer is
 identified, its durable entry becomes `cancel-required`, and only a completed
 cancellation removes it. An offer that replay has attached stays retained,
@@ -1573,9 +1581,11 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   WalletConnect is best-effort throughout because it lacks end-to-end create
   idempotency and response-loss reconciliation. For either pre-ID Cloud
   uncertainty or WalletConnect uncertainty, `WalletProviderRegistry` readiness
-  epochs launch exactly one automatic new attempt per later reconnect,
-  including after reload. There is no timer or immediate retry loop. A lost
-  successful response may orphan an offer or signature request, so the UI and
+  epochs permit one new attempt per later reconnect, including after reload.
+  Active fee replacements additionally require a live Rust submission request;
+  wallet readiness alone cannot create a fee offer. There is no timer or
+  immediate retry loop. A lost successful response may orphan an offer or
+  signature request, so the UI and
   diagnostics retain an explicit orphan-risk warning even if a later attempt is
   accepted.
 

@@ -414,6 +414,14 @@ describe('Shell production restore composition', () => {
         await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
 
+      expect(storageRepository.getPlayerId()).toBe(save.identity.playerId);
+      expect(jest.mocked(sessionHost.createSessionController).mock.calls.at(-1)?.[2]).toBe(
+        save.identity.playerId,
+      );
+      expect(jest.mocked(realBlockchainInfo.beginConnect).mock.calls.at(-1)?.[0]).toBe(
+        save.identity.playerId,
+      );
+
       if (!restored) {
         jest.useFakeTimers();
         act(() => {

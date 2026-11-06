@@ -43,10 +43,6 @@ const processKnownUncertainty = new WeakMap<WalletProviderRegistry, Set<string>>
 
 export class FeeAttachmentRuntime {
   private readonly flights = new Map<string, ProviderFlight>();
-  private readonly completed = new Map<
-    string,
-    Extract<WalletOfferCompletion, { kind: 'created-reserved' }>
-  >();
   private readonly restoredUncertain = new Set<string>();
   private readonly knownUncertain: Set<string>;
   private readonly unsubscribe: (() => void)[];
@@ -70,7 +66,6 @@ export class FeeAttachmentRuntime {
         } else {
           this.authorityRetired = true;
           this.detached = true;
-          this.completed.clear();
           this.restoredUncertain.clear();
           this.knownUncertain.clear();
           if (event === 'hard-reset') {
@@ -112,8 +107,6 @@ export class FeeAttachmentRuntime {
       return { kind: 'unavailable', reason: 'Fee runtime lost storage authority' };
     }
     const consumerDead = () => this.authorityRetired || this.ports.isRetired() || isInactive();
-    const completed = this.takeCompleted(owner, submissionId, consumerDead);
-    if (completed) return completed;
     storageRepository.ensureWalletContext(owner.providerScope);
     const provider = this.providers.provider(owner.providerScope);
     if (!provider) {
@@ -121,9 +114,11 @@ export class FeeAttachmentRuntime {
     }
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (current?.stage === 'best-effort-uncertain') {
-      await this.flights.get(`replace:${submissionId}`)?.promise;
+      if (current.disposition === 'cancel-on-create') {
+        return { kind: 'unavailable', reason: 'An earlier fee offer is still being retired' };
+      }
       return (
-        this.takeCompleted(owner, submissionId, consumerDead) ?? {
+        (await this.replaceUncertain(current, consumerDead)) ?? {
           kind: 'unavailable',
           reason: 'Fee replacement waits for wallet readiness',
         }
@@ -154,7 +149,9 @@ export class FeeAttachmentRuntime {
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (!current) return;
     if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
-      this.replace(current, { ...current, disposition: 'cancel-on-create' });
+      const retiring = { ...current, disposition: 'cancel-on-create' } as const;
+      this.replace(current, retiring);
+      if (retiring.stage === 'creating') this.recover(retiring);
       return;
     }
     const next =
@@ -309,23 +306,6 @@ export class FeeAttachmentRuntime {
     return outcome;
   }
 
-  private takeCompleted(
-    owner: FeeAttachmentOwner,
-    submissionId: string,
-    consumerDead: () => boolean,
-  ): WalletOfferCompletion | null {
-    const completed = this.completed.get(submissionId);
-    if (!completed) return null;
-    this.completed.delete(submissionId);
-    const latest = feeAttachmentForSubmission(this.entries(), owner, submissionId);
-    if (latest && isRetiringFeeAttachment(latest)) {
-      return { kind: 'unavailable', reason: 'An earlier fee offer is still being retired' };
-    }
-    if (!consumerDead()) return completed;
-    this.settleDeadCreation(owner, submissionId, completed);
-    return { kind: 'unavailable', reason: 'Fee consumer retired during wallet creation' };
-  }
-
   /**
    * The one dead-consumer transition. Only a completed cancellation removes an identified offer,
    * so a refused or interrupted cancel still has its record to retry from.
@@ -394,10 +374,11 @@ export class FeeAttachmentRuntime {
 
   private resume(): void {
     if (this.authorityRetired) return;
+    // Only Rust-issued submission demand may acquire an active fee. Background work retires offers.
     for (const entry of this.entries()) {
-      if (entry.stage === 'creating') this.recover(entry);
-      else if (entry.stage === 'best-effort-uncertain') this.replaceUncertain(entry);
-      else if (
+      if (entry.stage === 'creating' && entry.disposition === 'cancel-on-create') {
+        this.recover(entry);
+      } else if (
         entry.stage === 'cancel-required' ||
         entry.stage === 'cancelling' ||
         entry.stage === 'best-effort-cancellation-uncertain'
@@ -411,52 +392,41 @@ export class FeeAttachmentRuntime {
     if (this.authorityRetired) return;
     const provider = this.providers.provider(entry.owner.providerScope);
     if (!provider || !isRecoverableProvider(provider)) return;
-    void this.flight(`recover:${entry.submissionId}`, async () => {
-      const consumerDead = () =>
-        this.authorityRetired ||
-        this.ports.isRetired() ||
-        this.recoveredConsumerDead(entry.owner, entry.submissionId);
-      const outcome = await this.create(
+    void this.flight(`create:${entry.submissionId}`, () =>
+      this.create(
         provider,
         entry.owner,
         entry.submissionId,
         entry.request,
-        consumerDead,
+        () => this.recoveredConsumerDead(entry.owner, entry.submissionId),
         false,
-      );
-      if (outcome.kind === 'created-reserved' && !consumerDead()) {
-        this.completed.set(entry.submissionId, outcome);
-      }
-    });
+      ),
+    );
   }
 
-  private replaceUncertain(entry: FeeAttachmentUncertain): void {
-    if (this.authorityRetired) return;
+  private replaceUncertain(
+    entry: FeeAttachmentUncertain,
+    isInactive: () => boolean,
+  ): Promise<WalletOfferCompletion> | null {
+    if (this.authorityRetired) return null;
     const provider = this.providers.provider(entry.owner.providerScope);
     const epoch = BigInt(this.providers.readinessEpoch(entry.owner.providerScope));
     const key = feeAttachmentEntryKey(entry);
     const restored = this.restoredUncertain.has(key);
-    if (!provider || !canLosePreIdResponse(provider) || epoch === 0n) return;
-    if (!restored && epoch <= entry.lastAttemptEpoch) return;
+    if (!provider || !canLosePreIdResponse(provider) || epoch === 0n) return null;
+    if (!restored && epoch <= entry.lastAttemptEpoch) return null;
     this.restoredUncertain.delete(key);
     this.replace(entry, { ...entry, lastAttemptEpoch: epoch });
-    void this.flight(`replace:${entry.submissionId}`, async () => {
-      const consumerDead = () =>
-        this.authorityRetired ||
-        this.ports.isRetired() ||
-        this.recoveredConsumerDead(entry.owner, entry.submissionId);
-      const outcome = await this.create(
+    return this.flight(`create:${entry.submissionId}`, () =>
+      this.create(
         provider,
         entry.owner,
         entry.submissionId,
         entry.request,
-        consumerDead,
+        () => isInactive() || this.recoveredConsumerDead(entry.owner, entry.submissionId),
         true,
-      );
-      if (outcome.kind === 'created-reserved' && !consumerDead()) {
-        this.completed.set(entry.submissionId, outcome);
-      }
-    });
+      ),
+    );
   }
 
   private scheduleCancellation(id: string): Promise<void> {
@@ -541,9 +511,9 @@ export class FeeAttachmentRuntime {
     const scope = providerScopeKey(event.provider.scope);
     for (const entry of this.entries()) {
       if (providerScopeKey(entry.owner.providerScope) !== scope) continue;
-      if (entry.stage === 'creating') this.recover(entry);
-      else if (entry.stage === 'best-effort-uncertain') this.replaceUncertain(entry);
-      else if (
+      if (entry.stage === 'creating' && entry.disposition === 'cancel-on-create') {
+        this.recover(entry);
+      } else if (
         entry.stage === 'cancel-required' ||
         entry.stage === 'cancelling' ||
         entry.stage === 'best-effort-cancellation-uncertain'
@@ -638,7 +608,6 @@ export class FeeAttachmentRuntime {
   private maybeDispose(): void {
     if (!this.detached || this.flights.size) return;
     this.unsubscribe.splice(0).forEach((unsubscribe) => unsubscribe());
-    this.completed.clear();
     this.restoredUncertain.clear();
   }
 }

@@ -40,6 +40,40 @@ describe('flat state', () => {
     expect(storageRepository.getPlayerId()).toBe(id);
   });
 
+  it('keeps the saved player ID when startup reads identity before claiming storage', async () => {
+    const savedPlayerId = storageRepository.getPlayerId();
+    await saveLiveFields({ ...sampleSession, playerId: savedPlayerId });
+    const owner = {
+      installationPlayerId: savedPlayerId,
+      peerSessionId: 'saved-session',
+      providerScope: { provider: 'simulator' as const, identity: savedPlayerId },
+    };
+    storageRepository.replaceFeeAttachments([
+      {
+        owner,
+        submissionId: 'retained-submission',
+        providerReservationId: 'retained-fee',
+        stage: 'retained-for-replay',
+        reason: 'saved-fee-for-replay',
+      },
+    ]);
+    await storageRepository.checkpointDomainMutations();
+
+    for (let reload = 0; reload < 2; reload++) {
+      storageRepository._resetForTests();
+      expect(storageRepository.getPlayerId()).not.toBe(savedPlayerId);
+      await storageRepository.updatePreference({ key: 'alias', value: 'Before claim' });
+      const claimed = await storageRepository.claimApplicationState();
+      expect(claimed.identity.playerId).toBe(savedPlayerId);
+      expect(storageRepository.getPlayerId()).toBe(savedPlayerId);
+      expect(claimed.feeAttachments[0]?.owner).toEqual(owner);
+      expect(claimed.feeAttachments[0]?.stage).toBe('retained-for-replay');
+      expect(claimed.preferences.alias).toBe('Before claim');
+      await storageRepository.checkpointDomainMutations();
+      expect((await readApplicationState())?.identity.playerId).toBe(savedPlayerId);
+    }
+  });
+
   it('getSessionId generates and persists a session ID', () => {
     const id = storageRepository.getSessionId();
     expect(id).toBeTruthy();

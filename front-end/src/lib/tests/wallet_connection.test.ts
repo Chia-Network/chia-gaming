@@ -36,7 +36,7 @@ it('establishes simulator polling after an unavailable resume', async () => {
   jest.spyOn(fakeBlockchainInfo, 'isConnected').mockReturnValue(false);
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   const detached = jest.fn(() => expect(wallet.sessionAccess()).toBeNull());
-  const wallet = new WalletConnection('player', (event) => {
+  const wallet = new WalletConnection((event) => {
     if (event.type === 'detaching') detached();
   });
   try {
@@ -49,6 +49,28 @@ it('establishes simulator polling after an unavailable resume', async () => {
   wallet.stopLocalActivity();
   expect(detached).toHaveBeenCalledTimes(1);
 });
+
+it.each(['connect', 'resume'] as const)(
+  'uses claimed identity for %s when the wallet owner was constructed before reload recovery',
+  async (method) => {
+    const playerId = storageRepository.getPlayerId();
+    await storageRepository.checkpointDomainMutations();
+    storageRepository._resetForTests();
+    const wallet = new WalletConnection(jest.fn());
+    expect(storageRepository.getPlayerId()).not.toBe(playerId);
+    await storageRepository.claimApplicationState();
+    const begin = jest.spyOn(realBlockchainInfo, 'beginConnect').mockResolvedValue({
+      qrUri: 'wc:restored',
+      finalize: jest.fn(),
+    });
+    try {
+      await wallet[method]('walletconnect');
+      expect(begin.mock.calls[0]?.[0]).toBe(playerId);
+    } finally {
+      wallet.stopLocalActivity();
+    }
+  },
+);
 
 it('keeps publishing policy in its owning application', async () => {
   const first = createApplication();
@@ -76,7 +98,7 @@ it.each([false, true])(
     jest.spyOn(realBlockchainInfo, 'onConnectionChange').mockReturnValue(() => {});
     jest.spyOn(realBlockchainInfo, 'onPlayReadinessChange').mockReturnValue(() => {});
     const emit = jest.fn();
-    const wallet = new WalletConnection('player', emit);
+    const wallet = new WalletConnection(emit);
     try {
       let pending = wallet.connect('walletconnect', silent);
       await Promise.resolve();
@@ -117,7 +139,7 @@ it('ignores an old pairing callback after cancellation and a new attempt', async
     .mockReturnValueOnce(next.promise);
   jest.spyOn(realBlockchainInfo, 'disconnect').mockResolvedValue();
   const emit = jest.fn();
-  const wallet = new WalletConnection('player', emit);
+  const wallet = new WalletConnection(emit);
   try {
     const old = wallet.connect('walletconnect');
     await Promise.resolve();
@@ -173,7 +195,7 @@ describe.each([
       };
       jest.spyOn(provider, 'beginConnect').mockReturnValue(begin.promise);
       const emit = jest.fn();
-      const wallet = new WalletConnection('player', emit);
+      const wallet = new WalletConnection(emit);
       try {
         const pending = method === 'connect' ? wallet.connect(type, true) : wallet.resume(type);
         if (stage === 'finalize') {
@@ -219,7 +241,7 @@ describe.each([
         .mockReturnValueOnce(old.promise)
         .mockReturnValueOnce(current.promise);
       const emit = jest.fn();
-      const wallet = new WalletConnection('player', emit);
+      const wallet = new WalletConnection(emit);
       try {
         const first = wallet.resume(type);
         await wallet.cancel();
@@ -248,7 +270,7 @@ it('does not let a canceled form submission clear the next attempt’s connectin
     .mockResolvedValueOnce({ qrUri: 'sim://player', fields: {}, finalize: () => finish.promise })
     .mockReturnValueOnce(next.promise);
   jest.spyOn(fakeBlockchainInfo, 'disconnect').mockResolvedValue();
-  const wallet = new WalletConnection('player', jest.fn());
+  const wallet = new WalletConnection(jest.fn());
   try {
     await wallet.connect('simulator');
     const first = wallet.finalize();
@@ -276,7 +298,7 @@ it.each(['cancel', 'disconnect'] as const)(
       finalize: jest.fn(),
     });
     const emit = jest.fn();
-    const wallet = new WalletConnection('player', emit);
+    const wallet = new WalletConnection(emit);
     try {
       await wallet.resume('simulator');
       const stopping = wallet[method]();
@@ -303,7 +325,7 @@ it('retiring the connection owner prevents a pending resume from attaching', asy
   const begin = deferred<ConnectionSetup>();
   jest.spyOn(fakeBlockchainInfo, 'beginConnect').mockReturnValue(begin.promise);
   const emit = jest.fn();
-  const wallet = new WalletConnection('player', emit);
+  const wallet = new WalletConnection(emit);
   try {
     const pending = wallet.resume('simulator');
     wallet.stopLocalActivity();
@@ -328,10 +350,10 @@ it('connects Sage through the wallet owner and publishes the selected provider',
   jest.spyOn(sageBlockchainInfo, 'getBalance').mockReturnValue(new Promise(() => {}));
   jest.spyOn(sageBlockchainInfo, 'onConnectionChange').mockReturnValue(() => {});
   jest.spyOn(sageBlockchainInfo, 'onPlayReadinessChange').mockReturnValue(() => {});
-  const wallet = new WalletConnection('player', jest.fn());
+  const wallet = new WalletConnection(jest.fn());
   try {
     await expect(wallet.connect('sage', false, true)).resolves.toBe(true);
-    expect(begin).toHaveBeenCalledWith('player', true);
+    expect(begin).toHaveBeenCalledWith(storageRepository.getPlayerId(), true);
     expect(finalize).toHaveBeenCalledTimes(1);
     expect(wallet.view).toMatchObject({ walletType: 'sage', connected: true, hasProvider: true });
     expect(storageRepository.query('blockchainType')).toBe('sage');
