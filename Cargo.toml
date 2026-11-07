@@ -30,7 +30,9 @@ chia-bls = "=0.52.1"
 chia-consensus = "=0.52.1"
 chia-protocol = "=0.52.1"
 chia-puzzles = "=0.20.3"
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "286a343940b50bc6b2d2f8488c53f069c9cff2c8" }
+# Includes the current compiler/metadata fixes before the clvmr 0.22 release bump.
+# RuntimePrintDialect must share clvmr with the Chia runtime dependencies.
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "5c9101874f5a78d3c5dc82d95f4bff4eb45c305d" }
 clvm-traits = "=0.52.1"
 clvm-utils = "=0.52.1"
 clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498", features = ["pre-eval"] }
@@ -56,7 +58,7 @@ getrandom = { version = "=0.4.3", features = ["std"] }
 rand_chacha = "=0.9.0"
 serde = { version = "=1.0.228", features = ["alloc", "rc"] }
 serde_core = "=1.0.228"
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "286a343940b50bc6b2d2f8488c53f069c9cff2c8" }
+chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "5c9101874f5a78d3c5dc82d95f4bff4eb45c305d" }
 clvm-utils = "=0.52.1"
 clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498", features = ["pre-eval"] }
 hex = "=0.4.3"
