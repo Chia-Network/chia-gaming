@@ -1,4 +1,5 @@
 //! std.pack is usable without std.shapes and has no annotation vocabulary.
+use chialisp::classic::clvm::sexp::sexp_as_bin;
 use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
 use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
 use chialisp::classic::platform::argparse::ArgumentValue;
@@ -52,7 +53,8 @@ fn compile_with_library(body: &str, library: &str) -> Vec<u8> {
             .clone(),
     };
     let node = chialisp::compiler::clvm::convert_to_clvm_rs(&mut allocator, program).unwrap();
-    clvmr::serde::node_to_bytes(&allocator, node).unwrap()
+    // Serialized CLVM crosses from the compiler into the runtime allocator.
+    sexp_as_bin(&mut allocator, node).raw()
 }
 
 fn evaluate(program: &[u8], values: &[i32; 7]) -> (u64, String) {
