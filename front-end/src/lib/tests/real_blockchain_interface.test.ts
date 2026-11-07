@@ -819,16 +819,19 @@ describe('RealBlockchainInterface', () => {
       names: [opaqueErrorName],
       includeSpentCoins: true,
       allowUnsynced: true,
+      allowMissing: true,
     });
     expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(2, {
       names: [daemonErrorName],
       includeSpentCoins: true,
       allowUnsynced: true,
+      allowMissing: true,
     });
     expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(3, {
       names: [presentName],
       includeSpentCoins: true,
       allowUnsynced: true,
+      allowMissing: true,
     });
     expect(logLines.some((line) => line.includes('getCoinRecordsByNames error'))).toBe(false);
   });

@@ -828,6 +828,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           names: [name],
           includeSpentCoins: true,
           allowUnsynced: true,
+          allowMissing: true,
         });
         if ((resp as any)?.error) {
           const cached = this.coinRecordCache.get(name);
