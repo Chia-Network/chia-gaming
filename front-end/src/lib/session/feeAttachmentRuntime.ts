@@ -205,13 +205,22 @@ export class FeeAttachmentRuntime {
       (!entryEstablished || findEntry() !== null);
     const consumerDead = () =>
       this.authorityRetired || this.ports.isRetired() || isInactive() || !canPersist();
+    let recoveryId = !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
     const discardRetiredCreation = (result: WalletOfferBeginOutcome) => {
-      if (result.kind === 'created-reserved' && findEntry()?.stage !== 'retained-for-replay') {
-        this.cancelLateReservation(provider, result.tradeId, submissionId);
-      }
+      if (result.kind !== 'created-reserved') return;
+      const latest = findEntry();
+      // Detach leaves checkpointed requests and reservations with the next owner.
+      if (
+        latest &&
+        (storageRepository.hasAuthority() || latest.stage === 'retained-for-replay') &&
+        (latest.stage === 'creating'
+          ? latest.disposition === 'active' && latest.recoveryId === recoveryId
+          : latest.stage !== 'best-effort-uncertain' &&
+            latest.providerReservationId === result.tradeId)
+      )
+        return;
+      this.cancelLateReservation(provider, result.tradeId, submissionId);
     };
-    const recoveryId =
-      !replacement && current?.stage === 'creating' ? current.recoveryId : undefined;
     const operation = { owner, purpose: { kind: 'fee' as const, operationId: submissionId } };
     const reconciliation: WalletOfferReconciliationOptions = {
       mode: 'delivery',
@@ -357,13 +366,14 @@ export class FeeAttachmentRuntime {
         ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
       });
       entryEstablished = true;
+      recoveryId = pendingRecoveryId;
       outcome = await advance(pendingRecoveryId);
       if (outcome === null) return notInvoked();
       if (outcome.kind === 'pending') throw new Error('Fee reconciliation remained pending');
     }
     if (!storageRepository.isGenerationCurrent(generation)) {
       if (outcome.kind === 'created-reserved' && hardResetEpoch === this.hardResetEpoch) {
-        this.cancelLateReservation(provider, outcome.tradeId, submissionId);
+        discardRetiredCreation(outcome);
       }
       return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
     }
@@ -400,7 +410,7 @@ export class FeeAttachmentRuntime {
         error instanceof StorageAuthorityRequiredError
       ) {
         if (hardResetEpoch === this.hardResetEpoch) {
-          this.cancelLateReservation(provider, outcome.tradeId, submissionId);
+          discardRetiredCreation(outcome);
         }
         return { kind: 'unavailable', reason: 'Storage authority changed during fee creation' };
       }
@@ -446,10 +456,10 @@ export class FeeAttachmentRuntime {
           ? latest.providerReservationId
           : null;
     if (tradeId === null) {
-      if (latest?.stage === 'creating' && outcome.kind !== 'failure') {
+      if (unidentified && outcome.kind !== 'failure') {
         const retiring = { ...latest, disposition: 'cancel-on-create' } as const;
         this.replace(latest, retiring);
-        if (mode === 'delivery') this.recover(retiring);
+        if (mode === 'delivery' && retiring.stage === 'creating') this.recover(retiring);
       } else if (latest) {
         this.replace(latest, null);
       }

@@ -1548,6 +1548,61 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       runtime.detach();
     });
 
+    it.each(['retired', 'inactive'] as const)(
+      'preserves uncertainty when a replacement consumer becomes %s during its checkpoint',
+      async (ending) => {
+        const uncertain: FeeAttachment = {
+          owner,
+          submissionId: 'fee',
+          stage: 'best-effort-uncertain',
+          disposition: 'active',
+          request,
+          lastAttemptEpoch: 0n,
+          reason: 'response-lost',
+          orphanRisk: 'pre-id-response-lost',
+        };
+        install([uncertain]);
+        const provider = wallet();
+        const { providers, runtime } = attach(provider);
+        const gate = deferred<void>();
+        let entered = false;
+        let inactive = false;
+        const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+        const checkpoint = jest
+          .spyOn(storageRepository, 'checkpointDomainMutations')
+          .mockImplementationOnce(async () => {
+            entered = true;
+            await gate.promise;
+            await realCheckpoint();
+          });
+        try {
+          const reservation = runtime.reserve(owner, 'fee', request, () => inactive);
+          await waitFor(() => entered);
+          if (ending === 'retired') runtime.retire(owner, 'fee');
+          else inactive = true;
+          gate.resolve();
+          await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+          await runtime.awaitIdle();
+          expect(provider.beginCreation).not.toHaveBeenCalled();
+          expect(storageRepository.feeAttachments()).toEqual([
+            { ...uncertain, disposition: 'cancel-on-create', lastAttemptEpoch: 1n },
+          ]);
+
+          providers.reconnectReady(provider);
+          await expect(runtime.reserve(owner, 'fee', request, () => false)).resolves.toEqual({
+            kind: 'unavailable',
+            reason: 'An earlier fee offer is still being retired',
+          });
+          await runtime.awaitIdle();
+          expect(provider.beginCreation).not.toHaveBeenCalled();
+        } finally {
+          gate.resolve();
+          checkpoint.mockRestore();
+          runtime.detach();
+        }
+      },
+    );
+
     it('leaves restored active creation untouched until a live submission requests it', async () => {
       install([{ ...restoredCreation, disposition: 'active' }]);
       const reconcile = deferred<typeof created>();
@@ -1572,6 +1627,159 @@ describe('FeeAttachmentRuntime lifecycle', () => {
         expect.objectContaining({ stage: 'retained-for-replay' }),
       ]);
       runtime.detach();
+    });
+
+    it.each(['after-reply', 'before-reply', 'retained-before-reply'] as const)(
+      'preserves a detached reconciliation when replacement claims %s',
+      async (timing) => {
+        storageRepository._replaceApplicationStateForTests({
+          ...storageRepository.loadState(),
+          session: activeSave().session,
+        });
+        const delivery = deferred<typeof created>();
+        const provider = wallet();
+        provider.reconcileCreation.mockReturnValueOnce(delivery.promise);
+        const { providers, runtime } = attach(provider);
+        let replacement: FeeAttachmentRuntime | undefined;
+        try {
+          const reservation = runtime.reserve(owner, 'fee', request, () => false);
+          await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+          const saved = await readApplicationState();
+          expect(saved?.feeAttachments).toEqual([{ ...restoredCreation, disposition: 'active' }]);
+
+          runtime.detach();
+          if (timing !== 'after-reply') {
+            await storageRepository.claimApplicationState();
+            replacement = new FeeAttachmentRuntime(ports(), providers);
+            if (timing === 'retained-before-reply') {
+              await expect(
+                replacement.reserve(owner, 'fee', request, () => false),
+              ).resolves.toEqual(created);
+              replacement.retain(owner, 'fee');
+            }
+          }
+          delivery.resolve(created);
+          await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+          await runtime.awaitIdle();
+          expect(provider.beginCancellation).not.toHaveBeenCalled();
+          if (timing !== 'retained-before-reply')
+            expect(storageRepository.feeAttachments()).toEqual(saved?.feeAttachments);
+
+          if (!replacement) {
+            await storageRepository.claimApplicationState();
+            replacement = new FeeAttachmentRuntime(ports(), providers);
+          }
+          if (timing !== 'retained-before-reply') {
+            await expect(replacement.reserve(owner, 'fee', request, () => false)).resolves.toEqual(
+              created,
+            );
+            replacement.retain(owner, 'fee');
+          }
+          await replacement.awaitIdle();
+          expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+          expect(provider.reconcileCreation).toHaveBeenCalledTimes(2);
+          expect(provider.reconcileCreation).toHaveBeenLastCalledWith(
+            expect.anything(),
+            request,
+            'fee-request',
+            expect.objectContaining({ mode: 'delivery' }),
+          );
+          expect(provider.beginCancellation).not.toHaveBeenCalled();
+          expect(storageRepository.feeAttachments()).toEqual([
+            expect.objectContaining({
+              stage: 'retained-for-replay',
+              providerReservationId: created.tradeId,
+            }),
+          ]);
+        } finally {
+          delivery.resolve(created);
+          runtime.detach();
+          replacement?.detach();
+        }
+      },
+    );
+
+    it.each(['other-recovery', 'other-trade'] as const)(
+      'does not let an unrelated %s protect a detached late offer from cleanup',
+      async (replacement) => {
+        install([{ ...restoredCreation, disposition: 'active' }]);
+        const delivery = deferred<typeof created>();
+        const provider = wallet();
+        provider.reconcileCreation.mockReturnValueOnce(delivery.promise);
+        const { runtime } = attach(provider);
+        const reservation = runtime.reserve(owner, 'fee', request, () => false);
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+        runtime.detach();
+        const next: FeeAttachment =
+          replacement === 'other-recovery'
+            ? { ...restoredCreation, disposition: 'active', recoveryId: 'other-request' }
+            : {
+                owner,
+                submissionId: 'fee',
+                stage: 'retained-for-replay',
+                providerReservationId: 'other-trade',
+                reason: 'attached',
+              };
+        install([next]);
+        delivery.resolve(created);
+        await reservation;
+        await runtime.awaitIdle();
+        await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
+        expect(provider.beginCancellation).toHaveBeenCalledWith(created.tradeId);
+        expect(storageRepository.feeAttachments()).toEqual([next]);
+      },
+    );
+
+    it('leaves an installed reservation to restore cleanup when detach wins its checkpoint', async () => {
+      storageRepository._replaceApplicationStateForTests({
+        ...storageRepository.loadState(),
+        session: activeSave().session,
+      });
+      const provider = wallet();
+      const { providers, runtime } = attach(provider);
+      const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+      const gate = deferred<void>();
+      let checkpointed = false;
+      const checkpoint = jest
+        .spyOn(storageRepository, 'checkpointDomainMutations')
+        .mockImplementation(async () => {
+          await realCheckpoint();
+          if (!checkpointed && storageRepository.feeAttachments()[0]?.stage === 'reserved') {
+            checkpointed = true;
+            await gate.promise;
+          }
+        });
+      let replacement: FeeAttachmentRuntime | undefined;
+      try {
+        const reservation = runtime.reserve(owner, 'fee', request, () => false);
+        await waitFor(() => checkpointed);
+        expect((await readApplicationState())?.feeAttachments).toEqual([
+          expect.objectContaining({ stage: 'reserved', providerReservationId: created.tradeId }),
+        ]);
+        runtime.detach();
+        gate.resolve();
+        await expect(reservation).resolves.toMatchObject({ kind: 'unavailable' });
+        await runtime.awaitIdle();
+        expect(provider.beginCancellation).not.toHaveBeenCalled();
+
+        await storageRepository.claimApplicationState();
+        expect(storageRepository.feeAttachments()).toEqual([
+          expect.objectContaining({
+            stage: 'cancel-required',
+            providerReservationId: created.tradeId,
+          }),
+        ]);
+        replacement = new FeeAttachmentRuntime(ports(), providers);
+        await replacement.awaitIdle();
+        expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+        expect(provider.beginCancellation).toHaveBeenCalledWith(created.tradeId);
+        expect(storageRepository.feeAttachments()).toEqual([]);
+      } finally {
+        gate.resolve();
+        checkpoint.mockRestore();
+        runtime.detach();
+        replacement?.detach();
+      }
     });
 
     it('preserves a checkpointed active request across detach for the next live consumer', async () => {
