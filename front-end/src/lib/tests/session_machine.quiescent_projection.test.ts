@@ -1,9 +1,11 @@
+import { configureSessionExecution } from './session_execution.harness';
 import { Program } from 'clvm-lib';
-import type { SessionController } from '../../hooks/SessionController';
+import type { SessionController } from '../session/SessionController';
 import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import { storageRepository } from '../session/storageRepository';
+import { observeSessionProjection } from './session_frontend.harness';
 import { baseSave } from './session_save_envelope.fixtures';
 
 const proposal = {
@@ -19,13 +21,13 @@ const proposal = {
 
 function controller(acceptProposal: (id: string) => void): SessionController {
   return {
+    getCoinsOfInterest: () => [],
+    isChannelReady: () => true,
     acceptProposal,
-    commitSessionRuntime: jest.fn(),
     flushDeferredWork: jest.fn(),
     prepareReliableCommit: jest.fn(() => ({
       generation: 0,
-      outboundCount: 0,
-      ackCount: 0,
+      outboundMsgno: 0n,
       remoteNumber: 0n,
     })),
     completeReliableCommit: jest.fn(),
@@ -44,11 +46,40 @@ function initialState() {
   );
 }
 
-describe('SessionMachineRuntime quiescent projection', () => {
+describe('SessionController quiescent projection', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it('delivers readiness synchronously and preserves event order under observer reentry', () => {
+    const runtime = configureSessionExecution(initialState(), {
+      controller: controller(() => {}),
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'idle',
+      getRestoreError: () => null,
+      onError: (error) => {
+        throw error;
+      },
+      persist: async () => {},
+    });
+    const seen: string[] = [];
+    runtime.frontend.subscribe((event) => {
+      seen.push('first:' + event.type);
+      if (event.type === 'readiness') runtime.publishFrontend({ type: 'terminal-retry' });
+    });
+    runtime.frontend.subscribe((event) => seen.push('second:' + event.type));
+    runtime.publishReadiness(false);
+    expect(runtime.frontend.game.isChannelReady()).toBe(false);
+    expect(runtime.frontend.snapshot().channelReady).toBe(false);
+    expect(seen).toEqual([
+      'first:readiness',
+      'second:readiness',
+      'first:terminal-retry',
+      'second:terminal-retry',
+    ]);
   });
 
   it('coalesces reentrant local-potato acceptance into one accepted render', async () => {
@@ -57,7 +88,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     const mockController = controller(() => {
       notificationPending = true;
     });
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -93,12 +124,12 @@ describe('SessionMachineRuntime quiescent projection', () => {
         });
       }
     });
-    const rendered: ReturnType<typeof initialState>[] = [];
-    runtime.setRender((state) => rendered.push(state));
+    const rendered: import('../session/sessionFrontend').SessionPresentation[] = [];
+    observeSessionProjection(runtime, (state) => rendered.push(state));
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
     expect(rendered).toEqual([]);
-    await runtime.persist();
+    await runtime.flush();
 
     expect(rendered).toHaveLength(1);
     expect(persist).toHaveBeenCalledTimes(1);
@@ -107,7 +138,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
   });
 
   it('renders accepting when acceptance remains genuinely queued', async () => {
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: controller(jest.fn()),
       iStarted: false,
       restoring: false,
@@ -120,11 +151,11 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    const rendered: ReturnType<typeof initialState>[] = [];
-    runtime.setRender((state) => rendered.push(state));
+    const rendered: import('../session/sessionFrontend').SessionPresentation[] = [];
+    observeSessionProjection(runtime, (state) => rendered.push(state));
 
     runtime.dispatch({ type: 'accept-review', id: '7' });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(rendered).toHaveLength(1);
     expect(rendered[0].model.betweenHand.pendingProposals[0]?.lifecycle).toBe('peer-accept-queued');
@@ -132,7 +163,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
   });
 
   it('cancels a scheduled projection during teardown', () => {
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: controller(jest.fn()),
       iStarted: false,
       restoring: false,
@@ -146,9 +177,9 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.activate();
     runtime.activatePersistence();
     const render = jest.fn();
-    runtime.setRender(render);
+    const detachView = observeSessionProjection(runtime, render);
     runtime.dispatch({ type: 'accept-review', id: '7' });
-    runtime.clearRender();
+    detachView();
     jest.runOnlyPendingTimers();
     expect(render).not.toHaveBeenCalled();
   });
@@ -168,7 +199,11 @@ describe('SessionMachineRuntime quiescent projection', () => {
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
-      value: { MessageChannel: FakeMessageChannel },
+      value: {
+        MessageChannel: FakeMessageChannel,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      },
     });
     try {
       const order: string[] = [];
@@ -176,7 +211,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       (mockController.completeReliableCommit as jest.Mock).mockImplementation(() =>
         order.push('peer-send'),
       );
-      const runtime = new SessionMachineRuntime(initialState(), {
+      const runtime = configureSessionExecution(initialState(), {
         controller: mockController,
         iStarted: false,
         restoring: false,
@@ -189,7 +224,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       });
       runtime.activate();
       runtime.activatePersistence();
-      runtime.setRender(() => order.push('render'));
+      observeSessionProjection(runtime, () => order.push('render'));
       runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
       expect(order).toEqual([]);
       expect(messageTask).not.toBeNull();
@@ -197,7 +232,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       for (let turn = 0; turn < 20; turn++) await Promise.resolve();
       expect(order).toEqual(['persist', 'render', 'peer-send']);
       runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
-      runtime.retire();
+      runtime.retireExecution();
       (messageTask as unknown as () => void)();
       for (let turn = 0; turn < 20; turn++) await Promise.resolve();
       expect(order).toEqual(['persist', 'render', 'peer-send']);
@@ -213,7 +248,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     (mockController.completeReliableCommit as jest.Mock).mockImplementation(() =>
       order.push('peer-send'),
     );
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -226,10 +261,10 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender(() => order.push('render'));
+    observeSessionProjection(runtime, () => order.push('render'));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(order).toEqual(['persist', 'render', 'peer-send']);
   });
@@ -239,7 +274,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     const render = jest.fn();
     let attempt = 0;
     const persistedTimeouts: bigint[] = [];
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -253,10 +288,10 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender(render);
+    observeSessionProjection(runtime, render);
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
-    await expect(runtime.persist()).rejects.toThrow('disk full');
+    await expect(runtime.flush()).rejects.toThrow('disk full');
     expect(render).toHaveBeenCalledTimes(1);
     expect(mockController.completeReliableCommit).toHaveBeenNthCalledWith(
       1,
@@ -264,7 +299,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       false,
     );
 
-    await runtime.persist();
+    await runtime.flush();
     expect(persistedTimeouts).toEqual([20n, 20n]);
     expect(render).toHaveBeenCalledTimes(1);
     expect(mockController.completeReliableCommit).toHaveBeenCalledTimes(2);
@@ -282,7 +317,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     const writes: bigint[] = [];
     const renders: bigint[] = [];
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: controller(jest.fn()),
       iStarted: false,
       restoring: false,
@@ -296,7 +331,9 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    runtime.setRender((state) => renders.push(state.model.betweenHand.compose.gameTimeout));
+    observeSessionProjection(runtime, (state) =>
+      renders.push(state.model.betweenHand.compose.gameTimeout),
+    );
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     jest.runOnlyPendingTimers();
@@ -307,7 +344,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     resolveFirst();
     await Promise.resolve();
     await Promise.resolve();
-    await runtime.persist();
+    await runtime.flush();
 
     expect(writes).toEqual([20n, 30n]);
     expect(renders).toEqual([20n, 30n]);
@@ -361,7 +398,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     jest.spyOn(storageRepository, 'write').mockImplementation(async () => {
       if (captured.length === 1) await firstWrite;
     });
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -380,7 +417,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     wasmBytes = new Uint8Array([2, 2, 2]);
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 30n });
     releaseFirst();
-    await runtime.persist();
+    await runtime.flush();
 
     expect(captured).toEqual([
       { bytes: new Uint8Array([1, 1, 1]), timeout: 20n },
@@ -402,7 +439,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       });
     });
     (mockController as SessionController).reportDurabilityError = reportDurabilityError;
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -413,8 +450,8 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     runtime.activate();
     runtime.activatePersistence();
-    const rendered: ReturnType<typeof initialState>[] = [];
-    runtime.setRender((state) => rendered.push(state));
+    const rendered: import('../session/sessionFrontend').SessionPresentation[] = [];
+    observeSessionProjection(runtime, (state) => rendered.push(state));
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
     await jest.advanceTimersByTimeAsync(0);
@@ -443,14 +480,12 @@ describe('SessionMachineRuntime quiescent projection', () => {
     const mockController = controller(jest.fn());
     const firstReliableCommit = {
       generation: 1,
-      outboundCount: 0,
-      ackCount: 0,
+      outboundMsgno: 0n,
       remoteNumber: 0n,
     };
     const nextReliableCommit = {
       generation: 2,
-      outboundCount: 1,
-      ackCount: 1,
+      outboundMsgno: 1n,
       remoteNumber: 1n,
     };
     (mockController.prepareReliableCommit as jest.Mock)
@@ -465,7 +500,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
       });
     });
     (mockController as SessionController).reportDurabilityError = reportDurabilityError;
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -481,7 +516,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.activate();
     runtime.activatePersistence();
     const rendered: Array<{ timeout: bigint; warningVisible: boolean }> = [];
-    runtime.setRender((state) =>
+    observeSessionProjection(runtime, (state) =>
       rendered.push({
         timeout: state.model.betweenHand.compose.gameTimeout,
         warningVisible: state.model.channel.queue.some(
@@ -532,9 +567,9 @@ describe('SessionMachineRuntime quiescent projection', () => {
     });
     (mockController.prepareReliableCommit as jest.Mock).mockImplementation(() => {
       order.push('prepare-transport');
-      return { generation: 1, outboundCount: 1, ackCount: 0, remoteNumber: 0n };
+      return { generation: 1, outboundMsgno: 1n, remoteNumber: 0n };
     });
-    const runtime = new SessionMachineRuntime(initialState(), {
+    const runtime = configureSessionExecution(initialState(), {
       controller: mockController,
       iStarted: false,
       restoring: false,
@@ -549,7 +584,7 @@ describe('SessionMachineRuntime quiescent projection', () => {
     runtime.activatePersistence();
 
     runtime.dispatch({ type: 'set-compose-timeout', timeout: 20n });
-    await runtime.persist();
+    await runtime.flush();
 
     expect(order).toEqual(['drain-1', 'drain-2', 'drain-3', 'prepare-transport', 'persist-30']);
   });

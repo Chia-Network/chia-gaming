@@ -1,4 +1,4 @@
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import { startSimulator } from './load_wasm.harness';
 
 const USERS = Array.from({ length: 8 }, (_, index) => `ws-stress-${index}`);

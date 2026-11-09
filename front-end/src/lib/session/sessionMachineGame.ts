@@ -19,7 +19,6 @@ export type DurableGameEvent = Extract<
   | { type: 'notification-game-terminal' }
   | { type: 'notification-abandoned' }
   | { type: 'hand-state-changed' }
-  | { type: 'local-game-action-committed' }
   | { type: 'local-action-applied' }
 >;
 
@@ -207,20 +206,6 @@ export function reduceDurableGameEvent(
         throw new Error(
           `Internal hand state gameType ${event.handState.gameType} does not match active ${state.model.game.activeGameType}`,
         );
-      }
-      return withHandState(state, event.handState);
-    }
-    case 'local-game-action-committed': {
-      if (event.handState.gameType !== state.model.game.activeGameType) {
-        throw new Error(
-          `Internal committed gameType ${event.handState.gameType} does not match active ${state.model.game.activeGameType}`,
-        );
-      }
-      if (
-        !state.model.game.activeIds.includes(event.id) ||
-        !state.model.game.currentHandIds.includes(event.id)
-      ) {
-        throw new Error(`Internal committed game id ${event.id} is not an active hand member`);
       }
       return withHandState(state, event.handState);
     }

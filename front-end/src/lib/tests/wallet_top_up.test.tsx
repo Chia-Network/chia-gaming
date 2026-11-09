@@ -1,6 +1,8 @@
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 
-import { fundingShortfall, isBuyOrderSubmitted, WalletTopUp } from '../../components/WalletTopUp';
+import { isBuyOrderSubmitted, WalletTopUp } from '../../components/WalletTopUp';
+
+import { fundingShortfall } from '../wallet/fundingShortfall';
 
 describe('fundingShortfall', () => {
   it('counts the opening fee on top of the buy-in', () => {

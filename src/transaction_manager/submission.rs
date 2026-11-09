@@ -729,6 +729,32 @@ impl SubmissionBook {
         Ok(SubmissionAttemptStatus::Applied)
     }
 
+    pub(super) fn abandon_attempt(
+        &mut self,
+        attempt_token: u64,
+    ) -> Result<SubmissionAttemptStatus, Error> {
+        let Some(id) = self
+            .submitted
+            .iter()
+            .find(|tx| {
+                tx.active_attempt
+                    .as_ref()
+                    .is_some_and(|attempt| attempt.token == attempt_token)
+            })
+            .map(|tx| tx.id)
+        else {
+            return if self.issued_token_is_inactive(attempt_token) {
+                Ok(SubmissionAttemptStatus::Stale)
+            } else {
+                Err(Error::StrErr(format!(
+                    "unknown delivery attempt token {attempt_token}"
+                )))
+            };
+        };
+        self.retain_submitted(|tx| tx.id != id);
+        Ok(SubmissionAttemptStatus::Applied)
+    }
+
     pub(super) fn relinquish_completed_attempt(
         &mut self,
         attempt_token: u64,

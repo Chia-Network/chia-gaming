@@ -1,13 +1,17 @@
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
-import { createSessionMachineState } from '../session/sessionMachine';
-import { createSessionModel } from '../session/model';
-import { activeSave } from './session_save_envelope.fixtures';
+import { configureSessionExecution } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { SessionController } from '../../hooks/SessionController';
-import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { SessionController } from '../session/SessionController';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { entriesForOwner } from '../session/channelFundingSelectors';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
+import { canonicalizeFundingRequest, fundingRequestKey } from '../session/fundingRequest';
+import { createSessionModel } from '../session/model';
+import { createSessionMachineState } from '../session/sessionMachine';
+
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 import {
   makeMockCradle,
   makePeerConn,
@@ -23,10 +27,7 @@ import {
   recoverableWalletRpc,
   setup,
 } from './runtime_capability.harness';
-import { storageRepository } from '../session/storageRepository';
-import type { ChannelFundingEntry } from '../session/channelFundingStore';
-import { entriesForOwner } from '../session/channelFundingSelectors';
-import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
+import { activeSave } from './session_save_envelope.fixtures';
 
 describe('durable channel funding record', () => {
   const owner = {
@@ -83,7 +84,7 @@ describe('durable channel funding record', () => {
       } as InternalBlockchainInterface,
       60_000,
     );
-    controller.attachBlockchain(blockchain);
+    controller.setWallet(blockchain);
     await controller.flushPendingWork();
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
@@ -92,7 +93,7 @@ describe('durable channel funding record', () => {
   });
 
   it('keeps the session while a replacement wallet resumes monitoring and funds new work', async () => {
-    const { controller, blockchain, cradle } = setup(jest.fn());
+    const { controller, cradle } = setup(jest.fn());
     commitRuntime(controller, new ControlledRuntime());
     const originalReward = controller.rewardPuzzleHash;
     cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
@@ -106,7 +107,7 @@ describe('durable channel funding record', () => {
         reason: 'already-delivered',
       },
     ]);
-    controller.detachBlockchain(blockchain);
+    controller.setWallet(null);
     const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
     controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     const beginCreation = jest.fn().mockResolvedValue({
@@ -129,9 +130,9 @@ describe('durable channel funding record', () => {
       60_000,
     );
     replacement.refreshProviderReadiness();
-    const snapshot = jest.spyOn(replacement, 'snapshotGameSessionCoinInterest');
+    const snapshot = jest.spyOn(replacement, 'updateCoinInterest');
     try {
-      controller.attachBlockchain(replacement);
+      controller.setWallet(replacement);
       await controller.flushPendingWork();
       expect(controller.getWalletProviderScope()).toEqual(scope);
       expect(storageRepository.loadState().walletContext).toEqual(scope);
@@ -171,14 +172,11 @@ describe('durable channel funding record', () => {
           }),
       );
       const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
-      const { controller, blockchain, cradle } = setup(
-        jest.fn(),
-        bestEffortWalletRpc(begin, cancel),
-      );
+      const { controller, cradle } = setup(jest.fn(), bestEffortWalletRpc(begin, cancel));
       cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
       let releaseCheckpoint!: () => void;
       let holdCheckpoint = false;
-      const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+      const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
         controller,
         iStarted: true,
         restoring: false,
@@ -221,7 +219,7 @@ describe('durable channel funding record', () => {
         runtime.requestCommit();
         const checkpoint = runtime.flush();
         const timeout = timedOut
-          ? controller.runCommittedMutation(() => {
+          ? controller.enqueueResult(() => {
               controller.processResult(wasmResult({ events: [{ ChannelCreationTimedOut: null }] }));
               controller.flushDeferredWork();
             })
@@ -250,9 +248,9 @@ describe('durable channel funding record', () => {
         expect(
           (runtime as unknown as { pendingControllerWork: unknown[] }).pendingControllerWork.length,
         ).toBe(timedOut ? 2 : 1);
-        controller.detachBlockchain(blockchain);
+        controller.setWallet(null);
         replacement.refreshProviderReadiness();
-        controller.attachBlockchain(replacement);
+        controller.setWallet(replacement);
         holdCheckpoint = false;
         releaseCheckpoint();
         await checkpoint;
@@ -276,7 +274,7 @@ describe('durable channel funding record', () => {
       } finally {
         holdCheckpoint = false;
         releaseCheckpoint?.();
-        runtime.retire();
+        runtime.retireExecution();
         controller.cleanup();
         replacement.detachProvider();
       }
@@ -300,8 +298,9 @@ describe('durable channel funding record', () => {
     ]);
     controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
     controller.flushDeferredWork();
-    commitRuntime(controller, new ControlledRuntime(undefined, 'funding:'));
-    controller.detachBlockchain(blockchain);
+    const gate = new ControlledRuntime(undefined, 'funding:');
+    commitRuntime(controller, gate);
+    controller.setWallet(null);
     blockchain.detachProvider();
     const beginCreation = jest.fn().mockResolvedValue({
       kind: 'created-reserved',
@@ -322,8 +321,8 @@ describe('durable channel funding record', () => {
     );
     try {
       replacement.refreshProviderReadiness();
-      controller.attachBlockchain(replacement);
-      commitRuntime(controller, new ControlledRuntime());
+      controller.setWallet(replacement);
+      await gate.launchAll('funding:');
       await controller.flushPendingWork();
       expect(oldBegin).not.toHaveBeenCalled();
       expect(beginCreation).toHaveBeenCalledTimes(1);
@@ -371,7 +370,7 @@ describe('durable channel funding record', () => {
             reason: 'pending',
           },
         ]);
-      controller.detachBlockchain(blockchain);
+      controller.setWallet(null);
       blockchain.detachProvider();
       const scope = { provider: 'cloud' as const, walletId: 'Wallet_new_funding' };
       const beginCreation = jest.fn().mockResolvedValue({
@@ -393,7 +392,7 @@ describe('durable channel funding record', () => {
       );
       try {
         replacement.refreshProviderReadiness();
-        controller.attachBlockchain(replacement);
+        controller.setWallet(replacement);
         for (
           let n = 0;
           n < 30 && !(cradle.provide_offer_bech32 as jest.Mock).mock.calls.length;
@@ -425,7 +424,7 @@ describe('durable channel funding record', () => {
           60_000,
         );
         postFunding.refreshProviderReadiness();
-        controller.attachBlockchain(postFunding);
+        controller.setWallet(postFunding);
         await controller.flushPendingWork();
         expect(postFundingBegin).not.toHaveBeenCalled();
         postFunding.detachProvider();
@@ -509,13 +508,13 @@ describe('durable channel funding record', () => {
       try {
         blockchain.detachProvider();
         other.refreshProviderReadiness();
-        controller.attachBlockchain(other);
+        controller.setWallet(other);
         for (let n = 0; n < 30 && !otherBegin.mock.calls.length; n++)
           await new Promise((resolve) => setTimeout(resolve, 0));
         expect(otherBegin).toHaveBeenCalledTimes(1);
         other.detachProvider();
         reconnected.refreshProviderReadiness();
-        controller.attachBlockchain(reconnected);
+        controller.setWallet(reconnected);
         for (let n = 0; n < 30 && begin.mock.calls.length < 2; n++)
           await new Promise((resolve) => setTimeout(resolve, 0));
         expect(begin).toHaveBeenCalledTimes(2);

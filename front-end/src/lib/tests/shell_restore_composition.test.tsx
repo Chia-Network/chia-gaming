@@ -1,52 +1,54 @@
+import { mockWasmConnection } from './message_protocol.harness';
 import 'fake-indexeddb/auto';
+import { createApplication } from '../application/Application';
+import type { HubEvent } from '../../services/HubConnection';
+import { stubApplicationSession } from './session_frontend.harness';
 
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 import Shell from '../../components/Shell';
-import * as blobSingleton from '../../hooks/blobSingleton';
-import { realBlockchainInfo } from '../../hooks/RealBlockchainInterface';
-import { storageRepository } from '../session/storageRepository';
-import { markSavedSession, releaseLeaseIfOwner } from '../../hooks/saveCoordination';
-import { _resetPendingWalletConnectWipeForTests } from '../../hooks/saveHardReset';
 import { SESSION_DB_NAME } from '../session/indexedDb';
-import { TERMINAL_INSTANCE, baseSave } from './session_save_envelope.fixtures';
+import { markSavedSession, releaseLeaseIfOwner } from '../session/saveCoordination';
+import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset';
+import * as sessionHost from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
+import * as wasmInit from '../session/wasmLoader';
+import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
+import {
+  ACTIVE_INSTANCE,
+  TERMINAL_INSTANCE,
+  activeSave,
+  baseSave,
+} from './session_save_envelope.fixtures';
 
-import type { HubConnection } from '../../services/HubConnection';
-import { PeerSession, encodePeerAppMessage } from '../../services/PeerSession';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import type { GameSessionProps } from '../../components/GameSession';
-import { createSessionModel, INITIAL_CHANNEL_STATUS_MODEL } from '../session/model';
+import type { HubConnection } from '../../services/HubConnection';
+import { PeerSession, decodeReliableFrame, encodePeerAppMessage } from '../../services/PeerSession';
+import {
+  INITIAL_CHANNEL_STATUS_MODEL,
+  INITIAL_GAME_TERMINAL_MODEL,
+  createSessionModel,
+} from '../session/model';
 
 jest.mock('../../components/GameSession', () => {
   const actual = jest.requireActual('../../components/GameSession');
-  return {
-    ...actual,
-    __esModule: true,
-    default: function MockRestoredHandshake({ onSessionModelChange }: GameSessionProps) {
-      const React = jest.requireActual<typeof import('react')>('react');
-      React.useEffect(() => {
-        onSessionModelChange?.(
-          createSessionModel({
-            channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
-          }),
-        );
-      }, [onSessionModelChange]);
-      return null;
-    },
-  };
+  return { ...actual, __esModule: true, default: () => null };
 });
 
-let mockHubCallbacks: ConstructorParameters<typeof HubConnection>[2] | null = null;
+let mockHub: {
+  emit: (event: HubEvent) => void;
+  getPresence: () => import('../hubPresence').HubPresence;
+} | null = null;
 const mockSetBusy = jest.fn();
-const mockSendToPeer = jest.fn(() => true);
+const mockSendToPeer = jest.fn((_peerId: string, _frame: Uint8Array) => true);
 jest.mock('../../services/HubConnection', () => {
   const actual = jest.requireActual('../../services/HubConnection');
   return {
     ...actual,
-    HubConnection: jest.fn((_origin, _sessionId, callbacks) => {
-      mockHubCallbacks = callbacks;
+    HubConnection: jest.fn((_origin, _sessionId, emit, getPresence) => {
+      mockHub = { emit, getPresence };
       return {
         disconnect: jest.fn(),
         setBusy: mockSetBusy,
@@ -116,8 +118,21 @@ describe('Shell production restore composition', () => {
   const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
   const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
+  let stop: (() => void) | undefined;
   beforeEach(async () => {
-    mockHubCallbacks = null;
+    const session = stubApplicationSession(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+        restore: { status: 'restored', error: null },
+      }),
+    );
+    jest.spyOn(sessionHost, 'createSessionController').mockReturnValue(session.controller);
+    jest.spyOn(wasmInit, 'ensureWasmLoaded').mockResolvedValue(mockWasmConnection);
+    jest.spyOn(sessionHost, 'restoreSession').mockResolvedValue();
+    jest
+      .spyOn(sessionHost, 'configSessionController')
+      .mockImplementation(async (controller) => controller);
+    mockHub = null;
     mockSetBusy.mockClear();
     mockSendToPeer.mockClear();
     globalThis.requestAnimationFrame = () => 0;
@@ -171,9 +186,13 @@ describe('Shell production restore composition', () => {
 
   afterEach(async () => {
     if (renderer) {
-      act(() => renderer?.unmount());
+      act(() => {
+        renderer?.unmount();
+        stop?.();
+      });
       renderer = null;
     }
+    jest.useRealTimers();
     jest.restoreAllMocks();
     process.off('unhandledRejection', onUnhandledRejection);
     storageRepository._resetForTests();
@@ -217,7 +236,9 @@ describe('Shell production restore composition', () => {
     storageRepository._resetForTests();
 
     act(() => {
-      renderer = create(React.createElement(Shell));
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     expect(renderer!.root.findByProps({ children: 'Loading Chia Gaming…' })).toBeDefined();
 
@@ -230,9 +251,10 @@ describe('Shell production restore composition', () => {
     expect(
       renderer!.root.findByProps({ 'data-testid': 'finished-session-game-view' }),
     ).toBeDefined();
-    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' })).toBeDefined();
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
-    expect(renderer!.root.findByProps({ children: 'Connecting…' })).toBeDefined();
+    expect(renderer!.root.findByProps({ children: 'Preparing connection…' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ children: 'Setting up connection.' })).toHaveLength(0);
     expect(renderer!.root.findByProps({ children: 'Connect to Hub' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Done' }).props.disabled).toBe(true);
     expect(realBlockchainInfo.beginConnect).toHaveBeenCalledTimes(1);
@@ -240,6 +262,211 @@ describe('Shell production restore composition', () => {
     await flushEffects();
     expect(unhandledRejections).toEqual([]);
   });
+
+  it('keeps a failed live restore retired across later application publications', async () => {
+    jest.mocked(sessionHost.createSessionController).mockRestore();
+    const createController = jest.spyOn(sessionHost, 'createSessionController');
+    jest.mocked(wasmInit.ensureWasmLoaded).mockResolvedValue({} as typeof mockWasmConnection);
+    const restore = jest
+      .mocked(sessionHost.restoreSession)
+      .mockRejectedValueOnce(new Error('saved cradle cannot be decoded'))
+      .mockImplementation(() => new Promise<never>(() => {}));
+    requestTrust.mockResolvedValue('trusted');
+    await storageRepository.claimApplicationState();
+    const save = activeSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+      gameSessionId: '33'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    expectConsoleError('[sessionController] restoreSession error:');
+    await act(async () => {
+      await application.dispatch({ type: 'resume' });
+    });
+    for (let n = 0; n < 10; n++) await flushEffects();
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(createController).toHaveBeenCalledTimes(1);
+    await waitForText(renderer!, 'Restore failed');
+    expect(application.snapshot()).toMatchObject({
+      restoreStatus: 'failed',
+      restoreError: 'saved cradle cannot be decoded',
+      sessionFrontend: null,
+    });
+    await act(async () => {
+      await application.dispatch({ type: 'theme', theme: 'dark' });
+      await application.dispatch({ type: 'fee', fee: 7n });
+      mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
+      await application.dispatch({ type: 'wallet-cancel' });
+      await storageRepository.checkpointDomainMutations();
+    });
+    await flushEffects();
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(createController).toHaveBeenCalledTimes(1);
+    expect(storageRepository.loadState().session).toEqual(save.session);
+    expect(unhandledRejections).toEqual([]);
+  });
+
+  it('shows a preparing message instead of approval guidance before the QR code exists', async () => {
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Link Wallet');
+    await act(async () => {
+      void application.dispatch({ type: 'wallet-connect', wallet: 'walletconnect', fresh: true });
+      await Promise.resolve();
+    });
+    await waitForText(renderer!, 'Preparing connection…');
+    expect(renderer!.root.findAllByProps({ children: 'Setting up connection.' })).toHaveLength(0);
+    expect(
+      renderer!.root.findAllByProps({
+        children: 'You may have to approve some operations in your wallet.',
+      }),
+    ).toHaveLength(0);
+    expect(renderer!.root.findByProps({ children: 'Cancel' })).toBeDefined();
+  });
+
+  it('keeps wallet setup visibly pending after pairing until approvals finish', async () => {
+    let paired!: () => void;
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+      qrUri: 'wc:test-pairing',
+      finalize: (_values, onPaired) => {
+        paired = onPaired!;
+        return pending;
+      },
+    });
+    jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockReturnValue(new Promise(() => {}));
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockReturnValue(new Promise(() => {}));
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Link Wallet');
+    let connecting!: Promise<void>;
+    await act(async () => {
+      connecting = application.dispatch({
+        type: 'wallet-connect',
+        wallet: 'walletconnect',
+        fresh: true,
+      });
+      await Promise.resolve();
+    });
+    await waitForText(renderer!, 'Connecting wallet…');
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ children: 'Link Wallet' })).toHaveLength(0);
+    act(() => {
+      paired();
+    });
+    await waitForText(renderer!, 'Setting up connection.');
+    expect(renderer!.root.findAllByProps({ children: 'Connecting wallet…' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ children: 'Link Wallet' })).toHaveLength(0);
+    await act(async () => {
+      finish();
+      await connecting;
+      await storageRepository.checkpointDomainMutations();
+    });
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' })).toBeDefined();
+  });
+
+  it.each([
+    { state: 'ResolvedUnrolled', restored: false },
+    { state: 'ResolvedStale', restored: false },
+    { state: 'ResolvedUnrolled', restored: true },
+    { state: 'ResolvedStale', restored: true },
+  ] as const)(
+    'matures abandonment while the game payout is pending in $state (restored=$restored)',
+    async ({ state, restored }) => {
+      const initialState = restored ? state : 'Active';
+      const pendingPayout = {
+        ...ACTIVE_INSTANCE,
+        presentation: 'finishing-spending' as const,
+        terminal: INITIAL_GAME_TERMINAL_MODEL,
+      };
+      const model = createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: initialState } },
+        restore: { status: 'restored', error: null },
+        game: {
+          activeIds: ['game-1'],
+          currentHandIds: ['game-1'],
+          currentHandOrigin: 'local',
+          instances: { 'game-1': pendingPayout },
+        },
+      });
+      const session = stubApplicationSession(model);
+      session.controller.abandon = jest.fn();
+      jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+      await storageRepository.claimApplicationState();
+      const save = activeSave({
+        blockchainType: 'walletconnect',
+        hubUrl: 'https://hub.example.test',
+        activeTab: 'game',
+        sessionPeerId: 'p_' + '22'.repeat(16),
+        channelStatus: { state: initialState },
+        gameInstances: { 'game-1': pendingPayout },
+        waitingStateEnteredAt: restored ? BigInt(Date.now()) - 120_000n : null,
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      act(() => {
+        const application = createApplication();
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      });
+
+      if (!restored) {
+        jest.useFakeTimers();
+        act(() => {
+          session.publish({
+            ...model,
+            channel: { ...model.channel, status: { ...model.channel.status, state: 'Unrolling' } },
+          });
+          session.publish({
+            ...model,
+            channel: { ...model.channel, status: { ...model.channel.status, state } },
+          });
+        });
+        act(() => jest.advanceTimersByTime(119_999));
+        expect(renderer!.root.findByProps({ children: 'Waiting' }).props.disabled).toBe(true);
+        act(() => jest.advanceTimersByTime(1));
+      }
+
+      const abandon = renderer!.root.findByProps({ children: 'Abandon' });
+      expect(abandon.props.disabled).toBe(false);
+      act(() => abandon.props.onClick());
+      expect(renderer!.root.findByProps({ children: 'Abandon session?' })).toBeDefined();
+      expect(session.controller.abandon).not.toHaveBeenCalled();
+      act(() => {
+        const buttons = renderer!.root.findAll(
+          (node) => node.type === 'button' && node.props.children === 'Abandon',
+        );
+        buttons[buttons.length - 1].props.onClick();
+      });
+      expect(session.controller.abandon).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each([
     { peerId: undefined, ready: true, busy: false, presence: { busy: false } },
@@ -290,19 +517,21 @@ describe('Shell production restore composition', () => {
       releaseLeaseIfOwner();
       storageRepository._resetForTests();
       act(() => {
-        renderer = create(React.createElement(Shell));
+        const application = createApplication();
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
       });
       await waitForText(renderer!, 'You have previously saved state.');
       await act(async () => {
         await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
-      for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+      for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
       await flushEffects();
-      expect(mockHubCallbacks).not.toBeNull();
-      expect(mockHubCallbacks!.getPresence()).toEqual(presence);
+      expect(mockHub).not.toBeNull();
+      expect(mockHub!.getPresence()).toEqual(presence);
       mockSetBusy.mockClear();
       act(() => {
-        mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
+        mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
       });
       expect(mockSetBusy).toHaveBeenLastCalledWith(presence);
     },
@@ -346,13 +575,15 @@ describe('Shell production restore composition', () => {
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     act(() => {
-      renderer = create(React.createElement(Shell));
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
     await act(async () => {
       await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
     });
-    for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+    for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     await flushEffects();
     const walletTab = () => renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' });
     expect(walletTab()).toBeDefined();
@@ -410,17 +641,33 @@ describe('Shell production restore composition', () => {
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
     act(() => {
-      renderer = create(React.createElement(Shell));
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
+    let finishPeerLoad!: () => void;
+    const peerLoading = new Promise<void>((resolve) => {
+      finishPeerLoad = resolve;
+    });
+    const peerLoader = jest
+      .spyOn(wasmInit, 'ensurePeerProtocolLoaded')
+      .mockReturnValue(peerLoading);
     await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+      void renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    for (let n = 0; n < 30 && !peerLoader.mock.calls.length; n++) await flushEffects();
+    expect(peerLoader).toHaveBeenCalled();
+    expect(renderer!.root.findAllByProps({ children: 'Handshaking' })).toHaveLength(0);
+    peerLoader.mockRestore();
+    await act(async () => {
+      finishPeerLoad();
     });
     await waitForText(renderer!, 'Handshaking');
-    for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
+    for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     act(() => {
-      mockHubCallbacks!.onRegistered('p_' + '11'.repeat(16));
-      mockHubCallbacks!.onPeerUnavailable('p_' + '22'.repeat(16));
+      mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
+      mockHub!.emit({ type: 'peer-unavailable', playerId: 'p_' + '22'.repeat(16) });
     });
     expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
     expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');
@@ -476,15 +723,17 @@ describe('Shell production restore composition', () => {
       releaseLeaseIfOwner();
       storageRepository._resetForTests();
       act(() => {
-        renderer = create(React.createElement(Shell));
+        const application = createApplication();
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
       });
       await waitForText(renderer!, 'You have previously saved state.');
       await act(async () => {
         await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
       await waitForText(renderer!, 'Resolved Clean');
-      for (let n = 0; n < 30 && !mockHubCallbacks; n++) await flushEffects();
-      expect(mockHubCallbacks).not.toBeNull();
+      for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
+      expect(mockHub).not.toBeNull();
       const frames: Uint8Array[] = [];
       const carrier = {
         sendToPeer: (_peerId: string, frame: Uint8Array) => {
@@ -505,7 +754,12 @@ describe('Shell production restore composition', () => {
         secondAttempt.sendMessage(1, proposal);
       });
       await act(async () => {
-        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[0]);
+        mockHub!.emit({
+          type: 'peer-message',
+          fromId: '22'.repeat(16),
+          fromAlias: 'Clyde',
+          payload: frames[0],
+        });
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
@@ -529,20 +783,30 @@ describe('Shell production restore composition', () => {
       }
       expectConsoleError('[Shell] invalid provisional reliable session');
       await act(async () => {
-        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[1]);
+        mockHub!.emit({
+          type: 'peer-message',
+          fromId: '22'.repeat(16),
+          fromAlias: 'Clyde',
+          payload: frames[1],
+        });
         releaseCheckpoint();
         await storageRepository.inspect();
       });
       expect(renderer!.root.findAllByProps({ children: 'Accept' })).toHaveLength(0);
       await waitForText(renderer!, 'Resolved Clean');
       // Cancellation keeps the lobby busy until the pending checkpoint drains.
-      for (let attempt = 0; attempt < 30 && mockHubCallbacks!.getPresence().busy; attempt++) {
+      for (let attempt = 0; attempt < 30 && mockHub!.getPresence().busy; attempt++) {
         await flushEffects();
       }
-      expect(mockHubCallbacks!.getPresence().busy).toBe(false);
+      expect(mockHub!.getPresence().busy).toBe(false);
       expect(storageRepository.loadState().session).toBeNull();
       await act(async () => {
-        mockHubCallbacks!.onPeerMessage('22'.repeat(16), 'Clyde', frames[1]);
+        mockHub!.emit({
+          type: 'peer-message',
+          fromId: '22'.repeat(16),
+          fromAlias: 'Clyde',
+          payload: frames[1],
+        });
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
@@ -558,11 +822,201 @@ describe('Shell production restore composition', () => {
     },
   );
 
+  it.each(['cancel', 'failure'] as const)(
+    'keeps a restored session when wallet reconnect ends in %s',
+    async (outcome) => {
+      await storageRepository.claimApplicationState();
+      const save = activeSave({
+        blockchainType: 'walletconnect',
+        pairingToken: 'survives-wallet-setup',
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      jest.spyOn(realBlockchainInfo, 'disconnect').mockResolvedValue();
+      const application = createApplication();
+      act(() => {
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await application.dispatch({ type: 'resume' });
+      });
+      await flushEffects();
+      const controller = jest.mocked(sessionHost.createSessionController).mock.results[0].value;
+      const session = application.snapshot().sessionPresentation;
+      expect(session).not.toBeNull();
+      await act(async () => {
+        await application.dispatch({ type: 'wallet-disconnect' });
+      });
+      if (outcome === 'failure') {
+        jest
+          .mocked(realBlockchainInfo.beginConnect)
+          .mockRejectedValueOnce(new Error('reconnect failed'));
+        expectConsoleError('reconnect failed');
+      } else {
+        jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValueOnce({
+          skipQr: true,
+          fields: [{ key: 'wallet', label: 'Wallet', type: 'text' }],
+          finalize: jest.fn(),
+        } as any);
+      }
+      await act(async () => {
+        await application.dispatch({ type: 'wallet-connect', wallet: 'walletconnect' });
+        if (outcome === 'cancel') await application.dispatch({ type: 'wallet-cancel' });
+      });
+      await flushEffects();
+      expect(controller.cleanup).not.toHaveBeenCalled();
+      expect(sessionHost.createSessionController).toHaveBeenCalledTimes(1);
+      expect(application.snapshot().sessionPresentation).toBe(session);
+      expect(storageRepository.loadState().session).toEqual(save.session);
+    },
+  );
+
+  it('checkpoints a fresh proposal before replacing the terminal display and sending', async () => {
+    requestTrust.mockResolvedValue('trusted');
+    jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+      qrUri: '',
+      skipQr: true,
+      finalize: async () => {},
+    });
+    jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+    jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
+    jest
+      .spyOn(realBlockchainInfo, 'getHeightInfo')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    jest
+      .spyOn(realBlockchainInfo, 'getBalance')
+      .mockImplementation(() => new Promise<never>(() => {}));
+    jest.spyOn(realBlockchainInfo, 'getWalletOfferProvider').mockReturnValue({
+      capability: 'best-effort',
+      scope: { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },
+      beginCreation: jest.fn(),
+      cancel: jest.fn(),
+    });
+    await storageRepository.claimApplicationState();
+    const save = baseSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      activeTab: 'game',
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [],
+      terminalIStarted: true,
+      activeGameIds: [],
+      currentHandGameIds: [],
+      gameInstances: {},
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    });
+    await waitForText(renderer!, 'Resolved Clean');
+    for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
+    await flushEffects();
+    expect(mockHub).not.toBeNull();
+
+    let releaseCheckpoint!: () => void;
+    const checkpointGate = new Promise<void>((resolve) => {
+      releaseCheckpoint = resolve;
+    });
+    let checkpointStarted = false;
+    const write = storageRepository.write.bind(storageRepository);
+    jest.spyOn(storageRepository, 'write').mockImplementation(async (snapshot) => {
+      if (snapshot.session?.phase === 'pre-handshake') {
+        checkpointStarted = true;
+        await checkpointGate;
+      }
+      await write(snapshot);
+    });
+    mockSendToPeer.mockClear();
+    try {
+      act(() => {
+        mockHub!.emit({
+          type: 'advisory-start',
+          params: {
+            peer_id: '22'.repeat(16),
+            peer_alias: 'Clyde',
+            my_amount: '1000',
+            their_amount: '1000',
+          },
+        });
+      });
+      await waitForText(renderer!, 'New Session');
+      await act(async () => {
+        renderer!.root.findByProps({ children: 'Accept' }).props.onClick();
+      });
+      // Run the automatic transport timer while the first write is still blocked.
+      await flushEffects();
+      expect(checkpointStarted).toBe(true);
+      const pending = storageRepository.loadState().session;
+      if (pending?.phase !== 'pre-handshake') throw new Error('Missing fresh checkpoint');
+      const remote = new PeerSession('11'.repeat(16), pending.pairing.gameSessionId, {
+        sendToPeer: (_peerId: string, frame: Uint8Array) => {
+          mockHub!.emit({
+            type: 'peer-message',
+            fromId: '22'.repeat(16),
+            fromAlias: 'Clyde',
+            payload: frame,
+          });
+          return true;
+        },
+      } as unknown as HubConnection);
+      act(() => {
+        mockHub!.emit({ type: 'disconnected' });
+        mockHub!.emit({ type: 'reconnected' });
+        mockHub!.emit({ type: 'peer-available', playerId: '22'.repeat(16) });
+        remote.sendAck(1);
+        remote.sendMessage(1, Uint8Array.of(0x01));
+        remote.sendKeepalive();
+        remote.destroy();
+      });
+      await flushEffects();
+      expect(mockSendToPeer).not.toHaveBeenCalled();
+      expect((await storageRepository.inspect()).applicationState?.session?.phase).toBe('terminal');
+      expect(sessionHost.createSessionController).not.toHaveBeenCalled();
+      expect(application.snapshot().dashboardSessionModel?.channel.status.state).toBe(
+        'ResolvedClean',
+      );
+
+      await act(async () => {
+        releaseCheckpoint();
+      });
+      await waitForText(renderer!, 'Handshaking');
+      expect(sessionHost.createSessionController).toHaveBeenCalledTimes(1);
+      expect(mockSendToPeer).toHaveBeenCalledTimes(1);
+      const frame = decodeReliableFrame(mockSendToPeer.mock.calls[0][1]);
+      const saved = (await storageRepository.inspect()).applicationState;
+      expect(saved?.session?.phase).toBe('pre-handshake');
+      if (saved?.session?.phase !== 'pre-handshake' || frame?.tag !== 0x01) {
+        throw new Error('Fresh session did not persist and emit its proposal');
+      }
+      expect(frame.sessionId).toBe(saved.session.pairing.gameSessionId);
+      expect(saved.session.transport.unackedMessages).toEqual([{ msgno: 1n, msg: frame.data }]);
+      expect(unhandledRejections).toEqual([]);
+    } finally {
+      await act(async () => {
+        releaseCheckpoint();
+        await storageRepository.inspect();
+      });
+    }
+  });
+
   it('retires the live protocol owner before starting destructive storage reset', async () => {
     await storageRepository.claimApplicationState();
     await storageRepository.write(
       storageRepository.patchApplicationState(() =>
-        baseSave({
+        activeSave({
           blockchainType: 'walletconnect',
         }),
       ),
@@ -572,26 +1026,30 @@ describe('Shell production restore composition', () => {
     storageRepository._resetForTests();
 
     const order: string[] = [];
-    const destroyController = jest
-      .spyOn(blobSingleton, 'destroySessionController')
-      .mockImplementation(() => {
-        order.push('controller');
-      });
+    const controller = jest.mocked(sessionHost.createSessionController).getMockImplementation()!();
+    jest.mocked(controller.cleanup).mockImplementation(() => {
+      order.push('controller');
+    });
     const hardReset = jest.spyOn(storageRepository, 'hardReset').mockImplementation(async () => {
       order.push('storage');
       return { success: true };
     });
 
+    const application = createApplication();
     act(() => {
-      renderer = create(React.createElement(Shell));
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     await waitForText(renderer!, 'You have previously saved state.');
-
     await act(async () => {
-      await renderer!.root.findByProps({ children: 'Start over' }).props.onClick();
+      await application.dispatch({ type: 'resume' });
+    });
+    await flushEffects();
+    await act(async () => {
+      await application.dispatch({ type: 'reset' });
     });
 
-    expect(destroyController).toHaveBeenCalledTimes(1);
+    expect(controller.cleanup).toHaveBeenCalledTimes(1);
     expect(hardReset).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['controller', 'storage']);
   });

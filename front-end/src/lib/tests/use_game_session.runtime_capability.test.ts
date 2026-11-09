@@ -1,14 +1,13 @@
 import { Component, createElement, StrictMode, type ReactNode } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { Subject } from 'rxjs';
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { useGameSession } from '../../hooks/useGameSession';
-import type { SessionController } from '../../hooks/SessionController';
-import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
 import type { GameSessionParams, WasmEvent } from '../../types/ChiaGaming';
-import { SessionController as ConcreteSessionController } from '../../hooks/SessionController';
+import { SessionController as ConcreteSessionController } from '../session/SessionController';
+
 import { storageRepository } from '../session/storageRepository';
 import { makeMockCradle, mockWasmConnection } from './message_protocol.harness';
+import { useTestSessionPresentation } from './session_frontend.harness';
 
 class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -26,35 +25,13 @@ class TestErrorBoundary extends Component<{ children: ReactNode }, { failed: boo
 
 describe('useGameSession committed runtime', () => {
   function setup() {
-    let runtime: SessionMachineRuntime | null = null;
-    const commitSessionRuntime = jest.fn((nextRuntime: SessionMachineRuntime) => {
-      if (runtime && runtime !== nextRuntime) runtime.retire();
-      runtime = nextRuntime;
+    const controller = new ConcreteSessionController(null, 'test', 100n, 100n, {
+      sendMessage: () => true,
+      sendAck: () => true,
     });
-    const events = new Subject<WasmEvent>();
-    const controller = {
-      cleanShutdownCalled: false,
-      iStarted: false,
-      wasmNotificationHistory: [],
-      diagnosticLog: [],
-      getCommittedSessionRuntime: () => runtime,
-      commitSessionRuntime,
-      getRestoreStatus: () => 'idle',
-      getRestoreError: () => null,
-      reportRuntimeError: jest.fn(),
-      flushDeferredWork: jest.fn(),
-      getWasmFields: () => null,
-      prepareReliableCommit: jest.fn(() => ({
-        generation: 0,
-        outboundCount: 0,
-        ackCount: 0,
-        remoteNumber: 0n,
-      })),
-      completeReliableCommit: jest.fn(),
-      getObservable: () => events,
-      onRestoreStatusChange: () => () => {},
-      isChannelReady: () => false,
-    } as unknown as SessionController;
+    controller.perGameAmount = 10n;
+    const events = { next: (event: WasmEvent) => controller.receiveEvent(event) };
+    const activate = jest.spyOn(controller, 'activate');
     const params = {
       iStarted: false,
       myContribution: 100n,
@@ -62,19 +39,21 @@ describe('useGameSession committed runtime', () => {
       perGameAmount: 10n,
       pairingToken: 'pairing',
     } as GameSessionParams;
+    const frontend = controller.initializeExecution(false);
     return {
       controller,
+      frontend,
       params,
-      getRuntime: () => runtime,
+      getRuntime: () => controller,
       events,
-      commitSessionRuntime,
+      activate,
     };
   }
 
   it('keeps the committed runtime active when the hook unmounts', () => {
-    const { controller, params, getRuntime } = setup();
+    const { frontend, params, getRuntime } = setup();
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
 
@@ -107,8 +86,9 @@ describe('useGameSession committed runtime', () => {
       perGameAmount: 10n,
       pairingToken: 'pairing',
     } as GameSessionParams;
+    const frontend = controller.initializeExecution(false);
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
 
@@ -116,7 +96,7 @@ describe('useGameSession committed runtime', () => {
     act(() => {
       renderer = create(createElement(Harness));
     });
-    expect(controller.getCommittedSessionRuntime()).not.toBeNull();
+    expect(controller.executionActive).toBe(true);
     expect(attachRuntime).not.toHaveBeenCalled();
 
     await storageRepository.updatePreference({ key: 'alias', value: 'before-cradle' });
@@ -135,9 +115,9 @@ describe('useGameSession committed runtime', () => {
   });
 
   it('keeps the same runtime through Strict Effects setup-cleanup-setup replay', () => {
-    const { controller, params, getRuntime, commitSessionRuntime } = setup();
+    const { frontend, params, getRuntime, activate } = setup();
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
 
@@ -147,17 +127,23 @@ describe('useGameSession committed runtime', () => {
     });
     const runtime = getRuntime();
     expect(runtime).not.toBeNull();
-    expect(commitSessionRuntime).toHaveBeenCalledTimes(1);
+    expect(activate).toHaveBeenCalledTimes(1);
 
     act(() => renderer?.unmount());
     expect(getRuntime()).toBe(runtime);
   });
 
   it('keeps reducing controller events while unmounted and projects them on remount', () => {
-    const { controller, params, events, getRuntime } = setup();
+    const { frontend, params, events, getRuntime } = setup();
     let latestQueue: readonly unknown[] = [];
     function Harness() {
-      const session = useGameSession(params, controller, () => {});
+      const session = useGameSession(
+        params,
+        frontend,
+        () => {},
+        undefined,
+        useTestSessionPresentation(frontend),
+      );
       latestQueue = session.channelQueue;
       return null;
     }
@@ -186,13 +172,13 @@ describe('useGameSession committed runtime', () => {
 
   it('reattaches the committed runtime after a renderer crash and remount', () => {
     expectConsoleError('renderer crashed');
-    const { controller, params, getRuntime } = setup();
+    const { frontend, params, getRuntime } = setup();
     function Harness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       return null;
     }
     function CrashingHarness() {
-      useGameSession(params, controller, () => {});
+      useGameSession(params, frontend, () => {}, undefined, useTestSessionPresentation(frontend));
       throw new Error('renderer crashed');
     }
 

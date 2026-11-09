@@ -124,7 +124,10 @@ describe('Krunk automatic moves', () => {
       renderer = create(React.createElement(Harness));
     });
 
-    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'make-move',
+      'state-changed',
+    ]);
     expect(dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'make-move',
@@ -149,9 +152,9 @@ describe('Krunk automatic moves', () => {
     });
     const snapshots: KrunkHandState[] = [];
     const hand = testHand(persisted);
-    const dispatch = jest.fn((intent: { type: string }) => {
+    const dispatch = jest.fn((_intent: { type: string }) => {
       snapshots.push(structuredClone(hand.getState()));
-      return intent.type === 'make-move' ? ('queued' as const) : undefined;
+      return undefined;
     });
     const view: GameMountView<KrunkHand> = {
       frozen: false,
@@ -170,8 +173,17 @@ describe('Krunk automatic moves', () => {
     });
     act(() => hook!.submitNextQueuedGuess());
 
-    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual(['make-move']);
-    expect(snapshots[0].members[1]).toEqual(
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'make-move',
+      'state-changed',
+    ]);
+    expect(snapshots[0].members[1]).toMatchObject({
+      handler: KrunkHandler.BobGuess,
+      myTurn: true,
+      guesses: [],
+      queuedGuesses: ['CRANE', 'SLATE'],
+    });
+    expect(snapshots[1].members[1]).toEqual(
       expect.objectContaining({
         handler: KrunkHandler.BobWaiting,
         myTurn: false,
@@ -181,7 +193,7 @@ describe('Krunk automatic moves', () => {
     );
   });
 
-  it('keeps later guesses in the submitted hand until rejection is resolved', () => {
+  it('reports a dictionary rejection and clears queued guesses without advancing the hand', () => {
     const persisted = krunkStateCodec.encode({
       perPlayerStake: 100n,
       members: [
@@ -198,7 +210,9 @@ describe('Krunk automatic moves', () => {
     const snapshots: KrunkHandState[] = [];
     const dispatch = jest.fn((intent: { type: string }) => {
       snapshots.push(structuredClone(hand.getState()));
-      return intent.type === 'make-move' ? ('rejected' as const) : undefined;
+      return intent.type === 'make-move'
+        ? { tag: 'not_in_dictionary', message: 'XXXXX' }
+        : undefined;
     });
     const view: GameMountView<KrunkHand> = {
       frozen: false,
@@ -217,18 +231,50 @@ describe('Krunk automatic moves', () => {
     });
     act(() => hook!.submitNextQueuedGuess());
 
-    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual(['make-move']);
+    expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
+      'make-move',
+      'state-changed',
+    ]);
     expect(snapshots[0].members[1]).toEqual(
       expect.objectContaining({
-        handler: KrunkHandler.BobWaiting,
-        myTurn: false,
-        guesses: [{ word: 'XXXXX', clue: [-1n, -1n, -1n, -1n, -1n] }],
-        queuedGuesses: ['CRANE', 'SLATE'],
+        handler: KrunkHandler.BobGuess,
+        myTurn: true,
+        guesses: [],
+        queuedGuesses: ['XXXXX', 'CRANE', 'SLATE'],
       }),
     );
+    expect(hook!.rejection).toBe('XXXXX is not in the dictionary.');
+    expect(hand.getState().members[0]).toEqual(snapshots[0].members[0]);
+    expect(hand.getState().members[1]).toEqual({ ...snapshots[0].members[1], queuedGuesses: [] });
+    expect(snapshots[1]).toEqual(hand.getState());
   });
 
-  it('keeps an early guess queued when activation-time submission is rejected', () => {
+  it('retains an invalid secret for correction without changing the hand', () => {
+    const hand = restoreKrunkHand({
+      perPlayerStake: 100n,
+      members: [initialKrunkGameState('alice'), initialKrunkGameState('bob')],
+    });
+    const before = hand.getState();
+    const port: LiveGamePort = {
+      isChannelReady: () => true,
+      dispatch: () => ({ tag: 'not_in_dictionary', message: 'XXXXX' }),
+    };
+    let hook: ReturnType<typeof useKrunkHand>;
+    function Harness() {
+      hook = useKrunkHand({ frozen: false, hand, port, appendGameLog: () => {} }, 0);
+      return null;
+    }
+    act(() => {
+      renderer = create(React.createElement(Harness));
+    });
+    act(() => {
+      expect(hook!.setSecretWord('XXXXX')).toBe(false);
+    });
+    expect(hand.getState()).toBe(before);
+    expect(hook!.rejection).toBe('XXXXX is not in the dictionary.');
+  });
+
+  it('shows the error and clears an early guess when activation-time submission is rejected', () => {
     const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -251,14 +297,9 @@ describe('Krunk automatic moves', () => {
         ],
       }),
     );
-    let checkpoint = structuredClone(hand.getState());
     const dispatch = jest.fn((intent: { type: string }) => {
-      if (intent.type === 'state-changed') {
-        checkpoint = structuredClone(hand.getState());
-      } else if (intent.type === 'make-move') {
-        checkpoint.members.forEach((member, memberIndex) => {
-          hand.updateGame(memberIndex, () => structuredClone(member));
-        });
+      if (intent.type === 'make-move') {
+        return { tag: 'not_in_dictionary', message: 'XXXXX' };
       }
     });
     const view: GameMountView<KrunkHand> = {
@@ -295,12 +336,14 @@ describe('Krunk automatic moves', () => {
     expect(dispatch.mock.calls.map(([intent]) => intent.type)).toEqual([
       'state-changed',
       'make-move',
+      'state-changed',
     ]);
     expect(hand.getState().members[1]).toMatchObject({
-      handler: KrunkHandler.BobWaiting,
-      queuedGuesses: ['SLATE'],
+      handler: KrunkHandler.BobGuess,
+      queuedGuesses: [],
       guesses: [],
     });
+    expect(JSON.stringify(renderer!.toJSON())).toContain('XXXXX is not in the dictionary.');
     act(() => renderer!.unmount());
     renderer = null;
     if (windowDescriptor) {
@@ -448,7 +491,7 @@ describe('Krunk draft continuity', () => {
     }
   });
 
-  it('does not keep a local durable projection when intent dispatch fails', () => {
+  it.each(['exception', 'rejection'])('preserves the word draft on %s', (failure) => {
     const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
@@ -458,7 +501,8 @@ describe('Krunk draft continuity', () => {
       },
     });
     const dispatch = jest.fn(() => {
-      throw new Error('word rejected');
+      if (failure === 'exception') throw new Error('word rejected');
+      return { tag: 'not_in_dictionary', message: 'CRANE' };
     });
     const persisted = krunkStateCodec.encode({
       perPlayerStake: 100n,
@@ -481,7 +525,23 @@ describe('Krunk draft continuity', () => {
       act(() => key!.props.onClick());
     }
     const pick = root.findAllByType('button').find((button) => button.props.children === 'Pick');
-    expect(() => act(() => pick!.props.onClick())).toThrow('word rejected');
+    if (failure === 'exception') {
+      expect(() => act(() => pick!.props.onClick())).toThrow('word rejected');
+    } else {
+      act(() => pick!.props.onClick());
+      expect(JSON.stringify(renderer!.toJSON())).toContain('CRANE is not in the dictionary.');
+    }
+    expect(
+      root
+        .findAll(
+          (node) =>
+            typeof node.props.className === 'string' &&
+            node.props.className.includes('border-dashed') &&
+            typeof node.props.children === 'string' &&
+            node.props.children !== '',
+        )
+        .map((node) => node.props.children),
+    ).toEqual(['C', 'R', 'A', 'N', 'E']);
 
     expect(dispatch).toHaveBeenCalledTimes(1);
     expect(dispatch).toHaveBeenCalledWith(

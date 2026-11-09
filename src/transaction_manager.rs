@@ -1000,6 +1000,15 @@ impl<C> TransactionManager<C> {
         self.submission_book.stop_attempt(attempt_token)
     }
 
+    /// For a rejection that can never change, unlike `stop_submission_attempt`,
+    /// which a later fresh-chain epoch rebroadcasts.
+    pub fn abandon_submission_attempt(
+        &mut self,
+        attempt_token: u64,
+    ) -> Result<SubmissionAttemptStatus, Error> {
+        self.submission_book.abandon_attempt(attempt_token)
+    }
+
     pub fn relinquish_submission_attempt(
         &mut self,
         attempt_token: u64,
@@ -4479,6 +4488,36 @@ mod tests {
         assert_eq!(replay[0].id, submission.id);
         assert_eq!(mgr.submission_book.test_submitted().len(), 1);
         assert!(mgr.drain_retired_submission_ids().is_empty());
+    }
+
+    #[test]
+    fn abandoned_submission_is_retired_and_never_rebroadcast() {
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: test_submission("past-deadline", None),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+        let submission = mgr.drain_submissions().unwrap().submissions.remove(0);
+
+        assert_eq!(
+            mgr.abandon_submission_attempt(submission.attempt_token)
+                .unwrap(),
+            SubmissionAttemptStatus::Applied
+        );
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![submission.id]);
+        mgr.chain_snapshot_ready();
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
+        assert_eq!(
+            mgr.relinquish_submission_attempt(submission.attempt_token)
+                .unwrap(),
+            SubmissionAttemptStatus::Stale
+        );
+        assert_eq!(
+            mgr.abandon_submission_attempt(submission.attempt_token)
+                .unwrap(),
+            SubmissionAttemptStatus::Stale
+        );
     }
 
     #[test]

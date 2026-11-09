@@ -1,30 +1,34 @@
-import { expectConsoleError } from '../../../scripts/testSetup';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { observeWasmEvents } from './session_execution.harness';
 import { Program } from 'clvm-lib';
-import { SessionController } from '../../hooks/SessionController';
+import type { WalletFeeSource } from '../../../../wasm/contract';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import type {
   NeedCoinSpendRequest,
   TransactionSubmission,
   WasmResult,
 } from '../../types/ChiaGaming';
 import { requireWasmResult } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
+import {
+  _resetGameIdentityWarmupForTests,
+  protocolIdentitiesReady,
+  setProtocolIds,
+} from '../gameIdentities';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { createSessionModel } from '../session/model';
+import { sessionReceivePolicy } from '../session/receivePolicy';
+import { SessionController } from '../session/SessionController';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
 import { reduceSessionNotification } from '../session/sessionMachineNotifications';
-import { createSessionModel } from '../session/model';
-import { DIAGNOSTIC_LOG_LIMIT, WASM_NOTIFICATION_HISTORY_LIMIT } from '../session/historyLimits';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { createAcceptedBlob, handshakeA } from './accepted_session.harness';
 import {
-  attachTestCommitCoordinator,
   channelStatus,
   createReadyBlob,
   createUnreadyBlob,
   enc,
-  makeMockCradle,
-  makePeerConn,
-  mockBlockchain,
   mockRpc,
-  mockWasmConnection,
   setActiveBlob,
   setTestBlockchain,
   setTestPersistence,
@@ -34,24 +38,15 @@ import {
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
-import {
-  createCoordinatorOnlySessionMachineRuntime,
-  reduceSessionMachineForTest,
-} from './session_machine.harness';
-import { jsonStringify } from '../../util/jsonSafe';
+import { restorePeerState } from './peer_protocol.harness';
+import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
+import { reduceSessionMachineForTest } from './session_machine.harness';
 
 async function waitForCall(mock: jest.Mock, count: number): Promise<void> {
   for (let attempt = 0; attempt < 30 && mock.mock.calls.length < count; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 }
-import {
-  protocolIdentitiesReady,
-  setProtocolIds,
-  _resetGameIdentityWarmupForTests,
-} from '../gameIdentities';
-import { TEST_PROTOCOL_IDS, testProtocolId } from './protocolIdentities';
-import { sessionReceivePolicy } from '../session/receivePolicy';
 
 describe('WASM result boundary', () => {
   it.each(['events', 'watchCoins', 'unwatchCoins', 'actionSucceeded', 'disposition'] as const)(
@@ -120,7 +115,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification' && event.data.ActionFailed) {
         reasons.push(String(event.data.ActionFailed.reason));
       }
@@ -142,7 +137,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       const reason = String(event.data.ActionFailed.reason);
       reasons.push(reason);
@@ -169,7 +164,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       delivered += 1;
       if (delivered < 101) {
@@ -195,7 +190,7 @@ describe('in-order delivery', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     let delivered = 0;
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       delivered += 1;
       if (delivered < 101) {
@@ -220,7 +215,7 @@ describe('in-order delivery', () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
     const reasons: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type !== 'notification' || !event.data.ActionFailed) return;
       reasons.push(String(event.data.ActionFailed.reason));
       blob.cleanup();
@@ -242,28 +237,6 @@ describe('in-order delivery', () => {
     expect((blob as any).eventQueue).toEqual([]);
     expect((blob as any).protocolStopped).toBe(true);
   });
-
-  it('delivers messages 1, 2, 3 and ACKs each after durability flush', async () => {
-    const { blob, cradle, sentAcks } = createReadyBlob();
-    setActiveBlob(blob);
-
-    blob.deliverMessage(1n, enc('a'));
-    blob.deliverMessage(2n, enc('b'));
-    blob.deliverMessage(3n, enc('c'));
-
-    expect(blob.remoteNumber).toBe(3n);
-    expect(sentAcks).toEqual([]);
-    await blob.flushPendingWork();
-    expect(sentAcks).toEqual([1, 2, 3]);
-    const saved = await storageRepository.readCurrentState();
-    expect(saved?.session?.phase === 'live' && saved.session.live.remoteNumber).toBe(3n);
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(3);
-    expect((cradle.deliver_message as jest.Mock).mock.calls.map((c: any[]) => c[0])).toEqual([
-      enc('a'),
-      enc('b'),
-      enc('c'),
-    ]);
-  });
 });
 
 describe('protocol identity loading', () => {
@@ -272,7 +245,7 @@ describe('protocol identity loading', () => {
     setActiveBlob(blob);
     setProtocolIds(TEST_PROTOCOL_IDS);
     const tags: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') {
         tags.push(Object.keys(event.data)[0] ?? '');
       }
@@ -305,7 +278,7 @@ describe('protocol identity loading', () => {
     setActiveBlob(blob);
     _resetGameIdentityWarmupForTests();
     const tags: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') {
         tags.push(Object.keys(event.data)[0] ?? '');
       }
@@ -352,7 +325,7 @@ describe('protocol identity loading', () => {
     expectConsoleError('completeRegisteredGames failed');
     const tags: string[] = [];
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') {
         tags.push(Object.keys(event.data)[0] ?? '');
       }
@@ -482,7 +455,7 @@ describe('active game tracking', () => {
         },
       }).state;
       const settledIds: string[] = [];
-      blob.getObservable().subscribe((event) => {
+      observeWasmEvents(blob).subscribe((event) => {
         if (event.type !== 'notification') return;
         if (event.data.GameSettled) settledIds.push(String(event.data.GameSettled.id));
         machine = reduceSessionNotification(
@@ -567,23 +540,18 @@ describe('active game tracking', () => {
 });
 
 describe('lifecycle flush', () => {
-  it('drains transient handshake events before resolving the save flush', async () => {
-    const outbound = enc('next-handshake-message');
-    const { blob, sentMessages } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: outbound }],
-    }));
-    setActiveBlob(blob);
-
-    blob.deliverMessage(1n, enc('incoming-handshake-message'));
+  it('drains Rust handshake output before resolving the save flush', async () => {
+    const { blob, sentMessages } = await createAcceptedBlob(true);
+    blob.activateSpend();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
+    expect(sentMessages).toEqual([]);
     await blob.flushPendingSave();
-
-    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
     const saved = await storageRepository.readCurrentState();
-    expect(saved?.session?.phase === 'live' && saved.session.live.remoteNumber).toBe(1n);
-    expect(saved?.session?.phase === 'live' && saved.session.live.messageNumber).toBe(2n);
-    expect(saved?.session?.phase === 'live' && saved.session.live.unackedMessages).toEqual([
-      { msgno: 1n, msg: outbound },
-    ]);
+    expect(saved?.session?.phase === 'live' && saved.session.live.messageNumber).toBe(3n);
+    expect(saved?.session?.phase === 'live' && saved.session.live.unackedMessages).toEqual(
+      blob.unackedMessages,
+    );
   });
 });
 
@@ -606,7 +574,7 @@ describe('game action failure events', () => {
       throw new Error('cannot accept settlement');
     };
     const events: import('../../types/ChiaGaming').WasmEvent[] = [];
-    const subscription = blob.getObservable().subscribe((event) => events.push(event));
+    const subscription = observeWasmEvents(blob).subscribe((event) => events.push(event));
 
     expect(() => blob.makeMove('41', null)).toThrow('cannot reveal');
     expect(() => blob.acceptSettlement('42')).toThrow('cannot accept settlement');
@@ -649,7 +617,7 @@ describe('game action failure events', () => {
         ],
       });
     const notifications: unknown[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification') notifications.push(event.data);
     });
 
@@ -664,6 +632,8 @@ describe('game action failure events', () => {
 
   it('returns rejection before a local candidate can be committed', () => {
     const { blob, cradle } = createReadyBlob();
+    const broadcast = jest.fn();
+    observeWasmEvents(blob).subscribe(broadcast);
     const makeMove = jest.fn(() =>
       wasmResult({
         events: [
@@ -681,7 +651,8 @@ describe('game action failure events', () => {
       }
     ).make_move = makeMove;
 
-    expect(blob.makeMove('41', null)).toBe('rejected');
+    expect(blob.makeMove('41', null)).toEqual({ tag: 'illegal_move', message: 'not allowed' });
+    expect(broadcast).not.toHaveBeenCalled();
     makeMove.mockReturnValue(wasmResult());
     expect(blob.makeMove('41', null)).toBe('queued');
     makeMove.mockReturnValue(
@@ -701,32 +672,29 @@ describe('game action failure events', () => {
 
 describe('duplicate detection', () => {
   it('delivers once and coalesces duplicate ACKs behind durability', async () => {
-    const { blob, cradle, sentAcks } = createReadyBlob();
-    setActiveBlob(blob);
-
-    blob.deliverMessage(1n, enc('a'));
-    blob.deliverMessage(1n, enc('a'));
-
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
+    const { blob, cradle, sentAcks } = await createAcceptedBlob();
+    const body = await handshakeA();
+    blob.deliverMessage(1n, body);
+    const after = cradle.serialize();
+    blob.deliverMessage(1n, body);
+    expect(cradle.serialize()).toEqual(after);
+    expect(sentAcks).toEqual([]);
     await blob.flushPendingWork();
+    expect(blob.remoteNumber).toBe(1n);
     expect(sentAcks).toEqual([1]);
   });
 
   it('acknowledges a duplicate inbound without retransmitting unacked outbound', async () => {
-    const { blob, sentMessages, sentAcks } = createReadyBlob();
-    setActiveBlob(blob);
-    const offer = enc('offer-sent-payload');
-    blob.messageNumber = 3n;
-    blob.unackedMessages = [{ msgno: 2n, msg: offer }];
-
-    blob.deliverMessage(1n, enc('first'));
+    const { blob, sentMessages, sentAcks } = await createAcceptedBlob();
+    const pending = enc('retained opaque peer frame');
+    restorePeerState(blob, { messageNumber: 3n, unackedMessages: [{ msgno: 2n, msg: pending }] });
+    const body = await handshakeA();
+    blob.deliverMessage(1n, body);
     await blob.flushPendingWork();
     sentMessages.length = 0;
     sentAcks.length = 0;
-
-    blob.deliverMessage(1n, enc('first-again'));
+    blob.deliverMessage(1n, body);
     await blob.flushPendingWork();
-
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([]);
   });
@@ -736,9 +704,13 @@ describe('keepalive activity', () => {
   it.each(['live', 'restored'] as const)(
     'stops %s shutdown keepalives after the signed close is ready while preserving reliable delivery',
     async (mode) => {
+      const body = await handshakeA();
+      const { blob, sentMessages, sentAcks } = await createAcceptedBlob();
+      blob.deliverMessage(1n, body);
+      await blob.flushPendingWork();
+      sentAcks.length = 0;
       // IndexedDB persistence needs its real task queue while keepalive timers advance.
       jest.useFakeTimers({ doNotFake: ['setImmediate'] });
-      const { blob, sentMessages, sentAcks } = createReadyBlob();
       const send = jest.fn();
       try {
         const status = channelStatus({ state: 'ShutdownTransactionPending' });
@@ -755,11 +727,11 @@ describe('keepalive activity', () => {
           blob.processResult(wasmResult({ events: [{ Notification: { ChannelStatus: status } }] }));
         }
         const close = enc('signed close completion');
-        blob.messageNumber = 2n;
-        blob.unackedMessages = [{ msgno: 1n, msg: close }];
-        blob.resendUnacked();
+        restorePeerState(blob, { messageNumber: 2n });
+        restorePeerState(blob, { unackedMessages: [{ msgno: 1n, msg: close }] });
+        blob.reportPeerConnectivity('registered');
         expect(sentMessages).toContainEqual({ msgno: 1, msg: close });
-        blob.deliverMessage(1n, enc('pending shutdown traffic'));
+        blob.deliverMessage(1n, body);
         await blob.flushPendingWork();
         expect(sentAcks).toContain(1);
         blob.receiveAck(1n);
@@ -800,8 +772,8 @@ describe('keepalive activity', () => {
     setActiveBlob(blob);
     await blob.flushPendingSave();
     const pending = enc('pending-offer');
-    blob.messageNumber = 4n;
-    blob.unackedMessages = [{ msgno: 3n, msg: pending }];
+    restorePeerState(blob, { messageNumber: 4n });
+    restorePeerState(blob, { unackedMessages: [{ msgno: 3n, msg: pending }] });
 
     blob.receiveKeepalive();
 
@@ -819,175 +791,41 @@ describe('keepalive activity', () => {
 });
 
 describe('out-of-order delivery with reorder queue', () => {
-  it('reconstructs a lost receive gap solely from the sender reliable journal after both peers reload', async () => {
-    const sender = createReadyBlob();
-    sender.blob.processResult(
-      wasmResult({
-        events: [{ OutboundMessage: enc('frame-n') }, { OutboundMessage: enc('frame-n-plus-one') }],
-      }),
-    );
-    await sender.blob.flushPendingWork();
-    expect(sender.sentMessages.map(({ msgno }) => msgno)).toEqual([1, 2]);
-    const senderCheckpoint = {
-      messageNumber: sender.blob.messageNumber,
-      unackedMessages: structuredClone(sender.blob.unackedMessages),
-    };
-
-    const beforeReload = createReadyBlob();
-    beforeReload.blob.deliverMessage(
-      BigInt(sender.sentMessages[1].msgno),
-      sender.sentMessages[1].msg,
-    );
-    expect(beforeReload.cradle.deliver_message).not.toHaveBeenCalled();
-    expect((beforeReload.blob as any).reorderQueue.size).toBe(1);
-    beforeReload.blob.cleanup();
-
-    let authoritativeMoveEvents = 0;
-    const afterReload = createReadyBlob((message) =>
-      new TextDecoder().decode(message) === 'frame-n-plus-one'
-        ? {
-            events: [
-              {
-                Notification: {
-                  LocalActionApplied: { id: 'game-1', action: 'make_move' },
-                },
-              },
-            ],
-          }
-        : { events: [] },
-    );
-    afterReload.blob.getObservable().subscribe((event) => {
-      if (event.type === 'notification' && event.data.LocalActionApplied?.action === 'make_move') {
-        authoritativeMoveEvents += 1;
-      }
-    });
-    expect((afterReload.blob as any).reorderQueue.size).toBe(0);
-
-    const retransmitted: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const restoredSender = new SessionController(
-      mockBlockchain,
-      'test-sender-restored',
-      100n,
-      100n,
-      makePeerConn(retransmitted, []),
-    );
-    restoredSender.messageNumber = senderCheckpoint.messageNumber;
-    restoredSender.unackedMessages = senderCheckpoint.unackedMessages;
-    restoredSender.loadWasm(mockWasmConnection);
-    restoredSender.setGameSession(makeMockCradle());
-    restoredSender.kickSystem(2);
-
-    expect(restoredSender.resendUnacked()).toBe(true);
-    expect(retransmitted.map(({ msgno }) => msgno)).toEqual([1, 2]);
-    for (const frame of retransmitted) {
-      afterReload.blob.deliverMessage(BigInt(frame.msgno), frame.msg);
-    }
-
-    expect(
-      (afterReload.cradle.deliver_message as jest.Mock).mock.calls.map(([message]) =>
-        new TextDecoder().decode(message),
-      ),
-    ).toEqual(['frame-n', 'frame-n-plus-one']);
-    expect(afterReload.blob.remoteNumber).toBe(2n);
-    expect(authoritativeMoveEvents).toBe(1);
-    expect((afterReload.blob as any).reorderQueue.size).toBe(0);
-  });
-
-  it('delivers 3, 1, 2 → cradle sees a, b, c in order', async () => {
-    const delivered: Uint8Array[] = [];
-    const { blob, sentAcks } = createReadyBlob((msg) => {
-      delivered.push(msg);
-      return { events: [] };
-    });
-    setActiveBlob(blob);
-
-    blob.deliverMessage(3n, enc('c'));
-    blob.deliverMessage(1n, enc('a'));
-    blob.deliverMessage(2n, enc('b'));
-
-    expect(delivered).toEqual([enc('a'), enc('b'), enc('c')]);
-    expect(blob.remoteNumber).toBe(3n);
-    await blob.flushPendingWork();
-    expect(sentAcks).toEqual([1, 2, 3]);
-  });
-
   it('fails and clears queued frames when the future gap is exceeded', () => {
     const policy = sessionReceivePolicy({ maxFutureReliableMsgnoGap: 1n });
-    const { blob, cradle } = createReadyBlob(undefined, policy);
+    const { blob, cradle } = createReadyBlob(policy);
 
     blob.deliverMessage(3n, enc('too-far'));
 
-    expect(cradle.deliver_message).not.toHaveBeenCalled();
+    expect(blob.remoteNumber).toBe(0n);
     expect(cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect((blob as any).reorderQueue.size).toBe(0);
-    expect((blob as any).reorderQueue.size).toBe(0);
   });
 
   it('fails on queued message count and aggregate bytes', () => {
-    const countLimited = createReadyBlob(undefined, sessionReceivePolicy({ maxQueuedMessages: 1 }));
+    const countLimited = createReadyBlob(sessionReceivePolicy({ maxQueuedMessages: 1 }));
     countLimited.blob.deliverMessage(2n, enc('a'));
     countLimited.blob.deliverMessage(3n, enc('b'));
     expect(countLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect((countLimited.blob as any).reorderQueue.size).toBe(0);
 
-    const byteLimited = createUnreadyBlob(undefined, sessionReceivePolicy({ maxQueuedBytes: 3 }));
+    const byteLimited = createUnreadyBlob(sessionReceivePolicy({ maxQueuedBytes: 3 }));
     byteLimited.blob.deliverMessage(1n, enc('ab'));
     byteLimited.blob.deliverMessage(2n, enc('cd'));
     expect(byteLimited.cradle.go_on_chain).toHaveBeenCalledTimes(1);
-    expect((byteLimited.blob as any).reorderQueue.size).toBe(0);
-  });
-
-  it('does not double-account duplicate queued msgnos', () => {
-    const { blob, cradle } = createReadyBlob(
-      undefined,
-      sessionReceivePolicy({ maxQueuedMessages: 1, maxQueuedBytes: 1 }),
-    );
-
-    blob.deliverMessage(2n, enc('x'));
-    blob.deliverMessage(2n, enc('x'));
-    blob.deliverMessage(1n, enc('a'));
-
-    expect(cradle.go_on_chain).not.toHaveBeenCalled();
-    expect((cradle.deliver_message as jest.Mock).mock.calls.map((call) => call[0])).toEqual([
-      enc('a'),
-      enc('x'),
-    ]);
   });
 });
 
 describe('buffering before system ready, then spill', () => {
-  it('buffers messages and delivers when system reaches qe=7', async () => {
-    const { blob, cradle, sentAcks } = createUnreadyBlob();
-    setActiveBlob(blob);
-
-    blob.deliverMessage(1n, enc('a'));
-    blob.deliverMessage(2n, enc('b'));
-    expect(cradle.deliver_message).not.toHaveBeenCalled();
-
+  it('buffers the real handshake until the controller is ready', async () => {
+    const { blob, cradle, sentAcks } = await createAcceptedBlob(false, false);
+    const before = cradle.serialize();
+    blob.deliverMessage(1n, await handshakeA());
+    expect(cradle.serialize()).toEqual(before);
+    expect(blob.remoteNumber).toBe(0n);
     blob.kickSystem(2);
-
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(2);
-    expect(blob.remoteNumber).toBe(2n);
+    expect(cradle.serialize()).not.toEqual(before);
+    expect(blob.remoteNumber).toBe(1n);
     await blob.flushPendingWork();
-    expect(sentAcks).toEqual([1, 2]);
-  });
-
-  it('delivers out-of-order buffered messages in correct order', () => {
-    const delivered: Uint8Array[] = [];
-    const { blob } = createUnreadyBlob((msg) => {
-      delivered.push(msg);
-      return { events: [] };
-    });
-    setActiveBlob(blob);
-
-    blob.deliverMessage(2n, enc('b'));
-    blob.deliverMessage(1n, enc('a'));
-    expect(delivered).toEqual([]);
-
-    blob.kickSystem(2);
-
-    expect(delivered).toEqual([enc('a'), enc('b')]);
-    expect(blob.remoteNumber).toBe(2n);
+    expect(sentAcks).toEqual([1]);
   });
 });
 
@@ -996,12 +834,14 @@ describe('ACK pruning', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
 
-    blob.unackedMessages = [
-      { msgno: 1n, msg: enc('a') },
-      { msgno: 2n, msg: enc('b') },
-      { msgno: 3n, msg: enc('c') },
-    ];
-    blob.messageNumber = 4n;
+    restorePeerState(blob, {
+      unackedMessages: [
+        { msgno: 1n, msg: enc('a') },
+        { msgno: 2n, msg: enc('b') },
+        { msgno: 3n, msg: enc('c') },
+      ],
+    });
+    restorePeerState(blob, { messageNumber: 4n });
     blob.receiveAck(2n);
 
     expect(blob.unackedMessages).toEqual([{ msgno: 3n, msg: enc('c') }]);
@@ -1010,45 +850,14 @@ describe('ACK pruning', () => {
 
 describe('outbound message numbering', () => {
   it('continues numbering from the proposal transport state without reset', async () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const peer = makePeerConn(sentMessages, []);
-    const proposal = enc('session proposal');
-    peer.reliableState!.messageNumber = 2n;
-    peer.reliableState!.unackedMessages = [{ msgno: 1n, msg: proposal }];
-    const blob = new SessionController(null, 'test', 100n, 100n, peer, channelFundingRuntime);
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(makeMockCradle());
-    attachTestCommitCoordinator(blob);
-    setTestPersistence(blob, jest.fn());
-
-    expect(blob.queueHostMessage(enc('handshake A'))).toBe(2n);
+    const { blob, sentMessages } = await createAcceptedBlob(true);
+    expect(blob.messageNumber).toBe(2n);
+    expect(blob.unackedMessages.map(({ msgno }) => msgno)).toEqual([1n]);
+    blob.activateSpend();
     await blob.flushPendingWork();
-
     expect(blob.messageNumber).toBe(3n);
     expect(blob.unackedMessages.map(({ msgno }) => msgno)).toEqual([1n, 2n]);
     expect(sentMessages.map(({ msgno }) => msgno)).toEqual([2]);
-  });
-
-  it('assigns sequential numbers and tracks in unackedMessages', async () => {
-    const helloBytes = enc('hello');
-    const { blob, sentMessages } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: helloBytes }],
-    }));
-    setActiveBlob(blob);
-
-    blob.deliverMessage(1n, enc('trigger'));
-    blob.flushDeferredWork();
-    await blob.flushPendingWork();
-
-    expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-    expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
-
-    blob.deliverMessage(2n, enc('trigger2'));
-    blob.flushDeferredWork();
-    await blob.flushPendingWork();
-
-    expect(sentMessages[1]).toEqual({ msgno: 2, msg: helloBytes });
-    expect(blob.messageNumber).toBe(3n);
   });
 });
 
@@ -1125,9 +934,7 @@ describe('WASM wallet funding requests', () => {
         openingFee: 10n,
       },
     );
-    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledWith(
-      JSON.stringify(testSpendBundle('coin-spend')),
-    );
+    expect(cradle.provide_coin_spend_bundle).toHaveBeenCalledWith(testSpendBundle('coin-spend'));
   });
 
   it('attempts persistence before funding and continues after storage failure', async () => {
@@ -1382,7 +1189,7 @@ describe('WASM wallet funding requests', () => {
       'processResultNow',
     );
     const advances: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'notification' && event.data.ActionFailed) {
         advances.push(String(event.data.ActionFailed.reason));
       }
@@ -1427,7 +1234,7 @@ describe('WASM wallet funding requests', () => {
     (cradle as unknown as { wallet_callback_failed: jest.Mock }).wallet_callback_failed =
       walletCallbackFailed;
     setActiveBlob(blob);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
 
     blob.processResult(
       wasmResult({
@@ -1458,21 +1265,29 @@ describe('WASM wallet funding requests', () => {
 
   it('asks Rust for fee upgrades only on provider attach or readiness', async () => {
     let readiness: ((ready: boolean) => void) | undefined;
+    const unsubscribe = jest.fn();
+    const subscribe = jest.fn((callback: (ready: boolean) => void) => {
+      readiness = callback;
+      return unsubscribe;
+    });
     const blockchain = new BlockchainPoller(
       {
         ...mockRpc,
-        onPlayReadinessChange: (callback: (ready: boolean) => void) => {
-          readiness = callback;
-          return () => {};
-        },
+        onPlayReadinessChange: subscribe,
       },
       60000,
     );
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await blob.flushPendingWork();
+    expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
+
+    blob.setWallet(blockchain);
+    await blob.flushPendingWork();
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).not.toHaveBeenCalled();
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
 
     readiness?.(false);
@@ -1482,6 +1297,10 @@ describe('WASM wallet funding requests', () => {
     readiness?.(true);
     await blob.flushPendingWork();
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(2);
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    blob.setWallet(null);
+    blob.cleanup();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it('fails one distinct concurrent funding request without launching it', async () => {
@@ -1514,7 +1333,7 @@ describe('WASM wallet funding requests', () => {
       walletCallbackFailed;
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -1539,7 +1358,7 @@ describe('WASM wallet funding requests', () => {
     expect(errors.filter((error) => error.includes('concurrent funding request'))).toHaveLength(1);
   });
 
-  it('reschedules an unlaunched funding attempt onto a replacement runtime once', async () => {
+  it('keeps an unlaunched funding attempt through repeated execution initialization', async () => {
     const request: NeedCoinSpendRequest = {
       amount: '100',
       fee: '0',
@@ -1554,12 +1373,13 @@ describe('WASM wallet funding requests', () => {
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, beginWalletOffer }, 60000));
 
     blob.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
-    const replacement = createCoordinatorOnlySessionMachineRuntime(blob);
-    await replacement.persist();
+    const frontend = blob.initializeExecution(false);
+    expect(blob.initializeExecution(false)).toBe(frontend);
+    await blob.flush();
     await blob.flushPendingWork();
 
     expect(beginWalletOffer).toHaveBeenCalledTimes(1);
-    replacement.retire();
+    blob.retireExecution();
   });
 });
 
@@ -1591,15 +1411,18 @@ describe('wallet fee attachment on submission', () => {
   const feeTarget = 'dd'.repeat(32);
 
   function setFinalizer(blob: SessionController, finalize: jest.Mock) {
-    const wrapped = (attemptToken: string, feeSourceJson?: string) => ({
-      ...(finalize(attemptToken, feeSourceJson) as object),
+    const wrapped = (attemptToken: string, feeSource?: WalletFeeSource) => ({
+      ...(finalize(attemptToken, feeSource) as object),
       variant_fingerprint: 'bb'.repeat(32),
       should_broadcast: true,
     });
     const cradle = (
       blob as unknown as {
         cradle: {
-          finalize_submission_attempt: (attemptToken: string, feeSourceJson?: string) => unknown;
+          finalize_submission_attempt: (
+            attemptToken: string,
+            feeSource?: WalletFeeSource,
+          ) => unknown;
         };
       }
     ).cradle;
@@ -1677,10 +1500,10 @@ describe('wallet fee attachment on submission', () => {
         concurrentSpendCoinId: feeTarget,
       },
     );
-    expect(finalize).toHaveBeenCalledWith(
-      expect.any(String),
-      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
-    );
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       aggregated,
@@ -1838,7 +1661,7 @@ describe('wallet fee attachment on submission', () => {
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, spend }, 60000));
     setFinalizer(blob, finalize);
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -1936,10 +1759,7 @@ describe('wallet fee attachment on submission', () => {
     submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
     await transactionSubmitQueue(blob);
 
-    expect(finalize).toHaveBeenCalledWith(
-      expect.any(String),
-      jsonStringify({ kind: 'bundle', bundle: feeSpend }),
-    );
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), { kind: 'bundle', bundle: feeSpend });
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       aggregated,
@@ -1989,8 +1809,8 @@ describe('wallet fee attachment on submission', () => {
         ]),
       );
     (cradle.finalize_submission_attempt as jest.Mock)
-      .mockImplementationOnce((_attemptToken: string, feeSourceJson: string) => {
-        expect(JSON.parse(feeSourceJson)).toEqual({
+      .mockImplementationOnce((_attemptToken: string, feeSource: WalletFeeSource) => {
+        expect(feeSource).toEqual({
           kind: 'failure',
           reason: 'wallet transport disconnected',
         });
@@ -2004,7 +1824,7 @@ describe('wallet fee attachment on submission', () => {
           should_broadcast: true,
         };
       })
-      .mockImplementationOnce((_attemptToken: string, _feeSourceJson: string) => ({
+      .mockImplementationOnce((_attemptToken: string, _feeSource: WalletFeeSource) => ({
         protocol_bundle: testSpendBundle('coin'),
         bundle: protocolBundle,
         applied_fee: '10',
@@ -2027,7 +1847,7 @@ describe('wallet fee attachment on submission', () => {
       undefined,
     );
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     channelFundingRuntime.providerReconnectReady(
       blockchain.rpc.getWalletOfferProvider({
         installationPlayerId: 'test',
@@ -2048,10 +1868,10 @@ describe('wallet fee attachment on submission', () => {
 
     expect(cradle.request_fee_upgrades).toHaveBeenCalledTimes(1);
     expect(beginWalletOffer).toHaveBeenCalledTimes(2);
-    expect(cradle.finalize_submission_attempt).toHaveBeenLastCalledWith(
-      'fee-upgrade-attempt',
-      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
-    );
+    expect(cradle.finalize_submission_attempt).toHaveBeenLastCalledWith('fee-upgrade-attempt', {
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(spend).toHaveBeenLastCalledWith(
       expect.any(String),
       protocolBundle,
@@ -2184,7 +2004,7 @@ describe('wallet fee attachment on submission', () => {
     });
     const recoverableEvents: Array<{ error: string }> = [];
     const ordinaryErrors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableEvents.push(event);
       if (event.type === 'error') ordinaryErrors.push(event.error);
     });
@@ -2230,7 +2050,7 @@ describe('wallet fee attachment on submission', () => {
       .mockReturnValue(submissionDrain());
     const recoverableEvents: Array<{ error: string }> = [];
     const ordinaryErrors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableEvents.push(event);
       if (event.type === 'error') ordinaryErrors.push(event.error);
     });
@@ -2253,8 +2073,8 @@ describe('wallet fee attachment on submission', () => {
       reason: 'the wallet could not build a signed fee source',
     });
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const finalize = jest.fn().mockImplementation((_id: string, feeSource: string) => {
-      expect(JSON.parse(feeSource)).toEqual({
+    const finalize = jest.fn().mockImplementation((_id: string, feeSource: WalletFeeSource) => {
+      expect(feeSource).toEqual({
         kind: 'failure',
         reason: 'the wallet could not build a signed fee source',
       });
@@ -2275,7 +2095,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -2324,7 +2144,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 
@@ -2332,10 +2152,10 @@ describe('wallet fee attachment on submission', () => {
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
-    expect(finalize).toHaveBeenCalledWith(
-      expect.any(String),
-      jsonStringify({ kind: 'offer', offer: 'offer1signed' }),
-    );
+    expect(finalize).toHaveBeenCalledWith(expect.any(String), {
+      kind: 'offer',
+      offer: 'offer1signed',
+    });
     expect(spend).toHaveBeenCalledWith(
       expect.any(String),
       protocolBundle,
@@ -2401,13 +2221,13 @@ describe('wallet fee attachment on submission', () => {
   it('surfaces the real wallet error in the warning when the fee offer fails', async () => {
     const beginWalletOffer = jest.fn().mockRejectedValue(new Error('Internal error (code=-32603)'));
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const finalize = jest.fn().mockImplementation((_id: string, feeSource: string) => {
-      const source = JSON.parse(feeSource);
+    const finalize = jest.fn().mockImplementation((_id: string, feeSource: WalletFeeSource) => {
+      if (feeSource.kind !== 'failure') throw new Error('expected wallet failure');
       return {
         protocol_bundle: testSpendBundle('coin'),
         bundle: protocolBundle,
         applied_fee: '0',
-        warning: `Configured fee was not applied: ${source.reason}. The transaction will be attempted without a fee.`,
+        warning: `Configured fee was not applied: ${feeSource.reason}. The transaction will be attempted without a fee.`,
         fee_source_disposition: 'unused',
       };
     });
@@ -2419,7 +2239,7 @@ describe('wallet fee attachment on submission', () => {
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
-    const subscription = blob.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
 

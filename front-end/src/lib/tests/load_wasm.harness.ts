@@ -1,24 +1,32 @@
-import { Program } from 'clvm-lib';
-import { Subscription } from 'rxjs';
-import { WasmStateInit, storeInitArgs, _resetWasmLoadForTests } from '../../hooks/WasmStateInit';
-import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
-import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
-import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import { storageRepository } from '../session/storageRepository';
-import { SESSION_DB_NAME } from '../session/indexedDb';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { configSessionController } from '../../hooks/blobSingleton';
-import { SessionController } from '../../hooks/SessionController';
-import { clearSavedSessionMarker } from '../../hooks/saveCoordination';
-import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
-import type { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+import { observeWasmEvents } from './session_execution.harness';
 import { initialKrunkGameState, KrunkHandler } from '@games/krunk/ui/serialize';
-import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
-import type { HandProposal, PersistedGameState } from '../session/types';
-import { createCoordinatorOnlySessionMachineRuntime } from './session_machine.harness';
-import { pollOnce } from './blockchain_poller.driver';
+import { Program } from 'clvm-lib';
 import 'fake-indexeddb/auto';
+import { Subscription } from 'rxjs';
+import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
+import { createPeerProtocol } from '../../services/peerProtocol';
+import { BLOCKCHAIN_SERVICE_URL } from '../../settings';
+import { PeerConnectionResult, WasmEvent, type WalletProviderScope } from '../../types/ChiaGaming';
+import { createRegisteredGameHand, snapshotRegisteredGameHand } from '../gameRegistry';
+import { SessionController } from '../session/SessionController';
+import {
+  _resetWasmLoadForTests,
+  ensurePeerProtocolLoaded,
+  storeInitArgs,
+  ensureWasmLoaded,
+} from '../session/wasmLoader';
+import { SESSION_DB_NAME } from '../session/indexedDb';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
+import { clearSavedSessionMarker } from '../session/saveCoordination';
+import { configSessionController } from '../session/sessionHost';
+
+import { storageRepository } from '../session/storageRepository';
+import type { HandProposal, PersistedGameState } from '../session/types';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
+import { pollOnce } from './blockchain_poller.driver';
+import { calpokerStateCodec, krunkStateCodec, spacepokerStateCodec } from './game_state_helpers';
+import { activateTestExecution } from './session_machine.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as fs from 'fs';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
@@ -104,6 +112,7 @@ beforeEach(async () => {
   storageRepository._resetForTests();
   _resetWasmLoadForTests();
   storeInitArgs(async () => {}, WholeWasmObject);
+  await ensurePeerProtocolLoaded();
   await deleteSessionDatabase();
   await storageRepository.claimApplicationState();
 });
@@ -133,7 +142,7 @@ async function cleanupActiveResources() {
   while (activeCradles.length > 0) {
     await activeCradles.pop()?.shutdown();
   }
-  testPoller?.stop();
+  testPoller?.pauseChainPolling();
   testPoller = null;
   await fakeBlockchainInfo.disconnect();
   await storageRepository.checkpointDomainMutations();
@@ -160,7 +169,7 @@ export function makeTestReliableState(): NonNullable<PeerConnectionResult['relia
 
 export class SessionControllerAdapter {
   blob: SessionController | undefined;
-  runtime: SessionMachineRuntime | undefined;
+  runtime: SessionController | undefined;
   waiting_messages: Array<SimpleMessage>;
   readonly peerConnection: PeerConnectionResult;
 
@@ -174,8 +183,6 @@ export class SessionControllerAdapter {
       },
       sendAck: () => true,
       sendKeepalive: () => true,
-      hostLog: () => {},
-      close: () => {},
     };
   }
 
@@ -183,13 +190,13 @@ export class SessionControllerAdapter {
     if (!this.blob) {
       throw 'SessionControllerAdapter.getObservable() called before set_blob';
     }
-    return this.blob.getObservable();
+    return observeWasmEvents(this.blob);
   }
 
   set_blob(blob: SessionController) {
+    if (this.blob !== blob) this.runtime?.retireExecution();
     this.blob = blob;
-    this.runtime?.retire();
-    this.runtime = createCoordinatorOnlySessionMachineRuntime(blob);
+    this.runtime = activateTestExecution(blob);
     this.blob.kickSystem(2);
   }
 
@@ -199,11 +206,11 @@ export class SessionControllerAdapter {
   }
 
   retireRuntime() {
-    this.runtime?.retire();
+    this.runtime?.retireExecution();
     this.runtime = undefined;
   }
 
-  bindRuntime(runtime: SessionMachineRuntime) {
+  bindRuntime(runtime: SessionController) {
     if (this.runtime !== runtime) this.retireRuntime();
     runtime.activate();
     this.runtime = runtime;
@@ -232,9 +239,9 @@ export class SessionControllerAdapter {
   }
 
   async shutdown(): Promise<void> {
-    await this.runtime?.persist();
+    await this.runtime?.flush();
     await this.blob?.flushPendingWork();
-    await this.runtime?.persist();
+    await this.runtime?.flush();
     this.retireRuntime();
     const blob = this.blob;
     this.blob = undefined;
@@ -268,11 +275,28 @@ function debugCradleState(cradle: SessionControllerAdapter): string {
 export async function flushWrapperDrain(cradles: Array<SessionControllerAdapter>): Promise<void> {
   await Promise.all(
     cradles.map(async (cradle) => {
-      await cradle.runtime?.persist();
+      await cradle.runtime?.flush();
       await cradle.blob?.flushPendingWork();
-      await cradle.runtime?.persist();
+      await cradle.runtime?.flush();
     }),
   );
+}
+
+export function restoreTestSession(
+  controller: SessionController,
+  serialized: Uint8Array,
+  seed: string,
+) {
+  const snapshot = controller.getPeerProtocol().snapshot();
+  const restored = createPeerProtocol(snapshot, DEFAULT_SESSION_RECEIVE_POLICY, seed);
+  try {
+    restored.restore(snapshot, snapshot.terminalHandoff);
+    restored.restore_channel(serialized);
+    return restored;
+  } catch (error) {
+    restored.free();
+    throw error;
+  }
 }
 
 export function assertCradleRoundTrip(stage: string, controller: SessionController): Uint8Array {
@@ -285,13 +309,12 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
     `${stage}: expected current cradle schema`,
   );
   assert.ok(serialized.byteLength > 0, `${stage}: expected non-empty serialized cradle`);
-  // Fingerprint immediately: if serialize_game_session returned a WASM-memory view,
+  // Fingerprint immediately: if serialize returned a WASM-memory view,
   // later WASM activity would mutate these bytes in place.
   const ownedFingerprint = Uint8Array.from(serialized);
+  const restored = restoreTestSession(controller, serialized, `reload-regression-${stage}`);
   try {
-    const restoredId = WholeWasmObject.restore_session(serialized, `reload-regression-${stage}`);
-    assert.equal(typeof restoredId, 'number');
-    const reserialized = WholeWasmObject.serialize_game_session(restoredId);
+    const reserialized = restored.serialize();
     assert.deepEqual(
       serialized,
       ownedFingerprint,
@@ -308,6 +331,8 @@ export function assertCradleRoundTrip(stage: string, controller: SessionControll
       `${stage}: ${serialized.byteLength} byte cradle failed immediate restore\n${String(e)}`,
       { cause: e },
     );
+  } finally {
+    restored.free();
   }
   return serialized;
 }
@@ -439,14 +464,14 @@ export async function createActivePair(
     `cafe000${index}`,
     true,
     cradles[0].peerConnection,
-    new WasmStateInit(fetchPreset),
+    await ensureWasmLoaded(fetchPreset),
   );
   const second = await initSessionController(
     poller,
     `dead000${index}`,
     false,
     cradles[1].peerConnection,
-    new WasmStateInit(fetchPreset),
+    await ensureWasmLoaded(fetchPreset),
   );
   first.pairingToken = `restore-games-${index}-first`;
   second.pairingToken = `restore-games-${index}-second`;
@@ -547,7 +572,7 @@ export async function initSessionController(
   uniqueId: string,
   iStarted: boolean,
   peer_conn: PeerConnectionResult,
-  wasmStateInit: WasmStateInit,
+  wasmConnection: import('../../types/ChiaGaming').WasmConnection,
   myContribution = 100n,
   theirContribution = 100n,
   simulator: SimulatorControllerBehavior = fakeBlockchainInfo,
@@ -564,12 +589,12 @@ export async function initSessionController(
     walletProviderScope,
   );
 
+  gameObject.setWallet(blockchain);
   await configSessionController(
     gameObject,
     iStarted,
-    wasmStateInit,
+    wasmConnection,
     blockchain,
-    uniqueId,
     undefined,
     undefined,
     rewardPuzzleHash,
