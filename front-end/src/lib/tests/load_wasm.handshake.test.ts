@@ -1,22 +1,27 @@
-import { WasmStateInit, storeInitArgs } from '../../hooks/WasmStateInit';
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
+import { protocolIdForCatalog } from '../gameIdentities';
+import { SessionController } from '../session/SessionController';
+import { getGenesisChallenge } from '../../constants/wallet-connect';
+import { ensureWasmLoaded, storeInitArgs } from '../session/wasmLoader';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+import { hasSavedSessionMarker } from '../session/saveCoordination';
 import { storageRepository } from '../session/storageRepository';
-import { hasSavedSessionMarker } from '../../hooks/saveCoordination';
 import {
+  LONG_WASM_TEST_TIMEOUT,
   SessionControllerAdapter,
   action_with_messages,
   addActiveCradle,
   assertCradleRoundTrip,
+  exchangeUntilIdle,
   fetchPreset,
   flushWrapperDrain,
   initSessionController,
-  LONG_WASM_TEST_TIMEOUT,
   makeTestReliableState,
   pollOnce,
+  restoreTestSession,
   startSimulator,
 } from './load_wasm.harness';
 import { liveSave } from './session_save_envelope.fixtures';
@@ -44,11 +49,9 @@ it(
         },
         sendAck: (_ackMsgno: number) => true,
         sendKeepalive: () => true,
-        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
-        close: () => {},
       };
-      const wasm_init1 = new WasmStateInit(fetchPreset);
       storeInitArgs(async () => {}, WholeWasmObject);
+      const wasm_init1 = await ensureWasmLoaded(fetchPreset);
       const wasm_blob1 = await initSessionController(
         poller,
         'a11ce000',
@@ -67,10 +70,8 @@ it(
         },
         sendAck: (_ackMsgno: number) => true,
         sendKeepalive: () => true,
-        hostLog: (msg: string) => process.stderr.write(msg + '\n'),
-        close: () => {},
       };
-      const wasm_init2 = new WasmStateInit(fetchPreset);
+      const wasm_init2 = await ensureWasmLoaded(fetchPreset);
       const wasm_blob2 = await initSessionController(
         poller,
         'b0b77777',
@@ -184,16 +185,16 @@ it(
         reloaded.history.diagnosticLog?.includes('boot-before-resume'),
         'preference patch during marker-only boot must be retained',
       );
-      const restoredId = WholeWasmObject.restore_session(
+      const restored = restoreTestSession(
+        wasm_blob2,
         reloaded.session.live.serializedGameSession,
         'reload-regression-seed',
       );
-      assert.equal(typeof restoredId, 'number');
-      const restoredWatches = WholeWasmObject.snapshot_watched_coins(restoredId) as Array<{
+      const restoredWatches = restored.snapshot_watched_coins() as Array<{
         coin_name: string;
         coin_string: string;
       }>;
-      const restoredCoins = WholeWasmObject.coins_of_interest(restoredId) as Array<{
+      const restoredCoins = restored.coins_of_interest() as Array<{
         label: string;
         id: string;
       }>;
@@ -215,6 +216,8 @@ it(
         'reload before channel creation must preserve the channel watch',
       );
 
+      restored.free();
+
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('receiver-finished-four-message-handshake', wasm_blob2);
 
@@ -234,6 +237,71 @@ it(
     } catch (e) {
       throw new Error(`[load_wasm loads failed]\n${String(e)}`, { cause: e });
     }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
+it(
+  'opens both channels without acceptance and gives the receiver the first potato',
+  async () => {
+    const poller = await startSimulator(['d1ec7000', 'd1ec7001']);
+    if (!poller) return;
+    const wasm = await ensureWasmLoaded(fetchPreset);
+    const cradles = [
+      addActiveCradle(new SessionControllerAdapter()),
+      addActiveCradle(new SessionControllerAdapter()),
+    ];
+    const acceptanceCalls = [];
+    for (const [index, cradle] of cradles.entries()) {
+      const id = `d1ec700${index}`;
+      const address = await fakeBlockchainInfo.registerUser(id);
+      const controller = new SessionController(poller, id, 100n, 100n, cradle.peerConnection);
+      controller.setWallet(poller);
+      const peer = controller.getPeerProtocol();
+      // Keep the mock handle because diagnostic wrappers wrap methods on access.
+      const acceptSession = jest.fn(peer.accept_session);
+      peer.accept_session = acceptSession;
+      acceptanceCalls.push(acceptSession);
+      controller.loadWasm(wasm);
+      controller.iStarted = index === 0;
+      const channel = await peer.open_channel(
+        { proposer_amount: '100', responder_amount: '100' },
+        index === 0,
+        getGenesisChallenge(),
+        async () => address,
+      );
+      expect(channel).toBeDefined();
+      // Opening constructs the engine; starting its handshake is a separate step.
+      expect(peer.snapshot().messageNumber).toBe(1n);
+      expect(peer.snapshot().unackedMessages).toEqual([]);
+      controller.rewardPuzzleHash = channel!.rewardPuzzleHash;
+      controller.setGameSession(peer);
+      controller.activateSpend();
+      controller.pairingToken = id;
+      cradle.set_blob(controller);
+    }
+
+    await action_with_messages(poller, cradles[0], cradles[1]);
+    await exchangeUntilIdle(cradles);
+    const [initiator, receiver] = cradles.map((cradle) => cradle.blob!);
+    expect(initiator.lastChannelStatus?.have_potato).toBe(false);
+    expect(receiver.lastChannelStatus?.have_potato).toBe(true);
+    expect(initiator.lastChannelStatus?.state_number).toBe(1n);
+    expect(receiver.lastChannelStatus?.state_number).toBe(1n);
+
+    const ids = receiver.proposeGame({
+      game_type: protocolIdForCatalog('calpoker'),
+      timeout: 15n,
+      sender_is_player_a: false,
+      parameters: 20n,
+    });
+    expect(ids).toHaveLength(1);
+    await exchangeUntilIdle(cradles);
+    expect(initiator.lastChannelStatus?.have_potato).toBe(true);
+    expect(receiver.lastChannelStatus?.have_potato).toBe(false);
+    expect(initiator.lastChannelStatus?.state_number).toBe(2n);
+    expect(receiver.lastChannelStatus?.state_number).toBe(2n);
+    for (const acceptance of acceptanceCalls) expect(acceptance).not.toHaveBeenCalled();
   },
   LONG_WASM_TEST_TIMEOUT,
 );

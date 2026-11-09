@@ -1,7 +1,6 @@
-import type { GameSessionParams, PeerConnectionResult, SessionPhase } from '../../types/ChiaGaming';
 import type { AdvisoryStartParams } from '../../services/HubConnection';
-import type { RestoreStatus } from '../../hooks/SessionController';
 import type { ReliableTransportState } from '../../services/PeerSession';
+import type { GameSessionParams, PeerConnectionResult, SessionPhase } from '../../types/ChiaGaming';
 import type { AcceptReason } from './acceptLifecycle';
 import type { SessionModel } from './model';
 import type {
@@ -9,6 +8,7 @@ import type {
   PreHandshakeSessionSave,
   SessionTransportSave,
 } from './saveEnvelope';
+import type { RestoreStatus } from './SessionController';
 
 export type PendingSessionProposal = {
   from_id: string;

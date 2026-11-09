@@ -1,15 +1,14 @@
 import 'fake-indexeddb/auto';
 
-import { BlockchainPoller, PollingGameSession } from '../../hooks/BlockchainPoller';
-import { activate, deactivate } from '../../hooks/activeBlockchain';
 import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
-import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { ChannelFundingRuntime, channelFundingRuntime } from '../session/channelFundingRuntime';
 import { entriesForOwner, recoveryReadiness } from '../session/channelFundingSelectors';
-import { storageRepository } from '../session/storageRepository';
 import { providerScopeKey } from '../session/providerKeys';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller, PollingGameSession } from '../wallet/BlockchainPoller';
+import { ensureConnectionListener, pollOnce } from './blockchain_poller.driver';
 import { installAwaitingChannelFunding } from './channel_funding_test_helpers';
 
 const fundingOperation = {
@@ -475,9 +474,14 @@ describe('BlockchainPoller', () => {
     };
     const poller = new BlockchainPoller(rpc, 1000);
     addWatch = () =>
-      poller.watchCoin(cradle, {
-        coin_name: 'bb',
-        coin_string: 'coin-b',
+      poller.updateCoinInterest(cradle, {
+        watchCoins: [
+          {
+            coin_name: 'bb',
+            coin_string: 'coin-b',
+          },
+        ],
+        unwatchCoins: [],
       });
     poller.attachGameSession(cradle);
 
@@ -506,9 +510,14 @@ describe('BlockchainPoller', () => {
     };
     const poller = new BlockchainPoller(rpc, 1000);
     removeWatch = () =>
-      poller.unwatchCoin(cradle, {
-        coin_name: 'aa',
-        coin_string: 'coin-a',
+      poller.updateCoinInterest(cradle, {
+        watchCoins: [],
+        unwatchCoins: [
+          {
+            coin_name: 'aa',
+            coin_string: 'coin-a',
+          },
+        ],
       });
     poller.attachGameSession(cradle);
 
@@ -556,7 +565,10 @@ describe('BlockchainPoller', () => {
     expect(snapshotCalls).toBe(1);
     expect(queriedNames).toEqual([['aa'], ['aa']]);
 
-    poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
+    poller.updateCoinInterest(cradle, {
+      watchCoins: [{ coin_name: 'bb', coin_string: 'coin-b' }],
+      unwatchCoins: [],
+    });
     expect(snapshotCalls).toBe(1);
     await pollOnce(poller);
     expect(queriedNames).toEqual([['aa'], ['aa'], ['aa', 'bb']]);
@@ -576,7 +588,7 @@ describe('BlockchainPoller', () => {
     poller.attachGameSession(cradle);
 
     fail = true;
-    expect(() => poller.snapshotGameSessionCoinInterest(cradle)).toThrow('WASM watch query failed');
+    expect(() => poller.updateCoinInterest(cradle)).toThrow('WASM watch query failed');
     expect(
       (
         poller as unknown as {
@@ -884,7 +896,7 @@ describe('BlockchainPoller', () => {
     expect(balances).toEqual([10n]);
 
     // SessionController calls stop() on cradle terminal — wallet balance must continue.
-    poller.stop();
+    poller.pauseChainPolling();
     await jest.advanceTimersByTimeAsync(1000);
     expect(balances).toEqual([10n, 20n]);
     jest.useRealTimers();
@@ -1147,7 +1159,7 @@ describe('BlockchainPoller', () => {
     ]);
     await Promise.resolve();
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-    poller.stop();
+    poller.pauseChainPolling();
     poller.stopBalanceInterest();
     fundingRuntime.resetForTests();
   });
@@ -1239,10 +1251,13 @@ describe('BlockchainPoller', () => {
     );
 
     dirty = false;
-    poller.notifyProviderReadiness({
-      installationPlayerId: 'player-a',
-      peerSessionId: 'session-a',
-    });
+    const stopReadiness = poller.onSessionReadiness(
+      {
+        installationPlayerId: 'player-a',
+        peerSessionId: 'session-a',
+      },
+      () => {},
+    );
     expect(dirty).toBe(true);
     expect(fundingRuntime.providerScopeKeys()).toEqual(
       new Set([
@@ -1251,6 +1266,7 @@ describe('BlockchainPoller', () => {
       ]),
     );
 
+    stopReadiness();
     unsubscribe();
     fundingRuntime.resetForTests();
   });
@@ -1281,8 +1297,9 @@ describe('BlockchainPoller', () => {
       fundingOperation.purpose,
     );
 
+    const poller = new BlockchainPoller(rpc, 60_000, undefined, channelFundingRuntime);
     try {
-      activate(rpc, 60_000);
+      poller.start();
       expect(
         recoveryReadiness(
           storageRepository.channelFundingOperations(),
@@ -1308,7 +1325,8 @@ describe('BlockchainPoller', () => {
         ),
       ).toBe('ready');
     } finally {
-      deactivate();
+      poller.detachProvider();
+      poller.pauseChainPolling();
       channelFundingRuntime.resetForTests();
       jest.useRealTimers();
     }
@@ -1386,7 +1404,10 @@ describe('BlockchainPoller', () => {
     expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
 
     onConnectionChange?.(false);
-    poller.watchCoin(cradle, { coin_name: 'bb', coin_string: 'coin-b' });
+    poller.updateCoinInterest(cradle, {
+      watchCoins: [{ coin_name: 'bb', coin_string: 'coin-b' }],
+      unwatchCoins: [],
+    });
     await advanceLane(0);
     expect(rpc.registerCoins).toHaveBeenCalledTimes(1);
 

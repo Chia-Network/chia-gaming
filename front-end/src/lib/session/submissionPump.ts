@@ -1,3 +1,5 @@
+import type { WalletFeeSource } from '../../../../wasm/contract';
+import { log } from '../../services/log';
 import type {
   ChiaGame,
   FinalizedSubmission,
@@ -5,12 +7,11 @@ import type {
   TransactionSubmission,
   WalletSubmitOutcome,
 } from '../../types/ChiaGaming';
-import { log } from '../../services/log';
 import { spend_bundle_to_clvm } from '../../util';
-import { jsonStringify } from '../../util/jsonSafe';
-import { SessionRuntimeRetiredError } from './sessionMachineRuntime';
-import type { ProviderOwner } from './providerKeys';
+import { isPastDeadlineRejection } from '../../util/walletSubmit';
 import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
+import type { ProviderOwner } from './providerKeys';
+import { SessionRuntimeRetiredError } from './sessionMachineTypes';
 import { storageRepository } from './storageRepository';
 
 type SubmissionOutcome = 'acknowledged' | 'unavailable' | 'rejected' | 'local-failure' | 'skipped';
@@ -38,14 +39,14 @@ interface PumpEntry {
 
 export interface SubmissionPumpPorts {
   getCradle(): ChiaGame | undefined;
-  getBlockchain(): { rpc: InternalBlockchainInterface } | null;
+  getBlockchain(): { rpc: Pick<InternalBlockchainInterface, 'isReadyForPlay' | 'spend'> } | null;
   getRewardPuzzleHash(): string | null;
   getWalletOwner(): ProviderOwner | null;
   getInstallationPlayerId(): string;
   isRetired(): boolean;
   isPublishingDisabled(): boolean;
-  runCommittedMutation<T>(work: () => T): Promise<T>;
-  schedulePersistenceGatedEffect(key: string, launcher: () => Promise<void>): Promise<void>;
+  enqueueResult<T>(work: () => T): Promise<T>;
+  releaseAfterPersistence(key: string, launcher: () => Promise<void>): Promise<void>;
   requestCommit(): void;
   reportWarning(message: string): void;
   reportLocalFailure(submission: TransactionSubmission, error: unknown): void;
@@ -182,7 +183,7 @@ export class SubmissionPump {
       return;
     }
 
-    const release = this.ports.schedulePersistenceGatedEffect(`submission:${id}`, () => {
+    const release = this.ports.releaseAfterPersistence(`submission:${id}`, () => {
       const current = this.entries.get(id);
       if (current !== entry || current.state.kind !== 'scheduled') {
         return Promise.resolve();
@@ -207,7 +208,7 @@ export class SubmissionPump {
     if (error instanceof SessionRuntimeRetiredError && this.ports.isRetired()) return;
     const failed = entry.submission;
     const completion = this.ports
-      .runCommittedMutation(() => this.ports.reportLocalFailure(failed, error))
+      .enqueueResult(() => this.ports.reportLocalFailure(failed, error))
       .finally(async () => {
         if (this.entries.get(failed.id) !== entry) return;
         if (!entry.retired) await this.relinquish(failed);
@@ -231,7 +232,7 @@ export class SubmissionPump {
       !(this.ports.isRetired() && error instanceof SessionRuntimeRetiredError)
     ) {
       try {
-        await this.ports.runCommittedMutation(() => this.ports.reportLocalFailure(launched, error));
+        await this.ports.enqueueResult(() => this.ports.reportLocalFailure(launched, error));
       } catch (recordingError) {
         if (!this.ports.isRetired()) this.ports.reportError(recordingError);
       }
@@ -290,9 +291,10 @@ export class SubmissionPump {
 
     let feeOwner: ProviderOwner | undefined;
     let feeOfferCreated = false;
-    let feeSourceJson: string | undefined;
+    let walletFeeSource: WalletFeeSource | undefined;
     let finalizedDisposition: FinalizedSubmission['fee_source_disposition'] | undefined;
     let outcome: WalletSubmitOutcome | undefined;
+    let abandoned = false;
     try {
       if (!this.ports.getRewardPuzzleHash()) {
         throw new Error('Submission execution requires a reward puzzle hash');
@@ -300,10 +302,10 @@ export class SubmissionPump {
       if (submission.fee_request) {
         const owner = this.walletOwnerForSubmission(submission.id);
         if (!owner) {
-          feeSourceJson = jsonStringify({
+          walletFeeSource = {
             kind: 'failure',
             reason: 'wallet fee provider is unavailable',
-          });
+          };
         } else {
           feeOwner = owner;
           const request = {
@@ -324,25 +326,22 @@ export class SubmissionPump {
             if (this.isInactive(submission)) {
               this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-retired');
               if (!this.ports.isRetired()) {
-                await this.ports.runCommittedMutation(() => {
+                await this.ports.enqueueResult(() => {
                   this.ports.requestCommit();
                 });
               }
               return this.completion('skipped', false);
             }
-            feeSourceJson =
-              feeSource.material.kind === 'offer'
-                ? jsonStringify({ kind: 'offer', offer: feeSource.material.offer })
-                : jsonStringify({ kind: 'bundle', bundle: feeSource.material.bundle });
+            walletFeeSource = feeSource.material;
           } else if (feeSource.kind === 'failure' || feeSource.kind === 'unavailable') {
-            feeSourceJson = jsonStringify({ kind: 'failure', reason: feeSource.reason });
+            walletFeeSource = { kind: 'failure', reason: feeSource.reason };
           } else {
             throw new Error('Reserving fee provider returned ephemeral wallet material');
           }
         }
       }
 
-      const execution = await this.ports.runCommittedMutation(() => {
+      const execution = await this.ports.enqueueResult(() => {
         if (this.isInactive(submission)) {
           if (feeOfferCreated && feeOwner) {
             this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-retired');
@@ -352,7 +351,10 @@ export class SubmissionPump {
         }
         const cradle = this.ports.getCradle();
         if (!cradle) throw new Error('WASM cradle became unavailable before finalization');
-        const result = cradle.finalize_submission_attempt(submission.attempt_token, feeSourceJson);
+        const result = cradle.finalize_submission_attempt(
+          submission.attempt_token,
+          walletFeeSource,
+        );
         if ('status' in result && result.status === 'stale') {
           if (feeOfferCreated && feeOwner) {
             this.feeAttachments.cancel(feeOwner, submission.id, 'fee-submission-superseded');
@@ -377,7 +379,7 @@ export class SubmissionPump {
         if (!finalized.should_broadcast) {
           return { finalized, broadcast: Promise.resolve() };
         }
-        const broadcast = this.ports.schedulePersistenceGatedEffect(
+        const broadcast = this.ports.releaseAfterPersistence(
           `broadcast:${submission.id}:${finalized.variant_fingerprint}`,
           async () => {
             if (this.isInactive(submission)) return;
@@ -397,16 +399,23 @@ export class SubmissionPump {
               'submitTransaction',
               appliedFee || undefined,
             );
-            await this.ports.runCommittedMutation(() => {
+            await this.ports.enqueueResult(() => {
               if (this.isInactive(submission)) return;
               const activeCradle = this.ports.getCradle();
               if (!activeCradle) {
                 throw new Error('WASM cradle became unavailable before recording wallet outcome');
               }
-              if (outcome!.status === 'acknowledged') {
+              const reported = outcome!;
+              if (reported.status === 'acknowledged') {
                 activeCradle.acknowledge_submission_attempt(submission.attempt_token);
-              } else if (outcome!.status === 'unavailable') {
+              } else if (reported.status === 'unavailable') {
                 activeCradle.submission_attempt_unavailable(submission.attempt_token);
+              } else if (isPastDeadlineRejection(reported.detail)) {
+                activeCradle.abandon_submission_attempt(submission.attempt_token);
+                this.ports.reportWarning(
+                  `Wallet rejected transaction ${submission.id}: ${reported.detail}`,
+                );
+                abandoned = true;
               } else {
                 activeCradle.reject_submission_attempt(submission.attempt_token);
               }
@@ -419,7 +428,7 @@ export class SubmissionPump {
 
       if (!execution.finalized) return this.completion('skipped', false);
       if (!execution.finalized.should_broadcast) {
-        await this.ports.runCommittedMutation(() => {
+        await this.ports.enqueueResult(() => {
           if (!this.isInactive(submission)) {
             this.ports.getCradle()?.acknowledge_submission_attempt(submission.attempt_token);
             this.ports.requestCommit();
@@ -429,19 +438,19 @@ export class SubmissionPump {
       }
       await execution.broadcast;
       if (!outcome) return this.completion('skipped', false);
-      if (!this.isInactive(submission) && outcome.status === 'rejected') {
+      if (!abandoned && !this.isInactive(submission) && outcome.status === 'rejected') {
         this.ports.reportWarning(`Wallet rejected transaction ${submission.id}: ${outcome.detail}`);
       }
       return this.completion(outcome.status, outcome.status === 'unavailable');
     } catch (error) {
       if (this.isInactive(submission)) return this.completion('skipped', false);
       if (feeOfferCreated && feeOwner && finalizedDisposition !== 'attached') {
-        await this.ports.runCommittedMutation(() => {
+        await this.ports.enqueueResult(() => {
           this.feeAttachments.cancel(feeOwner!, submission.id, 'fee-finalization-rejected');
           this.ports.requestCommit();
         });
       }
-      await this.ports.runCommittedMutation(() => this.ports.reportLocalFailure(submission, error));
+      await this.ports.enqueueResult(() => this.ports.reportLocalFailure(submission, error));
       return this.completion('local-failure', true);
     }
   }
@@ -459,7 +468,7 @@ export class SubmissionPump {
   }
 
   private async relinquish(submission: TransactionSubmission): Promise<void> {
-    await this.ports.runCommittedMutation(() => {
+    await this.ports.enqueueResult(() => {
       const cradle = this.ports.getCradle();
       if (!cradle) {
         if (this.ports.isRetired()) return;
@@ -468,7 +477,7 @@ export class SubmissionPump {
       cradle.relinquish_submission_attempt(submission.attempt_token);
       this.ports.requestCommit();
     });
-    await this.ports.schedulePersistenceGatedEffect(
+    await this.ports.releaseAfterPersistence(
       `submission-relinquishment:${submission.id}:${submission.attempt_token}`,
       async () => {},
     );

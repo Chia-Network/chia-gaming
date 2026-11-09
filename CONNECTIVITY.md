@@ -101,13 +101,14 @@ dumb pipe — it delivers messages to the target peer if connected and reports
 `delivery_failure` if not. It also tells recent correspondents when one of them
 connects (`peer_available`) or actually disconnects (`peer_unavailable`).
 
-Per-session peer state is encapsulated in the peer transport
-(`front-end/src/services/PeerSession.ts`). Shell holds the selected transport
-instead of independent routing and reliability refs. The transport owns the
-peer ID, session ID, liveness, ordered delivery, acknowledgement state, replay
-log, and outbound framing from consent negotiation onward. Accepting a proposal
-attaches the WASM consumer without resetting transport counters. Destroying the
-transport makes it inert — all further method calls are no-ops.
+Application holds the selected browser peer adapter (`front-end/src/services/PeerSession.ts`),
+which owns routing, framing, and liveness presentation. Its Rust delivery owner
+(`src/peer_session.rs` and `src/peer_session/session.rs`) owns counters, queue draining,
+acknowledgements, and replay. TypeScript reports hub/peer connection events;
+Rust decides what to send, calls the carrier, and processes its result.
+Accepting a proposal starts Rust session setup and attaches channel processing
+without resetting the incoming stream. Destroying the browser adapter makes
+its carrier inert. Wallet and hub resources remain application-owned.
 
 Transient loss does not create a new peer session. The hub remembers a bounded,
 expiring relationship between recent correspondents and emits `peer_available`
@@ -118,6 +119,33 @@ receives `registered` from the hub (including reload) or a matching
 it cannot be rebound safely without peer authentication.
 
 ### Session
+
+A session begins at local acceptance. Rust owns proposal/setup progression and
+the wait for its requested wallet address. TypeScript maintains wallet/hub
+connections, executes requested host work, and reports results and connectivity
+observations to Rust. Pending incoming proposal records and retained rejection
+records sit outside that session lifetime. Rust reliable delivery preserves
+their counters when an incoming proposal is accepted; reconnecting never
+creates another session. Rust owns pre-consent delivery, rejection handling,
+and terminal-message send/ACK tracking. One accepted Rust session directly owns
+both reliability state and channel. It delivers messages and terminal
+acknowledgements through native calls and results, without internal JavaScript
+conversions or callback routing.
+Gameplay and chain observations are methods on that same exported session;
+TypeScript holds the object directly rather than a numeric channel handle.
+A replacement carrier retains that owner; retirement releases its channel.
+The host reports consumer availability and performs persistence and application
+effects requested by Rust. WalletConnect normalization remains in the TypeScript adapter.
+
+Hosts that agree session terms outside the invitation protocol can call
+`open_channel` directly on both peers without `accept_session`. They supply
+matching terms, opposite initiator roles, and consistent reliable counters.
+Opening creates the local engine without sending a proposal. The initiator
+then starts the normal channel handshake; completing it gives the receiver
+the first potato. Data and ACKs still enter through `receive`, and hosts must
+serialize checkpoint writes and completions. A prepared checkpoint identifies
+the last outgoing and incoming message numbers it covers; completing it
+releases pending messages and ACKs only through those numbers.
 
 A session is an **obligation**, not a connection. Once started, it runs to
 completion. Funds are locked in the channel coin and must be distributed
@@ -289,10 +317,10 @@ state (`ResolvedClean`, `ResolvedUnrolled`, `ResolvedStale`, or `Failed`) and
 any pending hand obligations have finished:
 
 1. The session is done.
-2. Shell is notified (via callback from `useGameSession`).
+2. Application consumes the session owner's ordered batch and resolved phase.
 3. Live protocol interaction stops: the WASM cradle is no longer used for new
    game actions, the `PeerSession` is destroyed (making it inert), keepalives
-   stop, `sessionStartedRef` is reset, and the finished session is treated as a
+   stop, `sessionStarted` is reset, and the finished session is treated as a
    read-only display.
 4. The resolved dashboard is intentionally preserved (channel label such as
    Resolved Clean, final Me/Opp balances, and related status detritus). Shell
@@ -301,7 +329,7 @@ any pending hand obligations have finished:
 5. That finished snapshot is persisted with the boot Resume/Start Over marker
    (live cradle/pairing cleared). Reload must show Resume/Start Over — not
    silently auto-connect the hub with an empty game tab.
-6. Shell tells the hub/hub that the player is not busy.
+6. Application tells the hub that the player is not busy.
 7. The player can accept new challenges. This is intentional: terminal sessions
    no longer impose a protocol obligation, so the UI should encourage continued
    play instead of making the user manually clear the finished game.
@@ -419,9 +447,11 @@ The hub does not create a session. It can only advise and relay:
    session, on-chain resolution, restore/handshake, or another consent prompt,
    it **ignores** the advisory (no `session_reject`).
 4. If the target consents, it marks itself busy, generates a random 16-byte
-   peer session ID, persists a reliable transport epoch, and sends
-   `session_proposal` as data message 1 under that ID. It then starts WASM as
-   initiator and sends handshake messages through the same counter sequence.
+   peer session ID, and starts the Rust session at local acceptance. Rust queues
+   `session_proposal` as data message 1; TypeScript checkpoints and sends it.
+   Rust setup requests the wallet reward address through TypeScript, then
+   creates its channel engine when the result arrives. Handshake messages use
+   the same counter sequence.
    Persist of that start is async; `session_reject` / local cancel must abort
    any in-flight start so it cannot resurrect an orphan handshake.
 5. The challenger app checks local availability before showing the proposal
@@ -458,7 +488,7 @@ The hub does not create a session. It can only advise and relay:
   WASM consumer to that same transport after consent without resetting its
   counters.
 - **Peer liveness**: 30-second degradation threshold (no dead-from-timeout)
-  with 5-second polling interval managed by Shell. Yellow when the hub
+  with 5-second liveness interval managed by Application. Yellow when the hub
   reports the peer disconnected (`delivery_failure` / `peer_unavailable`) or
   no matching peer frame has arrived for 30 seconds. Either is reversible on
   inbound traffic or `peer_available`. Dead state only from explicit go-on-chain
@@ -469,12 +499,13 @@ The hub does not create a session. It can only advise and relay:
   `ShutdownTransactionPending` reports a fully signed close awaiting chain
   confirmation, outgoing peer keepalives stop and the warning is suppressed.
 - **Advisory matchmaking**: Challenge acceptance sends `advisory_start` to the
-  challenge accepter; peers exchange consent messages before starting WASM.
+  challenge accepter. Local consent starts Rust session setup; the initial
+  proposal precedes completion of the wallet-address request and channel setup.
 - **Application persistence**: `StorageRepository` atomically claims and reads
   one salt-prefixed, masked Bencodex `DurableApplicationState` v5, owns ordered
   root transforms, and checkpoints the whole aggregate. IndexedDB v5 has only
   coordination and aggregate stores; the nested Rust/WASM cradle remains opaque
-  schema 23. Owner-specific channel-funding operations, fee attachments, and
+  schema 24. Owner-specific channel-funding operations, fee attachments, and
   rejection transports are nested in the same root and have no independent
   record, version, hydration, or writer. A non-current version therefore blocks
   connectivity restore for the whole root rather than selecting a predecessor
@@ -486,7 +517,7 @@ The hub does not create a session. It can only advise and relay:
   suppresses pending effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the
   2,000-entry cap secondary.
-- **Resume on reload**: `BootRecoveryBoundary` owns pending wipe, visible local
+- **Resume on reload**: `Recovery` (`lib/application/Recovery.ts`) owns pending wipe, visible local
   loading, read-only inspection, atomic claim-and-read, one strict aggregate
   rehydrate, takeover, malformed evidence, reset retry, and authority loss.
   Any malformed nested field rejects the whole root and displays Retry Hard
@@ -516,7 +547,7 @@ The hub does not create a session. It can only advise and relay:
   restore cradle (phase alone is often still `none` mid-resume). The Choose
   Connection network toggle is locked while a session binds a genesis
   challenge (`sessionLocksNetwork`) so reconnect cannot pair a different
-  chain id than the existing WASM cradle. (`Shell.tsx`)
+  chain id than the existing WASM cradle. (`lib/application/Application.ts`)
 
 - **Provider reservation recovery**: the aggregate has exactly two owners.
   `ChannelFundingRuntime` owns channel funding; `SubmissionPump` and
@@ -561,15 +592,15 @@ The hub does not create a session. It can only advise and relay:
   for a coherent snapshot, a newer fee-bearing successor may replace the base
   immediately, and unrelated IDs remain independent.
 
-- **Session state surfaced to Shell**: `GameSession` reports coarse session
-  phase (`off-chain | on-chain | resolved`) and an error flag to Shell via
-  the `onSessionPhaseChange` callback. Shell tracks this as `sessionPhase`
-  and `sessionError` state. (`GameSession.tsx`, `Shell.tsx`)
+- **Session state surfaced to the GUI**: Application consumes the session owner's
+  coarse phase (`off-chain | on-chain | resolved`), model, coins and restore status
+  directly, computes lifecycle effects, and publishes ordered presentation batches.
+  GameSession renders snapshots and sends typed session/game intents.
 
 - **Terminal session detection and resolved display preservation**: When `sessionPhase`
   becomes `'resolved'` (derived from terminal channel states plus the absence of
-  pending hand obligations), Shell stops live protocol interaction, destroys the
-  `PeerSession`, resets `sessionStartedRef`, and marks the player as not busy. The game UI stays visible as a read-only resolved display
+  pending hand obligations), Application stops live protocol interaction, destroys the
+  `PeerSession`, resets `sessionStarted`, and marks the player as not busy. The game UI stays visible as a read-only resolved display
   until a new match replaces it, and a reload may restore that finished view.
   Terminal error or suspect outcomes are carried separately via
   `sessionError`.
@@ -582,7 +613,7 @@ The hub does not create a session. It can only advise and relay:
 - **Hub busy signaling**: `HubConnection.setBusy(presence)`
   sends a bencodex `{ type: "set_busy", busy, busy_reasons? }` dictionary over
   the game WebSocket, with reasons only when busy.
-  The `identify` message includes the current presence. Shell computes presence
+  The `identify` message includes the current presence. Application computes presence
   with `computeHubPresence` (`lib/hubPresence.ts`) and reports it whenever the
   broader session phase changes. Local game presentation depends only on
   the local restoring flag and WASM restore status; independent hub, wallet,

@@ -708,6 +708,56 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     }
   });
 
+  it.each(['ResolvedUnrolled', 'ResolvedStale'] as const)(
+    'allows abandoning unfinished on-chain games after the %s waiting timeout',
+    (state) => {
+      const model = createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
+        game: { activeIds: ['7', '8'] },
+      });
+
+      expect(selectGameDashboardView(model, { abandonEnabled: false })).toMatchObject({
+        actionLabel: 'Waiting',
+        actionEnabled: false,
+        actionKind: 'none',
+      });
+      expect(selectGameDashboardView(model, { abandonEnabled: true })).toMatchObject({
+        actionLabel: 'Abandon',
+        actionEnabled: true,
+        actionKind: 'abandon',
+      });
+      expect(isChannelAbandonable(model.channel.status, false, true)).toBe(false);
+      expect(isChannelAbandonable(model.channel.status, true, true)).toBe(true);
+      expect(isChannelAbandonable(model.channel.status, true, false)).toBe(false);
+      expect(
+        selectGameDashboardView(
+          { ...model, game: { ...model.game, activeIds: [] } },
+          { abandonEnabled: true },
+        ),
+      ).toMatchObject({ actionLabel: 'Done', actionEnabled: false, actionKind: 'none' });
+
+      const awaitingPeer = createSessionModel({
+        ...model,
+        channel: {
+          status: { ...model.channel.status, sessionDisposition: 'AwaitOutboundTerminal' },
+        },
+      });
+      expect(selectGameDashboardView(awaitingPeer, { abandonEnabled: true })).toMatchObject({
+        actionLabel: 'Waiting',
+        actionEnabled: false,
+        actionKind: 'none',
+      });
+      expect(isChannelAbandonable(awaitingPeer.channel.status, true, true)).toBe(false);
+      expect(
+        isChannelAbandonable(
+          { ...model.channel.status, sessionDisposition: 'Abandoned' },
+          true,
+          true,
+        ),
+      ).toBe(false);
+    },
+  );
+
   it('allows chain-submitting dashboard actions even while the blockchain is offline', () => {
     const cleanShutdown = selectGameDashboardView(
       createSessionModel({

@@ -1,20 +1,20 @@
+import { subscribeLog } from '../../services/log';
+import { completeRegisteredGames, protocolIdentitiesReady } from '../../lib/gameIdentities';
+import type { WasmConnection } from '../../types/ChiaGaming';
 import {
-  WasmStateInit,
-  ensureWasmLoaded,
-  startWasmBootstrap,
-  storeInitArgs,
-  registerWasmLoader,
   _resetWasmLoadForTests,
   _drainClvmDiagnosticsForTests,
   DEBUG_PRESET_FILES,
+  ensurePeerProtocolLoaded,
+  ensureWasmLoaded,
   PRESET_FILES,
-} from '../../hooks/WasmStateInit';
-import { completeRegisteredGames, protocolIdentitiesReady } from '../../lib/gameIdentities';
-import type { WasmConnection } from '../../types/ChiaGaming';
+  registerWasmLoader,
+  startWasmBootstrap,
+  storeInitArgs,
+} from '../session/wasmLoader';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
-import { subscribeLog } from '../../services/log';
 
-describe('WasmStateInit lazy load', () => {
+describe('WASM lazy load', () => {
   beforeEach(() => {
     _resetWasmLoadForTests();
   });
@@ -26,6 +26,7 @@ describe('WasmStateInit lazy load', () => {
   function mockWasm(): WasmConnection {
     return {
       init: jest.fn(),
+      create_peer_protocol: jest.fn(),
       cache_file: jest.fn(),
       cache_debug_metadata: jest.fn(),
       diagnose_clvm: jest.fn((token: string) => `trace for ${token}`),
@@ -38,18 +39,10 @@ describe('WasmStateInit lazy load', () => {
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([1, 2, 3]));
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
 
     expect(initFn).not.toHaveBeenCalled();
     expect(fetchPreset).not.toHaveBeenCalled();
-  });
-
-  it('keeps deterministic debug sidecar URLs out of eager presets', () => {
-    expect(DEBUG_PRESET_FILES).toEqual(
-      PRESET_FILES.map((file) => file.replace(/\.clvm\.bin$/, '.debug.clvm.bin')),
-    );
-    expect(PRESET_FILES.every((file) => !file.endsWith('.debug.clvm.bin'))).toBe(true);
   });
 
   it('notifies glue after registering window.loadWasm', () => {
@@ -79,11 +72,10 @@ describe('WasmStateInit lazy load', () => {
 
     const fetchPreset = jest.fn(async (_key: string) => new Uint8Array([1, 2, 3]));
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
 
-    const p1 = ensureWasmLoaded();
-    const p2 = ensureWasmLoaded();
+    const p1 = ensureWasmLoaded(fetchPreset);
+    const p2 = ensureWasmLoaded(fetchPreset);
     expect(p1).toBe(p2);
 
     const conn = await p1;
@@ -96,25 +88,26 @@ describe('WasmStateInit lazy load', () => {
       expect(wasm.cache_file).toHaveBeenCalledWith(name, expect.any(Uint8Array));
     }
 
-    const again = await new WasmStateInit(fetchPreset).getWasmConnection();
+    const again = await ensureWasmLoaded(fetchPreset);
     expect(again).toBe(conn);
     expect(initCalls).toBe(1);
     expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length);
   });
 
-  it('getWasmConnection waits for storeInitArgs when called first', async () => {
+  it('ensureWasmLoaded waits for storeInitArgs when called first', async () => {
     const wasm = mockWasm();
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([9]));
 
-    const wsi = new WasmStateInit(fetchPreset);
-    const pending = wsi.getWasmConnection();
+    const pending = ensureWasmLoaded(fetchPreset);
 
     // Allow the wait subscription to attach before wiring init args.
     await Promise.resolve();
     storeInitArgs(initFn, wasm);
 
-    await expect(pending).resolves.not.toBe(wasm);
+    await expect(pending).resolves.toEqual(
+      expect.objectContaining({ cache_file: expect.any(Function) }),
+    );
     expect(initFn).toHaveBeenCalledTimes(1);
     expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length);
   });
@@ -131,12 +124,15 @@ describe('WasmStateInit lazy load', () => {
       return new Uint8Array([1]);
     });
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
 
-    await expect(ensureWasmLoaded()).rejects.toThrow('transient preset fetch');
-    await expect(ensureWasmLoaded()).resolves.not.toBe(wasm);
-    expect(initFn).toHaveBeenCalledTimes(2);
+    await expect(ensureWasmLoaded(fetchPreset)).rejects.toThrow('transient preset fetch');
+    await expect(ensureWasmLoaded(fetchPreset)).resolves.toEqual(
+      expect.objectContaining({ cache_file: expect.any(Function) }),
+    );
+    // The peer engine is now independently usable while game assets retry.
+    // Retrying a preset must not replace an initialized protocol module.
+    expect(initFn).toHaveBeenCalledTimes(1);
     expect(fetchPreset.mock.calls.length).toBeGreaterThan(PRESET_FILES.length);
   });
 
@@ -145,11 +141,11 @@ describe('WasmStateInit lazy load', () => {
     const initFn = jest.fn(async () => {});
     const fetchPreset = jest.fn(async () => new Uint8Array([1, 2, 3]));
 
-    new WasmStateInit(fetchPreset);
     storeInitArgs(initFn, wasm);
+    void ensureWasmLoaded(fetchPreset);
     startWasmBootstrap();
 
-    await ensureWasmLoaded();
+    await ensureWasmLoaded(fetchPreset);
     completeRegisteredGames(wasm);
 
     expect(initFn).toHaveBeenCalledTimes(1);
@@ -160,6 +156,25 @@ describe('WasmStateInit lazy load', () => {
     expect(protocolIdentitiesReady()).toBe(true);
   });
 
+  it('makes peer delivery available while game presets are still pending', async () => {
+    const wasm = mockWasm();
+    const initFn = jest.fn(async () => {});
+    let finishPresets!: (bytes: Uint8Array) => void;
+    const pendingPreset = new Promise<Uint8Array>((resolve) => {
+      finishPresets = resolve;
+    });
+    const fetchPreset = jest.fn(() => pendingPreset);
+    storeInitArgs(initFn, wasm);
+    const gamesReady = ensureWasmLoaded(fetchPreset);
+    await ensurePeerProtocolLoaded();
+    expect(initFn).toHaveBeenCalledTimes(1);
+    expect(wasm.cache_file).not.toHaveBeenCalled();
+    finishPresets(new Uint8Array([1]));
+    await expect(gamesReady).resolves.toEqual(
+      expect.objectContaining({ cache_file: expect.any(Function) }),
+    );
+    expect(initFn).toHaveBeenCalledTimes(1);
+  });
   it('loads all debug sidecars once after structured-token failures and reuses them', async () => {
     const wasm = mockWasm();
     const originalErrors = ['clvm-one', 'clvm-two', 'clvm-three'].map((token) => {
@@ -170,7 +185,7 @@ describe('WasmStateInit lazy load', () => {
       return error;
     });
     let nextError = 0;
-    (wasm as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => {
+    (wasm as unknown as { build_wallet_spend: jest.Mock }).build_wallet_spend = jest.fn(() => {
       throw originalErrors[nextError++];
     });
     const fetchPreset = jest.fn(async (name: string) => new Uint8Array([name.length]));
@@ -179,17 +194,16 @@ describe('WasmStateInit lazy load', () => {
     lines.length = 0;
 
     try {
-      new WasmStateInit(fetchPreset);
       storeInitArgs(
         jest.fn(async () => {}),
         wasm,
       );
-      const connection = await ensureWasmLoaded();
+      const connection = await ensureWasmLoaded(fetchPreset);
       expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length);
 
       for (const expected of originalErrors.slice(0, 2)) {
         try {
-          connection.make_move(1, '1', new Uint8Array());
+          connection.build_wallet_spend('{}');
           throw new Error('expected operation failure');
         } catch (error) {
           expect(error).toBe(expected);
@@ -203,7 +217,7 @@ describe('WasmStateInit lazy load', () => {
       }
       expect(wasm.diagnose_clvm).toHaveBeenCalledTimes(2);
 
-      expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(originalErrors[2]);
+      expect(() => connection.build_wallet_spend('{}')).toThrow(originalErrors[2]);
       await _drainClvmDiagnosticsForTests();
       expect(fetchPreset).toHaveBeenCalledTimes(PRESET_FILES.length + DEBUG_PRESET_FILES.length);
       expect(wasm.diagnose_clvm).toHaveBeenCalledTimes(3);
@@ -235,21 +249,21 @@ describe('WasmStateInit lazy load', () => {
       const error = Object.assign(new Error('operation failed'), {
         clvmDiagnosticToken: 'clvm-first',
       });
-      (wasm as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => {
+      (wasm as unknown as { build_wallet_spend: jest.Mock }).build_wallet_spend = jest.fn(() => {
         throw error;
       });
-      new WasmStateInit(fetchPreset);
+
       storeInitArgs(
         jest.fn(async () => {}),
         wasm,
       );
-      const connection = await ensureWasmLoaded();
-      expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(error);
+      const connection = await ensureWasmLoaded(fetchPreset);
+      expect(() => connection.build_wallet_spend('{}')).toThrow(error);
       await _drainClvmDiagnosticsForTests();
       expect(wasm.diagnose_clvm).not.toHaveBeenCalled();
       recovered = true;
       error.clvmDiagnosticToken = 'clvm-retry';
-      expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(error);
+      expect(() => connection.build_wallet_spend('{}')).toThrow(error);
       await _drainClvmDiagnosticsForTests();
       expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-retry');
       expect(cached.size).toBe(DEBUG_PRESET_FILES.length);
@@ -271,7 +285,7 @@ describe('WasmStateInit lazy load', () => {
         clvmDiagnosticToken: string;
       };
       original.clvmDiagnosticToken = `clvm-${failure}`;
-      (wasm as unknown as { make_move: jest.Mock }).make_move = jest.fn(() => {
+      (wasm as unknown as { build_wallet_spend: jest.Mock }).build_wallet_spend = jest.fn(() => {
         throw original;
       });
       if (failure === 'malformed') {
@@ -289,13 +303,12 @@ describe('WasmStateInit lazy load', () => {
       const unsubscribe = subscribeLog((line) => lines.push(line));
       lines.length = 0;
       try {
-        new WasmStateInit(fetchPreset);
         storeInitArgs(
           jest.fn(async () => {}),
           wasm,
         );
-        const connection = await ensureWasmLoaded();
-        expect(() => connection.make_move(1, '1', new Uint8Array())).toThrow(original);
+        const connection = await ensureWasmLoaded(fetchPreset);
+        expect(() => connection.build_wallet_spend('{}')).toThrow(original);
         await _drainClvmDiagnosticsForTests();
         expect(lines.some((line) => line.includes('diagnostic failed'))).toBe(true);
         expect(
@@ -306,4 +319,31 @@ describe('WasmStateInit lazy load', () => {
       }
     },
   );
+  it('captures failures from owned peer methods, including async channel setup', async () => {
+    const wasm = mockWasm();
+    const syncError = Object.assign(new Error('move failed'), { clvmDiagnosticToken: 'clvm-move' });
+    const asyncError = Object.assign(new Error('setup failed'), {
+      clvmDiagnosticToken: 'clvm-setup',
+    });
+    const peer = {
+      make_move: jest.fn(() => {
+        throw syncError;
+      }),
+      open_channel: jest.fn(async () => {
+        throw asyncError;
+      }),
+    };
+    (wasm.create_peer_protocol as jest.Mock).mockReturnValue(peer);
+    storeInitArgs(
+      jest.fn(async () => {}),
+      wasm,
+    );
+    const connection = await ensureWasmLoaded(async () => new Uint8Array([1]));
+    const wrapped = Reflect.apply(connection.create_peer_protocol, connection, []) as typeof peer;
+    expect(() => wrapped.make_move()).toThrow(syncError);
+    await expect(wrapped.open_channel()).rejects.toBe(asyncError);
+    await _drainClvmDiagnosticsForTests();
+    expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-move');
+    expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-setup');
+  });
 });

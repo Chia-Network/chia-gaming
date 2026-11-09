@@ -1,13 +1,14 @@
-import { indexedDbStoragePort, readApplicationState } from '../session/indexedDb';
-import { storageRepository } from '../session/storageRepository';
-import type { ChannelFundingEntry } from '../session/channelFundingStore';
 import { buildDurableApplicationState } from '../session/sessionMachinePersist';
+import type { SessionController } from '../session/SessionController';
+import type { ChannelFundingEntry } from '../session/channelFundingStore';
+import { indexedDbStoragePort, readApplicationState } from '../session/indexedDb';
+import { createSessionModel } from '../session/model';
 import { decodeDurableApplicationState } from '../session/persistence';
 import { createSessionMachineState } from '../session/sessionMachine';
-import { createSessionModel } from '../session/model';
-import type { SessionController } from '../../hooks/SessionController';
-import { activeSave } from './session_save_envelope.fixtures';
+import { storageRepository } from '../session/storageRepository';
+import { installCapturedState } from './checkpoint_capture.harness';
 import './save.harness';
+import { activeSave } from './session_save_envelope.fixtures';
 
 const entry: ChannelFundingEntry = {
   owner: {
@@ -34,6 +35,22 @@ function withWallet(state: ReturnType<typeof activeSave>): ReturnType<typeof act
 }
 
 describe('aggregate checkpoints', () => {
+  it('assembles a checkpoint without changing its input or installing a repository root', () => {
+    const root = activeSave();
+    const before = structuredClone(root);
+    const installed = structuredClone(storageRepository.loadState());
+    const snapshot = buildDurableApplicationState(root, {
+      kind: 'terminal',
+      walletProviderScope: entry.owner.providerScope,
+      model: createSessionModel(),
+      identity: { iStarted: true, myAlias: 'Bram', opponentAlias: null },
+      coinsOfInterest: [],
+    });
+    expect(snapshot?.session?.phase).toBe('terminal');
+    expect(root).toEqual(before);
+    expect(storageRepository.loadState()).toEqual(installed);
+  });
+
   it('logs ordinary aggregate write failures with a stack', async () => {
     const failure = new Error('disk unavailable');
     const write = jest
@@ -185,7 +202,7 @@ describe('aggregate checkpoints', () => {
         },
       }),
     );
-    const snapshot = buildDurableApplicationState({
+    const snapshot = installCapturedState({
       kind: 'live',
       controller,
       state: machine,

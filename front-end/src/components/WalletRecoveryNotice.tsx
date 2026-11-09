@@ -1,38 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import { channelFundingRuntime } from '../lib/session/channelFundingRuntime';
-import { walletRecoveryNotice } from '../lib/session/channelFundingSelectors';
-import { storageRepository } from '../lib/session/storageRepository';
+import type { WalletView } from '../lib/wallet/WalletConnection';
 
-function readNotice() {
-  return walletRecoveryNotice(
-    [...storageRepository.channelFundingOperations(), ...storageRepository.feeAttachments()],
-    channelFundingRuntime.providerScopeKeys(),
-  );
-}
-
-export default function WalletRecoveryNotice() {
-  const [notice, setNotice] = useState(readNotice);
+export default function WalletRecoveryNotice({ notice }: { notice: WalletView['recoveryNotice'] }) {
   const [dismissedKey, setDismissedKey] = useState<string | null>(null);
-
   useEffect(() => {
-    const refresh = () => {
-      const next = readNotice();
-      setNotice((previous) =>
-        previous?.key === next?.key && previous?.message === next?.message ? previous : next,
-      );
-      if (!next) setDismissedKey(null);
-    };
-    const unsubscribeOperations = storageRepository.onWalletOperationsChange(refresh);
-    const unsubscribeProviders = channelFundingRuntime.subscribe(refresh);
-    const unsubscribeLifecycle = storageRepository.onLifecycle(refresh);
-    refresh();
-    return () => {
-      unsubscribeOperations();
-      unsubscribeProviders();
-      unsubscribeLifecycle();
-    };
-  }, []);
+    if (!notice) setDismissedKey(null);
+  }, [notice]);
 
   if (!notice || notice.key === dismissedKey) return null;
   return (
