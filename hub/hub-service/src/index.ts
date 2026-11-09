@@ -30,7 +30,9 @@ const httpServer = createServer(app);
 function parseArgs() {
   const args = minimist(process.argv.slice(2), { boolean: ['verbose'], alias: { verbose: 'v' } });
   if (!args.self) {
-    console.warn('usage: hub --self [own-url] --dir [serve-directory] [--verbose]');
+    console.warn(
+      'usage: hub --self [own-url] --dir [serve-directory] [--redirect-html-to player-app-url] [--verbose]',
+    );
     process.exit(1);
   }
   return args;
@@ -503,6 +505,28 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+
+// Top-level browser visits to the hub's HTML go to the player app instead. The
+// player app embeds this same HTML in an iframe (Sec-Fetch-Dest: iframe), so
+// only document navigations are redirected.
+const redirectHtmlTo: string | undefined = args['redirect-html-to'];
+if (redirectHtmlTo) {
+  app.use((req, res, next) => {
+    const p = req.path;
+    const isHtml = p === '/' || p.endsWith('.html');
+    if (
+      (req.method === 'GET' || req.method === 'HEAD') &&
+      isHtml &&
+      req.get('Sec-Fetch-Dest') === 'document'
+    ) {
+      res.set('Cache-Control', 'no-store');
+      res.redirect(302, redirectHtmlTo);
+      return;
+    }
+    next();
+  });
+}
+
 if (args.dir) {
   app.use(express.static(args.dir));
 }
