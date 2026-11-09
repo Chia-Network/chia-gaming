@@ -515,8 +515,9 @@ const redirectHtmlTo: string | undefined = args['redirect-html-to'];
 function redirectTarget(req: express.Request): string {
   const host = req.get('Host') ?? '';
   if (host.startsWith('hub.')) {
-    const proto = req.get('X-Forwarded-Proto')?.split(',')[0].trim() || req.protocol;
-    return `${proto}://player.${host.slice('hub.'.length)}/`;
+    // Scheme-relative: the browser keeps the scheme it used for the hub (e.g.
+    // https behind a TLS-terminating proxy) without trusting forwarded headers.
+    return `//player.${host.slice('hub.'.length)}/`;
   }
   return redirectHtmlTo!;
 }
