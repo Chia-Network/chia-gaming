@@ -509,14 +509,14 @@ app.use(express.json());
 // Top-level browser visits to the hub's HTML go to the player app instead. The
 // player app embeds this same HTML in an iframe (Sec-Fetch-Dest: iframe), so
 // only document navigations are redirected. A request on a `hub.*` host goes to
-// the matching `playerapp.*` host (hub.example.com -> playerapp.example.com);
+// the matching `player.*` host (hub.example.com -> player.example.com);
 // any other host goes to the --redirect-html-to URL.
 const redirectHtmlTo: string | undefined = args['redirect-html-to'];
 function redirectTarget(req: express.Request): string {
   const host = req.get('Host') ?? '';
   if (host.startsWith('hub.')) {
     const proto = req.get('X-Forwarded-Proto')?.split(',')[0].trim() || req.protocol;
-    return `${proto}://playerapp.${host.slice('hub.'.length)}/`;
+    return `${proto}://player.${host.slice('hub.'.length)}/`;
   }
   return redirectHtmlTo!;
 }
