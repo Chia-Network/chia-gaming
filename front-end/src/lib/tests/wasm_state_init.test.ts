@@ -346,4 +346,48 @@ describe('WASM lazy load', () => {
     expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-move');
     expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-setup');
   });
+
+  it('delivers thrown-call prints before rethrowing and consumes each diagnostic once', async () => {
+    const wasm = mockWasm();
+    const error = Object.assign(new Error('factory failed'), {
+      clvmDiagnosticToken: 'clvm-factory',
+      clvmRuntimeOutput: {
+        prints: ['[clvm-print] before factory error'],
+        diagnosticTokens: ['clvm-factory'],
+      },
+    });
+    const peer = {
+      propose: jest.fn().mockImplementationOnce(() => {
+        throw error;
+      }),
+    };
+    (wasm.create_peer_protocol as jest.Mock).mockReturnValue(peer);
+    storeInitArgs(
+      jest.fn(async () => {}),
+      wasm,
+    );
+    const connection = await ensureWasmLoaded(async () => new Uint8Array([1]));
+    const wrapped = Reflect.apply(connection.create_peer_protocol, connection, []) as typeof peer;
+    const lines: string[] = [];
+    const unsubscribe = subscribeLog((line) => lines.push(line));
+    lines.length = 0;
+    try {
+      try {
+        wrapped.propose();
+        throw new Error('expected factory failure');
+      } catch (caught) {
+        expect(caught).toBe(error);
+      }
+      expect(lines).toEqual([expect.stringContaining('[clvm-print] before factory error')]);
+      await _drainClvmDiagnosticsForTests();
+      expect(wasm.diagnose_clvm).toHaveBeenCalledTimes(1);
+      expect(wasm.diagnose_clvm).toHaveBeenCalledWith('clvm-factory');
+      wrapped.propose();
+      await _drainClvmDiagnosticsForTests();
+      expect(lines.filter((line) => line.includes('[clvm-print]'))).toHaveLength(1);
+      expect(wasm.diagnose_clvm).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+    }
+  });
 });

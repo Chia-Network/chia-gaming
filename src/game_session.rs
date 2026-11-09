@@ -907,7 +907,8 @@ impl GameSession {
             .push_back(GameSessionEvent::ChannelCreationTimedOut);
     }
 
-    pub fn push_event(&mut self, event: GameSessionEvent) {
+    pub fn push_event(&mut self, allocator: &mut AllocEncoder, event: GameSessionEvent) {
+        self.collect_runtime_prints(allocator);
         self.state.events.push_back(event);
     }
 

@@ -452,6 +452,66 @@ mod tests {
     }
 
     #[test]
+    fn production_factory_metadata_covers_returned_handlers_and_validators() {
+        use chialisp::compiler::debug_metadata::{DebugMetadata, FrameMatch};
+        for key in ["calpoker", "spacepoker", "krunk"] {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let path = root.join(format!("games/{key}/clsp/factory_prepared"));
+            let metadata = DebugMetadata::decode(
+                &std::fs::read(path.with_extension("debug.clvm.bin")).unwrap(),
+            )
+            .unwrap();
+            let mut allocator = AllocEncoder::new();
+            let factory = decode(
+                allocator.allocator(),
+                &std::fs::read(path.with_extension("clvm.bin")).unwrap(),
+            );
+            let probe = decode(
+                allocator.allocator(),
+                &std::fs::read(root.join(format!("games/{key}/clsp/factory_probe.clvm.bin")))
+                    .unwrap(),
+            );
+            let args = run_clvm(allocator.allocator(), probe, NodePtr::NIL, 0)
+                .unwrap()
+                .1;
+            let result = run_clvm(allocator.allocator(), factory, args, 0).unwrap().1;
+            let result = crate::utils::proper_list(allocator.allocator(), result, true).unwrap();
+            let records =
+                crate::utils::proper_list(allocator.allocator(), result[1], true).unwrap();
+            let record =
+                crate::utils::proper_list(allocator.allocator(), records[0], true).unwrap();
+            let validators =
+                crate::utils::proper_list(allocator.allocator(), record[9], true).unwrap();
+            for (kind, program) in [("my-turn", record[7]), ("their-turn", record[8])]
+                .into_iter()
+                .chain(validators.into_iter().map(|program| ("validator", program)))
+            {
+                let program = node_to_bytes(allocator.allocator(), program).unwrap();
+                let frame = metadata.symbolize_frame(&program, &[]).unwrap();
+                assert!(
+                    matches!(frame.matched, FrameMatch::Exact | FrameMatch::Curried),
+                    "{key} {kind}"
+                );
+                if kind != "validator" {
+                    assert!(
+                        frame
+                            .function
+                            .as_ref()
+                            .is_some_and(|name| name
+                                .starts_with(&format!("games.{key}.clsp.{key}_generate."))),
+                        "{key} {kind}: {:?}",
+                        frame.function
+                    );
+                    let span = &metadata.spans[frame.source_span.expect("handler source span")];
+                    assert!(metadata.files[span.file]
+                        .path
+                        .ends_with(&format!("{key}_generate.clinc")));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn successful_execution_has_no_diagnostic_work() {
         reset();
         let mut allocator = Allocator::new();

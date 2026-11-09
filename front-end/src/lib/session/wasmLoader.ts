@@ -93,6 +93,18 @@ export function scheduleClvmDiagnostic(wasm: WasmConnection, token: string): voi
 
 function scheduleDiagnostic(wasm: WasmConnection, error: unknown): void {
   const token = diagnosticToken(error);
+  if (error && typeof error === 'object') {
+    const output = (
+      error as {
+        clvmRuntimeOutput?: { prints: string[]; diagnosticTokens: string[] };
+      }
+    ).clvmRuntimeOutput;
+    if (output) {
+      for (const line of output.prints) log(line);
+      for (const token of output.diagnosticTokens) scheduleClvmDiagnostic(wasm, token);
+      if (token !== null && output.diagnosticTokens.includes(token)) return;
+    }
+  }
   if (token !== null) scheduleClvmDiagnostic(wasm, token);
 }
 
