@@ -11,6 +11,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GAME_PORT="${GAME_PORT:-3002}"
 HUB_PORT="${HUB_PORT:-3003}"
 HOST="${HOST:-127.0.0.1}"
+# Where browser visits to the hub's HTML are redirected. `{domain}` is replaced
+# with the request's host minus its first label, e.g. on a server:
+#   PLAYER_APP_URL='https://playerapp.{domain}' ./tools/run-production.sh
+PLAYER_APP_URL="${PLAYER_APP_URL:-http://$HOST:$GAME_PORT}"
 
 PLAYER_STAGE="${PLAYER_STAGE:-$ROOT_DIR/.stage-player}"
 HUB_STAGE="${HUB_STAGE:-$ROOT_DIR/.stage-hub}"
@@ -77,7 +81,7 @@ echo "=== Starting hub on http://$HOST:$HUB_PORT ==="
 PORT="$HUB_PORT" node "$HUB_STAGE/service.js" \
     --self "http://$HOST:$HUB_PORT" \
     --dir "$HUB_STAGE" \
-    --redirect-html-to "http://$HOST:$GAME_PORT" &
+    --redirect-html-to "$PLAYER_APP_URL" &
 PIDS+=($!)
 
 echo ""
