@@ -13,9 +13,6 @@ GAMES_DIR="$SCRIPT_DIR/games"
 GAME_PORT=${GAME_PORT:-3002}
 HUB_PORT=${HUB_PORT:-3003}
 SIM_PORT=${SIM_PORT:-5800}
-# Where browser visits to the hub's HTML are redirected. `{domain}` is replaced
-# with the request's host minus its first label (e.g. 'https://playerapp.{domain}').
-PLAYER_APP_URL=${PLAYER_APP_URL:-http://localhost:$GAME_PORT}
 
 SKIP_BUILD=0
 FORCE_BUILD=0
@@ -229,7 +226,7 @@ node "$SCRIPT_DIR/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting hub (hub-service + hub-frontend on port $HUB_PORT) ==="
-(cd "$HUB_SERVICE_DIR" && PORT=$HUB_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$HUB_PORT" --dir "$HUB_SERVE" --redirect-html-to "$PLAYER_APP_URL") &
+(cd "$HUB_SERVICE_DIR" && PORT=$HUB_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$HUB_PORT" --dir "$HUB_SERVE" --redirect-html-to "http://localhost:$GAME_PORT") &
 PIDS+=($!)
 
 echo "=== Waiting for services ==="
