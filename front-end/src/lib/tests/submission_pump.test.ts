@@ -364,6 +364,190 @@ describe('submission pump delivery and lifecycle', () => {
     }
   });
 
+  describe('a displaced fee attempt whose offer the wallet will not cancel', () => {
+    const feeRequest = { target: '22'.repeat(32), amount: '10' };
+    const scope = { provider: 'simulator' as const, identity: 'submission-handoff' };
+    const created = {
+      kind: 'created-reserved' as const,
+      material: { kind: 'offer' as const, offer: 'offer1displaced' },
+      tradeId: 'Offer_displaced',
+    };
+    const cancellationRecord = [
+      expect.objectContaining({
+        stage: 'best-effort-cancellation-uncertain',
+        providerReservationId: created.tradeId,
+      }),
+    ];
+
+    function refusingWallet() {
+      return {
+        capability: 'recoverable-after-begin' as const,
+        scope,
+        beginCreation: jest.fn().mockResolvedValue({ kind: 'pending', recoveryId: 'sr-1' }),
+        reconcileCreation: jest.fn(),
+        beginCancellation: jest
+          .fn()
+          .mockResolvedValue({ status: 'unavailable', detail: 'feature flag missing' }),
+        reconcileCancellation: jest.fn(),
+      };
+    }
+
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((settle) => {
+        resolve = settle;
+      });
+      return { promise, resolve };
+    }
+
+    function start(provider: ReturnType<typeof refusingWallet>) {
+      const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+      return {
+        spend,
+        ...setup(spend, {
+          getWalletOfferProvider: () => provider,
+        } as unknown as Partial<InternalBlockchainInterface>),
+      };
+    }
+
+    async function launchSuccessor(lease: ControlledRuntime, id: string) {
+      const relinquishment = `submission-relinquishment:${id}:${id}-attempt-1`;
+      for (let pass = 0; pass < 200 && !lease.has(`submission:${id}`); pass += 1) {
+        if (lease.has(relinquishment)) await lease.launch(relinquishment);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await lease.launch(`submission:${id}`);
+    }
+
+    function expectFallback(cradle: { finalize_submission_attempt: unknown }, id: string) {
+      expect((cradle.finalize_submission_attempt as jest.Mock).mock.calls).toEqual([
+        [
+          `${id}-attempt-2`,
+          {
+            kind: 'failure',
+            reason: 'An earlier fee offer is still being retired',
+          },
+        ],
+      ]);
+    }
+
+    it('keeps the first offer when the successor arrives during its install checkpoint', async () => {
+      const provider = refusingWallet();
+      provider.reconcileCreation.mockResolvedValue(created);
+      const { blockchain, controller, cradle, submit } = start(provider);
+      const lease = new ControlledRuntime();
+      const first = { ...submission('fee-checkpoint'), fee_request: feeRequest };
+      const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+      const gate = deferred<void>();
+      let gated = false;
+      const checkpoint = jest
+        .spyOn(storageRepository, 'checkpointDomainMutations')
+        .mockImplementation(async () => {
+          if (!gated && storageRepository.feeAttachments()[0]?.stage === 'reserved') {
+            gated = true;
+            await gate.promise;
+          }
+          return realCheckpoint();
+        });
+      try {
+        commitRuntime(controller, lease);
+        submit(first);
+        await lease.launch('submission:fee-checkpoint');
+        await waitFor(() => gated);
+        submit({ ...nextAttempt(first, 'fee-checkpoint-attempt-2'), fee_request: feeRequest });
+        gate.resolve();
+        await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
+        await waitFor(() => storageRepository.feeAttachments()[0]?.stage !== 'cancel-required');
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+
+        await launchSuccessor(lease, 'fee-checkpoint');
+        await waitFor(
+          () => (cradle.finalize_submission_attempt as jest.Mock).mock.calls.length > 0,
+        );
+
+        expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+        expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+        expectFallback(cradle, 'fee-checkpoint');
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+      } finally {
+        checkpoint.mockRestore();
+        controller.cleanup();
+        blockchain.detachProvider();
+      }
+    });
+
+    it('keeps a restored offer a parallel recovery found, and never hands it to the successor', async () => {
+      const recovering = deferred<typeof created>();
+      const displaced = deferred<typeof created>();
+      const provider = refusingWallet();
+      provider.reconcileCreation
+        .mockReturnValueOnce(recovering.promise)
+        .mockReturnValueOnce(displaced.promise);
+      const { blockchain, controller, cradle, submit } = start(provider);
+      const selector = (
+        controller as unknown as {
+          walletProviderOwnerSelector(): { installationPlayerId: string; peerSessionId: string };
+        }
+      ).walletProviderOwnerSelector();
+      const lease = new ControlledRuntime();
+      const id = 'fee-restored';
+      try {
+        storageRepository._replaceApplicationStateForTests({
+          ...storageRepository.loadState(),
+          walletContext: scope,
+          feeAttachments: [
+            {
+              owner: { ...selector, providerScope: scope },
+              submissionId: id,
+              stage: 'creating',
+              disposition: 'active',
+              recoveryId: 'sr-1',
+              request: {
+                kind: 'fee',
+                uniqueId: selector.installationPlayerId,
+                fee: 10n,
+                concurrentSpendCoinId: feeRequest.target,
+              },
+              reason: 'fee-creation-pending',
+            },
+          ],
+        });
+        blockchain.channelFundingRuntime.providerReconnectReady(
+          blockchain.rpc.getWalletOfferProvider(selector)!,
+        );
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+
+        commitRuntime(controller, lease);
+        const first = { ...submission(id), fee_request: feeRequest };
+        submit(first);
+        await lease.launch(`submission:${id}`);
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 2);
+        submit({ ...nextAttempt(first, `${id}-attempt-2`), fee_request: feeRequest });
+
+        recovering.resolve(created);
+        await waitFor(() => storageRepository.feeAttachments()[0]?.stage === 'reserved');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        displaced.resolve(created);
+        await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
+        await waitFor(() => storageRepository.feeAttachments()[0]?.stage !== 'cancel-required');
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+
+        await launchSuccessor(lease, id);
+        await waitFor(
+          () => (cradle.finalize_submission_attempt as jest.Mock).mock.calls.length > 0,
+        );
+
+        expect(provider.beginCreation).not.toHaveBeenCalled();
+        expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+        expectFallback(cradle, id);
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+      } finally {
+        controller.cleanup();
+        blockchain.detachProvider();
+      }
+    });
+  });
+
   it('cancels a fee reservation returned after only its submission retires', async () => {
     let resolveFee!: (value: {
       kind: 'created-reserved';

@@ -174,8 +174,10 @@ There are exactly two replay paths:
   unlanded entries still awaiting wallet acknowledgement are requeued.
   Acknowledged entries are not ordinarily rebroadcast, and block reports do not
   create a per-block retry loop. An unavailable wallet call remains awaiting
-  acknowledgement for a later fresh-sync retry; an explicit rejection retires
-  only that stable submission ID.
+  acknowledgement for a later fresh-sync retry. An explicit rejection also waits
+  for a later fresh-sync retry, because mempool verdicts can change, unless it
+  reports a passed height deadline: heights only advance, so that submission is
+  abandoned and retired.
 - **Rollback replay.** A lower tip opens a rollback epoch and queues every
   surviving retained transaction at most once. At an equal or higher restored
   tip, replay requires causal evidence for one retained transaction: a
@@ -605,10 +607,31 @@ Funding survives material delivery until Rust emits a typed chain outcome:
 unidentified pre-ID timeout cannot synthesize a cancellation ID and instead
 retains cancel-on-create orphan evidence. An attached fee stays retained while
 Rust owns exact-byte replay; wallet acknowledgement does not retire it, and
-Rust submission retirement cancels the exact `providerReservationId`. Cloud
-cancellation is complete only after its signature request reaches terminal
-success. Cloud is recoverable only after begin returns a
-`signatureRequest` recovery ID: pre-ID response loss persists
+Rust submission retirement moves the exact `providerReservationId` to
+`cancel-required`. Every fee path whose consumer dies follows one rule: once the
+offer is identified, its durable entry becomes `cancel-required`, and only a
+completed cancellation removes it. An offer that replay has attached stays
+retained, because a dying creation flight says nothing about the replay that owns
+it. An in-memory cancel remains only after storage authority is lost, where no
+durable write is possible, and a hard reset discards the offer without one. A
+request whose consumer died stays `creating` with cancel-on-create from the
+moment its recovery ID is known, through any `unavailable` reconciliation, until
+it identifies the offer or definitively fails. A retiring entry is never handed
+to a successor attempt, which falls back without a fee while that cleanup drains.
+Cloud's off-chain
+`cancelOffer` returns `signatureRequest: null` on success with no signature
+request: the wallet releases the reservation at once and broadcasts nothing, so
+a holder of the offer string can still take it. A taken, expired, untracked, or
+unknown offer is already terminal. Only a malformed success response or a
+definitively failed signature request is `rejected`, which deletes the entry.
+Every other failure lacks a definitive wallet answer and is `unavailable`,
+including HTTP and non-JSON failures, masked internal errors, rate limits,
+uncoded GraphQL errors, a wallet refusal such as a missing
+`OFFER_CANCEL_OFF_CHAIN` organization flag, and an active on-chain cancel. The
+entry stays durable and retries on a later trigger with no loop. Only a refusal
+raises a dismissible Cloud notice with the wallet's reason. A signature request
+the wallet does return stays tracked to its terminal status. Cloud is recoverable only after
+begin returns a `signatureRequest` recovery ID: pre-ID response loss persists
 `best-effort-uncertain`, while post-ID `creating` and `cancelling` entries
 reconcile the exact request without another begin call. If a replacement begin
 after pre-ID uncertainty supplies an ID, the entry transitions to `creating`

@@ -430,6 +430,7 @@ export interface GameSessionApi {
   ): SubmissionFinalizationResult;
   acknowledge_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
   reject_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
+  abandon_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
   submission_attempt_unavailable(attemptToken: string): SubmissionAttemptStatus;
   relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
   chain_snapshot_ready(): void;

@@ -26,6 +26,8 @@ import { CoinOfInterestEntry, HubLiveness } from '../types/ChiaGaming';
 import { formatMojos } from '../util';
 import { isElectronDistribution } from '../util/distribution';
 import { Button } from './button';
+import CloudWalletApprovalNotice from './CloudWalletApprovalNotice';
+import CloudWalletCancellationNotice from './CloudWalletCancellationNotice';
 import { ConnectionSetupModal } from './ConnectionSetupModal';
 import { COPY_FAILED_TITLE, CopyIcon } from './CopyIcon';
 import FinishedSessionGameView from './FinishedSessionGameView';
@@ -786,6 +788,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
         }}
         className="bg-canvas-bg-subtle text-canvas-text"
       >
+        <CloudWalletApprovalNotice />
+        <CloudWalletCancellationNotice />
         {/* Tab bar with branding */}
         <div
           style={{

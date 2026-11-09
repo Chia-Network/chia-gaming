@@ -48,6 +48,22 @@ export type IdentifiedFeeAttachment = Exclude<
 >;
 export const MAX_FEE_ATTACHMENT_REASON_LENGTH = 256;
 
+export function isFeeAttachmentCancellation(entry: FeeAttachment): boolean {
+  return (
+    entry.stage === 'cancel-required' ||
+    entry.stage === 'best-effort-cancellation-uncertain' ||
+    entry.stage === 'cancelling'
+  );
+}
+
+export function isRetiringFeeAttachment(entry: FeeAttachment): boolean {
+  return (
+    isFeeAttachmentCancellation(entry) ||
+    ((entry.stage === 'creating' || entry.stage === 'best-effort-uncertain') &&
+      entry.disposition === 'cancel-on-create')
+  );
+}
+
 export function feeAttachmentOperationKey(owner: FeeAttachmentOwner, submissionId: string): string {
   const ownerKey = providerOwnerKey(owner);
   return `${ownerKey.length}:${ownerKey}${submissionId.length}:${submissionId}`;

@@ -676,6 +676,17 @@ orphan evidence and cannot synthesize a cancellation ID. An attached fee
 source remains retained while Rust may replay its current exact variant;
 wallet acknowledgement does not retire it, and Rust submission retirement
 moves its exact `providerReservationId` through typed cancellation before removal.
+`FeeAttachmentRuntime` applies one rule to a dead consumer: once the offer is
+identified, its durable entry becomes `cancel-required`, and only a completed
+cancellation removes it. An offer that replay has attached stays retained,
+because a dying creation flight says nothing about the replay that owns it. An
+in-memory cancel remains only after storage authority is lost, where no durable
+write is possible, and a hard reset discards the offer without one.
+A request whose consumer died stays durable in `creating` from the moment its
+recovery ID is known, through any `unavailable` reconciliation, until it
+identifies the offer or definitively fails. `reserve` never hands a retiring
+offer to a successor attempt, which falls back without a fee while that cleanup
+drains.
 Ordinary controller replacement preserves replay-retained fee sources. Terminal
 completion and explicit abandonment discard replay ownership and forget the
 session's reservations. Cancellation through the original wallet is attempted
@@ -704,7 +715,8 @@ captured again on later activity. Only the active-blockchain lifecycle attaches
 the cancellation RPC. While a session remains active, failed cancellation records may be retained as
 optional retry hints for restore or matching wallet reconnect/readiness. They
 never require reconnecting the old account, block the current wallet, or keep a
-recovery banner visible. There is no timer or immediate retry loop. Terminal completion or explicit
+recovery banner visible; a Cloud refusal shows only a dismissible notice with the
+wallet's reason. There is no timer or immediate retry loop. Terminal completion or explicit
 abandonment retires both reservation slices with best-effort cancellation;
 cold terminal or empty-session restore forgets any leftover cleanup. Cancellation
 failure never prevents retirement or the use of another wallet; only funding material still owed to Rust blocks
@@ -1547,7 +1559,15 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   `orphanRisk: 'pre-id-response-lost'` survives both paths and any eventual
   created trade, preserving a typed warning that the unidentified first request
   may still exist. Approval messages must match origin, popup source, and
-  canonical request ID, with exact cleanup. On desktop, approval opens in the
+  canonical request ID, with exact cleanup. Browsers block popups that don't
+  closely follow a click, so a blocked approval keeps polling while
+  `CloudWalletApprovalNotice` offers the click that reopens it. An approval
+  window closed with no result returns to that prompt, unless the window already
+  reported approval, because the wallet may close its own window. Without an open
+  window, a fee approval gives up after a minute so a deadline-bound transaction
+  can take its no-fee fallback; other approvals wait the full approval window. An
+  open window has no such limit. Polling stops when reconciliation returns. On
+  desktop, approval opens in the
   system browser once per signature request per run, and polling alone observes
   the outcome. Deployed
   WalletConnect is best-effort throughout because it lacks end-to-end create
@@ -1574,10 +1594,21 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   or nil-puzzle spend. Both shapes then pass through the same Rust checks for
   target, amount, deficit, input overlap, aggregate signatures, expiry, and
   combined consensus validity. Rejected or unusable Cloud fee offers are
-  cancelled off chain using their offer IDs. Cancellation is typed and complete
-  only when the Cloud signature request reaches a terminal success status;
-  transport unavailability and wallet rejection remain distinct durable
-  cleanup outcomes.
+  cancelled off chain using their offer IDs. Success returns
+  `signatureRequest: null` with no signature request: the wallet releases the
+  reservation at once and broadcasts nothing, so a holder of the offer string
+  can still take it. A signature request the wallet does return stays tracked to
+  a terminal status. A taken, expired, untracked, or unknown offer is already
+  terminal. The wallet's `BAD_USER_INPUT` errors differ only by message, so the
+  message and the offer it names decide that. Only a malformed success response
+  or a definitively failed signature request is `rejected`, which deletes the
+  entry. Every other failure lacks a definitive wallet answer and is
+  `unavailable`, which keeps the durable entry for a later retry with no loop:
+  HTTP and non-JSON failures, masked internal errors, rate limits, uncoded
+  GraphQL errors, an active on-chain cancel, a wallet refusal, a dead grant, and
+  transport loss. Only a refusal, such as a missing `OFFER_CANCEL_OFF_CHAIN`
+  organization flag, raises a dismissible `CloudWalletCancellationNotice` with
+  the wallet's reason.
 
   Cloud's wallet address, balance, consent, and offer operations remain on the
   wallet GraphQL API. Full-node reads and final `push_tx` calls use its typed
