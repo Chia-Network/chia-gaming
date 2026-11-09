@@ -78,6 +78,11 @@ export interface GameHandInitialization {
   }[];
 }
 
+export interface GameActionRejection {
+  tag: string;
+  message: string;
+}
+
 export type GameUpdate =
   | {
       type: 'move-readable';
@@ -122,7 +127,7 @@ export interface HandProposalFormProps<TParams> {
 
 export interface LiveGamePort {
   isChannelReady(): boolean;
-  dispatch(intent: GameIntent): void;
+  dispatch(intent: GameIntent): GameActionRejection | void;
 }
 
 export interface GameMountNames {

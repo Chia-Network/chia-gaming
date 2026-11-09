@@ -1,8 +1,9 @@
+import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { SessionController } from '../../hooks/SessionController';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { SessionController } from '../session/SessionController';
 import { storageRepository } from '../session/storageRepository';
-import type { InternalBlockchainInterface, TransactionSubmission } from '../../types/ChiaGaming';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import { mockRpc, submissionDrain, wasmResult } from './message_protocol.harness';
 import {
   bestEffortWalletRpc,
@@ -19,7 +20,7 @@ async function waitFor(check: () => boolean): Promise<void> {
   }
 }
 
-describe('submission pump delivery and runtime replacement', () => {
+describe('submission pump delivery and lifecycle', () => {
   it('does not recreate an unresolved fee reservation through a different wallet', async () => {
     const { blockchain, controller, submit } = setup(
       jest.fn().mockResolvedValue({ status: 'acknowledged' }),
@@ -49,7 +50,7 @@ describe('submission pump delivery and runtime replacement', () => {
         },
       ],
     });
-    controller.detachBlockchain(blockchain);
+    controller.setWallet(null);
     blockchain.detachProvider();
     const beginCreation = jest.fn();
     const cancel = jest.fn();
@@ -68,7 +69,7 @@ describe('submission pump delivery and runtime replacement', () => {
     );
     try {
       replacement.refreshProviderReadiness();
-      controller.attachBlockchain(replacement);
+      controller.setWallet(replacement);
       const lease = new ControlledRuntime();
       commitRuntime(controller, lease);
       submit({
@@ -127,10 +128,10 @@ describe('submission pump delivery and runtime replacement', () => {
       await controller.flushPendingWork();
       expect(oldBegin).toHaveBeenCalledTimes(1);
       const oldOwner = storageRepository.feeAttachments()[0].owner;
-      controller.detachBlockchain(blockchain);
+      controller.setWallet(null);
       blockchain.detachProvider();
       replacement.refreshProviderReadiness();
-      controller.attachBlockchain(replacement);
+      controller.setWallet(replacement);
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(submissionDrain([], ['old-fee']));
       controller.processResult(wasmResult());
       submit({ ...submission('new-fee'), fee_request: { target: '33'.repeat(32), amount: '10' } });
@@ -363,112 +364,188 @@ describe('submission pump delivery and runtime replacement', () => {
     }
   });
 
-  it('keeps a launched delivery queue-owned across runtime replacement', async () => {
-    let resolveSpend!: (value: { status: 'acknowledged' }) => void;
-    const spendGate = new Promise<{ status: 'acknowledged' }>((resolve) => {
-      resolveSpend = resolve;
-    });
-    const spend = jest.fn(() => spendGate);
-    const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledRuntime();
-    const replacement = new ControlledRuntime();
-    try {
-      commitRuntime(controller, first);
-      submit(submission('after-launch'));
-      const launch = first.launch('submission:after-launch');
-      for (let i = 0; i < 10 && spend.mock.calls.length === 0; i += 1) {
-        await Promise.resolve();
-      }
-      expect(spend).toHaveBeenCalledTimes(1);
+  describe('a displaced fee attempt whose offer the wallet will not cancel', () => {
+    const feeRequest = { target: '22'.repeat(32), amount: '10' };
+    const scope = { provider: 'simulator' as const, identity: 'submission-handoff' };
+    const created = {
+      kind: 'created-reserved' as const,
+      material: { kind: 'offer' as const, offer: 'offer1displaced' },
+      tradeId: 'Offer_displaced',
+    };
+    const cancellationRecord = [
+      expect.objectContaining({
+        stage: 'best-effort-cancellation-uncertain',
+        providerReservationId: created.tradeId,
+      }),
+    ];
 
-      commitRuntime(controller, replacement);
-      expect(replacement.has('submission:after-launch')).toBe(false);
-
-      resolveSpend({ status: 'acknowledged' });
-      await launch;
-      await controller.flushPendingWork();
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
-    } finally {
-      controller.cleanup();
+    function refusingWallet() {
+      return {
+        capability: 'recoverable-after-begin' as const,
+        scope,
+        beginCreation: jest.fn().mockResolvedValue({ kind: 'pending', recoveryId: 'sr-1' }),
+        reconcileCreation: jest.fn(),
+        beginCancellation: jest
+          .fn()
+          .mockResolvedValue({ status: 'unavailable', detail: 'feature flag missing' }),
+        reconcileCancellation: jest.fn(),
+      };
     }
-  });
 
-  it('hands an unlaunched finalized broadcast to the replacement runtime', async () => {
-    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledRuntime(undefined, 'broadcast:');
-    const replacement = new ControlledRuntime();
-    try {
-      commitRuntime(controller, first);
-      submit(submission('finalized-broadcast-handoff'));
-      const launch = first.launch('submission:finalized-broadcast-handoff');
-      const broadcastKey = `broadcast:finalized-broadcast-handoff:${'bb'.repeat(32)}`;
-      for (let i = 0; i < 50 && !first.has(broadcastKey); i += 1) {
-        await Promise.resolve();
-      }
-
-      expect(first.has(broadcastKey)).toBe(true);
-      expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(spend).not.toHaveBeenCalled();
-
-      commitRuntime(controller, replacement);
-      await launch;
-      await controller.flushPendingWork();
-
-      expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(
-        'finalized-broadcast-handoff-attempt-1',
-      );
-    } finally {
-      controller.cleanup();
-    }
-  });
-
-  it('cleans a finalized fee reservation independently of runtime replacement', async () => {
-    const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail: 'wallet rejected' });
-    const beginWalletOffer = jest.fn().mockResolvedValue({
-      kind: 'created-reserved',
-      material: { kind: 'offer', offer: 'offer-fee' },
-      tradeId: 'trade-fee',
-    });
-    const beginWalletOfferCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
-    const { controller, cradle, submit } = setup(
-      spend,
-      bestEffortWalletRpc(beginWalletOffer, beginWalletOfferCancellation),
-    );
-    const first = new ControlledRuntime();
-    const replacement = new ControlledRuntime();
-    try {
-      commitRuntime(controller, first);
-      (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-        submissionDrain([], ['fee-release-handoff']),
-      );
-      submit({
-        ...submission('fee-release-handoff'),
-        fee_request: { target: '22'.repeat(32), amount: '10' },
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((settle) => {
+        resolve = settle;
       });
-      const launch = first.launch('submission:fee-release-handoff');
-      await waitFor(() => spend.mock.calls.length === 1);
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(cradle.reject_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
-
-      commitRuntime(controller, replacement);
-      await launch;
-      controller.processResult(wasmResult());
-      await controller.flushPendingWork();
-      await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
-
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(cradle.reject_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-      expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-fee');
-    } finally {
-      controller.cleanup();
+      return { promise, resolve };
     }
+
+    function start(provider: ReturnType<typeof refusingWallet>) {
+      const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+      return {
+        spend,
+        ...setup(spend, {
+          getWalletOfferProvider: () => provider,
+        } as unknown as Partial<InternalBlockchainInterface>),
+      };
+    }
+
+    async function launchSuccessor(lease: ControlledRuntime, id: string) {
+      const relinquishment = `submission-relinquishment:${id}:${id}-attempt-1`;
+      for (let pass = 0; pass < 200 && !lease.has(`submission:${id}`); pass += 1) {
+        if (lease.has(relinquishment)) await lease.launch(relinquishment);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await lease.launch(`submission:${id}`);
+    }
+
+    function expectFallback(cradle: { finalize_submission_attempt: unknown }, id: string) {
+      expect((cradle.finalize_submission_attempt as jest.Mock).mock.calls).toEqual([
+        [
+          `${id}-attempt-2`,
+          {
+            kind: 'failure',
+            reason: 'An earlier fee offer is still being retired',
+          },
+        ],
+      ]);
+    }
+
+    it('keeps the first offer when the successor arrives during its install checkpoint', async () => {
+      const provider = refusingWallet();
+      provider.reconcileCreation.mockResolvedValue(created);
+      const { blockchain, controller, cradle, submit } = start(provider);
+      const lease = new ControlledRuntime();
+      const first = { ...submission('fee-checkpoint'), fee_request: feeRequest };
+      const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+      const gate = deferred<void>();
+      let gated = false;
+      const checkpoint = jest
+        .spyOn(storageRepository, 'checkpointDomainMutations')
+        .mockImplementation(async () => {
+          if (!gated && storageRepository.feeAttachments()[0]?.stage === 'reserved') {
+            gated = true;
+            await gate.promise;
+          }
+          return realCheckpoint();
+        });
+      try {
+        commitRuntime(controller, lease);
+        submit(first);
+        await lease.launch('submission:fee-checkpoint');
+        await waitFor(() => gated);
+        submit({ ...nextAttempt(first, 'fee-checkpoint-attempt-2'), fee_request: feeRequest });
+        gate.resolve();
+        await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
+        await waitFor(() => storageRepository.feeAttachments()[0]?.stage !== 'cancel-required');
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+
+        await launchSuccessor(lease, 'fee-checkpoint');
+        await waitFor(
+          () => (cradle.finalize_submission_attempt as jest.Mock).mock.calls.length > 0,
+        );
+
+        expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+        expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+        expectFallback(cradle, 'fee-checkpoint');
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+      } finally {
+        checkpoint.mockRestore();
+        controller.cleanup();
+        blockchain.detachProvider();
+      }
+    });
+
+    it('keeps a restored offer a parallel recovery found, and never hands it to the successor', async () => {
+      const recovering = deferred<typeof created>();
+      const displaced = deferred<typeof created>();
+      const provider = refusingWallet();
+      provider.reconcileCreation
+        .mockReturnValueOnce(recovering.promise)
+        .mockReturnValueOnce(displaced.promise);
+      const { blockchain, controller, cradle, submit } = start(provider);
+      const selector = (
+        controller as unknown as {
+          walletProviderOwnerSelector(): { installationPlayerId: string; peerSessionId: string };
+        }
+      ).walletProviderOwnerSelector();
+      const lease = new ControlledRuntime();
+      const id = 'fee-restored';
+      try {
+        storageRepository._replaceApplicationStateForTests({
+          ...storageRepository.loadState(),
+          walletContext: scope,
+          feeAttachments: [
+            {
+              owner: { ...selector, providerScope: scope },
+              submissionId: id,
+              stage: 'creating',
+              disposition: 'active',
+              recoveryId: 'sr-1',
+              request: {
+                kind: 'fee',
+                uniqueId: selector.installationPlayerId,
+                fee: 10n,
+                concurrentSpendCoinId: feeRequest.target,
+              },
+              reason: 'fee-creation-pending',
+            },
+          ],
+        });
+        blockchain.channelFundingRuntime.providerReconnectReady(
+          blockchain.rpc.getWalletOfferProvider(selector)!,
+        );
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+
+        commitRuntime(controller, lease);
+        const first = { ...submission(id), fee_request: feeRequest };
+        submit(first);
+        await lease.launch(`submission:${id}`);
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 2);
+        submit({ ...nextAttempt(first, `${id}-attempt-2`), fee_request: feeRequest });
+
+        recovering.resolve(created);
+        await waitFor(() => storageRepository.feeAttachments()[0]?.stage === 'reserved');
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        displaced.resolve(created);
+        await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
+        await waitFor(() => storageRepository.feeAttachments()[0]?.stage !== 'cancel-required');
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+
+        await launchSuccessor(lease, id);
+        await waitFor(
+          () => (cradle.finalize_submission_attempt as jest.Mock).mock.calls.length > 0,
+        );
+
+        expect(provider.beginCreation).not.toHaveBeenCalled();
+        expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+        expectFallback(cradle, id);
+        expect(storageRepository.feeAttachments()).toEqual(cancellationRecord);
+      } finally {
+        controller.cleanup();
+        blockchain.detachProvider();
+      }
+    });
   });
 
   it('cancels a fee reservation returned after only its submission retires', async () => {
@@ -645,76 +722,6 @@ describe('submission pump delivery and runtime replacement', () => {
     }
   });
 
-  it('hands an acknowledged wallet outcome to the replacement runtime without rebroadcasting', async () => {
-    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
-    const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledRuntime(2);
-    const replacement = new ControlledRuntime();
-    try {
-      commitRuntime(controller, first);
-      submit(submission('acknowledged-handoff'));
-      const launch = first.launch('submission:acknowledged-handoff');
-      for (let i = 0; i < 50 && !first.hasPendingMutation(); i += 1) {
-        await Promise.resolve();
-      }
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(first.hasPendingMutation()).toBe(true);
-      expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalled();
-
-      commitRuntime(controller, replacement);
-      await launch;
-      await controller.flushPendingWork();
-
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(
-        'acknowledged-handoff-attempt-1',
-      );
-    } finally {
-      controller.cleanup();
-    }
-  });
-
-  it.each([
-    [
-      'block-height completion',
-      (controller: SessionController) => controller.reportNewBlock(7n),
-      'report_height',
-      [7n],
-    ],
-    [
-      'coin-snapshot completion',
-      (controller: SessionController) =>
-        controller.reportCoinStates(8n, [
-          { coin: 'coin-state', created_height: 8n, spent_height: null },
-        ]),
-      'report_coin_states',
-      [8n, [{ coin: 'coin-state', created_height: 8n, spent_height: null }]],
-    ],
-  ] as const)(
-    'hands %s to a replacement runtime exactly once',
-    async (_label, deliver, cradleMethod, expectedArguments) => {
-      const { controller, cradle } = setup(jest.fn());
-      const first = new ControlledRuntime(1);
-      const replacement = new ControlledRuntime();
-      try {
-        commitRuntime(controller, first);
-        const completion = deliver(controller);
-        expect(first.hasPendingMutation()).toBe(true);
-
-        commitRuntime(controller, replacement);
-        await completion;
-
-        const callback = cradle[cradleMethod] as jest.Mock;
-        expect(callback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith(...expectedArguments);
-      } finally {
-        controller.cleanup();
-      }
-    },
-  );
-
   it.each([
     [
       'block-height observation',
@@ -770,7 +777,7 @@ describe('submission pump delivery and runtime replacement', () => {
       const { controller, cradle } = setup(jest.fn());
       const lease = new ControlledRuntime();
       const errors: string[] = [];
-      const subscription = controller.getObservable().subscribe((event) => {
+      const subscription = observeWasmEvents(controller).subscribe((event) => {
         if (event.type === 'error') errors.push(event.error);
       });
       (cradle[cradleMethod] as jest.Mock).mockImplementation(() => {
@@ -786,51 +793,6 @@ describe('submission pump delivery and runtime replacement', () => {
       }
     },
   );
-
-  it('hands wallet failure recording to the replacement runtime without retrying the wallet', async () => {
-    expectConsoleError('wallet failed after broadcast');
-    const spend = jest.fn().mockRejectedValue(new Error('wallet failed after broadcast'));
-    const { controller, cradle, submit } = setup(spend);
-    const first = new ControlledRuntime(2);
-    const replacement = new ControlledRuntime();
-    const recordFailure = jest.spyOn(
-      controller as unknown as {
-        recordLocalSubmissionFailure(submission: TransactionSubmission, error: unknown): void;
-      },
-      'recordLocalSubmissionFailure',
-    );
-    const errors: string[] = [];
-    const subscription = controller.getObservable().subscribe((event) => {
-      if (event.type === 'error') errors.push(event.error);
-    });
-    try {
-      commitRuntime(controller, first);
-      submit(submission('failure-handoff'));
-      const launch = first.launch('submission:failure-handoff');
-      for (let i = 0; i < 50 && !first.hasPendingMutation(); i += 1) {
-        await Promise.resolve();
-      }
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(first.hasPendingMutation()).toBe(true);
-      expect(errors).toEqual([]);
-
-      commitRuntime(controller, replacement);
-      await launch;
-      await controller.flushPendingWork();
-
-      expect(spend).toHaveBeenCalledTimes(1);
-      expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
-      expect(recordFailure).toHaveBeenCalledTimes(1);
-      expect(errors).toEqual([
-        expect.stringMatching(
-          /failure-handoff.*retained for retry.*wallet failed after broadcast/i,
-        ),
-      ]);
-    } finally {
-      subscription.unsubscribe();
-      controller.cleanup();
-    }
-  });
 
   it('does not duplicate scheduling when the same runtime commits repeatedly', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
@@ -947,7 +909,6 @@ describe('submission pump delivery and runtime replacement', () => {
     );
     const { controller, submit } = setup(spend);
     const firstLease = new ControlledRuntime();
-    const replacementLease = new ControlledRuntime();
     const first = submission('exact-successor');
     const successor = nextAttempt(first, 'exact-successor-attempt-2');
     try {
@@ -964,9 +925,9 @@ describe('submission pump delivery and runtime replacement', () => {
 
       expect(firstLease.has('submission:exact-successor')).toBe(false);
 
-      commitRuntime(controller, replacementLease);
+      expect(controller.initializeExecution(false)).toBe(controller.frontend);
       await controller.reportChainSnapshotReady(2n);
-      expect(replacementLease.has('submission:exact-successor')).toBe(true);
+      expect(firstLease.has('submission:exact-successor')).toBe(true);
     } finally {
       controller.cleanup();
     }
@@ -985,7 +946,7 @@ describe('submission pump delivery and runtime replacement', () => {
     });
     const lease = new ControlledRuntime();
     try {
-      controller.attachBlockchain(blockchain);
+      controller.setWallet(blockchain);
       commitRuntime(controller, lease);
       submit(submission('provider-gated'));
 
@@ -1110,7 +1071,7 @@ describe('submission pump delivery and runtime replacement', () => {
     const { controller, submit } = setup(spend);
     const lease = new ControlledRuntime();
     const errors: string[] = [];
-    const subscription = controller.getObservable().subscribe((event) => {
+    const subscription = observeWasmEvents(controller).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     try {

@@ -4,7 +4,7 @@ jest.mock('../../services/log', () => ({ log: jest.fn() }));
 
 jest.mock('../../constants/wallet-connect', () => ({ getChainId: () => 'chia:mainnet' }));
 
-jest.mock('../../hooks/WalletConnectRpc', () => ({
+jest.mock('../wallet/WalletConnectRpc', () => ({
   WalletConnectTransportError: class WalletConnectTransportError extends Error {},
   sageRpc: {
     getAddress: jest.fn(),
@@ -32,13 +32,13 @@ const mockWalletConnectState = {
   disconnect: jest.fn(async () => {}),
 };
 
-jest.mock('../../hooks/useWalletConnect', () => ({
+jest.mock('../wallet/WalletConnectClient', () => ({
   walletConnectState: mockWalletConnectState,
 }));
 
 const mockBuildWalletSpend = jest.fn();
 const mockSpendableTotal = jest.fn();
-jest.mock('../../hooks/WasmStateInit', () => ({
+jest.mock('../session/wasmLoader', () => ({
   ensureWasmLoaded: async () => ({
     build_wallet_spend: mockBuildWalletSpend,
     spendable_standard_total: mockSpendableTotal,
@@ -51,8 +51,8 @@ function sumOfferedCoins(coinsJson: string): string {
   return coins.reduce((total, { coin }) => total + BigInt(coin.amount), 0n).toString();
 }
 
-import { sageRpc, WalletConnectTransportError } from '../../hooks/WalletConnectRpc';
-import { SageBlockchainInterface } from '../../hooks/SageBlockchainInterface';
+import { sageRpc, WalletConnectTransportError } from '../wallet/WalletConnectRpc';
+import { SageBlockchainInterface } from '../wallet/SageBlockchainInterface';
 import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 import { jsonStringify } from '../../util/jsonSafe';
 

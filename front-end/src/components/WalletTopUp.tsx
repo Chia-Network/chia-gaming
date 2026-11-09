@@ -2,22 +2,12 @@ import QRCode from 'qrcode';
 import { useEffect, useState } from 'react';
 
 import { getCurrencyLabels } from '../constants/currency';
-import { desktopCloudWalletBridge } from '../hooks/cloudWalletOAuth';
+import { desktopCloudWalletBridge } from '../lib/wallet/cloudWalletOAuth';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { WalletTopUpOptions } from '../types/ChiaGaming';
 import { Button } from './button';
 
 const BUY_ORDER_MESSAGE_TYPE = 'chia-cloud-wallet/buy-order';
-
-/**
- * Mojos the wallet is short of funding `buyIn` plus the opening `fee`, or 0n
- * when it is enough. An unknown balance is never reported as short.
- */
-export function fundingShortfall(balance: bigint | undefined, buyIn: string, fee: bigint): bigint {
-  if (balance === undefined) return 0n;
-  const needed = BigInt(buyIn) + fee;
-  return balance < needed ? needed - balance : 0n;
-}
 
 /**
  * True for the purchase page's "order placed" message from the popup this

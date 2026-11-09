@@ -1,7 +1,14 @@
-import type { SessionController } from '../../hooks/SessionController';
+import { configureSessionExecution } from './session_execution.harness';
+import {
+  createRegisteredGameHand,
+  restoreRegisteredGameHandState,
+  snapshotRegisteredGameHand,
+  type RegisteredGameHand,
+} from '../gameRegistry';
+import type { SessionController } from '../session/SessionController';
 import { createSessionModel } from '../session/model';
 import { createSessionMachineState, reduceSessionMachine } from '../session/sessionMachine';
-import { SessionMachineRuntime } from '../session/sessionMachineRuntime';
+
 import type {
   SessionMachineEffect,
   SessionMachineEvent,
@@ -9,12 +16,6 @@ import type {
   SessionMachineTransition,
 } from '../session/sessionMachineTypes';
 import type { HandProposal, ProposalOrigin } from '../session/types';
-import {
-  createRegisteredGameHand,
-  restoreRegisteredGameHandState,
-  snapshotRegisteredGameHand,
-  type RegisteredGameHand,
-} from '../gameRegistry';
 
 export function reduceSessionMachineForTest(
   state: SessionMachineState,
@@ -123,11 +124,11 @@ export function activeMachineState() {
   return createSessionMachineState(createSessionModel());
 }
 
-export function createCoordinatorOnlySessionMachineRuntime(
+export function activateTestExecution(
   controller: SessionController,
   persist: () => void | Promise<void> = () => {},
-): SessionMachineRuntime {
-  const runtime = new SessionMachineRuntime(createSessionMachineState(createSessionModel()), {
+): SessionController {
+  const runtime = configureSessionExecution(createSessionMachineState(createSessionModel()), {
     controller,
     iStarted: controller.iStarted,
     restoring: false,

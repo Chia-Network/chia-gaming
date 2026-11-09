@@ -2,10 +2,11 @@ import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'rea
 
 import {
   _resetBuyPopupForTests,
-  fundingShortfall,
   isBuyOrderSubmitted,
   WalletTopUp,
 } from '../../components/WalletTopUp';
+
+import { fundingShortfall } from '../wallet/fundingShortfall';
 
 describe('fundingShortfall', () => {
   it('counts the opening fee on top of the buy-in', () => {

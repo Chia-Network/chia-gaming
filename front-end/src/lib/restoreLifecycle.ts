@@ -1,13 +1,13 @@
 import type { SessionPhase } from '../types/ChiaGaming';
-import type { RestoreStatus } from '../hooks/SessionController';
-import type { DurableSessionPhase } from './session/saveEnvelope';
 import { computeHubPresence } from './hubPresence';
+import type { RestoreStatus } from './session/SessionController';
 import {
   createSessionModel,
   isPreCommitmentChannelStatus,
   selectRestoreBlocked,
   selectShouldAdvertiseAvailable,
 } from './session/model';
+import type { DurableSessionPhase } from './session/saveEnvelope';
 
 export function isRestoreBlocked(restoring: boolean, restoreStatus: RestoreStatus): boolean {
   return selectRestoreBlocked(

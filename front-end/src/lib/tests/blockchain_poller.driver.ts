@@ -1,4 +1,4 @@
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 
 type BlockchainPollerTestSeam = {
   pollOnce(): Promise<void>;

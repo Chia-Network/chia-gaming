@@ -1,19 +1,16 @@
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { fakeBlockchainInfo } from '../../hooks/FakeBlockchainInterface';
-import type { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { storageRepository } from '../session/storageRepository';
-import { markSavedSession } from '../../hooks/saveCoordination';
-import {
-  buildDurableApplicationState,
-  type TerminalCapture,
-} from '../session/sessionMachinePersist';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
-import { isTerminalChannelSnapshot } from '../session/selectors';
-import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { coinIdFromBytes, toUint8 } from '../../util';
 import { coinRecordToName } from '../../util/coinWatch';
+import { channelStatusModelFromPayload, createSessionModel } from '../session/model';
+import { rehydrateDurableApplicationState } from '../session/persistence';
+import { markSavedSession } from '../session/saveCoordination';
+import { isTerminalChannelSnapshot } from '../session/selectors';
+import { storageRepository } from '../session/storageRepository';
+import { finalizeTerminalSession } from '../session/terminalFinalization';
 import type { HandProposal } from '../session/types';
+import { ensureWasmLoaded } from '../session/wasmLoader';
+import type { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
+import { installCapturedState, type TerminalCapture } from './checkpoint_capture.harness';
 import {
   action_with_messages,
   addActiveCradle,
@@ -34,7 +31,7 @@ import { createHash } from 'crypto';
 
 const harnessTerminalDependencies = {
   persistTerminal: async (capture: TerminalCapture) => {
-    const snapshot = buildDurableApplicationState(capture);
+    const snapshot = installCapturedState(capture);
     if (!snapshot) throw new Error('expected terminal snapshot');
     await storageRepository.write(snapshot);
   },
@@ -66,7 +63,7 @@ async function createAsymmetricActivePair(
       `cafe000${suffix}`,
       true,
       adapters[0].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
       firstContribution,
       secondContribution,
     ),
@@ -75,7 +72,7 @@ async function createAsymmetricActivePair(
       `dead000${suffix}`,
       false,
       adapters[1].peerConnection,
-      new WasmStateInit(fetchPreset),
+      await ensureWasmLoaded(fetchPreset),
       secondContribution,
       firstContribution,
     ),
@@ -277,7 +274,7 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
 
 async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<void> {
   const adapters = await createAsymmetricActivePair(poller, 13);
-  poller.stop();
+  poller.pauseChainPolling();
   await pollOnce(poller);
   const controller = adapters[0].blob!;
   const status = controller.lastChannelStatus;
@@ -318,7 +315,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
   const originalSpend = fakeBlockchainInfo.spend;
   const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
   const originalRegisterCoins = fakeBlockchainInfo.registerCoins;
-  const originalWatchCoin = poller.watchCoin;
+  const originalUpdateInterest = poller.updateCoinInterest;
   fakeBlockchainInfo.spend = async (...args: Parameters<typeof originalSpend>) => {
     submittedBlobs.push(args[0]);
     return originalSpend.apply(fakeBlockchainInfo, args);
@@ -333,9 +330,9 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     registeredCoinIds.push(...args[0]);
     return originalRegisterCoins.apply(fakeBlockchainInfo, args);
   };
-  poller.watchCoin = (...args: Parameters<typeof originalWatchCoin>) => {
-    protocolWatchedCoinIds.push(args[1].coin_name);
-    return originalWatchCoin.apply(poller, args);
+  poller.updateCoinInterest = (...args: Parameters<typeof originalUpdateInterest>) => {
+    protocolWatchedCoinIds.push(...(args[1]?.watchCoins ?? []).map((coin) => coin.coin_name));
+    return originalUpdateInterest.apply(poller, args);
   };
 
   try {
@@ -528,7 +525,7 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     fakeBlockchainInfo.spend = originalSpend;
     fakeBlockchainInfo.getPuzzleAndSolution = originalGetPuzzleAndSolution;
     fakeBlockchainInfo.registerCoins = originalRegisterCoins;
-    poller.watchCoin = originalWatchCoin;
+    poller.updateCoinInterest = originalUpdateInterest;
   }
 }
 

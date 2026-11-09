@@ -1,17 +1,24 @@
+import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { SessionController } from '../../hooks/SessionController';
 import type { ChiaGame, WasmConnection, WasmResult } from '../../types/ChiaGaming';
-import { restoreSession } from '../../hooks/blobSingleton';
-import { rehydrateDurableApplicationState } from '../session/persistence';
-import { WasmStateInit } from '../../hooks/WasmStateInit';
-import { storageRepository } from '../session/storageRepository';
-import { decodeDurableApplicationState } from '../session/persistence';
-import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { DIAGNOSTIC_LOG_UTF8_BYTE_LIMIT, diagnosticLogUtf8Bytes } from '../session/historyLimits';
 import { SESSION_DB_NAME } from '../session/indexedDb';
+import {
+  decodeDurableApplicationState,
+  rehydrateDurableApplicationState,
+} from '../session/persistence';
+import { SessionController } from '../session/SessionController';
+import { restoreSession } from '../session/sessionHost';
+import { storageRepository } from '../session/storageRepository';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import {
+  acceptedTerms,
+  createAcceptedBlob,
+  installAcceptedChannel,
+} from './accepted_session.harness';
+import { restorePeerState } from './peer_protocol.harness';
 
-import { liveSave } from './session_save_envelope.fixtures';
 import {
   channelStatus,
   createReadyBlob,
@@ -28,6 +35,7 @@ import {
   wasmResult,
 } from './message_protocol.harness';
 import { TEST_PROTOCOL_IDS } from './protocolIdentities';
+import { liveSave } from './session_save_envelope.fixtures';
 
 async function readRawApplicationState(): Promise<Uint8Array> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -61,21 +69,17 @@ describe('WASM command persistence', () => {
     setActiveBlob(blob);
     const save = jest.fn(async () => {});
     setTestPersistence(blob, save);
-    const outbound = enc('pre-cradle-outbound');
-
-    blob.processResult(wasmResult({ events: [{ OutboundMessage: outbound }] }));
+    blob.getPeerProtocol().accept_session(acceptedTerms, true);
+    const outbound = blob.unackedMessages[0].msg;
     await expect(blob.flushPendingSave()).rejects.toThrow(
-      'Active-session persistence requires SessionMachineRuntime coordination',
+      'Active-session persistence requires session execution coordination',
     );
     expect(save).not.toHaveBeenCalled();
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
     expect(blob.unackedMessages).toEqual([{ msgno: 1n, msg: outbound }]);
-
-    blob.rewardPuzzleHash = '11'.repeat(32);
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(makeMockCradle());
+    blob.pairingToken = 'test-pairing';
+    await installAcceptedChannel(blob, true, true);
     await blob.flushPendingSave();
-
     expect(save).toHaveBeenCalledTimes(1);
     expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
     expect(sentAcks).toEqual([]);
@@ -100,33 +104,21 @@ describe('WASM command persistence', () => {
   });
 
   it('keeps outbound delivery behind one immediate durability flush', async () => {
-    jest.useFakeTimers();
-    const outbound = enc('eventless-command-outbound');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob();
-    setActiveBlob(blob);
+    const { blob, sentMessages, sentAcks } = await createAcceptedBlob(true);
     const save = jest.fn(() => {
       expect(sentMessages).toEqual([]);
       expect(sentAcks).toEqual([]);
     });
     setTestPersistence(blob, save);
-    (cradle as unknown as { make_move: jest.Mock }).make_move = jest.fn(() =>
-      wasmResult({ events: [{ OutboundMessage: outbound }] }),
-    );
-
-    try {
-      expect(blob.makeMove('7', null)).toBe('queued');
-      expect(save).not.toHaveBeenCalled();
-      expect(sentMessages).toEqual([]);
-
-      await blob.flushPendingWork();
-      expect(save).toHaveBeenCalledTimes(1);
-      expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-
-      await jest.advanceTimersByTimeAsync(500);
-      expect(save).toHaveBeenCalledTimes(1);
-    } finally {
-      jest.useRealTimers();
-    }
+    blob.activateSpend();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
+    expect(save).not.toHaveBeenCalled();
+    expect(sentMessages).toEqual([]);
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
+    await blob.flushPendingWork();
+    expect(save).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -135,8 +127,10 @@ describe('durability failures', () => {
     const { blob } = createReadyBlob();
     const warnings: string[] = [];
     const retry = jest.fn();
-    const unsubscribeRetry = blob.onTerminalFinalizationRetry(retry);
-    const sub = blob.getObservable().subscribe((event) => {
+    const unsubscribeRetry = blob.frontend.subscribe((event) => {
+      if (event.type === 'terminal-retry') retry();
+    });
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
 
@@ -159,7 +153,7 @@ describe('durability failures', () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     const warnings: string[] = [];
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
     let fail = true;
@@ -198,42 +192,32 @@ describe('durability failures', () => {
   });
 
   it('keeps valid WASM state and releases reliable effects once across IndexedDB failure', async () => {
-    const helloBytes = enc('hello');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: helloBytes }],
-    }));
-    setActiveBlob(blob);
+    const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     const warnings: string[] = [];
-    const sub = blob.getObservable().subscribe((event) => {
+    const sub = observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'durability-error') warnings.push(event.error);
     });
     let fail = true;
     setTestPersistence(blob, () =>
       fail ? Promise.reject(new Error('permanent write failure')) : Promise.resolve(),
     );
+    blob.activateSpend();
+    const after = cradle.serialize();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
     try {
-      blob.deliverMessage(1n, enc('trigger'));
-      blob.flushDeferredWork();
-      await expect(blob.flushPendingWork()).rejects.toThrow();
-
+      await expect(blob.flushPendingWork()).rejects.toThrow('permanent write failure');
       expect(warnings).toHaveLength(1);
       expect(warnings[0]).toContain('continuing without a durable checkpoint');
-      expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
-      expect(blob.remoteNumber).toBe(1n);
-      expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-      expect(sentAcks).toEqual([1]);
-      expect(blob.unackedMessages).toContainEqual({ msgno: 1n, msg: helloBytes });
+      expect(cradle.serialize()).toEqual(after);
+      expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
+      expect(blob.unackedMessages).toContainEqual({ msgno: 2n, msg: outbound });
     } finally {
       fail = false;
     }
-
     await blob.flushPendingSave();
     await blob.flushPendingWork();
-
-    expect(cradle.deliver_message).toHaveBeenCalledTimes(1);
-    expect(blob.remoteNumber).toBe(1n);
-    expect(sentMessages).toEqual([{ msgno: 1, msg: helloBytes }]);
-    expect(sentAcks).toEqual([1]);
+    expect(cradle.serialize()).toEqual(after);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
     sub.unsubscribe();
   });
 
@@ -320,79 +304,55 @@ describe('durability failures', () => {
   });
 
   it('requires the prepared save to update cached synchronously before returning', async () => {
-    const { storageRepository } = await import('../session/storageRepository');
-    const outbound = enc('outbound');
-    const { blob, cradle, sentMessages } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: outbound }],
-    }));
-    setActiveBlob(blob);
-
-    const cradleBytes = new Uint8Array([7, 7, 7, 7]);
-    (cradle.serialize as jest.Mock).mockReturnValue(cradleBytes);
+    const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     let saveReturned = false;
     setTestPersistence(blob, () => {
       const fields = blob.getWasmFields();
       if (!fields) throw new Error('expected save fields');
-      const pending = saveLiveSession({
-        ...fields,
-        serializedGameSession: cradle.serialize(),
-        pairingToken: 'sync-cradle',
-      });
-      // Cached must already contain the cradle before the returned Promise
-      // settles — durability flushes immediately after starting the prepared save.
+      const pending = saveLiveSession({ ...fields, pairingToken: 'sync-cradle' });
       const state = storageRepository.loadState();
       expect(state.session?.phase === 'live' && state.session.live.serializedGameSession).toEqual(
         cradleBytes,
       );
+      expect(sentMessages).toEqual([]);
       saveReturned = true;
       return pending;
     });
-
-    blob.deliverMessage(1n, enc('trigger'));
+    blob.activateSpend();
+    const cradleBytes = cradle.serialize();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
     await blob.flushPendingWork();
-
     expect(saveReturned).toBe(true);
     const persisted = await storageRepository.readCurrentState();
     expect(
       persisted?.session?.phase === 'live' && persisted.session.live.serializedGameSession,
     ).toEqual(cradleBytes);
-    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
   });
 
   it('releases the prepared outbound when persistence-time cradle serialization fails', async () => {
-    const outbound = enc('outbound');
-    const { blob, cradle, sentMessages, sentAcks } = createReadyBlob(() => ({
-      events: [{ OutboundMessage: outbound }],
-    }));
-    setActiveBlob(blob);
-    setTestPersistence(blob, () => Promise.resolve());
-    await blob.flushPendingWork();
-    await blob.flushPendingSave();
+    const { blob, cradle, sentMessages } = await createAcceptedBlob(true);
     const previousFields = blob.getWasmFields();
     if (!previousFields) throw new Error('expected save fields');
-    void saveLiveSession({
+    await saveLiveSession({
       ...previousFields,
       serializedGameSession: new Uint8Array([9, 9, 9]),
       pairingToken: 'previous-durable-record',
     });
-    await storageRepository.checkpointDomainMutations();
-    (cradle.serialize as jest.Mock).mockImplementation(() => {
+    const serialize = jest.spyOn(cradle, 'serialize').mockImplementation(() => {
       throw new Error('malformed cradle serialization');
     });
     setTestPersistence(blob, () => {
-      // Serialize failures throw from getWasmFields; null means not ready yet.
       const fields = blob.getWasmFields();
-      if (!fields) return Promise.resolve();
+      if (!fields) throw new Error('expected save fields');
       return saveLiveSession(fields as unknown as Record<string, unknown>);
     });
-
-    blob.deliverMessage(1n, enc('trigger'));
+    blob.activateSpend();
+    const outbound = blob.unackedMessages.find(({ msgno }) => msgno === 2n)!.msg;
     await expect(blob.flushPendingWork()).rejects.toThrow('malformed cradle serialization');
-
-    expect(sentMessages).toEqual([{ msgno: 1, msg: outbound }]);
-    expect(sentAcks).toEqual([1]);
+    expect(sentMessages).toEqual([{ msgno: 2, msg: outbound }]);
     blob.cleanup();
-    setActiveBlob(null);
+    serialize.mockRestore();
     const saved = await storageRepository.readCurrentState();
     expect(saved?.session?.phase === 'live' && saved.session.live.serializedGameSession).toEqual(
       new Uint8Array([9, 9, 9]),
@@ -400,18 +360,20 @@ describe('durability failures', () => {
   });
 });
 
-describe('resendUnacked', () => {
+describe('peer reconnection', () => {
   it('re-sends all un-acked messages via sendMessage', async () => {
     const { blob, sentMessages } = createReadyBlob();
     setActiveBlob(blob);
     await blob.flushPendingSave();
 
-    blob.messageNumber = 3n;
-    blob.unackedMessages = [
-      { msgno: 1n, msg: enc('a') },
-      { msgno: 2n, msg: enc('b') },
-    ];
-    blob.resendUnacked();
+    restorePeerState(blob, { messageNumber: 3n });
+    restorePeerState(blob, {
+      unackedMessages: [
+        { msgno: 1n, msg: enc('a') },
+        { msgno: 2n, msg: enc('b') },
+      ],
+    });
+    blob.reportPeerConnectivity('registered');
 
     expect(sentMessages).toEqual([
       { msgno: 1, msg: enc('a') },
@@ -466,16 +428,20 @@ describe('restore ordering', () => {
       game_session_serialization_schema: () => 4,
       registered_game_packages: () => [...TEST_PROTOCOL_IDS],
     } as unknown as WasmConnection;
-    const wasmStateInit = {
-      getWasmConnection: jest.fn(async () => restoreWasmConnection),
-      deserializeGame: jest.fn(() => cradle),
-    } as unknown as WasmStateInit;
+    Object.assign(blob.getPeerProtocol(), cradle, { restore_channel: jest.fn() });
 
     blob.kickSystem(2);
     blob.deliverMessage(1n, enc('already-processed'));
     await blob.flushPendingWork();
-    const statuses: string[] = [];
-    const unsubscribe = blob.onRestoreStatusChange((status) => statuses.push(status));
+    const statuses: string[] = [blob.getRestoreStatus()];
+    const setStatus = (blob as any).setRestoreStatus.bind(blob);
+    const statusSpy = jest
+      .spyOn(blob as any, 'setRestoreStatus')
+      .mockImplementation((...args: any[]) => {
+        setStatus(...args);
+        statuses.push(blob.getRestoreStatus());
+      });
+    const unsubscribe = () => statusSpy.mockRestore();
 
     const newestDiagnostic = `newest:${'界'.repeat(60_000)}`;
     const save = liveSave({
@@ -498,11 +464,10 @@ describe('restore ordering', () => {
     });
     expect(() => decodeDurableApplicationState(save)).not.toThrow();
     await blob.beginRestore(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), restoreWasmConnection),
     );
     unsubscribe();
 
-    expect(cradle.deliver_message).not.toHaveBeenCalled();
     expect(sentAcks).toEqual([1]);
     expect(sentMessages).toEqual([]);
     expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
@@ -530,7 +495,7 @@ describe('restore ordering', () => {
     setActiveBlob(blob);
 
     const errors: string[] = [];
-    const sub = blob.getObservable().subscribe({
+    const sub = observeWasmEvents(blob).subscribe({
       next: (evt) => {
         if (evt.type === 'error') errors.push(evt.error);
       },
@@ -560,7 +525,7 @@ describe('restore ordering', () => {
     setActiveBlob(blob);
 
     const errors: string[] = [];
-    const sub = blob.getObservable().subscribe({
+    const sub = observeWasmEvents(blob).subscribe({
       next: (evt) => {
         if (evt.type === 'error') errors.push(evt.error);
       },
@@ -579,23 +544,18 @@ describe('restore ordering', () => {
 describe('cradle serialization schema restore guard', () => {
   function makeRestoreHarness(deserializeGame: () => ChiaGame): {
     blob: SessionController;
-    wasmStateInit: WasmStateInit;
+    wasmConnection: WasmConnection;
     deserializeMock: jest.Mock;
   } {
     const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, makePeerConn([], []));
     setActiveBlob(blob);
-    const deserializeMock = jest.fn(deserializeGame);
-    const wasmStateInit = {
-      getWasmConnection: jest.fn(
-        async () =>
-          ({
-            game_session_serialization_schema: () => 4,
-            registered_game_packages: () => [...TEST_PROTOCOL_IDS],
-          }) as unknown as WasmConnection,
-      ),
-      deserializeGame: deserializeMock,
-    } as unknown as WasmStateInit;
-    return { blob, wasmStateInit, deserializeMock };
+    const deserializeMock = jest.fn(() => Object.assign(blob.getPeerProtocol(), deserializeGame()));
+    blob.getPeerProtocol().restore_channel = deserializeMock;
+    const wasmConnection = {
+      game_session_serialization_schema: () => 4,
+      registered_game_packages: () => [...TEST_PROTOCOL_IDS],
+    } as unknown as WasmConnection;
+    return { blob, wasmConnection, deserializeMock };
   }
 
   it('rejects a whole aggregate with a missing cradle schema', async () => {
@@ -636,10 +596,10 @@ describe('cradle serialization schema restore guard', () => {
     await storageRepository.write(storageRepository.patchApplicationState(() => save));
     const memoryBefore = structuredClone(storageRepository.loadState());
     const durableBytesBefore = await readRawApplicationState();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(makeMockCradle);
+    const { blob, wasmConnection, deserializeMock } = makeRestoreHarness(makeMockCradle);
 
     await expect(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmConnection),
     ).rejects.toThrow('Unsupported saved game format: cradle schema 3; current schema is 4');
 
     expect(deserializeMock).not.toHaveBeenCalled();
@@ -663,13 +623,13 @@ describe('cradle serialization schema restore guard', () => {
       rewardPuzzleHash: '11'.repeat(32),
     });
     await storageRepository.checkpointDomainMutations();
-    const { blob, wasmStateInit, deserializeMock } = makeRestoreHarness(() => {
+    const { blob, wasmConnection, deserializeMock } = makeRestoreHarness(() => {
       throw new Error('corrupt current-schema cradle');
     });
     const save = (await storageRepository.readCurrentState())!;
 
     await expect(
-      restoreSession(blob, rehydrateDurableApplicationState(save), wasmStateInit),
+      restoreSession(blob, rehydrateDurableApplicationState(save), wasmConnection),
     ).rejects.toThrow('corrupt current-schema cradle');
 
     expect(deserializeMock).toHaveBeenCalledTimes(1);
@@ -750,7 +710,7 @@ describe('abandon calls Rust through cradle', () => {
       }),
     } as unknown as ChiaGame;
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     blob.loadWasm(mockWasmConnection);

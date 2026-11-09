@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { handleOAuthCallbackPage } from '../hooks/cloudWalletOAuth';
+import { handleOAuthCallbackPage } from '../lib/wallet/cloudWalletOAuth';
 
 /**
  * Minimal handoff page for Cloud Wallet OAuth redirect.

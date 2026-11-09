@@ -1,3 +1,5 @@
+import { configureSessionExecution } from './session_execution.harness';
+import { createSessionMachineState } from '../session/sessionMachine';
 import { createSessionModel } from '../session/model';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { storageRepository } from '../session/storageRepository';
@@ -60,25 +62,38 @@ describe('submission controller handoff and quiescence', () => {
     }
   });
 
-  it('revalidates quiescence when the committed runtime changes during snapshot', async () => {
+  it('seals the same execution owner and rejects later mutations', async () => {
     const { controller } = setup(jest.fn());
-    const firstModel = createSessionModel({ restore: { status: 'restoring' } });
-    const replacementModel = createSessionModel({ restore: { status: 'restored' } });
-    const replacementSnapshot = jest.fn(() => replacementModel);
-    const replacement = new ControlledRuntime(undefined, undefined, replacementSnapshot);
-    const firstSnapshot = jest.fn(() => {
-      commitRuntime(controller, replacement);
-      return firstModel;
+    const model = createSessionModel({ restore: { status: 'restored' } });
+    const capture = jest.spyOn(controller, 'snapshotModel');
+    configureSessionExecution(createSessionMachineState(model), {
+      controller,
+      iStarted: false,
+      restoring: false,
+      getRestoreStatus: () => 'restored',
+      getRestoreError: () => null,
+      onError: (error) => {
+        throw error;
+      },
+      persist: async () => {},
     });
-    const first = new ControlledRuntime(undefined, undefined, firstSnapshot);
     try {
-      commitRuntime(controller, first);
-
+      controller.activate();
+      const frontend = controller.frontend;
+      expect(controller.initializeExecution(false)).toBe(frontend);
       const snapshot = await controller.quiesceAndSealForTerminalFinalization();
-      expect(snapshot).toEqual({ model: replacementModel, coinsOfInterest: [] });
-      expect(snapshot.model).not.toBe(replacementModel);
-      expect(firstSnapshot).toHaveBeenCalledTimes(1);
-      expect(replacementSnapshot).toHaveBeenCalledTimes(1);
+      expect(snapshot).toEqual({ model, coinsOfInterest: [] });
+      expect(snapshot.model).not.toBe(model);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(controller.executionActive).toBe(false);
+      await expect(controller.enqueueResult(() => 'late')).rejects.toMatchObject({
+        code: 'SESSION_RUNTIME_RETIRED',
+      });
+      const waitingSince = controller.getWasmFields()!.waitingStateEnteredAt;
+      controller.setPresentationTiming({ waitingStateEnteredAt: 42n });
+      controller.processResult(wasmResult({ events: [{ Log: 'late result' }] }));
+      expect(controller.getWasmFields()!.waitingStateEnteredAt).toBe(waitingSince);
+      expect(controller.hasDeferredWork()).toBe(false);
     } finally {
       controller.cleanup();
     }
@@ -95,9 +110,7 @@ describe('submission controller handoff and quiescence', () => {
       throw failure;
     });
     const persistTerminal = jest.fn().mockResolvedValue(undefined);
-    const teardown = jest.fn((terminalController) =>
-      terminalController.cleanupAfterTerminalFlush(),
-    );
+    const teardown = jest.fn((terminalController) => terminalController.cleanup());
     try {
       commitRuntime(controller, runtime);
 
@@ -184,7 +197,7 @@ describe('submission controller handoff and quiescence', () => {
     submit(submission('never-launched'));
 
     controller.cleanup();
-    controller.cleanupAfterTerminalFlush();
+    controller.cleanup();
 
     await expect(controller.flushTransactionSubmissions()).resolves.toBeUndefined();
     await expect(controller.flushPendingWork()).resolves.toBeUndefined();

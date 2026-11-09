@@ -1,424 +1,35 @@
-import { rewriteFeeRateRejection, SessionController } from '../../hooks/SessionController';
-import type { ChiaGame, InternalBlockchainInterface, WasmResult } from '../../types/ChiaGaming';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { channelFundingRuntime } from '../session/channelFundingRuntime';
+import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
+import type { ChiaGame, InternalBlockchainInterface } from '../../types/ChiaGaming';
+import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import {
-  destroySessionController,
-  getOrCreateSessionController,
-  isTransactionPublishNerfed,
-  setTransactionPublishNerfed,
-  subscribeTransactionPublishNerfed,
-} from '../../hooks/blobSingleton';
+  rewriteFeeRateRejection,
+  rewritePastDeadlineRejection,
+  SessionController,
+} from '../session/SessionController';
+import { createSessionController } from '../session/sessionHost';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import { pollOnce } from './blockchain_poller.driver';
 import {
   attachTestCommitCoordinator,
   channelStatus,
   createReadyBlob,
-  enc,
   makeMockCradle,
   makePeerConn,
   mockBlockchain,
   mockRpc,
   mockWasmConnection,
   setActiveBlob,
-  setTestPersistence,
   submissionDrain,
   submitTransaction,
   testSpendBundle,
   transactionSubmitQueue,
   wasmResult,
 } from './message_protocol.harness';
-import { pollOnce } from './blockchain_poller.driver';
 
 describe('terminal protocol cleanup', () => {
-  it('restores an acknowledged handoff by completing Rust without allocating or retransmitting', () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const blob = new SessionController(
-      mockBlockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn(sentMessages, []),
-    );
-    const message = enc('complete clean close');
-    const cradle = {
-      ...makeMockCradle(),
-      pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
-      completeOutboundTerminalHandoff: jest.fn(() =>
-        wasmResult({ disposition: { kind: 'terminal' } }),
-      ),
-    } as unknown as ChiaGame;
-    blob.messageNumber = 2n;
-    blob.restoreTerminalHandoff({
-      id: 'restored',
-      message,
-      msgno: 1n,
-      sent: true,
-      acknowledged: true,
-    });
-    blob.loadWasm(mockWasmConnection);
-
-    blob.setGameSession(cradle);
-
-    expect(cradle.completeOutboundTerminalHandoff).toHaveBeenCalledTimes(1);
-    expect(blob.messageNumber).toBe(2n);
-    expect(sentMessages).toEqual([]);
-    expect((blob as any).terminalHandoff).toBeNull();
-  });
-
-  it('retains an ACK that arrives after transport restore but before Rust restore', () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const blob = new SessionController(
-      mockBlockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn(sentMessages, []),
-    );
-    const message = enc('complete clean close');
-    blob.restoreTransportCheckpoint({
-      messageNumber: 2n,
-      remoteNumber: 0n,
-      unackedMessages: [{ msgno: 1n, msg: message }],
-      disposition: 'active',
-      terminalHandoff: {
-        id: 'restored',
-        message,
-        msgno: 1n,
-        sent: true,
-        acknowledged: false,
-      },
-    });
-
-    blob.receiveAck(1n);
-    expect(blob.unackedMessages).toEqual([]);
-    expect(blob.getWasmFields()).toBeNull();
-
-    const cradle = {
-      ...makeMockCradle(),
-      pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
-      completeOutboundTerminalHandoff: jest.fn(() =>
-        wasmResult({ disposition: { kind: 'terminal' } }),
-      ),
-    } as unknown as ChiaGame;
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
-
-    expect(cradle.completeOutboundTerminalHandoff).toHaveBeenCalledTimes(1);
-    expect(blob.messageNumber).toBe(2n);
-    expect(sentMessages).toEqual([]);
-  });
-
-  it('restores an unacknowledged handoff on its exact reliable frame', () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const blob = new SessionController(
-      mockBlockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn(sentMessages, []),
-    );
-    const message = enc('complete clean close');
-    const cradle = {
-      ...makeMockCradle(),
-      pendingTerminalHandoff: jest.fn(() => ({ id: 'restored', message })),
-    } as unknown as ChiaGame;
-    blob.messageNumber = 2n;
-    blob.unackedMessages = [{ msgno: 1n, msg: Uint8Array.from(message) }];
-    blob.restoreTerminalHandoff({
-      id: 'restored',
-      message,
-      msgno: 1n,
-      sent: true,
-      acknowledged: false,
-    });
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
-
-    expect(blob.resendUnacked()).toBe(true);
-    expect(blob.messageNumber).toBe(2n);
-    expect(sentMessages).toEqual([{ msgno: 1, msg: message }]);
-  });
-
-  it('rejects a restored handoff that disagrees with Rust instead of allocating a replacement', () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const blob = new SessionController(
-      mockBlockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn(sentMessages, []),
-    );
-    blob.messageNumber = 2n;
-    blob.unackedMessages = [{ msgno: 1n, msg: enc('persisted close') }];
-    blob.restoreTerminalHandoff({
-      id: 'persisted',
-      message: enc('persisted close'),
-      msgno: 1n,
-      sent: true,
-      acknowledged: false,
-    });
-    blob.loadWasm(mockWasmConnection);
-
-    expect(() =>
-      blob.setGameSession({
-        ...makeMockCradle(),
-        pendingTerminalHandoff: jest.fn(() => ({
-          id: 'different',
-          message: enc('different close'),
-        })),
-      } as unknown as ChiaGame),
-    ).toThrow('does not match Rust pending command');
-    expect(blob.messageNumber).toBe(2n);
-    expect(sentMessages).toEqual([]);
-  });
-
-  it('completes a restored cooperative terminal handoff', async () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const sentAcks: number[] = [];
-    const blob = new SessionController(
-      mockBlockchain,
-      'test',
-      100n,
-      100n,
-      makePeerConn(sentMessages, sentAcks),
-    );
-    setActiveBlob(blob);
-    const cradle = {
-      ...makeMockCradle(),
-      pendingTerminalHandoff: jest.fn(() => ({ id: '1', message: enc('complete clean close') })),
-      completeOutboundTerminalHandoff: jest.fn(
-        () =>
-          ({
-            ...wasmResult(),
-            disposition: { kind: 'terminal' },
-            events: [
-              {
-                Notification: {
-                  ChannelStatus: channelStatus({
-                    state: 'ShutdownTransactionPending',
-                    session_disposition: 'Abandoned',
-                    zero_payout: true,
-                  }),
-                },
-              },
-            ],
-          }) as WasmResult,
-      ),
-    } as unknown as ChiaGame;
-    blob.loadWasm(mockWasmConnection);
-    setTestPersistence(blob, jest.fn());
-    blob.setGameSession(cradle);
-    blob.kickSystem(2);
-    attachTestCommitCoordinator(blob);
-    await blob.flushPendingWork();
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
-    blob.receiveAck(1n);
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
-    expect((blob as any).lastChannelStatus).toMatchObject({
-      state: 'ShutdownTransactionPending',
-      session_disposition: 'Abandoned',
-    });
-  });
-
-  it('does not complete a restored handoff when replaying its close message fails', () => {
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, {
-      ...makePeerConn([], []),
-      sendMessage: () => false,
-    });
-    setActiveBlob(blob);
-    const cradle = {
-      ...makeMockCradle(),
-      pendingTerminalHandoff: jest.fn(() => ({ id: '1', message: enc('complete clean close') })),
-      completeOutboundTerminalHandoff: jest.fn(
-        () =>
-          ({
-            ...wasmResult(),
-            disposition: { kind: 'terminal' },
-            events: [
-              {
-                Notification: {
-                  ChannelStatus: channelStatus({
-                    state: 'ShutdownTransactionPending',
-                    session_disposition: 'Abandoned',
-                    zero_payout: true,
-                  }),
-                },
-              },
-            ],
-          }) as WasmResult,
-      ),
-    } as unknown as ChiaGame;
-    blob.unackedMessages = [{ msgno: 1n, msg: enc('complete clean close') }];
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
-    blob.kickSystem(2);
-    attachTestCommitCoordinator(blob);
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
-    expect((blob as any).protocolStopped).toBe(false);
-  });
-
-  it('does not complete a terminal handoff before its message is acknowledged', () => {
-    const { blob, cradle } = createReadyBlob();
-    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
-      ...wasmResult(),
-      events: [],
-    } as WasmResult);
-
-    blob.processResult({
-      ...wasmResult(),
-      disposition: {
-        kind: 'await-outbound-terminal',
-        command: { id: '1', message: enc('complete clean close') },
-      },
-      events: [],
-    });
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
-    expect(() => blob.receiveAck(1n)).not.toThrow();
-    expect((blob as any).terminalHandoff).toMatchObject({ id: '1', msgno: 1n });
-  });
-
-  it('requires a successful terminal close send before its ACK can complete Rust abandonment', async () => {
-    const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
-    const sentAcks: number[] = [];
-    const sendMessage = jest.fn(() => false);
-    const blob = new SessionController(mockBlockchain, 'test', 100n, 100n, {
-      ...makePeerConn(sentMessages, sentAcks),
-      sendMessage,
-    });
-    setActiveBlob(blob);
-    const cradle = {
-      ...makeMockCradle(),
-      completeOutboundTerminalHandoff: jest.fn(
-        () =>
-          ({
-            ...wasmResult(),
-            disposition: { kind: 'terminal' },
-            events: [],
-          }) as WasmResult,
-      ),
-    } as unknown as ChiaGame;
-    blob.loadWasm(mockWasmConnection);
-    blob.setGameSession(cradle);
-    blob.kickSystem(2);
-    attachTestCommitCoordinator(blob);
-    setTestPersistence(blob, jest.fn());
-    blob.processResult({
-      ...wasmResult(),
-      disposition: {
-        kind: 'await-outbound-terminal',
-        command: { id: '1', message: enc('complete clean close') },
-      },
-      events: [],
-    });
-    await blob.flushPendingWork();
-
-    blob.receiveAck(1n);
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
-    expect((blob as any).terminalHandoff).toMatchObject({ sent: false, acknowledged: false });
-
-    sendMessage.mockReturnValue(true);
-    blob.resendUnacked();
-    blob.receiveAck(1n);
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
-  });
-
-  it('persists a failed terminal completion as acknowledged and retries on future transport work', async () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const { blob, cradle } = createReadyBlob();
-    (cradle.completeOutboundTerminalHandoff as jest.Mock)
-      .mockImplementationOnce(() => {
-        throw new Error('temporary completion failure');
-      })
-      .mockReturnValueOnce(wasmResult({ disposition: { kind: 'terminal' } }));
-    setTestPersistence(blob, jest.fn());
-    blob.processResult({
-      ...wasmResult(),
-      disposition: {
-        kind: 'await-outbound-terminal',
-        command: { id: '1', message: enc('complete clean close') },
-      },
-      events: [],
-    });
-    await blob.flushPendingWork();
-
-    blob.receiveAck(1n);
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
-    expect((blob as any).terminalCompletionRetryTimer).toBeUndefined();
-    expect((blob as any).protocolStopped).toBe(false);
-    expect(blob.getWasmFields()?.terminalHandoff).toMatchObject({
-      id: '1',
-      sent: true,
-      acknowledged: true,
-    });
-
-    blob.receiveAck(1n);
-
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(2);
-    expect((blob as any).protocolStopped).toBe(true);
-    errorSpy.mockRestore();
-  });
-
-  it('hands off the final clean-close message before Rust terminalizes locally', async () => {
-    const { blob, cradle, sentMessages } = createReadyBlob();
-    (cradle.completeOutboundTerminalHandoff as jest.Mock).mockReturnValue({
-      ...wasmResult(),
-      disposition: { kind: 'terminal' },
-      events: [
-        {
-          Notification: {
-            ChannelStatus: channelStatus({
-              state: 'ShutdownTransactionPending',
-              session_disposition: 'Abandoned',
-              zero_payout: true,
-            }),
-          },
-        },
-      ],
-    } as WasmResult);
-
-    blob.processResult({
-      ...wasmResult(),
-      disposition: {
-        kind: 'await-outbound-terminal',
-        command: { id: '1', message: enc('complete clean close') },
-      },
-      events: [
-        { OutboundMessage: enc('advisory before clean close') },
-        {
-          Notification: {
-            ChannelStatus: channelStatus({
-              state: 'ShutdownTransactionPending',
-              zero_payout: true,
-            }),
-          },
-        },
-      ],
-    });
-    await blob.flushPendingWork();
-    await blob.flushPendingSave();
-    blob.resendUnacked();
-
-    expect(sentMessages.map((message) => new TextDecoder().decode(message.msg))).toContain(
-      'complete clean close',
-    );
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).not.toHaveBeenCalled();
-    blob.receiveAck(2n);
-    expect(cradle.completeOutboundTerminalHandoff as jest.Mock).toHaveBeenCalledTimes(1);
-    expect((blob as any).lastChannelStatus).toMatchObject({
-      state: 'ShutdownTransactionPending',
-      session_disposition: 'Abandoned',
-      zero_payout: true,
-    });
-  });
-
-  it('replaces queued protocol and presentation work with terminal notifications', () => {
+  // Reliable terminal handoff permutations are covered by peer_session::session::tests.
+  it('replaces queued presentation work with terminal notifications', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const blob = new SessionController(
@@ -435,10 +46,7 @@ describe('terminal protocol cleanup', () => {
 
     blob.processResult({
       ...wasmResult(),
-      events: [
-        { OutboundMessage: enc('stale protocol message') },
-        { Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } },
-      ],
+      events: [{ Notification: { ChannelStatus: channelStatus({ state: 'Active' }) } }],
     });
     blob.processResult({
       ...wasmResult(),
@@ -500,34 +108,30 @@ describe('terminal protocol cleanup', () => {
 });
 
 describe('transaction submission', () => {
-  it('routes controller nerfs through the singleton policy and notifies subscribers', () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  it('publishes controller nerfs through the ordered session event pipe', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];
     const sentAcks: number[] = [];
     const updates: boolean[] = [];
-    const unsubscribe = subscribeTransactionPublishNerfed((nerfed) => updates.push(nerfed));
-    const { sessionController: blob } = getOrCreateSessionController(
+    const blob = createSessionController(
       null,
       makePeerConn(sentMessages, sentAcks),
-      () => {},
       'test',
       100n,
       100n,
       true,
     );
 
-    expect(isTransactionPublishNerfed()).toBe(false);
+    const unsubscribe = blob.frontend.subscribe((event) => {
+      if (event.type === 'publishing-policy') updates.push(event.nerfed);
+    });
     blob.nerf();
-    expect(isTransactionPublishNerfed()).toBe(true);
     expect(blob.isTransactionPublishNerfed()).toBe(true);
-    setTransactionPublishNerfed(false);
-    expect(isTransactionPublishNerfed()).toBe(false);
+    blob.setTransactionPublishNerfed(false);
     expect(blob.isTransactionPublishNerfed()).toBe(false);
-    expect(updates).toEqual([false, true, false]);
+    expect(updates).toEqual([true, false]);
 
     unsubscribe();
-    destroySessionController();
-    errorSpy.mockRestore();
+    blob.cleanup();
   });
 
   it('drops queued publishes after nerfing and resumes newly queued publishes when re-enabled', async () => {
@@ -618,6 +222,7 @@ describe('transaction submission', () => {
         {
           getHeightInfo: () => Promise.resolve(1n),
           getWalletOfferProvider: () => null,
+          onPlayReadinessChange: () => () => {},
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -646,7 +251,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     (cradle.snapshot_watched_coins as jest.Mock).mockClear();
 
     blob.processResult({
@@ -668,7 +273,7 @@ describe('transaction submission', () => {
 
     expect(cradle.snapshot_watched_coins).not.toHaveBeenCalled();
     expect(queriedNames).toEqual([['aa']]);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('refreshes watched coins when a hydrated cradle receives a later blockchain attach', async () => {
@@ -678,6 +283,7 @@ describe('transaction submission', () => {
         {
           getHeightInfo: () => Promise.resolve(1n),
           getWalletOfferProvider: () => null,
+          onPlayReadinessChange: () => () => {},
           registerCoins: () => Promise.resolve(),
           getCoinRecordsByNames: (names: string[]) => {
             queriedNames.push(names);
@@ -712,15 +318,15 @@ describe('transaction submission', () => {
     blob.setGameSession(cradle);
     expect(queriedNames).toEqual([]);
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await pollOnce(blockchain);
 
     expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
     expect(queriedNames).toEqual([['bb']]);
 
-    blob.attachBlockchain(blockchain);
-    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(2);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(blockchain);
+    expect(cradle.snapshot_watched_coins).toHaveBeenCalledTimes(1);
+    blob.setWallet(null);
   });
 
   it('hydrates without blockchain and replays retained submissions on later attach', async () => {
@@ -768,14 +374,14 @@ describe('transaction submission', () => {
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).not.toHaveBeenCalled();
 
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     await pollOnce(blockchain);
     await transactionSubmitQueue(blob);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(5);
     expect(spend).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
     errorSpy.mockRestore();
   });
 
@@ -790,7 +396,7 @@ describe('transaction submission', () => {
     );
     attachTestCommitCoordinator(blob);
     const recoverableErrors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'recoverable-internal-error') recoverableErrors.push(event.error);
     });
     const cradle = {
@@ -834,7 +440,7 @@ describe('transaction submission', () => {
     blob.loadWasm(mockWasmConnection);
     // Blockchain attachment can complete while restore is still deserializing
     // the cradle, so this height must remain buffered.
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
 
@@ -845,7 +451,7 @@ describe('transaction submission', () => {
     blob.reportChainSnapshotReady(1n);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('uses height-only sync to resubmit only restored sessions with no watches', () => {
@@ -864,13 +470,13 @@ describe('transaction submission', () => {
     const cradle = makeMockCradle();
 
     blob.loadWasm(mockWasmConnection);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
     blob.reportNewBlock(1n);
     blob.setGameSession(cradle);
     blob.reportChainSnapshotReady(1n);
 
     expect(cradle.chain_snapshot_ready).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('suppresses a same-stack fresh-sync duplicate while its submission is queued', async () => {
@@ -927,7 +533,7 @@ describe('transaction submission', () => {
 
     blob.loadWasm(mockWasmConnection);
     blob.setGameSession(cradle);
-    blob.attachBlockchain(blockchain);
+    blob.setWallet(blockchain);
 
     // report_coin_states queues the first copy in processResult, then the
     // fresh-sync resubmit drains the same retained ID before promise jobs run.
@@ -941,7 +547,7 @@ describe('transaction submission', () => {
     expect(spend).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(submission.id);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('submits drained transactions sequentially', async () => {
@@ -1063,7 +669,7 @@ describe('transaction submission', () => {
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     const cradle = {
@@ -1114,7 +720,7 @@ describe('transaction submission', () => {
     attachTestCommitCoordinator(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((event) => {
+    observeWasmEvents(blob).subscribe((event) => {
       if (event.type === 'error') errors.push(event.error);
     });
     const cradle = {
@@ -1137,6 +743,41 @@ describe('transaction submission', () => {
     expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
     expect(errors).toEqual([expect.stringMatching(/Wallet rejected transaction rejected/)]);
     expect(errors[0]).toMatch(/effectively zero/i);
+  });
+
+  it('abandons a past-deadline rejection instead of waiting to rebroadcast it', async () => {
+    const detail = 'Failed to include transaction e3, error ASSERT_BEFORE_HEIGHT_RELATIVE_FAILED';
+    const spend = jest.fn().mockResolvedValue({ status: 'rejected', detail });
+    const blockchain = new BlockchainPoller(
+      { ...mockRpc, spend, isConnected: () => true } as InternalBlockchainInterface,
+      60000,
+    );
+    const blob = new SessionController(blockchain, 'test', 100n, 100n, makePeerConn([], []));
+    attachTestCommitCoordinator(blob);
+    blob.rewardPuzzleHash = '11'.repeat(32);
+    const errors: string[] = [];
+    observeWasmEvents(blob).subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+    const cradle = {
+      ...makeMockCradle(),
+      drain_submissions: jest
+        .fn()
+        .mockReturnValueOnce(
+          submissionDrain([{ id: 'late', bundle: testSpendBundle('03'), fee_request: null }]),
+        )
+        .mockReturnValue(submissionDrain([], ['late'])),
+    } as unknown as ChiaGame;
+
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(cradle);
+    blob.processResult(wasmResult());
+    await transactionSubmitQueue(blob);
+
+    expect(cradle.abandon_submission_attempt).toHaveBeenCalledWith('late');
+    expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
+    expect(errors).toEqual([expect.stringMatching(/too late/i)]);
+    expect(errors[0]).toContain(detail);
   });
 
   it('submits transactions already queued when a manager result is terminal', async () => {
@@ -1177,7 +818,7 @@ describe('transaction submission', () => {
 
     expect(cradle.drain_submissions).toHaveBeenCalledTimes(1);
     expect(spend).toHaveBeenCalledTimes(1);
-    blob.detachBlockchain(blockchain);
+    blob.setWallet(null);
   });
 
   it('retains unavailable submissions and silently acknowledges an exact duplicate', async () => {
@@ -1208,7 +849,7 @@ describe('transaction submission', () => {
     setActiveBlob(blob);
     blob.rewardPuzzleHash = '11'.repeat(32);
     const errors: string[] = [];
-    blob.getObservable().subscribe((evt) => {
+    observeWasmEvents(blob).subscribe((evt) => {
       if (evt.type === 'error') errors.push(evt.error);
     });
     const cradle = {
@@ -1231,6 +872,15 @@ describe('transaction submission', () => {
     expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith('4');
     expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
     expect(errors).toEqual([]);
+  });
+
+  it('explains past-deadline rejections and passes others through', () => {
+    const rewritten = rewritePastDeadlineRejection('error ASSERT_BEFORE_HEIGHT_ABSOLUTE_FAILED');
+    expect(rewritten).toMatch(/too late/i);
+    expect(rewritten).toContain('ASSERT_BEFORE_HEIGHT_ABSOLUTE_FAILED');
+    expect(rewritePastDeadlineRejection('error ASSERT_HEIGHT_RELATIVE_FAILED')).toBe(
+      'error ASSERT_HEIGHT_RELATIVE_FAILED',
+    );
   });
 
   it('rewrites fee-rate rejections into an actionable message and passes others through', () => {

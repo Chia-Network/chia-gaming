@@ -1,9 +1,12 @@
 import 'fake-indexeddb/auto';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { storageRepository } from '../session/storageRepository';
+import { coinRecordToName } from '../../util/coinWatch';
+import { pollOnce } from './blockchain_poller.driver';
+import type { CoinStateRecord, InternalBlockchainInterface } from '../../types/ChiaGaming';
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
+import { storageRepository } from '../session/storageRepository';
 
-jest.mock('../../hooks/WalletConnectRpc', () => ({
+jest.mock('../wallet/WalletConnectRpc', () => ({
   WalletConnectTransportError: class WalletConnectTransportError extends Error {},
   WalletConnectResponseError: class WalletConnectResponseError extends Error {},
   rpc: {
@@ -57,33 +60,30 @@ const mockWalletConnectState = {
   }),
 };
 
-jest.mock('../../hooks/useWalletConnect', () => ({
+jest.mock('../wallet/WalletConnectClient', () => ({
   walletConnectState: mockWalletConnectState,
 }));
 
-import {
-  rpc,
-  WalletConnectResponseError,
-  WalletConnectTransportError,
-} from '../../hooks/WalletConnectRpc';
-import { RealBlockchainInterface } from '../../hooks/RealBlockchainInterface';
+import { subscribeLog } from '../../services/log';
+import { CoinRecord } from '../../types/rpc/CoinRecord';
+import { coinIdFromBytes, toUint8 } from '../../util';
+import { encodePuzzleHashToBech32m } from '../../util/bech32m';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import { WalletProviderRegistry } from '../session/walletProviderRegistry';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import {
   classifyFakeBlockchainSubmitError,
   classifyFakeBlockchainSubmitResult,
   FakeBlockchainInterface,
   SimulatorTransportError,
   SyntheticFeeOfferTracker,
-} from '../../hooks/FakeBlockchainInterface';
-import { BlockchainPoller } from '../../hooks/BlockchainPoller';
-import { CoinRecord } from '../../types/rpc/CoinRecord';
-import { coinIdFromBytes, toUint8 } from '../../util';
-import { encodePuzzleHashToBech32m } from '../../util/bech32m';
-import { subscribeLog } from '../../services/log';
-import { coinRecordToName } from '../../util/coinWatch';
-import { pollOnce } from './blockchain_poller.driver';
-import type { CoinStateRecord, InternalBlockchainInterface } from '../../types/ChiaGaming';
+} from '../wallet/FakeBlockchainInterface';
+import { RealBlockchainInterface } from '../wallet/RealBlockchainInterface';
+import {
+  rpc,
+  WalletConnectResponseError,
+  WalletConnectTransportError,
+} from '../wallet/WalletConnectRpc';
 
 const offerOperation = {
   owner: {
@@ -181,6 +181,40 @@ describe('RealBlockchainInterface', () => {
     jest.advanceTimersByTime(500);
     await Promise.resolve();
   }
+
+  it('reports pairing before monitoring setup completes', async () => {
+    let approve!: () => void;
+    let finishMonitoring!: () => void;
+    mockWalletConnectState.connect.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          approve = resolve;
+        }),
+    );
+    const blockchain = new RealBlockchainInterface();
+    const monitoring = jest.spyOn(blockchain, 'startMonitoring').mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishMonitoring = resolve;
+        }),
+    );
+    const paired = jest.fn();
+    try {
+      const setup = await blockchain.beginConnect('id');
+      const finalizing = setup.finalize(undefined, paired);
+      expect(paired).not.toHaveBeenCalled();
+      expect(monitoring).not.toHaveBeenCalled();
+      approve();
+      await Promise.resolve();
+      expect(paired).toHaveBeenCalledTimes(1);
+      expect(monitoring).toHaveBeenCalledTimes(1);
+      finishMonitoring();
+      await finalizing;
+    } finally {
+      monitoring.mockRestore();
+      await blockchain.disconnect();
+    }
+  });
 
   it('reissues a QR on repeated fresh Link Wallet without wiping IndexedDB', async () => {
     const deleteDatabase = jest.fn();
