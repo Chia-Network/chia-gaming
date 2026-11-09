@@ -397,6 +397,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     recovering: walletRecovering,
     showSetup: showConnectionSetupModal,
     connecting,
+    preparingConnection,
     error: connectError,
     balance,
   } = walletView;
@@ -1127,12 +1128,20 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             ) : connecting ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <div className="w-6 h-6 border-2 border-canvas-border border-t-canvas-text-contrast rounded-full animate-spin" />
-                <p className="text-sm text-canvas-text animate-pulse" role="status">
-                  Setting up connection.
-                </p>
-                <p className="text-sm text-canvas-text text-center">
-                  You may have to approve some operations in your wallet.
-                </p>
+                {preparingConnection ? (
+                  <p className="text-sm text-canvas-text animate-pulse" role="status">
+                    Preparing connection…
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm text-canvas-text animate-pulse" role="status">
+                      Setting up connection.
+                    </p>
+                    <p className="text-sm text-canvas-text text-center">
+                      You may have to approve some operations in your wallet.
+                    </p>
+                  </>
+                )}
                 <Button variant="solid" onClick={() => dispatch({ type: 'wallet-cancel' })}>
                   Cancel
                 </Button>

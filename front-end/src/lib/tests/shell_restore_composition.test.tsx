@@ -253,7 +253,8 @@ describe('Shell production restore composition', () => {
     ).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, connecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
-    expect(renderer!.root.findByProps({ children: 'Setting up connection.' })).toBeDefined();
+    expect(renderer!.root.findByProps({ children: 'Preparing connection…' })).toBeDefined();
+    expect(renderer!.root.findAllByProps({ children: 'Setting up connection.' })).toHaveLength(0);
     expect(renderer!.root.findByProps({ children: 'Connect to Hub' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Done' }).props.disabled).toBe(true);
     expect(realBlockchainInfo.beginConnect).toHaveBeenCalledTimes(1);
@@ -313,6 +314,27 @@ describe('Shell production restore composition', () => {
     expect(createController).toHaveBeenCalledTimes(1);
     expect(storageRepository.loadState().session).toEqual(save.session);
     expect(unhandledRejections).toEqual([]);
+  });
+
+  it('shows a preparing message instead of approval guidance before the QR code exists', async () => {
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Link Wallet');
+    await act(async () => {
+      void application.dispatch({ type: 'wallet-connect', wallet: 'walletconnect', fresh: true });
+      await Promise.resolve();
+    });
+    await waitForText(renderer!, 'Preparing connection…');
+    expect(renderer!.root.findAllByProps({ children: 'Setting up connection.' })).toHaveLength(0);
+    expect(
+      renderer!.root.findAllByProps({
+        children: 'You may have to approve some operations in your wallet.',
+      }),
+    ).toHaveLength(0);
+    expect(renderer!.root.findByProps({ children: 'Cancel' })).toBeDefined();
   });
 
   it('keeps wallet setup visibly pending after pairing until approvals finish', async () => {
