@@ -370,9 +370,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private lastConnectedState = false;
   private lastRecoveringState = false;
   private coinRecordCache = new Map<string, CoinRecord>();
-  // Learned only from an explicit missing-coin response; never persisted or
-  // shared with another wallet connection.
-  private batchCoinRecordsQuery: { scope: string; allowMissing: boolean } | null = null;
+  // Probe once using a known existing coin; never persist the decision or
+  // share it with another wallet connection.
+  private coinRecordsQueryCapability: { scope: string; supportsAllowMissing: boolean } | null =
+    null;
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
@@ -829,11 +830,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     const getScope = () =>
       `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
     const scope = getScope();
-    const batchQuery =
-      this.batchCoinRecordsQuery?.scope === scope ? this.batchCoinRecordsQuery : null;
+    const supportsAllowMissing =
+      this.coinRecordsQueryCapability?.scope === scope &&
+      this.coinRecordsQueryCapability.supportsAllowMissing;
     // Released GUIs reject allowMissing itself. Begin with their original
-    // singleton request until a successful absence proves a batching mode.
-    const queries = batchQuery ? [uniqueNames] : uniqueNames.map((name) => [name]);
+    // singleton request until a probe on a known existing coin accepts the flag.
+    const queries = supportsAllowMissing ? [uniqueNames] : uniqueNames.map((name) => [name]);
     const records: CoinRecord[] = [];
     for (const queryNames of queries) {
       try {
@@ -844,24 +846,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             allowUnsynced: true,
             ...(allowMissing ? { allowMissing: true } : {}),
           });
-        let allowMissing = batchQuery?.allowMissing ?? false;
-        let resp;
-        try {
-          resp = await query(allowMissing);
-        } catch (error) {
-          if (
-            batchQuery ||
-            !(error instanceof WalletConnectResponseError) ||
-            getScope() !== scope
-          ) {
-            throw error;
-          }
-          // A missing coin and an unsupported flag both become opaque errors.
-          // Probe the opt-in only after the legacy request fails; a present
-          // coin must remain readable through a GUI that rejects the flag.
-          allowMissing = true;
-          resp = await query(allowMissing);
-        }
+        const resp = await query(supportsAllowMissing);
         if (resp?.success === false || (resp as any)?.error || !Array.isArray(resp?.coinRecords)) {
           throw new Error('Wallet did not return coin records');
         }
@@ -885,12 +870,34 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           log(
             `[wc-blockchain] getCoinRecordsByNames hit names=${queryNames.join(',')} count=${r.length}`,
           );
-        } else {
-          // Capture the request's scope, so a late response from a replaced
-          // wallet cannot enable batching for the new connection.
-          this.batchCoinRecordsQuery = { scope, allowMissing };
         }
         records.push(...r);
+        if (
+          r.length > 0 &&
+          getScope() === scope &&
+          this.coinRecordsQueryCapability?.scope !== scope
+        ) {
+          // Missing coins and rejected flags produce the same opaque error.
+          // Use the coin just found as a control, and record the attempt before
+          // awaiting it so overlapping reads cannot send duplicate probes.
+          const capability = { scope, supportsAllowMissing: false };
+          this.coinRecordsQueryCapability = capability;
+          try {
+            const probe = await query(true);
+            if (
+              getScope() === scope &&
+              probe?.success !== false &&
+              !(probe as any)?.error &&
+              Array.isArray(probe?.coinRecords) &&
+              probe.coinRecords.length > 0
+            ) {
+              capability.supportsAllowMissing = true;
+            }
+          } catch {
+            // Keep the successful legacy result and stay in legacy mode for
+            // this connection, even if the probe fails or times out.
+          }
+        }
       } catch {
         // WalletConnect may collapse the wallet's expected missing-coin result
         // and unrelated daemon failures into the same opaque "Internal Error".
