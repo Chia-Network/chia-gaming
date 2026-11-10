@@ -76,7 +76,8 @@ PIDS+=($!)
 echo "=== Starting hub on http://$HOST:$HUB_PORT ==="
 PORT="$HUB_PORT" node "$HUB_STAGE/service.js" \
     --self "http://$HOST:$HUB_PORT" \
-    --dir "$HUB_STAGE" &
+    --dir "$HUB_STAGE" \
+    --redirect-html-to "http://$HOST:$GAME_PORT" &
 PIDS+=($!)
 
 echo ""
