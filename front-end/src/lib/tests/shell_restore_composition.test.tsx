@@ -205,6 +205,41 @@ describe('Shell production restore composition', () => {
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   });
 
+  it('remembers an automatically connected hub after disconnect', async () => {
+    requestTrust.mockResolvedValue('trusted');
+    await storageRepository.claimApplicationState();
+    await storageRepository.updateCommon({
+      preferences: { hubUrl: 'http://localhost:3003' },
+    });
+    expect(storageRepository.query('lastHubUrl')).toBeUndefined();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await application.dispatch({ type: 'resume' });
+    });
+    for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
+    expect(mockHub).not.toBeNull();
+
+    await act(async () => {
+      await application.dispatch({ type: 'hub-disconnect' });
+    });
+    await flushEffects();
+
+    expect(storageRepository.query('hubUrl')).toBeUndefined();
+    expect(storageRepository.query('lastHubUrl')).toBe('http://localhost:3003');
+    expect(
+      renderer!.root.find((node) => node.type === 'input' && node.props.role === 'combobox').props
+        .value,
+    ).toBe('http://localhost:3003');
+  });
+
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
     await storageRepository.claimApplicationState();
     const save = baseSave({

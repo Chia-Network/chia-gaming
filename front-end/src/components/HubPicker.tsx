@@ -107,7 +107,8 @@ export function HubPicker({ onConnect, connectionError, defaultHubUrl }: HubPick
                   aria-invalid={error ? true : undefined}
                   placeholder="https://hub.example.com"
                   className="pr-9"
-                  onKeyDown={(e) => {
+                  // Autocomplete commits a highlighted suggestion on keydown.
+                  onKeyUp={(e) => {
                     if (e.key === 'Enter') handleConnect();
                   }}
                 />

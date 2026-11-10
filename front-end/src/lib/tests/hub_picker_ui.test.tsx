@@ -1,6 +1,8 @@
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
+import { Autocomplete } from '@base-ui/react/autocomplete';
+
 import { HubPicker } from '../../components/HubPicker';
 
 function renderPicker(defaultHubUrl?: string) {
@@ -23,6 +25,26 @@ function renderPicker(defaultHubUrl?: string) {
       root.find(
         (n) => n.type === 'button' && n.findAll((c) => c.children.includes('Connect')).length > 0,
       ),
+    pressEnter: (selectedSuggestion?: string) => {
+      act(() => {
+        // Base UI commits the highlighted option during keydown, after the
+        // input's consumer handler. Keep both callbacks in the same React batch.
+        input().props.onKeyDown?.({
+          key: 'Enter',
+          nativeEvent: { key: 'Enter' },
+          currentTarget: { value: input().props.value, scrollWidth: 100, clientWidth: 100 },
+        });
+        if (selectedSuggestion) {
+          root.findByType(Autocomplete.Root).props.onValueChange(selectedSuggestion, {
+            reason: 'item-press',
+            event: { key: 'Enter', type: 'keydown' },
+          });
+        }
+      });
+      act(() => {
+        input().props.onKeyUp?.({ key: 'Enter' });
+      });
+    },
     suggestions: () => root.find((n) => Array.isArray(n.props.items)).props.items,
     errorText: () =>
       root
@@ -78,6 +100,26 @@ describe('hub picker', () => {
     });
 
     expect(picker.onConnect).toHaveBeenCalledWith('https://hub.example.com');
+  });
+
+  it('connects to the suggestion committed by Enter instead of the previous input', () => {
+    const picker = renderPicker();
+    picker.type('my-hub.test');
+
+    picker.pressEnter('https://hub.nokitlan.com');
+
+    expect(picker.onConnect).toHaveBeenCalledTimes(1);
+    expect(picker.onConnect).toHaveBeenCalledWith('https://hub.nokitlan.com');
+  });
+
+  it('connects to a typed URL on Enter when no suggestion is highlighted', () => {
+    const picker = renderPicker();
+    picker.type('my-hub.test/lobby');
+
+    picker.pressEnter();
+
+    expect(picker.onConnect).toHaveBeenCalledTimes(1);
+    expect(picker.onConnect).toHaveBeenCalledWith('https://my-hub.test');
   });
 
   it('prefills the last used hub and keeps the known hubs as suggestions', () => {

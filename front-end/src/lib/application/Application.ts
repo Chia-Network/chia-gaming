@@ -1426,6 +1426,8 @@ export function createApplication() {
       return;
     }
     hubConn = conn;
+    // Remember every attached hub, including a connection restored at boot.
+    storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
     peerSession?.attachCarrier(conn);
     void restoreRejections(conn, bootRejectionDescriptors).catch((error) => {
       console.error('[Shell] failed to restore rejection tombstones', error);
@@ -1438,9 +1440,9 @@ export function createApplication() {
       update('hubConnectionError', trustError);
       return;
     }
-    // Survives hub disconnects (unlike hubUrl) so the picker offers it after a restart.
-    storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
     if (trust === 'granted') {
+      // This connection continues after reloading with the new trust grant.
+      storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
       storageRepository.regenerateSessionId();
       storageRepository.updatePreference({ key: 'hubUrl', value: origin });
       window.location.reload();
