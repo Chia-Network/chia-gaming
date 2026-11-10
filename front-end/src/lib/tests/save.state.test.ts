@@ -30,7 +30,7 @@ function clearGameSession(): Promise<void> {
 }
 
 describe('flat state', () => {
-  it('defaults the transaction fee to the effective nonzero floor', () => {
+  it('defaults the transaction fee without treating it as a network minimum', () => {
     expect(storageRepository.query('defaultFee')).toBe(100_000_000n);
   });
 

@@ -601,6 +601,23 @@ describe('Shell production restore composition', () => {
     expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
     act(() => walletTab().props.onClick());
     await waitForText(renderer!, 'Connected');
+    // Total fees are preferences, not a fixed network admission threshold.
+    // In particular, a nonzero amount below the default is still valid input.
+    for (const fee of [1n, 100_000_000n, 0n]) {
+      const currentFee = String(storageRepository.query('defaultFee'));
+      const editFee = renderer!.root.find(
+        (node) => node.type === 'button' && node.children[0] === currentFee,
+      );
+      act(() => editFee.props.onClick());
+      const input = renderer!.root.findByProps({ inputMode: 'numeric' });
+      act(() => input.props.onChange({ target: { value: '-1' } }));
+      expect(renderer!.root.findByProps({ children: 'Set' }).props.disabled).toBe(true);
+      act(() => input.props.onChange({ target: { value: fee.toString() } }));
+      const setFee = renderer!.root.findByProps({ children: 'Set' });
+      expect(setFee.props.disabled).toBe(false);
+      await act(async () => setFee.props.onClick());
+      expect(storageRepository.query('defaultFee')).toBe(fee);
+    }
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' })).toHaveLength(0);
     act(() => connectionChanged(true, false));
     expect(walletTab()).toBeDefined();

@@ -1,4 +1,4 @@
-import { MIN_NONZERO_FEE_MOJOS } from '../../constants/fees';
+import { DEFAULT_TRANSACTION_FEE_MOJOS } from '../../constants/fees';
 import type {
   BlockchainType,
   ChiaNetwork,
@@ -42,7 +42,7 @@ export function selectSessionPreference<K extends keyof SessionPreferenceQueries
     network: preferences.network ?? 'mainnet',
     alias: preferences.alias,
     theme: preferences.theme,
-    defaultFee: preferences.defaultFee ?? MIN_NONZERO_FEE_MOJOS,
+    defaultFee: preferences.defaultFee ?? DEFAULT_TRANSACTION_FEE_MOJOS,
     feeUnit: preferences.feeUnit ?? 'mojo',
     activeTab: preferences.activeTab,
     unreadGame: preferences.unreadGame ?? false,

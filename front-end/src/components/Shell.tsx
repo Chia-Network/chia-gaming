@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import QRCode from 'qrcode';
 import { getCurrencyLabels } from '../constants/currency';
-import { MIN_NONZERO_FEE_MOJOS, isEffectivelyZeroFee } from '../constants/fees';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { shouldSuppressPhaseReporting } from '../lib/restoreLifecycle';
 import { shouldSynthesizeSetupPending } from '../lib/session/acceptLifecycle';
@@ -472,12 +471,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     [feeUnit],
   );
   const parsedFeeInput = parseFeeInput(feeInput);
-  const feeInputError =
-    parsedFeeInput === null
-      ? 'Enter a valid amount.'
-      : isEffectivelyZeroFee(parsedFeeInput)
-        ? `A fee below ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} ${getCurrencyLabels().mojos} is treated as zero by the network and will not confirm. Use 0 or at least ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} ${getCurrencyLabels().mojos}.`
-        : null;
+  const feeInputError = parsedFeeInput === null ? 'Enter a valid amount.' : null;
   const feeInputValid = feeInputError === null;
   const startEditingFee = useCallback(() => {
     setFeeInput(feeDisplayText());
@@ -486,7 +480,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
   }, [feeDisplayText]);
   const commitFee = useCallback(() => {
     const mojos = parseFeeInput(feeInput);
-    if (mojos === null || isEffectivelyZeroFee(mojos)) return;
+    if (mojos === null) return;
     dispatch({ type: 'fee', fee: mojos });
     setFeeEditing(false);
   }, [feeInput, parseFeeInput, dispatch]);

@@ -1718,17 +1718,15 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   successful broadcast) or a failure with no peer answer falls back to Coinset
   `push_tx` with the exact bytes, where a duplicate is acknowledged.
 
-  **Fee floor.** Chia's mempool treats a fee below 5 mojos per cost unit as zero
-  (`nonzero_fee_minimum_fpc`), so a small nonzero fee is strictly worse than no
-  fee: it buys no inclusion, and on a full mempool the node rejects the bundle
-  with `INVALID_FEE_TOO_CLOSE_TO_ZERO` instead of admitting it as free. The front
-  end therefore forbids the in-between values: `front-end/src/constants/fees.ts`
-  defines `MIN_NONZERO_FEE_MOJOS` (100M mojos, derived from 5 mojo/cost times a
-  conservative bundle cost) and `isEffectivelyZeroFee`, and both fee entry points
-  (the Wallet-tab editor in `Shell.tsx` and the Cloud Wallet connect modal's fee
-  field) reject a nonzero fee below it. Zero (a free transaction) and
-  floor-or-above are allowed. This is a floor below which a fee definitely cannot
-  work, not a guarantee of inclusion. For ordinary WalletConnect submissions,
+  **Fee rates.** When its mempool is full, the node rejects fees below 5 mojos
+  per cost unit with `INVALID_FEE_TOO_CLOSE_TO_ZERO`, including zero fees.
+  `INVALID_FEE_LOW_FEE` means the rate does not beat the current competing
+  transactions. Neither error specifies a fixed total-fee minimum: the required
+  amount depends on the complete bundle's cost and congestion. The frontend's
+  `DEFAULT_TRANSACTION_FEE_MOJOS` (100M mojos) is only an initial preference;
+  fee editors accept any nonnegative amount without promising admission. Error
+  messages distinguish the rate floor from the competitive threshold and do not
+  recommend zero as a bypass. For ordinary WalletConnect submissions,
   `createFeeSpend` makes a persisted signed offer whose wallet spend asserts the
   Rust-specified target coin is spent concurrently and reserves the fee. Cloud
   Wallet returns its native-fee offer instead. JavaScript passes

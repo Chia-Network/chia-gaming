@@ -7,7 +7,6 @@ import {
   type SessionFrontendEvent,
   type SessionPresentation,
 } from './sessionFrontend';
-import { MIN_NONZERO_FEE_MOJOS } from '../../constants/fees';
 import { diagStack, log } from '../../services/log';
 import {
   ReliablePeerTransport,
@@ -188,20 +187,23 @@ function extractErrorMessage(e: unknown): string {
   return String(e);
 }
 
-/**
- * Chia's mempool treats a fee below 5 mojos per cost unit as zero and, on a full
- * mempool, rejects the bundle outright rather than admitting it as free. This
- * rewrites the node's terse fee-rate codes into an actionable message. The fee
- * rejection is fatal (unlike the benign cases above), so callers must still
- * surface it loudly.
- */
+/** Explain fee-rate admission failures without inventing a fixed total-fee minimum. */
 export function rewriteFeeRateRejection(message: string): string {
-  if (/INVALID_FEE_TOO_CLOSE_TO_ZERO|INVALID_FEE_LOW_FEE|fee.*too close to zero/i.test(message)) {
+  if (/INVALID_FEE_TOO_CLOSE_TO_ZERO|fee.*too close to zero/i.test(message)) {
     return (
-      `The network rejected the transaction because its fee is effectively zero ` +
-      `(below ${MIN_NONZERO_FEE_MOJOS.toLocaleString()} mojos, the 5 mojo/cost floor). ` +
-      `Set the transaction fee to 0 (a free transaction) or to at least ` +
-      `${MIN_NONZERO_FEE_MOJOS.toLocaleString()} mojos and try again. (${message})`
+      `The network rejected this transaction because its fee rate is below the node's ` +
+      `5 mojos per cost unit minimum while its mempool is full. The required total fee ` +
+      `depends on the complete transaction's cost; 100,000,000 mojos may not be enough. ` +
+      `Use a higher fee for a new transaction attempt or wait for congestion to ease. ` +
+      `A zero fee does not bypass this check. (${message})`
+    );
+  }
+  if (/INVALID_FEE_LOW_FEE/i.test(message)) {
+    return (
+      `The network rejected this transaction because its fee rate is too low to enter ` +
+      `the full mempool. The required rate depends on competing transactions and may ` +
+      `exceed 5 mojos per cost unit. Use a higher fee for a new transaction attempt or ` +
+      `wait for congestion to ease. (${message})`
     );
   }
   return message;
