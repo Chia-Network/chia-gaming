@@ -12,6 +12,7 @@ import {
 import { WalletType } from '../../types/WalletType';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { isExactDuplicateTransaction } from '../../util/walletSubmit';
+import { coinRecordToName } from '../../util/coinWatch';
 import {
   rpc,
   WalletConnectResponseError,
@@ -369,6 +370,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private lastConnectedState = false;
   private lastRecoveringState = false;
   private coinRecordCache = new Map<string, CoinRecord>();
+  // Probe once using a known existing coin; never persist the decision or
+  // share it with another wallet connection.
+  private coinRecordsQueryCapability: { scope: string; supportsAllowMissing: boolean } | null =
+    null;
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
@@ -821,36 +826,88 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
     const uniqueNames = [...new Set(names)];
+    if (uniqueNames.length === 0) return [];
+    const getScope = () =>
+      `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
+    const scope = getScope();
+    const supportsAllowMissing =
+      this.coinRecordsQueryCapability?.scope === scope &&
+      this.coinRecordsQueryCapability.supportsAllowMissing;
+    // Released GUIs reject allowMissing itself. Begin with their original
+    // singleton request until a probe on a known existing coin accepts the flag.
+    const queries = supportsAllowMissing ? [uniqueNames] : uniqueNames.map((name) => [name]);
     const records: CoinRecord[] = [];
-    for (const name of uniqueNames) {
+    for (const queryNames of queries) {
       try {
-        const resp = await rpc.getCoinRecordsByNames({
-          names: [name],
-          includeSpentCoins: true,
-          allowUnsynced: true,
-        });
-        if ((resp as any)?.error) {
-          const cached = this.coinRecordCache.get(name);
-          if (cached) records.push(cached);
-          continue;
+        const query = (allowMissing: boolean) =>
+          rpc.getCoinRecordsByNames({
+            names: queryNames,
+            includeSpentCoins: true,
+            allowUnsynced: true,
+            ...(allowMissing ? { allowMissing: true } : {}),
+          });
+        const resp = await query(supportsAllowMissing);
+        if (resp?.success === false || (resp as any)?.error || !Array.isArray(resp?.coinRecords)) {
+          throw new Error('Wallet did not return coin records');
         }
-        const r = resp.coinRecords ?? [];
-        if (r.length > 0) {
-          log(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
-          this.coinRecordCache.set(name, r[0]);
+        const r = resp.coinRecords;
+        const byName = new Map<string, CoinRecord>();
+        if (queryNames.length === 1) {
+          if (r[0]) byName.set(queryNames[0], r[0]);
         } else {
-          this.coinRecordCache.delete(name);
+          for (const record of r) {
+            const name = await coinRecordToName(record);
+            if (!name) throw new Error('Wallet returned an invalid coin record');
+            byName.set(name, record);
+          }
+        }
+        for (const name of queryNames) {
+          const record = byName.get(name);
+          if (record) this.coinRecordCache.set(name, record);
+          else this.coinRecordCache.delete(name);
+        }
+        if (r.length > 0) {
+          log(
+            `[wc-blockchain] getCoinRecordsByNames hit names=${queryNames.join(',')} count=${r.length}`,
+          );
         }
         records.push(...r);
+        if (
+          r.length > 0 &&
+          getScope() === scope &&
+          this.coinRecordsQueryCapability?.scope !== scope
+        ) {
+          // Missing coins and rejected flags produce the same opaque error.
+          // Use the coin just found as a control, and record the attempt before
+          // awaiting it so overlapping reads cannot send duplicate probes.
+          const capability = { scope, supportsAllowMissing: false };
+          this.coinRecordsQueryCapability = capability;
+          try {
+            const probe = await query(true);
+            if (
+              getScope() === scope &&
+              probe?.success !== false &&
+              !(probe as any)?.error &&
+              Array.isArray(probe?.coinRecords) &&
+              probe.coinRecords.length > 0
+            ) {
+              capability.supportsAllowMissing = true;
+            }
+          } catch {
+            // Keep the successful legacy result and stay in legacy mode for
+            // this connection, even if the probe fails or times out.
+          }
+        }
       } catch {
         // WalletConnect may collapse the wallet's expected missing-coin result
         // and unrelated daemon failures into the same opaque "Internal Error".
-        // Preserve a last-known record so a transient failure cannot turn a
+        // Preserve last-known records so a transient failure cannot turn a
         // previously live coin into an authoritative disappearance. Unknown
         // names remain absent and polling retries them without noisy logging.
-        const cached = this.coinRecordCache.get(name);
-        if (cached) records.push(cached);
-        continue;
+        for (const name of queryNames) {
+          const cached = this.coinRecordCache.get(name);
+          if (cached) records.push(cached);
+        }
       }
     }
     return records;

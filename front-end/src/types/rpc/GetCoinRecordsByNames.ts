@@ -6,6 +6,7 @@ export interface GetCoinRecordsByNamesRequest {
   endHeight?: bigint;
   includeSpentCoins?: boolean;
   allowUnsynced?: boolean;
+  allowMissing?: boolean;
 }
 
 export interface GetCoinRecordsByNamesResponse {
