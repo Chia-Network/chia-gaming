@@ -155,7 +155,7 @@ describe('Shell production restore composition', () => {
         __chiaHub: { requestTrust },
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
-        location: { reload: jest.fn() },
+        location: { hostname: 'localhost', reload: jest.fn() },
       },
     });
     Object.defineProperty(globalThis, 'document', {

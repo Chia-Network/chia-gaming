@@ -81,6 +81,7 @@ function ShellBootHarness(props: {
   externalHub: Promise<void>;
   externalWallet: Promise<void>;
   reload: () => void;
+  autoResume?: boolean;
   onRestore?: (
     save: Parameters<BootRecoveryBoundaryDependencies['onRestore']>[0],
     source: BootRestoreSource,
@@ -93,6 +94,7 @@ function ShellBootHarness(props: {
   const [walletReady] = useState(false);
   const [hubReady] = useState(false);
   const boundary = useBootRecoveryBoundary({
+    autoResume: props.autoResume ?? false,
     onSessionId: props.onSessionId ?? (() => {}),
     onRestore:
       props.onRestore ??
@@ -319,6 +321,45 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(renderer!.root.findByProps({ children: 'Wallet reconnecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Wallet action' }).props.disabled).toBe(true);
     expect(renderer!.root.findByProps({ children: 'Hub action' }).props.disabled).toBe(true);
+  });
+
+  it('auto-resumes a durable live session without offering Resume or Start over', async () => {
+    await storageRepository.claimApplicationState();
+    const save = liveSave({
+      pairingToken: 'auto-resume-pair',
+      serializedGameSession: new Uint8Array([4, 5, 6]),
+    });
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const onRestore = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          autoResume: true,
+          onRestore,
+        }),
+      );
+    });
+    for (let attempt = 0; attempt < 20 && onRestore.mock.calls.length === 0; attempt++) {
+      await flushEffects();
+    }
+
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: expect.objectContaining({
+          pairing: expect.objectContaining({ token: 'auto-resume-pair' }),
+        }),
+      }),
+      'automatic',
+    );
+    expect(renderer!.root.findAllByProps({ children: 'Resume Session' })).toHaveLength(0);
   });
 
   it('offers and restores a durable live session without localStorage hints', async () => {

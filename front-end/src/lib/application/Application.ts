@@ -15,7 +15,7 @@ import {
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import { isElectronDistribution } from '../../util/distribution';
+import { isElectronDistribution, isLocalDevHost } from '../../util/distribution';
 import { hubTrustError, requestHubTrust } from '../../util/hubTrust';
 import {
   acceptedHandNeedsGameTabAttention,
@@ -489,6 +489,8 @@ export function createApplication() {
   } | null = null;
   const recovery = new Recovery(
     {
+      // Local dev keeps the Resume / Start over choice; everyone else resumes.
+      autoResume: !isLocalDevHost(),
       onSessionId: (value) => update('sessionId', value),
       onRestore: async (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);

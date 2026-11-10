@@ -402,10 +402,12 @@ implicit crash rollback; this is not continuous save and does not imply that
 every changing or important value is durable. Network connections (wallet
 backend, hub) treat a reload like a remote drop and reconcile in the background.
 
-The one exception is the **restore / start over dialog**: when a saved game
-session exists, the app asks the user whether to resume or discard it before
-proceeding. This is intentional — silently resuming a stale or unwanted session
-could be worse than asking.
+Saved sessions resume automatically. The **Resume / Start over dialog** only
+appears on a local dev host (`localhost`, `127.0.0.1`, `[::1]`, which is what
+`pnpm run dev` serves) or when the save cannot be loaded. A deploy-cutover reload
+auto-resumes on any host. Start over deletes the
+channel keys without graceful cleanup, so production keeps it behind load or
+restore failures, where it is the only way out.
 
 This is always-on — not a feature the user opts into.
 
@@ -1104,7 +1106,9 @@ followed by one strict aggregate rehydrate:
 ```
 hasSavedSessionMarker()?
                  │
-                 ├─ yes → inspect IndexedDB → show Resume / Start Over
+                 ├─ yes → inspect IndexedDB
+                 │       ├─ not a local dev host → Resume (automatic)
+                 │       └─ local dev host → show Resume / Start Over
                  │       │
                  │       ├─ Start Over → hardReset(), reload
                  │       │                (separate "Starting over…" UI state;

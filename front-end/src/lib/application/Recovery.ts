@@ -22,6 +22,8 @@ export type BootRecoveryState =
 export type BootRestoreSource = 'manual' | 'automatic' | 'takeover';
 
 export interface BootRecoveryBoundaryDependencies {
+  /** Restore a loadable save without the Resume / Start over dialog. */
+  autoResume: boolean;
   onSessionId: (sessionId: string) => void;
   onRestore: (
     save: DurableApplicationState,
@@ -118,7 +120,7 @@ export class Recovery {
       if (inspected && storageRepository.shouldOfferResumeOrStartOver(inspected)) {
         markSavedSession();
         this.setState(
-          peekAutoResumeOnce()
+          this.dependencies.autoResume || peekAutoResumeOnce()
             ? { kind: 'autoResuming' }
             : { kind: 'resumeDialog', loadError: null },
         );
@@ -136,7 +138,7 @@ export class Recovery {
           this.claimedRecovery = save;
           markSavedSession();
           this.setState(
-            peekAutoResumeOnce()
+            this.dependencies.autoResume || peekAutoResumeOnce()
               ? { kind: 'autoResuming' }
               : { kind: 'resumeDialog', loadError: null },
           );
