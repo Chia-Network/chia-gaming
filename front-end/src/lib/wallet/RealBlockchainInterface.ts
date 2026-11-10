@@ -19,6 +19,7 @@ import {
   WC_INTER_REQUEST_MS,
 } from './WalletConnectRpc';
 
+import { getCurrencyLabels } from '../../constants/currency';
 import { ChiaMethod, getChainId } from '../../constants/wallet-connect';
 import { log } from '../../services/log';
 import {
@@ -198,6 +199,66 @@ function collectErrorText(err: unknown): string {
         ),
     )
     .join(' ');
+}
+
+const WC_USER_REJECTED = 5000;
+
+/** The JSON-RPC error object the wallet answered with, when there is one. */
+function walletRpcError(err: unknown): { code?: unknown; message?: unknown } | null {
+  const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : err;
+  return typeof cause === 'object' && cause !== null ? cause : null;
+}
+
+/** The wallet's own message when the user declined the request there. */
+function walletUserRejection(err: unknown): string | null {
+  if (Number(walletRpcError(err)?.code) !== WC_USER_REJECTED) return null;
+  return walletRpcMessage(err) ?? 'Request rejected in the wallet';
+}
+
+/** The message of the wallet's JSON-RPC error, without the transport framing. */
+function walletRpcMessage(err: unknown): string | null {
+  const message = walletRpcError(err)?.message;
+  return typeof message === 'string' && message ? message : null;
+}
+
+/**
+ * The reference wallet reports coin-selection failures as free text, so its
+ * balance, not the message, says which state made an offer fail. Returns null
+ * when the balance does not explain the failure.
+ */
+async function describeOfferShortfall(needed: bigint): Promise<string | null> {
+  if (needed <= 0n) return null;
+  let balance: Partial<Awaited<ReturnType<typeof rpc.getWalletBalance>>> | null | undefined;
+  try {
+    balance = await rpc.getWalletBalance({ walletId: 1n });
+  } catch (e) {
+    log(`[wc-blockchain] balance read after offer failure failed: ${collectErrorText(e)}`);
+    return null;
+  }
+  const confirmed = balance?.confirmedWalletBalance;
+  const spendable = balance?.spendableBalance;
+  const maxSend = balance?.maxSendAmount;
+  const { mojos } = getCurrencyLabels();
+  if (typeof confirmed === 'bigint' && confirmed < needed) {
+    return `Not enough funds in the wallet: ${needed} ${mojos} needed, ${confirmed} available.`;
+  }
+  if (typeof spendable === 'bigint' && spendable < needed) {
+    return `Wallet funds are held by a pending transaction or an open offer: ${needed} ${mojos} needed, ${spendable} spendable right now. Try again once the transaction confirms or the offer is cancelled.`;
+  }
+  if (typeof maxSend === 'bigint' && maxSend < needed) {
+    return `Wallet funds are split across too many small coins to spend ${needed} ${mojos} at once. Combine coins in the wallet and try again.`;
+  }
+  return null;
+}
+
+/** Reason shown to the user when the wallet refused to create an offer. */
+async function offerFailureReason(err: unknown, needed: bigint, detail: string): Promise<string> {
+  return (
+    walletUserRejection(err) ??
+    (await describeOfferShortfall(needed)) ??
+    walletRpcMessage(err) ??
+    detail
+  );
 }
 
 function boundedCancellationError(value: unknown): string {
@@ -600,7 +661,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (e instanceof WalletConnectTransportError) {
         return { kind: 'unavailable', reason: text };
       }
-      return { kind: 'failure', reason: text };
+      return { kind: 'failure', reason: await offerFailureReason(e, fee, text) };
     }
   }
 
@@ -791,9 +852,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.structuredError?.message ??
         '';
       const reason = errorMsg || errorText || 'createOfferForIds failed';
-      return e instanceof WalletConnectTransportError
-        ? { kind: 'unavailable', reason }
-        : { kind: 'failure', reason };
+      if (e instanceof WalletConnectTransportError) return { kind: 'unavailable', reason };
+      const offered = offer['1'] ?? 0n;
+      return { kind: 'failure', reason: await offerFailureReason(e, -offered, reason) };
     }
   }
 

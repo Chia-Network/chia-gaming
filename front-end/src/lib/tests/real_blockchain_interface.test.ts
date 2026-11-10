@@ -14,6 +14,7 @@ jest.mock('../wallet/WalletConnectRpc', () => ({
     cancelOffer: jest.fn(),
     createNewRemoteWallet: jest.fn(),
     getNextAddress: jest.fn(),
+    getWalletBalance: jest.fn(),
     getCoinRecordsByNames: jest.fn(),
     getWallets: jest.fn(),
     pushTransactions: jest.fn(),
@@ -95,6 +96,7 @@ const offerOperation = {
 };
 
 const mockCreateOfferForIds = rpc.createOfferForIds as jest.Mock;
+const mockGetWalletBalance = rpc.getWalletBalance as jest.Mock;
 const mockCancelOffer = rpc.cancelOffer as jest.Mock;
 const mockCreateNewRemoteWallet = rpc.createNewRemoteWallet as jest.Mock;
 const mockGetNextAddress = rpc.getNextAddress as jest.Mock;
@@ -137,6 +139,7 @@ describe('RealBlockchainInterface', () => {
   beforeEach(async () => {
     setTestGlobal('localStorage', makeStorage());
     mockCreateOfferForIds.mockReset();
+    mockGetWalletBalance.mockReset();
     mockCancelOffer.mockReset();
     mockCreateNewRemoteWallet.mockReset();
     mockGetNextAddress.mockReset();
@@ -1276,6 +1279,154 @@ describe('RealBlockchainInterface', () => {
     ).resolves.toEqual({
       kind: 'failure',
       reason: 'wallet not synced',
+    });
+  });
+
+  it.each([
+    [
+      'the wallet does not hold enough',
+      { confirmedWalletBalance: 40n, spendableBalance: 40n, maxSendAmount: 40n },
+      /^Not enough funds in the wallet: 100 mojos needed, 40 available\.$/,
+    ],
+    [
+      'funds are pending or reserved by an offer',
+      { confirmedWalletBalance: 500n, spendableBalance: 0n, maxSendAmount: 0n },
+      /^Wallet funds are held by a pending transaction or an open offer: 100 mojos needed, 0 spendable right now\./,
+    ],
+    [
+      'funds are split across too many coins',
+      { confirmedWalletBalance: 500n, spendableBalance: 500n, maxSendAmount: 60n },
+      /^Wallet funds are split across too many small coins to spend 100 mojos at once\./,
+    ],
+  ])('names the wallet state when funding fails because %s', async (_name, balance, reason) => {
+    const blockchain = new RealBlockchainInterface();
+    expectConsoleError(/createOfferForIds error/);
+    mockCreateOfferForIds.mockRejectedValue(
+      new WalletConnectResponseError(
+        "WalletConnect RPC chia_createOfferForIds failed: Can't select amount higher than our spendable balance.",
+      ),
+    );
+    mockGetWalletBalance.mockResolvedValue(balance);
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({ kind: 'failure', reason: expect.stringMatching(reason) });
+    expect(mockGetWalletBalance).toHaveBeenCalledWith({ walletId: 1n });
+  });
+
+  it('keeps the wallet message when the balance does not explain a funding failure', async () => {
+    const blockchain = new RealBlockchainInterface();
+    expectConsoleError(/createOfferForIds error/);
+    mockCreateOfferForIds.mockRejectedValue(
+      new WalletConnectResponseError('Wallet is not connected to any synced peers.'),
+    );
+    mockGetWalletBalance.mockResolvedValue({
+      confirmedWalletBalance: 500n,
+      spendableBalance: 500n,
+      maxSendAmount: 500n,
+    });
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({
+      kind: 'failure',
+      reason: 'Wallet is not connected to any synced peers.',
+    });
+  });
+
+  it('keeps the wallet message when the balance cannot be read after a funding failure', async () => {
+    const blockchain = new RealBlockchainInterface();
+    expectConsoleError(/createOfferForIds error/);
+    mockCreateOfferForIds.mockRejectedValue(new WalletConnectResponseError('daemon failure'));
+    mockGetWalletBalance.mockRejectedValue(new WalletConnectTransportError('relay closed'));
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({ kind: 'failure', reason: 'daemon failure' });
+  });
+
+  it('prefers the bare message of the wallet error over the transport framing', async () => {
+    const blockchain = new RealBlockchainInterface();
+    expectConsoleError(/createOfferForIds error/);
+    const daemonFailure = new WalletConnectResponseError(
+      'WalletConnect RPC chia_createOfferForIds failed: Wallet is not connected to any synced peers. (code=-32000)',
+    );
+    (daemonFailure as Error & { cause?: unknown }).cause = {
+      code: -32000,
+      message: 'Wallet is not connected to any synced peers.',
+    };
+    mockCreateOfferForIds.mockRejectedValue(daemonFailure);
+    mockGetWalletBalance.mockResolvedValue({
+      confirmedWalletBalance: 500n,
+      spendableBalance: 500n,
+      maxSendAmount: 500n,
+    });
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({
+      kind: 'failure',
+      reason: 'Wallet is not connected to any synced peers.',
+    });
+  });
+
+  it('reports a wallet-side rejection without reading the balance', async () => {
+    const blockchain = new RealBlockchainInterface();
+    expectConsoleError(/createOfferForIds error/);
+    const rejection = new WalletConnectResponseError(
+      'WalletConnect RPC chia_createOfferForIds failed: Operation cancelled by user (code=5000)',
+    );
+    (rejection as Error & { cause?: unknown }).cause = {
+      code: 5000,
+      message: 'Operation cancelled by user',
+    };
+    mockCreateOfferForIds.mockRejectedValue(rejection);
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({ kind: 'failure', reason: 'Operation cancelled by user' });
+    expect(mockGetWalletBalance).not.toHaveBeenCalled();
+  });
+
+  it('names the wallet state when a fee offer fails for lack of spendable funds', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockCreateOfferForIds.mockRejectedValue(new WalletConnectResponseError('daemon failure'));
+    mockGetWalletBalance.mockResolvedValue({
+      confirmedWalletBalance: 500n,
+      spendableBalance: 3n,
+      maxSendAmount: 3n,
+    });
+
+    await expect(
+      blockchain.beginWalletOffer(
+        { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
+        { kind: 'fee', uniqueId: 'test', fee: 10n, concurrentSpendCoinId: 'cd'.repeat(32) },
+      ),
+    ).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringMatching(
+        /^Wallet funds are held by a pending transaction or an open offer: 10 mojos needed, 3 spendable right now\./,
+      ),
     });
   });
 
