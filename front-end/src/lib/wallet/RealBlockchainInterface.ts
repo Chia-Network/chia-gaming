@@ -372,7 +372,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private coinRecordCache = new Map<string, CoinRecord>();
   // Learned only from an explicit missing-coin response; never persisted or
   // shared with another wallet connection.
-  private batchCoinRecordsScope: string | null = null;
+  private batchCoinRecordsQuery: { scope: string; allowMissing: boolean } | null = null;
   // Play readiness: use a verified full-node peer when the wallet supports the
   // optional count RPC; otherwise connectivity is sufficient.
   private readyForPlay = false;
@@ -826,20 +826,42 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
     const uniqueNames = [...new Set(names)];
     if (uniqueNames.length === 0) return [];
-    const scope = `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
-    // Older wallets reject the whole request if any coin is absent. Stay with
-    // individual queries until this connection proves it can return absence.
-    const queries =
-      this.batchCoinRecordsScope === scope ? [uniqueNames] : uniqueNames.map((name) => [name]);
+    const getScope = () =>
+      `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
+    const scope = getScope();
+    const batchQuery =
+      this.batchCoinRecordsQuery?.scope === scope ? this.batchCoinRecordsQuery : null;
+    // Released GUIs reject allowMissing itself. Begin with their original
+    // singleton request until a successful absence proves a batching mode.
+    const queries = batchQuery ? [uniqueNames] : uniqueNames.map((name) => [name]);
     const records: CoinRecord[] = [];
     for (const queryNames of queries) {
       try {
-        const resp = await rpc.getCoinRecordsByNames({
-          names: queryNames,
-          includeSpentCoins: true,
-          allowUnsynced: true,
-          allowMissing: true,
-        });
+        const query = (allowMissing: boolean) =>
+          rpc.getCoinRecordsByNames({
+            names: queryNames,
+            includeSpentCoins: true,
+            allowUnsynced: true,
+            ...(allowMissing ? { allowMissing: true } : {}),
+          });
+        let allowMissing = batchQuery?.allowMissing ?? false;
+        let resp;
+        try {
+          resp = await query(allowMissing);
+        } catch (error) {
+          if (
+            batchQuery ||
+            !(error instanceof WalletConnectResponseError) ||
+            getScope() !== scope
+          ) {
+            throw error;
+          }
+          // A missing coin and an unsupported flag both become opaque errors.
+          // Probe the opt-in only after the legacy request fails; a present
+          // coin must remain readable through a GUI that rejects the flag.
+          allowMissing = true;
+          resp = await query(allowMissing);
+        }
         if (resp?.success === false || (resp as any)?.error || !Array.isArray(resp?.coinRecords)) {
           throw new Error('Wallet did not return coin records');
         }
@@ -866,7 +888,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         } else {
           // Capture the request's scope, so a late response from a replaced
           // wallet cannot enable batching for the new connection.
-          this.batchCoinRecordsScope = scope;
+          this.batchCoinRecordsQuery = { scope, allowMissing };
         }
         records.push(...r);
       } catch {

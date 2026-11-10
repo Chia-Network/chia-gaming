@@ -825,19 +825,16 @@ describe('RealBlockchainInterface', () => {
       names: [opaqueErrorName],
       includeSpentCoins: true,
       allowUnsynced: true,
-      allowMissing: true,
     });
     expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(2, {
       names: [daemonErrorName],
       includeSpentCoins: true,
       allowUnsynced: true,
-      allowMissing: true,
     });
     expect(mockGetCoinRecordsByNames).toHaveBeenNthCalledWith(3, {
       names: [presentName],
       includeSpentCoins: true,
       allowUnsynced: true,
-      allowMissing: true,
     });
     expect(logLines.some((line) => line.includes('getCoinRecordsByNames error'))).toBe(false);
   });
@@ -890,6 +887,94 @@ describe('RealBlockchainInterface', () => {
     const requestedNames = () =>
       mockGetCoinRecordsByNames.mock.calls.map(([request]) => request.names);
 
+    it('finds coins through a released GUI that rejects the allowMissing parameter', async () => {
+      const present = (await coinRecordToName(record))!;
+      mockGetCoinRecordsByNames.mockImplementation(async (request) => {
+        // Chia 2.7.5 rejects allow_missing before calling the core. Its SDK
+        // turns that rejection and the core's missing-coin error into this error.
+        if ('allowMissing' in request || request.names.includes(absent)) {
+          throw new WalletConnectResponseError('Internal error');
+        }
+        return { success: true, coinRecords: [record] };
+      });
+      const blockchain = new RealBlockchainInterface();
+
+      await expect(blockchain.getCoinRecordsByNames([absent, present])).resolves.toEqual([record]);
+      await expect(blockchain.getCoinRecordsByNames([present, absent])).resolves.toEqual([record]);
+      expect(requestedNames()).toEqual([
+        [absent],
+        [absent],
+        [present],
+        [present],
+        [absent],
+        [absent],
+      ]);
+      expect(mockGetCoinRecordsByNames.mock.calls.map(([request]) => request.allowMissing)).toEqual(
+        [undefined, true, undefined, undefined, undefined, true],
+      );
+    });
+
+    it('batches with allowMissing only after an opt-in probe proves absence', async () => {
+      const present = (await coinRecordToName(record))!;
+      mockGetCoinRecordsByNames.mockImplementation(async ({ names, allowMissing }) => {
+        if (names.includes(absent) && !allowMissing) {
+          throw new WalletConnectResponseError('Internal error');
+        }
+        return { success: true, coinRecords: names.includes(present) ? [record] : [] };
+      });
+      const blockchain = new RealBlockchainInterface();
+
+      await expect(blockchain.getCoinRecordsByNames([absent])).resolves.toEqual([]);
+      await expect(blockchain.getCoinRecordsByNames([absent, present])).resolves.toEqual([record]);
+      expect(requestedNames()).toEqual([[absent], [absent], [absent, present]]);
+      expect(mockGetCoinRecordsByNames.mock.calls.map(([request]) => request.allowMissing)).toEqual(
+        [undefined, true, true],
+      );
+    });
+
+    it('returns a coin that appears during the opt-in probe without enabling batching', async () => {
+      const present = (await coinRecordToName(record))!;
+      const second = { ...record, coin: { ...record.coin, parentCoinInfo: '33'.repeat(32) } };
+      const secondName = (await coinRecordToName(second))!;
+      const blockchain = new RealBlockchainInterface();
+      mockGetCoinRecordsByNames
+        .mockRejectedValueOnce(new WalletConnectResponseError('Internal error'))
+        .mockResolvedValueOnce({ success: true, coinRecords: [record] })
+        .mockResolvedValueOnce({ success: true, coinRecords: [record] })
+        .mockResolvedValueOnce({ success: true, coinRecords: [second] });
+
+      await expect(blockchain.getCoinRecordsByNames([present])).resolves.toEqual([record]);
+      await expect(blockchain.getCoinRecordsByNames([present, secondName])).resolves.toEqual([
+        record,
+        second,
+      ]);
+      expect(requestedNames()).toEqual([[present], [present], [present], [secondName]]);
+      expect(mockGetCoinRecordsByNames.mock.calls.map(([request]) => request.allowMissing)).toEqual(
+        [undefined, true, undefined, undefined],
+      );
+    });
+
+    it('does not probe after a transport failure', async () => {
+      mockGetCoinRecordsByNames.mockRejectedValue(
+        new WalletConnectTransportError('Request timed out; relay restarted'),
+      );
+      await expect(new RealBlockchainInterface().getCoinRecordsByNames([absent])).resolves.toEqual(
+        [],
+      );
+      expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(1);
+      expect(mockGetCoinRecordsByNames.mock.calls[0][0]).not.toHaveProperty('allowMissing');
+    });
+
+    it('does not send an opt-in probe to a replacement wallet', async () => {
+      const blockchain = new RealBlockchainInterface();
+      mockGetCoinRecordsByNames.mockImplementation(async () => {
+        mockWalletSession = { topic: 'replacement-wallet' };
+        throw new WalletConnectResponseError('Internal error');
+      });
+      await expect(blockchain.getCoinRecordsByNames([absent])).resolves.toEqual([]);
+      expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(1);
+    });
+
     it('keeps successful present-coin queries individual and deduplicates names', async () => {
       const present = (await coinRecordToName(record))!;
       const blockchain = new RealBlockchainInterface();
@@ -930,7 +1015,7 @@ describe('RealBlockchainInterface', () => {
       expect(requestedNames()).toEqual([[present], [present], [absent], [present], [absent]]);
     });
 
-    it('batches after an explicit absence and keeps records keyed by coin ID', async () => {
+    it('batches without the flag after an unflagged absence and keeps records keyed by coin ID', async () => {
       const second = {
         ...record,
         coin: { ...record.coin, parentCoinInfo: '33'.repeat(32) },
@@ -962,7 +1047,6 @@ describe('RealBlockchainInterface', () => {
         names,
         includeSpentCoins: true,
         allowUnsynced: true,
-        allowMissing: true,
       });
     });
 
