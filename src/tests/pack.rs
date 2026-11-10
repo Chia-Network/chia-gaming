@@ -32,7 +32,7 @@ fn compile_with_library(body: &str, library: &str) -> Vec<u8> {
             ]),
         ),
     ]);
-    let mut allocator = Default::default();
+    let mut allocator = chialisp::clvmr::Allocator::new();
     let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).unwrap();
     let compiled = compile_file(
         &mut allocator,
