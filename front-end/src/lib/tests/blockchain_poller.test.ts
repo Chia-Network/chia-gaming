@@ -876,6 +876,44 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it.each(['resolve', 'reject'] as const)(
+    'discards an old vault balance request that completes with %s after interest restarts',
+    async (outcome) => {
+      jest.useFakeTimers();
+      const oldBalance = deferred<bigint>();
+      const newBalance = deferred<bigint>();
+      const rpc = makeRpc([]);
+      rpc.getBalance = jest
+        .fn()
+        .mockReturnValueOnce(oldBalance.promise)
+        .mockReturnValue(newBalance.promise);
+      const poller = new BlockchainPoller(rpc, 1000);
+      const oldCallbacks = { onBalance: jest.fn(), onError: jest.fn() };
+      const newCallbacks = { onBalance: jest.fn(), onError: jest.fn() };
+      try {
+        poller.startBalanceInterest(1000, oldCallbacks);
+        await advanceLane();
+        expect(rpc.getBalance).toHaveBeenCalledTimes(1);
+        poller.stopBalanceInterest();
+        poller.startBalanceInterest(1000, newCallbacks);
+        if (outcome === 'resolve') oldBalance.resolve(1000n);
+        else oldBalance.reject(new Error('old vault failed'));
+        await advanceLane();
+        expect(oldCallbacks.onBalance).not.toHaveBeenCalled();
+        expect(oldCallbacks.onError).not.toHaveBeenCalled();
+        expect(newCallbacks.onBalance).not.toHaveBeenCalled();
+        expect(newCallbacks.onError).not.toHaveBeenCalled();
+        expect(rpc.getBalance).toHaveBeenCalledTimes(2);
+        newBalance.resolve(0n);
+        await advanceLane();
+        expect(newCallbacks.onBalance).toHaveBeenCalledWith(0n);
+      } finally {
+        poller.stopBalanceInterest();
+        jest.useRealTimers();
+      }
+    },
+  );
+
   it('re-paces live balance interest and never revives stopped interest', async () => {
     jest.useFakeTimers();
     const rpc = new Proxy(

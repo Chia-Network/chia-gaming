@@ -205,6 +205,114 @@ describe('Shell production restore composition', () => {
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   });
 
+  it.each(['advisory', 'proposal'] as const)(
+    'waits for a known wallet balance before accepting a session %s',
+    async (kind) => {
+      requestTrust.mockResolvedValue('trusted');
+      jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+        qrUri: '',
+        skipQr: true,
+        finalize: async () => {},
+      });
+      jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+      jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
+      jest.replaceProperty(realBlockchainInfo, 'requestGapMs', 0);
+      jest.spyOn(realBlockchainInfo, 'getWalletOfferProvider').mockReturnValue({
+        capability: 'best-effort',
+        scope: { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },
+        beginCreation: jest.fn(),
+        cancel: jest.fn(),
+      });
+      jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockResolvedValue(10n);
+      let resolveBalance!: (balance: bigint) => void;
+      jest.spyOn(realBlockchainInfo, 'getBalance').mockReturnValue(
+        new Promise((resolve) => {
+          resolveBalance = resolve;
+        }),
+      );
+      await storageRepository.claimApplicationState();
+      const save = baseSave({
+        blockchainType: 'walletconnect',
+        hubUrl: 'https://hub.example.test',
+        activeTab: 'game',
+        channelStatus: { state: 'ResolvedClean' },
+        coinsOfInterest: [],
+        terminalIStarted: true,
+        activeGameIds: [],
+        currentHandGameIds: [],
+        gameInstances: {},
+      });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+      const application = createApplication();
+      act(() => {
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
+      });
+      await waitForText(renderer!, 'You have previously saved state.');
+      await act(async () => {
+        await application.dispatch({ type: 'resume' });
+      });
+      await waitForText(renderer!, 'Resolved Clean');
+      for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
+      await act(async () => {
+        if (kind === 'advisory') {
+          mockHub!.emit({
+            type: 'advisory-start',
+            params: {
+              peer_id: '22'.repeat(16),
+              peer_alias: 'Clyde',
+              my_amount: '1000',
+              their_amount: '1000',
+            },
+          });
+        } else {
+          const frames: Uint8Array[] = [];
+          const peer = new PeerSession('11'.repeat(16), '33'.repeat(16), {
+            sendToPeer: (_peerId: string, frame: Uint8Array) => {
+              frames.push(frame);
+              return true;
+            },
+          } as unknown as HubConnection);
+          peer.sendMessage(
+            1,
+            encodePeerAppMessage({
+              type: 'session_proposal',
+              proposer_amount: '1000',
+              responder_amount: '1000',
+              network: storageRepository.query('network'),
+            }),
+          );
+          mockHub!.emit({
+            type: 'peer-message',
+            fromId: '22'.repeat(16),
+            fromAlias: 'Clyde',
+            payload: frames[0],
+          });
+          peer.destroy();
+        }
+        await storageRepository.inspect();
+      });
+      await waitForText(renderer!, 'New Session');
+      expect(application.snapshot().walletView.balance).toBeUndefined();
+      expect(renderer!.root.findByProps({ children: 'Accept' }).props.disabled).toBe(true);
+      await act(async () => {
+        await application.dispatch({ type: 'accept-session' });
+      });
+      expect(application.snapshot().transition).toEqual({ kind: 'idle' });
+      expect(renderer!.root.findByProps({ children: 'New Session' })).toBeDefined();
+      await act(async () => {
+        resolveBalance(1_000_000_000_000n);
+      });
+      for (let n = 0; n < 30 && application.snapshot().walletView.balance === undefined; n++)
+        await flushEffects();
+      expect(application.snapshot().walletView.balance).toBe(1_000_000_000_000n);
+      expect(renderer!.root.findByProps({ children: 'Accept' }).props.disabled).toBe(false);
+    },
+  );
+
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
     await storageRepository.claimApplicationState();
     const save = baseSave({
@@ -694,12 +802,9 @@ describe('Shell production restore composition', () => {
       });
       jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
       jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
-      jest
-        .spyOn(realBlockchainInfo, 'getHeightInfo')
-        .mockImplementation(() => new Promise<never>(() => {}));
-      jest
-        .spyOn(realBlockchainInfo, 'getBalance')
-        .mockImplementation(() => new Promise<never>(() => {}));
+      jest.replaceProperty(realBlockchainInfo, 'requestGapMs', 0);
+      jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockResolvedValue(10n);
+      jest.spyOn(realBlockchainInfo, 'getBalance').mockResolvedValue(1_000_000_000_000n);
       jest.spyOn(realBlockchainInfo, 'getWalletOfferProvider').mockReturnValue({
         capability: 'best-effort',
         scope: { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },
@@ -884,12 +989,9 @@ describe('Shell production restore composition', () => {
     });
     jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
     jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
-    jest
-      .spyOn(realBlockchainInfo, 'getHeightInfo')
-      .mockImplementation(() => new Promise<never>(() => {}));
-    jest
-      .spyOn(realBlockchainInfo, 'getBalance')
-      .mockImplementation(() => new Promise<never>(() => {}));
+    jest.replaceProperty(realBlockchainInfo, 'requestGapMs', 0);
+    jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockResolvedValue(10n);
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockResolvedValue(1_000_000_000_000n);
     jest.spyOn(realBlockchainInfo, 'getWalletOfferProvider').mockReturnValue({
       capability: 'best-effort',
       scope: { provider: 'walletconnect', fingerprint: '123', chainId: 'chia:mainnet' },

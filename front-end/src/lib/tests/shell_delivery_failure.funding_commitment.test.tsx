@@ -505,7 +505,8 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       finalize: async () => {},
     });
     jest.spyOn(BlockchainPoller.prototype, 'start').mockImplementation(() => {});
-    jest.spyOn(realBlockchainInfo, 'getBalance').mockResolvedValue(0n);
+    jest.spyOn(realBlockchainInfo, 'isConnected').mockReturnValue(true);
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockResolvedValue(1_000_000_000_000n);
     await storageRepository.claimApplicationState();
     const save = liveSave({
       blockchainType: 'walletconnect',
@@ -547,6 +548,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     }
     expect(readinessChange).toBeDefined();
     expect(mockHub).not.toBeNull();
+    expect(application.snapshot().walletView.balance).toBe(1_000_000_000_000n);
     const accept = () => renderer!.root.findByProps({ children: 'Accept' });
     expect(accept().props.disabled).toBe(true);
     act(() => readinessChange!(true));

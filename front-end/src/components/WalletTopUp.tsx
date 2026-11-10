@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { getCurrencyLabels } from '../constants/currency';
 import { desktopCloudWalletBridge } from '../lib/wallet/cloudWalletOAuth';
@@ -36,6 +36,15 @@ function formatXch(mojos: bigint): string {
   return frac ? `${whole}.${frac}` : whole;
 }
 
+// A purchase outlives any one WalletTopUp and belongs to its original wallet.
+// Keep its handle across tab remounts and the consent dialog, without navigating
+// it when another wallet starts a purchase.
+const buyPopups = new Map<string, Window>();
+
+export function _resetBuyPopupForTests(): void {
+  buyPopups.clear();
+}
+
 // Sized for the purchase wizard; the sign-in and approval popups are narrower.
 function openBuyPopup(url: string): Window | null {
   const width = 1000;
@@ -44,7 +53,7 @@ function openBuyPopup(url: string): Window | null {
   const top = Math.max(0, Math.floor(window.screenY + (window.outerHeight - height) / 2));
   return window.open(
     url,
-    'chia-gaming-cloud-wallet-buy',
+    '_blank',
     `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
   );
 }
@@ -62,17 +71,23 @@ export function WalletTopUp(props: WalletTopUpProps) {
   const currency = getCurrencyLabels();
   const [showDeposit, setShowDeposit] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
-  const [buyState, setBuyState] = useState<BuyState>('idle');
-  const popupRef = useRef<Window | null>(null);
   const { state: copyState, copy } = useCopyToClipboard();
   const depositAddress = options?.depositAddress ?? null;
   const buyUrl = options?.buyUrl ?? null;
+  // Each result is about the wallet whose page it came from; after a switch the
+  // earlier wallet's "placed" or error no longer describes this one.
+  const [buyResult, setBuyResult] = useState<{ state: BuyState; url: string } | null>(null);
+  const buyState: BuyState = buyResult && buyResult.url === buyUrl ? buyResult.state : 'idle';
 
   useEffect(() => {
     if (!buyUrl) return;
     const buyOrigin = new URL(buyUrl).origin;
     const onMessage = (event: MessageEvent) => {
-      if (isBuyOrderSubmitted(event, buyOrigin, popupRef.current)) setBuyState('placed');
+      // Only the window buying for this wallet speaks for it.
+      const popup = buyPopups.get(buyUrl) ?? null;
+      if (isBuyOrderSubmitted(event, buyOrigin, popup)) {
+        setBuyResult({ state: 'placed', url: buyUrl });
+      }
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
@@ -107,21 +122,27 @@ export function WalletTopUp(props: WalletTopUpProps) {
     const desktop = desktopCloudWalletBridge();
     if (desktop) {
       try {
-        setBuyState((await desktop.openInBrowser(url)) ? 'in-browser' : 'browser-failed');
+        const opened = await desktop.openInBrowser(url);
+        setBuyResult({ state: opened ? 'in-browser' : 'browser-failed', url });
       } catch (err) {
         console.error('[WalletTopUp] opening the browser failed', err);
-        setBuyState('browser-failed');
+        setBuyResult({ state: 'browser-failed', url });
       }
       return;
     }
-    // Reopening by name would reload the page and lose the purchase in progress.
-    if (popupRef.current && !popupRef.current.closed) {
-      popupRef.current.focus();
+    for (const [popupUrl, popup] of buyPopups) {
+      if (popup.closed) buyPopups.delete(popupUrl);
+    }
+    const popup = buyPopups.get(url);
+    if (popup) {
+      popup.focus();
       return;
     }
-    const popup = openBuyPopup(url);
-    popupRef.current = popup;
-    setBuyState(popup ? 'idle' : 'popup-blocked');
+    // A fresh browsing context keeps late messages from another wallet's page
+    // distinguishable by event.source, even during navigation.
+    const opened = openBuyPopup(url);
+    if (opened) buyPopups.set(url, opened);
+    setBuyResult({ state: opened ? 'idle' : 'popup-blocked', url });
   };
 
   if (!buyUrl && !depositAddress) {

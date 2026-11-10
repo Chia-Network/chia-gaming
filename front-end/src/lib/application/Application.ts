@@ -2535,7 +2535,12 @@ export function createApplication() {
       case 'hub-disconnect':
         return handleDisconnectHub();
       case 'accept-session':
-        if (consentShortfall() > 0n || state.walletView.switchingWallet) return;
+        if (
+          state.walletView.balance === undefined ||
+          consentShortfall() > 0n ||
+          state.walletView.switchingWallet
+        )
+          return;
         if (sessions.state.pendingAdvisory)
           return acceptPendingAdvisory(sessions.state.pendingAdvisory);
         if (sessions.state.pendingProposal)
