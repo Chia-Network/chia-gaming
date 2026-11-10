@@ -1037,9 +1037,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     </button>
                   )}
                 </div>
-                <Button onClick={() => dispatch({ type: 'wallet-disconnect' })}>
-                  Disconnect
-                </Button>
+                <Button onClick={() => dispatch({ type: 'wallet-disconnect' })}>Disconnect</Button>
               </div>
             ) : connectionSetup && !connectionSetup.skipQr ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -1142,9 +1140,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 <p className="text-sm text-canvas-text animate-pulse">
                   Waiting for approval in your wallet…
                 </p>
-                <Button onClick={() => dispatch({ type: 'wallet-cancel' })}>
-                  Cancel
-                </Button>
+                <Button onClick={() => dispatch({ type: 'wallet-cancel' })}>Cancel</Button>
               </div>
             ) : connecting ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -1163,9 +1159,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     </p>
                   </>
                 )}
-                <Button onClick={() => dispatch({ type: 'wallet-cancel' })}>
-                  Cancel
-                </Button>
+                <Button onClick={() => dispatch({ type: 'wallet-cancel' })}>Cancel</Button>
               </div>
             ) : !walletConnected && walletView.hasProvider ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
@@ -1174,9 +1168,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   <span className="text-lg font-semibold text-alert-text">Disconnected</span>
                 </div>
                 <p className="text-sm text-canvas-text">Connection was lost</p>
-                <Button onClick={() => dispatch({ type: 'wallet-reconnect' })}>
-                  Reconnect
-                </Button>
+                <Button onClick={() => dispatch({ type: 'wallet-reconnect' })}>Reconnect</Button>
               </div>
             ) : (
               <div className="flex flex-col justify-center items-center w-full px-4 py-6 gap-4">

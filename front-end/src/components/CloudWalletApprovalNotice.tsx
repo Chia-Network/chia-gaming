@@ -31,10 +31,7 @@ export default function CloudWalletApprovalNotice() {
             ? `The Cloud Wallet approval window for the ${next.source} was closed before it finished. Open it again to continue.`
             : `Your browser blocked the Cloud Wallet approval window for the ${next.source}. Allow pop-ups for this site, then open it to continue.`}
       </p>
-      <Button
-        size="sm"
-        onClick={() => setStillBlocked(!cloudBlockchainInfo.openBlockedApproval())}
-      >
+      <Button size="sm" onClick={() => setStillBlocked(!cloudBlockchainInfo.openBlockedApproval())}>
         Open approval
       </Button>
     </div>
