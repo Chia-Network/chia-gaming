@@ -35,7 +35,7 @@
     "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "4.3.3",
+    "@tailwindcss/cli": "4.3.4",
     "@types/jest": "30.0.0",
     "@types/node": "24.19.2",
     "@types/qrcode": "1.5.6",
