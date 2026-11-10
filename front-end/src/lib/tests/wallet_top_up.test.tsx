@@ -134,11 +134,7 @@ describe('WalletTopUp Buy', () => {
     const r = render();
 
     await clickBuy(r);
-    expect(open).toHaveBeenCalledWith(
-      BUY_URL,
-      'chia-gaming-cloud-wallet-buy',
-      expect.stringContaining('popup=yes'),
-    );
+    expect(open).toHaveBeenCalledWith(BUY_URL, '_blank', expect.stringContaining('popup=yes'));
     // A second click brings back the open purchase instead of reloading it.
     await clickBuy(r);
     expect(open).toHaveBeenCalledTimes(1);
@@ -187,35 +183,101 @@ describe('WalletTopUp Buy', () => {
     expect(first.focus).not.toHaveBeenCalled();
   });
 
-  it('moves an open buy window to the wallet now connected', async () => {
+  it('keeps wallet purchases in distinct windows through switches', async () => {
     const OTHER_URL = 'https://vault.chia.net/buy-xch?walletId=Wallet_other';
-    // Opening by the same name navigates the existing window and returns it.
-    const popup = { closed: false, focus: jest.fn() };
-    const open = jest.fn(() => popup);
+    // A browser returns the same WindowProxy when a named window is navigated.
+    const named = new Map<string, { closed: boolean; focus: jest.Mock }>();
+    const open = jest.fn((_url: string, target: string) => {
+      if (target !== '_blank' && named.has(target)) return named.get(target)!;
+      const popup = { closed: false, focus: jest.fn() };
+      named.set(target, popup);
+      return popup;
+    });
     win.open = open;
     const submitted = { type: 'chia-cloud-wallet/buy-order', status: 'submitted' };
     const r = render();
 
     await clickBuy(r);
-    postMessage('https://vault.chia.net', popup, submitted);
+    const first = open.mock.results[0]!.value;
+    postMessage('https://vault.chia.net', first, submitted);
     expect(text(r)).toContain('Purchase placed.');
-
-    // The user switched wallets: the earlier purchase no longer describes this one.
     act(() => {
       r.update(
         <WalletTopUp options={{ buyUrl: OTHER_URL, depositAddress: null }} shortfall={100n} />,
       );
     });
     expect(text(r)).not.toContain('Purchase placed');
-
-    // Buy loads this wallet's page instead of bringing back the earlier wallet's.
     await clickBuy(r);
-    expect(open).toHaveBeenLastCalledWith(
-      OTHER_URL,
-      'chia-gaming-cloud-wallet-buy',
-      expect.stringContaining('popup=yes'),
-    );
-    expect(popup.focus).not.toHaveBeenCalled();
+    const second = open.mock.results[1]!.value;
+    // A delayed message from the old document cannot describe the new wallet,
+    // even while the new purchase page is still navigating.
+    postMessage('https://vault.chia.net', first, submitted);
+    expect(text(r)).not.toContain('Purchase placed');
+    expect(second).not.toBe(first);
+    postMessage('https://vault.chia.net', second, submitted);
+    expect(text(r)).toContain('Purchase placed.');
+
+    act(() => r.update(<WalletTopUp options={options} shortfall={0n} />));
+    await clickBuy(r);
+    expect(open).toHaveBeenCalledTimes(2);
+    expect(first.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains an in-progress purchase when the wallet tab remounts', async () => {
+    const popup = { closed: false, focus: jest.fn() };
+    const open = jest.fn(() => popup);
+    win.open = open;
+    const first = render();
+    await clickBuy(first);
+    act(() => first.unmount());
+    const remounted = render();
+    await clickBuy(remounted);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.focus).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides a popup error after switching wallets', async () => {
+    win.open = jest.fn(() => null);
+    const r = render();
+    await clickBuy(r);
+    expect(text(r)).toContain('blocked the Cloud Wallet window');
+    act(() => {
+      r.update(
+        <WalletTopUp
+          options={{
+            buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_other',
+            depositAddress: null,
+          }}
+          shortfall={0n}
+        />,
+      );
+    });
+    expect(text(r)).not.toContain('blocked the Cloud Wallet window');
+  });
+
+  it('does not show a late desktop result for the wallet selected afterward', async () => {
+    let finish!: (opened: boolean) => void;
+    win.__chiaCloudWallet = {
+      openInBrowser: () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve;
+        }),
+    };
+    const r = render();
+    await clickBuy(r);
+    act(() => {
+      r.update(
+        <WalletTopUp
+          options={{
+            buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_other',
+            depositAddress: null,
+          }}
+          shortfall={0n}
+        />,
+      );
+    });
+    await act(async () => finish(true));
+    expect(text(r)).not.toContain('Finish the purchase in your browser.');
   });
 
   it('ignores a purchase from a window still buying for an earlier wallet', async () => {

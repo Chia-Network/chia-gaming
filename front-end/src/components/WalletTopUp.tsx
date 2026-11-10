@@ -36,18 +36,13 @@ function formatXch(mojos: bigint): string {
   return frac ? `${whole}.${frac}` : whole;
 }
 
-/**
- * The one buy window, shared by every WalletTopUp. The Wallet tab and the New
- * Session dialog each mount one, and the window is opened by a fixed name, so
- * a per-instance handle would let the second reopen it and reload a purchase
- * in progress, or ignore the purchase message from a window the other opened.
- * `url` names the wallet it buys for: the window outlives a wallet switch or
- * disconnect, and a purchase finished there would fund that earlier wallet.
- */
-let buyPopup: { window: Window; url: string } | null = null;
+// A purchase outlives any one WalletTopUp and belongs to its original wallet.
+// Keep its handle across tab remounts and the consent dialog, without navigating
+// it when another wallet starts a purchase.
+const buyPopups = new Map<string, Window>();
 
 export function _resetBuyPopupForTests(): void {
-  buyPopup = null;
+  buyPopups.clear();
 }
 
 // Sized for the purchase wizard; the sign-in and approval popups are narrower.
@@ -58,7 +53,7 @@ function openBuyPopup(url: string): Window | null {
   const top = Math.max(0, Math.floor(window.screenY + (window.outerHeight - height) / 2));
   return window.open(
     url,
-    'chia-gaming-cloud-wallet-buy',
+    '_blank',
     `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
   );
 }
@@ -89,7 +84,7 @@ export function WalletTopUp(props: WalletTopUpProps) {
     const buyOrigin = new URL(buyUrl).origin;
     const onMessage = (event: MessageEvent) => {
       // Only the window buying for this wallet speaks for it.
-      const popup = buyPopup?.url === buyUrl ? buyPopup.window : null;
+      const popup = buyPopups.get(buyUrl) ?? null;
       if (isBuyOrderSubmitted(event, buyOrigin, popup)) {
         setBuyResult({ state: 'placed', url: buyUrl });
       }
@@ -135,16 +130,18 @@ export function WalletTopUp(props: WalletTopUpProps) {
       }
       return;
     }
-    // Reopening by name would reload the page and lose the purchase in progress,
-    // so an open window for this wallet only comes forward. One opened for an
-    // earlier wallet is reloaded with this wallet's page: opening by the same
-    // name navigates it.
-    if (buyPopup && !buyPopup.window.closed && buyPopup.url === url) {
-      buyPopup.window.focus();
+    for (const [popupUrl, popup] of buyPopups) {
+      if (popup.closed) buyPopups.delete(popupUrl);
+    }
+    const popup = buyPopups.get(url);
+    if (popup) {
+      popup.focus();
       return;
     }
+    // A fresh browsing context keeps late messages from another wallet's page
+    // distinguishable by event.source, even during navigation.
     const opened = openBuyPopup(url);
-    buyPopup = opened ? { window: opened, url } : null;
+    if (opened) buyPopups.set(url, opened);
     setBuyResult({ state: opened ? 'idle' : 'popup-blocked', url });
   };
 
