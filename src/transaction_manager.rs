@@ -1066,11 +1066,13 @@ impl<C> TransactionManager<C> {
             .expect("retained broadcast variant must remain fingerprintable");
     }
 
-    /// Queue each surviving retained intent once during the current rollback
+    /// Queue each active retained intent once during the current rollback
     /// epoch. The replayed-id set deliberately outlives drain and wallet
     /// acknowledgement until forward progress ends the epoch.
     fn collect_rollback_epoch_replay(&mut self) {
-        let ids = self.submission_book.all_ids();
+        // A peak height carries no evidence that a known-spent input is live.
+        // Stopped submissions wait for coin-state reconciliation.
+        let ids = self.submission_book.active_ids().into_iter().collect();
         self.submission_book.collect_rollback_replay_ids(&ids);
     }
 
@@ -3393,11 +3395,29 @@ mod tests {
         .expect("report");
         assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
 
-        // Reorg to height 8 rolls back the child's creating block.  The manager
-        // flags it vanished and re-queues the creating transaction.
+        // Reorg to height 8 rolls back the child's creating block. The manager
+        // flags it vanished, but waits for evidence that its input is usable.
         mgr.report_coin_states(&mut allocator, 8, &[])
             .expect("report");
         assert!(mgr.vanished_coins().contains(&child));
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
+        mgr.report_coin_states(
+            &mut allocator,
+            9,
+            &[
+                CoinStateRecord {
+                    coin: parent,
+                    created_height: Some(5),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: child,
+                    created_height: None,
+                    spent_height: None,
+                },
+            ],
+        )
+        .expect("report revived input");
         let resubmitted = mgr.drain_submissions().unwrap().submissions;
         assert_eq!(resubmitted.len(), 1);
         assert_eq!(resubmitted[0].bundle.name.as_deref(), Some("create-child"));
@@ -4619,7 +4639,7 @@ mod tests {
             &mut allocator,
             15,
             &[CoinStateRecord {
-                coin: output,
+                coin: output.clone(),
                 created_height: Some(15),
                 spent_height: None,
             }],
@@ -4627,6 +4647,24 @@ mod tests {
         .unwrap();
 
         mgr.report_height(&mut allocator, 14).unwrap();
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
+        mgr.report_coin_states(
+            &mut allocator,
+            14,
+            &[
+                CoinStateRecord {
+                    coin: input,
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: output,
+                    created_height: None,
+                    spent_height: None,
+                },
+            ],
+        )
+        .unwrap();
         let replay = mgr.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(replay.id, first.id);
         mgr.acknowledge_no_fee_attempt(replay.attempt_token)
@@ -4640,7 +4678,7 @@ mod tests {
     }
 
     #[test]
-    fn height_only_rollback_replay_survives_drain_failure_and_restore() {
+    fn confirmed_rollback_replay_survives_drain_failure_and_restore() {
         let input = test_coin(64);
         let output = CoinString::from_parts(
             &input.to_coin_id(),
@@ -4698,6 +4736,24 @@ mod tests {
         );
 
         mgr.report_height(&mut allocator, 19).unwrap();
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
+        mgr.report_coin_states(
+            &mut allocator,
+            19,
+            &[
+                CoinStateRecord {
+                    coin: input.clone(),
+                    created_height: Some(10),
+                    spent_height: None,
+                },
+                CoinStateRecord {
+                    coin: output,
+                    created_height: None,
+                    spent_height: None,
+                },
+            ],
+        )
+        .unwrap();
         let rollback_replay = mgr.drain_submissions().unwrap().submissions.remove(0);
         assert_eq!(rollback_replay.id, first.id);
         assert_eq!(rollback_replay.bundle, fee_bearing_bundle);
@@ -4707,8 +4763,8 @@ mod tests {
             SubmissionChainTerminality::Active
         );
 
-        // The host failed to complete submission and reloads before the
-        // authoritative same-tip coin snapshot arrives.
+        // The host failed to complete submission and reloads before the next
+        // coin snapshot arrives.
         let encoded = bencodex::to_vec(&mgr).expect("serialize manager");
         let mut restored: TransactionManager<PersistableMockGameSession> =
             bencodex::from_slice(&encoded).expect("restore manager");
@@ -6199,24 +6255,18 @@ mod tests {
             restored.request_fee_upgrades();
             assert!(restored.drain_submissions().unwrap().submissions.is_empty());
 
-            // A replacement chain can make the input spendable again. The
-            // retained intent resumes only after the chain observation changes.
+            // The replacement peak is higher, but its chain has not spent this
+            // input. The poller still does not query the unwatched output.
+            assert!(!restored.snapshot_watched_coins().contains(&output));
             restored
                 .report_coin_states(
                     &mut allocator,
-                    12,
-                    &[
-                        CoinStateRecord {
-                            coin: input,
-                            created_height: Some(10),
-                            spent_height: None,
-                        },
-                        CoinStateRecord {
-                            coin: output,
-                            created_height: None,
-                            spent_height: None,
-                        },
-                    ],
+                    13,
+                    &[CoinStateRecord {
+                        coin: input,
+                        created_height: Some(10),
+                        spent_height: None,
+                    }],
                 )
                 .unwrap();
             let resumed = restored.drain_submissions().unwrap().submissions;
@@ -6226,6 +6276,142 @@ mod tests {
                 resumed[0].fee_intent,
                 SubmissionFeeIntent::Attach { .. }
             ));
+        }
+    }
+
+    #[test]
+    fn height_reports_cannot_restart_spent_fee_work() {
+        for output_observed in [false, true] {
+            let input = test_coin(0x84);
+            let output = CoinString::from_parts(
+                &input.to_coin_id(),
+                &PuzzleHash::from_bytes([0x85; 32]),
+                &Amount::new(1),
+            );
+            let mut manager = TransactionManager::new(PersistableMockGameSession);
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::attach_to(
+                    test_bundle_spending_creating("spent-fee-height", &input, &output),
+                    None,
+                    &input,
+                ),
+                fee_intent: SubmissionFeeIntent::Attach {
+                    target: input.to_coin_id(),
+                    amount: Amount::new(15),
+                    attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+                },
+            });
+            let first = manager.drain_submissions().unwrap().submissions.remove(0);
+            let mut records = vec![CoinStateRecord {
+                coin: input,
+                created_height: Some(10),
+                spent_height: Some(12),
+            }];
+            if output_observed {
+                manager.register_watch(output.clone(), Timeout::new(50), None, None);
+                records.push(CoinStateRecord {
+                    coin: output,
+                    created_height: Some(12),
+                    spent_height: None,
+                });
+            }
+            let mut allocator = AllocEncoder::new();
+            manager
+                .report_coin_states(&mut allocator, 12, &records)
+                .unwrap();
+            assert_eq!(manager.drain_retired_submission_ids(), vec![first.id]);
+            for height in [13, 12, 11] {
+                manager.report_height(&mut allocator, height).unwrap();
+                manager.chain_snapshot_ready();
+                manager.request_fee_upgrades();
+                assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+            }
+            // Even a lower coin snapshot must supply evidence that the input
+            // is spendable again; an empty response cannot restart fee work.
+            manager.report_coin_states(&mut allocator, 11, &[]).unwrap();
+            manager.chain_snapshot_ready();
+            manager.request_fee_upgrades();
+            assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+        }
+    }
+
+    #[test]
+    fn spent_bundle_recovers_only_when_all_external_inputs_are_live() {
+        let input_a = test_coin(0x86);
+        let input_b = test_coin(0x87);
+        let ephemeral = CoinString::from_parts(
+            &input_a.to_coin_id(),
+            &PuzzleHash::from_bytes([0x88; 32]),
+            &Amount::new(1),
+        );
+        let output_a = CoinString::from_parts(
+            &ephemeral.to_coin_id(),
+            &PuzzleHash::from_bytes([0x89; 32]),
+            &Amount::new(1),
+        );
+        let output_b = CoinString::from_parts(
+            &input_b.to_coin_id(),
+            &PuzzleHash::from_bytes([0x8a; 32]),
+            &Amount::new(1),
+        );
+        let mut bundle = test_bundle_spending_creating("parent", &input_a, &ephemeral);
+        bundle
+            .spends
+            .extend(test_bundle_spending_creating("ephemeral", &ephemeral, &output_a).spends);
+        bundle
+            .spends
+            .extend(test_bundle_spending_creating("other-input", &input_b, &output_b).spends);
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        manager.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: TransactionSubmission::already_paid(bundle, None),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+        let first = manager.drain_submissions().unwrap().submissions.remove(0);
+        let mut allocator = AllocEncoder::new();
+        // A second live input does not make a spent or missing input usable.
+        // The internal coin will be recreated by replay, so it can be absent.
+        for (index, (created_a, spent_a, created_b, spent_b)) in [
+            (Some(1), Some(2), Some(1), None),
+            (None, None, Some(1), None),
+            (Some(1), None, Some(1), Some(4)),
+            (Some(1), None, None, None),
+            (Some(1), None, Some(1), None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            manager
+                .report_coin_states(
+                    &mut allocator,
+                    index as u64 + 2,
+                    &[
+                        CoinStateRecord {
+                            coin: input_a.clone(),
+                            created_height: created_a,
+                            spent_height: spent_a,
+                        },
+                        CoinStateRecord {
+                            coin: input_b.clone(),
+                            created_height: created_b,
+                            spent_height: spent_b,
+                        },
+                        CoinStateRecord {
+                            coin: ephemeral.clone(),
+                            created_height: None,
+                            spent_height: None,
+                        },
+                    ],
+                )
+                .unwrap();
+            let replay = manager.drain_submissions().unwrap().submissions;
+            if index == 4 {
+                assert_eq!(replay.len(), 1);
+                assert_eq!(replay[0].id, first.id);
+            } else {
+                assert!(replay.is_empty());
+            }
         }
     }
 

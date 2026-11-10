@@ -792,10 +792,6 @@ impl SubmissionBook {
             .collect()
     }
 
-    pub(super) fn all_ids(&self) -> HashSet<u64> {
-        self.submitted.iter().map(|tx| tx.id).collect()
-    }
-
     pub(super) fn finish_replay_if_advanced(&mut self, height: u64) {
         self.replay_epoch.finish_if_advanced(height);
     }
@@ -831,7 +827,7 @@ impl SubmissionBook {
                     tx.chain_terminality = SubmissionChainTerminality::InputSpent;
                 }
                 stopped_ids.push(tx.id);
-            } else if reorg || causally_rolled_back_ids.contains(&tx.id) {
+            } else if causally_rolled_back_ids.contains(&tx.id) {
                 tx.chain_terminality = SubmissionChainTerminality::Active;
             }
         }
@@ -860,14 +856,21 @@ impl SubmissionBook {
                     .expected_output_coins()
                     .expect("validated retained base bundle must remain parseable");
                 tx.chain_terminality != SubmissionChainTerminality::Active
-                    && ((tx.chain_terminality == SubmissionChainTerminality::InputSpent
-                        && expected_output_coins.is_empty())
+                    && (tx.chain_terminality == SubmissionChainTerminality::InputSpent
                         || expected_output_coins
                             .iter()
                             .any(|coin| explicitly_absent.contains(coin)))
+                    // Every external input must be spendable again. Coins
+                    // created and consumed inside this bundle are recreated on
+                    // replay, so they need not exist in the replacement chain.
                     && tx
                         .spent_coin_ids()
-                        .any(|coin_id| explicitly_live_input_ids.contains(&coin_id))
+                        .filter(|coin_id| {
+                            !expected_output_coins
+                                .iter()
+                                .any(|coin| coin.to_coin_id() == *coin_id)
+                        })
+                        .all(|coin_id| explicitly_live_input_ids.contains(&coin_id))
             })
             .map(|tx| tx.id)
             .collect()

@@ -805,9 +805,13 @@ delivery acknowledgement and chain finality. JavaScript makes one wallet call
 and reports a typed `acknowledged`, `unavailable`, or `rejected` result:
 acknowledgement ends ordinary app rebroadcast, while unavailability remains
 eligible for replay after fresh chain synchronization. A lower-tip rollback
-queues every surviving retained transaction once for that epoch. An
-equal-or-higher replacement tip queues only the retained transaction whose
-watched output is explicitly absent and whose own input is explicitly live.
+queues still-active retained transactions once for that epoch. A height update
+alone cannot reactivate a submission with a known-spent input. Recovery requires
+coin records showing all external inputs live again; an `InputSpent` submission
+does not need its unwatched outputs queried first. A `Landed` submission also
+requires a watched output to be explicitly absent. These rules apply even when
+the replacement chain has a higher peak. Coins created and consumed inside the
+bundle are recreated by replay and need not already exist on chain.
 Rollback and fresh-sync replay use the current exact Rust-owned variant without
 rebuilding it or creating a second wallet trade. Successful poll batches
 represent every queried interest explicitly;
