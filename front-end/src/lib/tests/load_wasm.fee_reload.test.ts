@@ -325,6 +325,99 @@ it(
   LONG_WASM_TEST_TIMEOUT,
 );
 
+it(
+  'revokes pending fee approval when the peer spends the channel coin before output discovery',
+  async () => {
+    const poller = await startSimulator(['cafe00018', 'dead00018']);
+    if (!poller) return;
+    poller.pauseChainPolling();
+    await pollOnce(poller);
+    const adapters = await createActivePair(poller, 18);
+    const controller = adapters[0].blob!;
+    controller.getFee = () => 10n;
+    const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
+    let material: WalletOfferCompletion | undefined;
+    let target: string | undefined;
+    let approvalStarted!: () => void;
+    const approving = new Promise<void>((resolve) => {
+      approvalStarted = resolve;
+    });
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: controller.getWalletProviderScope(),
+      beginCreation: jest.fn(async (operation, request) => {
+        assert.equal(request.kind, 'fee');
+        if (request.kind === 'fee') target = request.concurrentSpendCoinId;
+        material = await fakeBlockchainInfo.beginWalletOffer(operation, request);
+        assert.equal(material.kind, 'created-reserved');
+        return { kind: 'pending', recoveryId: 'spent-input-fee' };
+      }),
+      reconcileCreation: jest.fn(async (_operation, _request, _id, options) => {
+        if (options?.mode === 'observe-only') {
+          assert.ok(material);
+          return material;
+        }
+        assert.equal(options?.mode, 'delivery');
+        assert.equal(options.allowApproval?.(), true);
+        return new Promise<WalletOfferCompletion>((resolve) => {
+          const unsubscribe = options.onApprovalChange?.(() => {
+            if (options.allowApproval?.()) return;
+            unsubscribe?.();
+            resolve({ kind: 'unavailable', reason: 'approval revoked' });
+          });
+          approvalStarted();
+        });
+      }),
+      beginCancellation: jest.fn((id) => fakeBlockchainInfo.beginWalletOfferCancellation(id)),
+      reconcileCancellation: jest.fn(),
+    };
+    fakeBlockchainInfo.getWalletOfferProvider = () => provider;
+    channelFundingRuntime.attachProvider(provider);
+    try {
+      assert.equal(controller.goOnChain(), true);
+      await approving;
+      assert.ok(target);
+      const watched = controller.snapshotWatchedCoins().find((coin) => coin.coin_name === target);
+      assert.ok(watched);
+
+      assert.equal(adapters[1].blob!.goOnChain(), true);
+      await flushWrapperDrain([adapters[1]]);
+      const height = await fakeBlockchainInfo.farmBlock();
+      const [record] = await fakeBlockchainInfo.getCoinRecordsByNames([target]);
+      assert.ok(record?.spent, 'the peer must actually spend the coin in the simulator');
+      // The first poll knows only the input. Discovering its outputs is later
+      // protocol work and must not delay cancellation of the old fee request.
+      await controller.reportCoinStates(height, [
+        {
+          coin: watched.coin_string,
+          created_height: record.confirmedBlockIndex,
+          spent_height: record.spentBlockIndex,
+        },
+      ]);
+      await flushWrapperDrain(adapters);
+      await controller.reportChainSnapshotReady(height);
+      controller.setWallet(null);
+      controller.setWallet(poller);
+      await flushWrapperDrain(adapters);
+
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'spent-input-fee',
+        { mode: 'observe-only' },
+      );
+      expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+      assert.deepEqual(storageRepository.feeAttachments(), []);
+    } finally {
+      poller.pauseChainPolling();
+      for (const adapter of adapters) adapter.blob?.cleanup();
+      fakeBlockchainInfo.getWalletOfferProvider = originalProvider;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
 it.each(['channel spend', 'on-chain game move'])(
   'keeps one fee approval for %s when a fresh snapshot arrives during wallet approval',
   async (transactionKind) => {

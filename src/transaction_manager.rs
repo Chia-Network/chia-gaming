@@ -116,6 +116,9 @@ enum FeeResolution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SubmissionChainTerminality {
     Active,
+    /// Delivery is obsolete, but output discovery has not classified the spend.
+    /// Persist this fact so reload/readiness cannot restart fee acquisition.
+    InputSpent,
     Landed,
 }
 
@@ -453,25 +456,23 @@ fn plan_pending_submission(
                 ),
             });
         }
-        let should_emit = match goal {
-            SubmissionDeliveryGoal::EnsureBroadcast => !retained
-                .current_variant_acknowledged()
-                .map_err(|error| SubmissionPlanError {
-                    stage: SubmissionDrainFailureStage::RetainedState,
-                    retained_submission_id: Some(retained.id),
-                    candidate_submission_id: Some(retained.id),
-                    intent_fingerprint: Some(fingerprint.clone()),
-                    message: format!(
-                        "Queued submission {} has an invalid current variant",
-                        retained.id
-                    ),
-                    rust_context: format!("{error:?}"),
-                })?,
-            SubmissionDeliveryGoal::FeeUpgrade => {
-                retained.chain_terminality == SubmissionChainTerminality::Active
-                    && retained.unresolved_fee_intent().is_some()
-            }
-        };
+        let should_emit = retained.chain_terminality == SubmissionChainTerminality::Active
+            && match goal {
+                SubmissionDeliveryGoal::EnsureBroadcast => !retained
+                    .current_variant_acknowledged()
+                    .map_err(|error| SubmissionPlanError {
+                        stage: SubmissionDrainFailureStage::RetainedState,
+                        retained_submission_id: Some(retained.id),
+                        candidate_submission_id: Some(retained.id),
+                        intent_fingerprint: Some(fingerprint.clone()),
+                        message: format!(
+                            "Queued submission {} has an invalid current variant",
+                            retained.id
+                        ),
+                        rust_context: format!("{error:?}"),
+                    })?,
+                SubmissionDeliveryGoal::FeeUpgrade => retained.unresolved_fee_intent().is_some(),
+            };
         (
             should_emit.then_some(retained.id),
             Some((
@@ -1528,70 +1529,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             }
         }
 
-        // Retained submissions are replay intents, not timeless wishes. Once a
-        // coin they spend is observed spent, an absent expected output proves a
-        // conflict only when that output was already part of this manager's
-        // watched scope. A handler may register the output in reaction to this
-        // same input-spent report, but the host necessarily queried the older
-        // scope; treating that first report as evidence would prematurely drop
-        // our own transaction before its wallet acknowledgement arrives.
-        let observed_created: std::collections::HashSet<CoinString> = records
-            .iter()
-            .filter(|rec| rec.created_height.is_some())
-            .map(|rec| rec.coin.clone())
-            .collect();
-        let spent_inputs: std::collections::HashSet<CoinID> = records
-            .iter()
-            .filter(|rec| rec.spent_height.is_some())
-            .map(|rec| rec.coin.to_coin_id())
-            .collect();
-        self.submission_book.reconcile_chain_terminality(
-            &observed_created,
-            reorg,
-            &causally_rolled_back_ids,
-        );
-        let current_height = height;
-        let watched_outputs = self
-            .watched_coins
-            .keys()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>();
-        self.retain_submitted(|tx| {
-            if matches!(tx.expiry, Some(expiry) if current_height >= expiry) {
-                return false;
-            }
-            if !spent_inputs.is_empty() {
-                let spends_observed_input = tx
-                    .spent_coin_ids()
-                    .any(|coin_id| spent_inputs.contains(&coin_id));
-                let expected_output_coins = tx
-                    .expected_output_coins()
-                    .expect("validated retained base bundle must remain parseable");
-                let expected_output_watched = expected_output_coins
-                    .iter()
-                    .any(|coin| watched_outputs.contains(coin));
-                return !spends_observed_input
-                    || tx.chain_terminality == SubmissionChainTerminality::Landed
-                    || expected_output_coins.is_empty()
-                    || !expected_output_watched;
-            }
-            true
-        });
-
-        if reorg {
-            self.collect_rollback_epoch_replay();
-        } else if !causally_rolled_back_ids.is_empty() {
-            self.submission_book.begin_replay(height);
-            self.submission_book
-                .collect_rollback_replay_ids(&causally_rolled_back_ids);
-        }
-        let reconciliation_inputs_after = self.reconciliation_input_coins();
-        for coin in reconciliation_inputs_before.difference(&reconciliation_inputs_after) {
-            if !self.watched_coins.contains_key(coin) {
-                self.pending_unwatch_coins.push(coin.clone());
-            }
-        }
-
         // Created/deleted are the symmetric difference against the previous
         // report. The resulting observations are ordered as every creation,
         // then every spend, before the cradle receives the height callback.
@@ -1652,6 +1589,76 @@ impl<C: ManagedGameSession> TransactionManager<C> {
         // A coin that re-confirmed live is no longer vanished.
         for coin in created_watched.iter() {
             self.vanished_coins.remove(coin);
+        }
+
+        // Stop delivery as soon as any input is spent, independently of output
+        // discovery. An absent expected output proves a conflict only when it
+        // was already in the queried watch scope. A handler may register it in
+        // reaction to this same spend report, so keep the transaction history
+        // until the outcome can be classified or a reorg makes it eligible again.
+        let observed_created: std::collections::HashSet<CoinString> = records
+            .iter()
+            .filter(|rec| rec.created_height.is_some())
+            .map(|rec| rec.coin.clone())
+            .collect();
+        let spent_inputs: std::collections::HashSet<CoinID> = records
+            .iter()
+            .filter(|rec| rec.spent_height.is_some())
+            .map(|rec| rec.coin.to_coin_id())
+            .chain(deleted_watched.iter().map(CoinString::to_coin_id))
+            .collect();
+        self.submission_book.reconcile_chain_terminality(
+            &observed_created,
+            &spent_inputs,
+            reorg,
+            &causally_rolled_back_ids,
+        );
+        let current_height = height;
+        let watched_outputs = self
+            .watched_coins
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        self.retain_submitted(|tx| {
+            if matches!(tx.expiry, Some(expiry) if current_height >= expiry) {
+                return false;
+            }
+            if !spent_inputs.is_empty() {
+                let spends_observed_input = tx
+                    .spent_coin_ids()
+                    .any(|coin_id| spent_inputs.contains(&coin_id));
+                let expected_output_coins = tx
+                    .expected_output_coins()
+                    .expect("validated retained base bundle must remain parseable");
+                let expected_output_watched = expected_output_coins
+                    .iter()
+                    .any(|coin| watched_outputs.contains(coin));
+                return !spends_observed_input
+                    || tx.chain_terminality == SubmissionChainTerminality::Landed
+                    || expected_output_coins.is_empty()
+                    || !expected_output_watched;
+            }
+            true
+        });
+
+        if reorg || !causally_rolled_back_ids.is_empty() {
+            // The current snapshot wins over rollback replay: an input still
+            // observed spent cannot be reactivated by the lower tip alone.
+            let replay_ids = self
+                .submission_book
+                .active_ids()
+                .into_iter()
+                .filter(|id| reorg || causally_rolled_back_ids.contains(id))
+                .collect();
+            self.submission_book.begin_replay(height);
+            self.submission_book
+                .collect_rollback_replay_ids(&replay_ids);
+        }
+        let reconciliation_inputs_after = self.reconciliation_input_coins();
+        for coin in reconciliation_inputs_before.difference(&reconciliation_inputs_after) {
+            if !self.watched_coins.contains_key(coin) {
+                self.pending_unwatch_coins.push(coin.clone());
+            }
         }
 
         self.report_timeout_claim_rearms(rearmed_timeout_claims)?;
@@ -5618,7 +5625,7 @@ mod tests {
             ),
             ("next id", stale_next_id, "outside issued range"),
             ("next token", stale_next_token, "outside issued range"),
-            ("landed active", landed_active, "landed submission"),
+            ("landed active", landed_active, "non-active submission"),
             (
                 "unbound non-protocol",
                 unbound_non_protocol,
@@ -6104,6 +6111,198 @@ mod tests {
     }
 
     #[test]
+    fn spent_input_stops_fee_work_before_outputs_are_watched() {
+        for acknowledged_base in [false, true] {
+            let input = test_coin(0x80);
+            let output = CoinString::from_parts(
+                &input.to_coin_id(),
+                &PuzzleHash::from_bytes([0x81; 32]),
+                &Amount::new(1),
+            );
+            let mut manager = TransactionManager::new(PersistableMockGameSession);
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::attach_to(
+                    test_bundle_spending_creating("pending-fee", &input, &output),
+                    None,
+                    &input,
+                ),
+                fee_intent: SubmissionFeeIntent::Attach {
+                    target: input.to_coin_id(),
+                    amount: Amount::new(15),
+                    attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+                },
+            });
+            let first = manager.drain_submissions().unwrap().submissions.remove(0);
+            if acknowledged_base {
+                manager
+                    .finalize_submission_attempt(
+                        first.attempt_token,
+                        SubmissionFeeSource::Failed("wallet offline".to_string()),
+                        &Hash::default(),
+                        10,
+                    )
+                    .unwrap();
+                manager
+                    .acknowledge_submission_attempt(first.attempt_token)
+                    .unwrap();
+                manager.request_fee_upgrades();
+            }
+            let mut allocator = AllocEncoder::new();
+            manager
+                .report_coin_states(
+                    &mut allocator,
+                    12,
+                    &[CoinStateRecord {
+                        coin: input.clone(),
+                        created_height: Some(10),
+                        spent_height: Some(12),
+                    }],
+                )
+                .unwrap();
+            assert_eq!(manager.drain_retired_submission_ids(), vec![first.id]);
+            assert!(manager
+                .finalize_submission_attempt(
+                    first.attempt_token,
+                    SubmissionFeeSource::Failed("late wallet response".to_string()),
+                    &Hash::default(),
+                    12,
+                )
+                .unwrap()
+                .is_none());
+            manager.chain_snapshot_ready();
+            manager.request_fee_upgrades();
+            assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+            assert_eq!(manager.submission_book.test_submitted().len(), 1);
+
+            // A lower tip must not override the same snapshot's spent evidence.
+            manager
+                .report_coin_states(
+                    &mut allocator,
+                    11,
+                    &[CoinStateRecord {
+                        coin: input.clone(),
+                        created_height: Some(10),
+                        spent_height: Some(11),
+                    }],
+                )
+                .unwrap();
+            assert_eq!(manager.drain_retired_submission_ids(), vec![first.id]);
+            assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+
+            let encoded = bencodex::to_vec(&manager).unwrap();
+            let mut restored: TransactionManager<PersistableMockGameSession> =
+                bencodex::from_slice(&encoded).unwrap();
+            restored.submission_book.restore_runtime();
+            assert!(restored.snapshot_watched_coins().contains(&input));
+            restored.chain_snapshot_ready();
+            restored.request_fee_upgrades();
+            assert!(restored.drain_submissions().unwrap().submissions.is_empty());
+
+            // A replacement chain can make the input spendable again. The
+            // retained intent resumes only after the chain observation changes.
+            restored
+                .report_coin_states(
+                    &mut allocator,
+                    12,
+                    &[
+                        CoinStateRecord {
+                            coin: input,
+                            created_height: Some(10),
+                            spent_height: None,
+                        },
+                        CoinStateRecord {
+                            coin: output,
+                            created_height: None,
+                            spent_height: None,
+                        },
+                    ],
+                )
+                .unwrap();
+            let resumed = restored.drain_submissions().unwrap().submissions;
+            assert_eq!(resumed.len(), 1);
+            assert_eq!(resumed[0].id, first.id);
+            assert!(matches!(
+                resumed[0].fee_intent,
+                SubmissionFeeIntent::Attach { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn spent_input_stops_outputless_and_disappearing_coin_deliveries() {
+        for explicit_spend in [false, true] {
+            let input = test_coin(0x82);
+            let mut allocator = AllocEncoder::new();
+            let nil = ().to_clvm(&mut allocator).unwrap();
+            let bundle = SpendBundle {
+                name: Some("outputless-fee".to_string()),
+                spends: vec![CoinSpend {
+                    coin: input.clone(),
+                    bundle: Spend {
+                        puzzle: nil.to_quoted_program(&mut allocator).unwrap().into(),
+                        solution: Program::nil().into(),
+                        signature: Default::default(),
+                    },
+                }],
+            };
+            let mut manager = TransactionManager::new(PersistableMockGameSession);
+            manager.register_watch(input.clone(), Timeout::new(50), None, None);
+            manager
+                .report_coin_states(
+                    &mut allocator,
+                    10,
+                    &[CoinStateRecord {
+                        coin: input.clone(),
+                        created_height: Some(10),
+                        spent_height: None,
+                    }],
+                )
+                .unwrap();
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::attach_to(bundle, None, &input),
+                fee_intent: SubmissionFeeIntent::Attach {
+                    target: input.to_coin_id(),
+                    amount: Amount::new(15),
+                    attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+                },
+            });
+            let first = manager.drain_submissions().unwrap().submissions.remove(0);
+            let records = if explicit_spend {
+                vec![CoinStateRecord {
+                    coin: input.clone(),
+                    created_height: Some(10),
+                    spent_height: Some(12),
+                }]
+            } else {
+                Vec::new()
+            };
+            manager
+                .report_coin_states(&mut allocator, 12, &records)
+                .unwrap();
+            assert_eq!(manager.drain_retired_submission_ids(), vec![first.id]);
+            manager.chain_snapshot_ready();
+            manager.request_fee_upgrades();
+            assert!(manager.drain_submissions().unwrap().submissions.is_empty());
+            manager
+                .report_coin_states(
+                    &mut allocator,
+                    12,
+                    &[CoinStateRecord {
+                        coin: input,
+                        created_height: Some(10),
+                        spent_height: None,
+                    }],
+                )
+                .unwrap();
+            let resumed = manager.drain_submissions().unwrap().submissions;
+            assert_eq!(resumed.len(), 1);
+            assert_eq!(resumed[0].id, first.id);
+        }
+    }
+
+    #[test]
     fn conflicting_spend_prunes_once_expected_output_is_watched() {
         let mut allocator = AllocEncoder::new();
         let coin = test_coin(30);
@@ -6143,7 +6342,9 @@ mod tests {
         )
         .expect("report");
         mgr.chain_snapshot_ready();
-        assert_eq!(mgr.drain_submissions().unwrap().submissions.len(), 1);
+        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
+        assert_eq!(mgr.submission_book.test_submitted().len(), 1);
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![submitted.id]);
 
         // Once the expected child is in the watched scope, a later complete
         // snapshot that still lacks it proves that a conflicting spend won.

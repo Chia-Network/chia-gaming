@@ -786,7 +786,13 @@ and immutable predecessor/relationship metadata. Rust emits the no-fee base
 immediately when fee acquisition fails or is unavailable and continues seeking
 after base acknowledgement. Matching provider readiness or an explicit
 fresh-chain rebroadcast epoch may later upgrade that ID to a fee-bearing
-variant; chain terminality stops acquisition. An ordinary fresh snapshot or
+variant. Observing any spent protocol input immediately stops that submission's
+delivery and fee approval, even before its expected outputs are watched. Rust
+retains an `InputSpent` chain state while the outcome is still unknown, so restore
+and wallet readiness cannot restart obsolete work. Outcome classification and
+reorg recovery keep the retained transaction; only changed chain evidence may
+reactivate it. The separate fee-wallet reservation moves to noninteractive cleanup.
+An ordinary fresh snapshot or
 provider-readiness edge leaves an already-running fee acquisition with its
 current attempt; it cannot cancel that approval and issue a replacement.
 Genuine browser restoration relinquishes abandoned delivery attempts at the
