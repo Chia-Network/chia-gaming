@@ -185,6 +185,7 @@ export type ApplicationIntent =
         | 'accept-session'
         | 'decline-session'
         | 'toggle-publish'
+        | 'request-full-reset'
         | 'confirm'
         | 'cancel-confirmation';
     }
@@ -478,6 +479,17 @@ export function createApplication() {
       onConfirm: () => {
         setTransactionPublishNerf(true);
         update('confirmDialog', null);
+      },
+    });
+  };
+  const requestFullReset = () => {
+    update('confirmDialog', {
+      title: 'Reset everything?',
+      body: 'This deletes all data this app has saved in this browser, disconnects your wallet, and reloads. If a session is in progress you will lose the ability to resolve it and may lose the funds in it. This cannot be undone.',
+      confirmLabel: 'Full reset',
+      onConfirm: () => {
+        update('confirmDialog', null);
+        return recovery.retryHardReset();
       },
     });
   };
@@ -2542,6 +2554,8 @@ export function createApplication() {
         return handleDashboardAction(intent.action);
       case 'toggle-publish':
         return toggleTransactionPublishNerf();
+      case 'request-full-reset':
+        return requestFullReset();
       case 'history':
         return appendHistory(intent.line);
       case 'confirm':

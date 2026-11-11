@@ -926,17 +926,27 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             }}
           >
             <WalletRecoveryNotice notice={walletView.recoveryNotice} />
-            {showTransactionPublishControl && (
+            <div className="absolute right-4 top-4 flex items-center gap-2">
+              {showTransactionPublishControl && (
+                <Button
+                  variant={transactionPublishNerfed ? 'solid' : 'outline'}
+                  color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                  size="sm"
+                  onClick={() => dispatch({ type: 'toggle-publish' })}
+                >
+                  Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+                </Button>
+              )}
               <Button
-                variant={transactionPublishNerfed ? 'solid' : 'outline'}
-                color={transactionPublishNerfed ? 'primary' : 'neutral'}
+                variant="destructive"
+                color="neutral"
                 size="sm"
-                className="absolute right-4 top-4"
-                onClick={() => dispatch({ type: 'toggle-publish' })}
+                disabled={startingOver}
+                onClick={() => dispatch({ type: 'request-full-reset' })}
               >
-                Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+                {startingOver ? 'Resetting\u2026' : 'Full reset'}
               </Button>
-            )}
+            </div>
             <ConnectionSetupModal
               open={showConnectionSetupModal && !!connectionSetup}
               title={connectionSetup?.title}

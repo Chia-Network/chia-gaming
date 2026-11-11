@@ -59,6 +59,22 @@ it('keeps publishing policy in its owning application', async () => {
   expect(second.snapshot().transactionPublishNerfed).toBe(false);
 });
 
+it('asks for confirmation before a full reset', async () => {
+  const hardReset = jest.spyOn(storageRepository, 'hardReset').mockResolvedValue({ success: true });
+  const application = createApplication();
+
+  await application.dispatch({ type: 'request-full-reset' });
+  expect(application.snapshot().confirmDialog).toMatchObject({ confirmLabel: 'Full reset' });
+  await application.dispatch({ type: 'cancel-confirmation' });
+  expect(application.snapshot().confirmDialog).toBeNull();
+  expect(hardReset).not.toHaveBeenCalled();
+
+  await application.dispatch({ type: 'request-full-reset' });
+  await application.dispatch({ type: 'confirm' });
+  expect(application.snapshot().confirmDialog).toBeNull();
+  expect(hardReset).toHaveBeenCalledTimes(1);
+});
+
 it.each([false, true])(
   'keeps pairing and wallet setup pending through completion, silent=%s',
   async (silent) => {
