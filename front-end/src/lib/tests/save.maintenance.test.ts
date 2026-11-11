@@ -269,22 +269,16 @@ describe('hard reset', () => {
       // Queued behind an earlier blocked delete: the browser fires no event.
       deleteDatabase: jest.fn(() => ({})),
     });
-    jest.useFakeTimers();
-    try {
-      const reset = storageRepository.hardReset();
-      await jest.advanceTimersByTimeAsync(3_000);
-      await expect(reset).resolves.toEqual({
-        success: false,
-        failures: expect.arrayContaining([
-          expect.objectContaining({ database: SESSION_DB_NAME, reason: 'blocked' }),
-        ]),
-      });
-    } finally {
-      jest.useRealTimers();
-    }
+    // Real timers: the storage layer under test also schedules on them.
+    await expect(storageRepository.hardReset()).resolves.toEqual({
+      success: false,
+      failures: expect.arrayContaining([
+        expect.objectContaining({ database: SESSION_DB_NAME, reason: 'blocked' }),
+      ]),
+    });
     expect(localStorage.getItem('appState_pendingWipe')).toBe('1');
     warn.mockRestore();
-  });
+  }, 10_000);
 
   it('returns unsuccessful when a database deletion is blocked by an open connection', async () => {
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
