@@ -25,13 +25,29 @@ export function reloadAfterSuccessfulHardReset(
   return true;
 }
 
+// A delete queued behind an earlier, still-blocked delete of the same database
+// gets no event at all until that one completes, so the wait must be bounded.
+const DELETE_SETTLE_TIMEOUT_MS = 3_000;
+
 function deleteIndexedDb(
   name: string,
   context = 'IndexedDB cleanup',
 ): Promise<HardResetFailure | null> {
-  return new Promise((resolve) => {
+  return new Promise((settle) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const resolve = (failure: HardResetFailure | null) => {
+      clearTimeout(timeout);
+      settle(failure);
+    };
     try {
       const request = indexedDB.deleteDatabase(name);
+      timeout = setTimeout(() => {
+        console.warn(
+          `[save] ${context}: no response deleting IndexedDB database "${name}"; ` +
+            'treating it as blocked',
+        );
+        resolve({ database: name, reason: 'blocked' });
+      }, DELETE_SETTLE_TIMEOUT_MS);
       request.onsuccess = () => resolve(null);
       request.onerror = () => {
         console.error(

@@ -282,6 +282,47 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     claim.mockRestore();
   });
 
+  it('reloads to finish a retried hard reset that is only blocked', async () => {
+    const originalIndexedDb = indexedDB;
+    localStorage.setItem('appState_pendingWipe', '1');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: {
+        databases: jest.fn().mockResolvedValue([{ name: SESSION_DB_NAME }]),
+        deleteDatabase: jest.fn(() => {
+          const request: { onblocked?: () => void } = {};
+          setTimeout(() => request.onblocked?.(), 0);
+          return request;
+        }),
+      },
+    });
+    const reload = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload,
+        }),
+      );
+    });
+    await waitForRender(renderer!, 'pending hard reset is still blocked');
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
+    });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem('appState_pendingWipe')).toBe('1');
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: originalIndexedDb,
+    });
+    warn.mockRestore();
+  });
+
   it('shows local loading then restores while hub and wallet remain unresolved', async () => {
     await storageRepository.claimApplicationState();
     const save = liveSave({

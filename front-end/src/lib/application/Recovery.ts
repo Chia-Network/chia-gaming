@@ -291,6 +291,12 @@ export class Recovery {
       const result = await storageRepository.hardReset();
       if (!result.success) {
         const blocked = result.failures.some((failure) => failure.reason === 'blocked');
+        if (blocked && result.failures.every((failure) => failure.reason === 'blocked')) {
+          // This page's own wallet storage connection can be the blocker. The
+          // wipe is marked pending and finishes at boot before that reopens.
+          (this.dependencies.reload ?? (() => window.location.reload()))();
+          return;
+        }
         markSavedSession();
         this.setState({
           kind: 'resumeDialog',
