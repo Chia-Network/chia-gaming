@@ -212,6 +212,8 @@ export class HubConnection {
   private hubUrl: string;
   private sessionId: string;
   private ws: WebSocket | null = null;
+  // The attempt still opening; `ws` is only assigned once it has opened.
+  private connectingWs: WebSocket | null = null;
   private closed = false;
   private wasDisconnected = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -318,6 +320,7 @@ export class HubConnection {
       throw new Error(msg);
     }
     const ws = new WebSocket(wsUrl);
+    this.connectingWs = ws;
 
     const connectTimeout = globalThis.setTimeout(() => {
       if (this.ws === ws || this.closed) return;
@@ -332,6 +335,11 @@ export class HubConnection {
 
     ws.onopen = () => {
       globalThis.clearTimeout(connectTimeout);
+      if (this.connectingWs === ws) this.connectingWs = null;
+      if (this.closed) {
+        ws.close();
+        return;
+      }
       this.ws = ws;
       this.reconnectAttempt = 0;
       this.presence = this.getPresence();
@@ -378,6 +386,7 @@ export class HubConnection {
 
     ws.onclose = () => {
       globalThis.clearTimeout(connectTimeout);
+      if (this.connectingWs === ws) this.connectingWs = null;
       this.stopKeepaliveTimer();
       if (this.closed) return;
       if (!this.wasDisconnected) {
@@ -506,6 +515,12 @@ export class HubConnection {
     log('[hub] force disconnect');
     this.stopKeepaliveTimer();
     this.clearFirstConnectTimer();
+    this.closeSockets();
+  }
+
+  private closeSockets(): void {
+    this.connectingWs?.close();
+    this.connectingWs = null;
     this.ws?.close();
     this.ws = null;
   }
@@ -538,8 +553,7 @@ export class HubConnection {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.ws?.close();
-    this.ws = null;
+    this.closeSockets();
   }
 
   private dispatchRelay(fromId: string, fromAlias: string, payload: Uint8Array): void {

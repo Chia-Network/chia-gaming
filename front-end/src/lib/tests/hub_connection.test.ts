@@ -778,6 +778,28 @@ describe('first connection fail-fast', () => {
     expect(cb.events('closed')).toHaveLength(1);
   });
 
+  it('closes a still-connecting retry when it gives up, and ignores its late open', () => {
+    jest.useFakeTimers();
+    expectedHubDisconnects = 1;
+    const cb = makeObserver();
+    makeFailFastConnection(cb);
+    refuse();
+    jest.advanceTimersByTime(7500);
+    // The retry hangs: it neither opens nor fails.
+    const retry = MockWebSocket.instance!;
+    retry.closed = true;
+    const close = jest.spyOn(retry, 'close');
+
+    jest.advanceTimersByTime(22_500);
+    expect(cb.events('closed')).toHaveLength(1);
+    expect(close).toHaveBeenCalled();
+
+    retry.readyState = MockWebSocket.OPEN;
+    retry.onopen?.({ type: 'open' });
+    expect(retry.sentControl).toEqual([]);
+    expect(cb.events('reconnected')).toHaveLength(0);
+  });
+
   it('gives up after 30 seconds when the socket opens but the hub never registers', () => {
     jest.useFakeTimers();
     const cb = makeObserver();
