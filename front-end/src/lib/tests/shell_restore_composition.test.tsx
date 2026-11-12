@@ -1045,6 +1045,14 @@ describe('Shell production restore composition', () => {
       await application.dispatch({ type: 'resume' });
     });
     await flushEffects();
+    const unloadVetoed = () => {
+      const event = { preventDefault: jest.fn(), returnValue: undefined };
+      for (const [type, listener] of jest.mocked(window.addEventListener).mock.calls) {
+        if (type === 'beforeunload') (listener as (event: unknown) => void)(event);
+      }
+      return event.preventDefault.mock.calls.length > 0;
+    };
+    expect(unloadVetoed()).toBe(true);
     await act(async () => {
       await application.dispatch({ type: 'reset' });
     });
@@ -1052,5 +1060,7 @@ describe('Shell production restore composition', () => {
     expect(controller.cleanup).toHaveBeenCalledTimes(1);
     expect(hardReset).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['controller', 'storage']);
+    // The reset's own reload must not be vetoed by the live-session warning.
+    expect(unloadVetoed()).toBe(false);
   });
 });
