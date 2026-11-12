@@ -350,6 +350,13 @@ an established off-chain channel.
 `HubConnection` exposes `onHubDisconnected` and `onHubReconnected`
 callbacks for logging/diagnostics around game channel stream health.
 
+A connection made with no saved session, or by choosing a hub in the picker,
+fails fast until its first `registered`: it reports `closed` once attempts have
+kept failing for 10 seconds (unknown host, refused), or after 30 seconds without
+`registered` (a hanging or silent host). A connection restored for a saved
+session, and any connection after its first `registered`, keeps the full
+reconnect budget.
+
 #### WebSocket Connection Discipline
 
 All three WebSocket clients — `FakeBlockchainInterface` (simulator),
