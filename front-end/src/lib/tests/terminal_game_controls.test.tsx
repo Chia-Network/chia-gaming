@@ -1,16 +1,6 @@
-import { createElement, type ComponentProps } from 'react';
+import { createElement } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
-jest.mock(
-  '@/components/button',
-  () => {
-    const React = jest.requireActual<typeof import('react')>('react');
-    return {
-      Button: (props: ComponentProps<'button'>) => React.createElement('button', props),
-    };
-  },
-  { virtual: true },
-);
 jest.mock('@games/calpoker/ui/components/components', () => {
   const React = jest.requireActual<typeof import('react')>('react');
   return {

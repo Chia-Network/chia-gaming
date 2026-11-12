@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import { cloudBlockchainInfo } from '../lib/wallet/CloudBlockchainInterface';
-import { Button } from './button';
+import { Button } from './ui/button';
 
 function subscribe(listener: () => void) {
   return cloudBlockchainInfo.onRefusedCancellationsChange(listener);
@@ -25,7 +25,6 @@ export default function CloudWalletCancellationNotice() {
       </p>
       <Button
         variant="outline"
-        color="neutral"
         size="sm"
         aria-label="Dismiss refused cancellation"
         onClick={() => cloudBlockchainInfo.dismissRefusedCancellation(next.offerId)}

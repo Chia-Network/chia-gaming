@@ -1426,6 +1426,8 @@ export function createApplication() {
       return;
     }
     hubConn = conn;
+    // Remember every attached hub, including a connection restored at boot.
+    storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
     peerSession?.attachCarrier(conn);
     void restoreRejections(conn, bootRejectionDescriptors).catch((error) => {
       console.error('[Shell] failed to restore rejection tombstones', error);
@@ -1439,6 +1441,8 @@ export function createApplication() {
       return;
     }
     if (trust === 'granted') {
+      // This connection continues after reloading with the new trust grant.
+      storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
       storageRepository.regenerateSessionId();
       storageRepository.updatePreference({ key: 'hubUrl', value: origin });
       window.location.reload();
@@ -2444,6 +2448,7 @@ export function createApplication() {
       ...sessionState,
       alias: storageRepository.query('alias'),
       theme: storageRepository.query('theme'),
+      lastHubUrl: storageRepository.query('lastHubUrl'),
       keepSession: shouldMountGameSession(
         !!sessions.state.sessionConfig && !!sessions.state.peerConn,
         state.walletView.connected,
