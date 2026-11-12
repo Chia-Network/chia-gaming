@@ -26,16 +26,14 @@ used_linker = []
 [dependencies]
 bencodex = { path = "bencodex" }
 blst = { version = "=0.3.17", features = ["portable"] }
-chia-bls = "=0.53.0"
-chia-consensus = "=0.53.0"
-chia-protocol = "=0.53.0"
+chia-bls = "=0.54.0"
+chia-consensus = "=0.54.0"
+chia-protocol = "=0.54.0"
 chia-puzzles = "=0.20.3"
-# Includes the current compiler/metadata fixes before the clvmr 0.22 release bump.
-# RuntimePrintDialect must share clvmr with the Chia runtime dependencies.
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "5c9101874f5a78d3c5dc82d95f4bff4eb45c305d" }
-clvm-traits = "=0.53.0"
-clvm-utils = "=0.53.0"
-clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498", features = ["pre-eval"] }
+chialisp = "=0.7.0"
+clvm-traits = "=0.54.0"
+clvm-utils = "=0.54.0"
+clvmr = { version = "=0.22.0", features = ["pre-eval"] }
 hex = "=0.4.3"
 lazy_static = "=1.5.1"
 num-bigint = "=0.5.1"
@@ -58,9 +56,9 @@ getrandom = { version = "=0.4.3", features = ["std"] }
 rand_chacha = "=0.9.0"
 serde = { version = "=1.0.228", features = ["alloc", "rc"] }
 serde_core = "=1.0.228"
-chialisp = { git = "https://github.com/Chia-Network/chialisp.git", rev = "5c9101874f5a78d3c5dc82d95f4bff4eb45c305d" }
-clvm-utils = "=0.53.0"
-clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498", features = ["pre-eval"] }
+chialisp = "=0.7.0"
+clvm-utils = "=0.54.0"
+clvmr = { version = "=0.22.0", features = ["pre-eval"] }
 hex = "=0.4.3"
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"
@@ -82,6 +80,3 @@ harness = false
 [lib]
 name = "chia_gaming"
 crate-type = ["rlib"]
-
-[patch.crates-io]
-clvmr = { git = "https://github.com/Chia-Network/clvm_rs.git", rev = "05e31346107b7d0defc6c9055f7efd32ac81d498" }

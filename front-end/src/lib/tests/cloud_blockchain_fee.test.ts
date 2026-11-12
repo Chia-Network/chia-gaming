@@ -1659,7 +1659,7 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(calls[0]!.variables.input).toEqual({
       walletId: 'Wallet_1',
       endpoint: 'get_coin_records_by_names',
-      request: { names: ['aa'.repeat(32)], include_spent_coins: true },
+      request: { names: ['aa'.repeat(32)], include_spent_coins: true, allow_missing: true },
     });
   });
 
@@ -1752,6 +1752,7 @@ describe('CloudBlockchainInterface fee support', () => {
     expect((calls[0]!.variables.input as any).request).toEqual({
       names: ['aa'.repeat(32)],
       include_spent_coins: true,
+      allow_missing: true,
     });
     expect(
       calls.every(
@@ -1762,6 +1763,7 @@ describe('CloudBlockchainInterface fee support', () => {
     expect((calls[1]!.variables.input as any).request).toEqual({
       names: ['aa'.repeat(32), 'bb'.repeat(32)],
       include_spent_coins: true,
+      allow_missing: true,
     });
   });
 

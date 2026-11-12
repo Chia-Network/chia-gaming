@@ -34,7 +34,8 @@ struct GameRegistry {
 const CHIALISP_COMPILER_STACK_SIZE: usize = 128 * 1024 * 1024;
 
 fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
-    let mut allocator = Allocator::new();
+    // The compiler may use a different clvmr version than the game runtime.
+    let mut allocator = chialisp::clvmr::Allocator::new();
     let mut arguments: HashMap<String, ArgumentValue> = HashMap::new();
     arguments.insert(
         "include".to_string(),
