@@ -222,6 +222,13 @@ export class HubConnection {
   // after failures; aborting early makes the next attempt slower.
   private static readonly CONNECT_TIMEOUT_MS = 30_000;
   static readonly MAX_RECONNECT_ATTEMPTS = 18;
+  // Fail-fast limits for a hub that has never registered this connection: one
+  // that cannot be reached at all, and one that is reached but stays silent.
+  static readonly FIRST_CONNECT_UNREACHABLE_MS = 10_000;
+  static readonly FIRST_CONNECT_UNRESPONSIVE_MS = 30_000;
+  private readonly startedAt = Date.now();
+  private firstConnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private registered = false;
   private reconnectAttempt = 0;
   private presence: HubPresence = { busy: false };
   private closePending = false;
@@ -232,11 +239,38 @@ export class HubConnection {
     sessionId: string,
     private readonly emit: (event: HubEvent) => void,
     private readonly getPresence: () => HubPresence,
+    private readonly options: { failFastFirstConnect?: boolean } = {},
   ) {
     this.hubUrl = hubUrl;
     this.sessionId = sessionId;
     this.presence = this.getPresence();
     this.connectWs();
+    if (this.options.failFastFirstConnect && !this.closed) {
+      this.firstConnectTimer = globalThis.setTimeout(() => {
+        this.firstConnectTimer = null;
+        this.abandonFirstConnect('hub did not respond');
+      }, HubConnection.FIRST_CONNECT_UNRESPONSIVE_MS);
+      if (typeof this.firstConnectTimer === 'object' && 'unref' in this.firstConnectTimer)
+        this.firstConnectTimer.unref();
+    }
+  }
+
+  private awaitingFirstConnect(): boolean {
+    return this.options.failFastFirstConnect === true && !this.registered;
+  }
+
+  private clearFirstConnectTimer(): void {
+    if (this.firstConnectTimer !== null) {
+      globalThis.clearTimeout(this.firstConnectTimer);
+      this.firstConnectTimer = null;
+    }
+  }
+
+  private abandonFirstConnect(reason: string): void {
+    if (this.closed || !this.awaitingFirstConnect()) return;
+    log(`[hub] first connection abandoned: ${reason}`);
+    this.disconnect();
+    this.emit({ type: 'closed' });
   }
 
   private getWsUrl(): string {
@@ -354,6 +388,13 @@ export class HubConnection {
         this.ws = null;
       }
       if (this.reconnectTimer === null) {
+        const unreachableBudget = this.awaitingFirstConnect()
+          ? HubConnection.FIRST_CONNECT_UNREACHABLE_MS - (Date.now() - this.startedAt)
+          : null;
+        if (unreachableBudget !== null && unreachableBudget <= 0) {
+          this.abandonFirstConnect('hub could not be reached');
+          return;
+        }
         if (this.reconnectAttempt >= HubConnection.MAX_RECONNECT_ATTEMPTS) {
           log('[hub] reconnect budget exhausted, declaring connection dead');
           this.closed = true;
@@ -365,11 +406,13 @@ export class HubConnection {
             Math.min(this.reconnectAttempt, HubConnection.RECONNECT_DELAYS.length - 1)
           ];
         const jitter = Math.round(base * (0.75 + Math.random() * 0.5));
+        // The last first-connection attempt lands on its deadline, not after it.
+        const delay = unreachableBudget === null ? jitter : Math.min(jitter, unreachableBudget);
         this.reconnectAttempt++;
         this.reconnectTimer = globalThis.setTimeout(() => {
           this.reconnectTimer = null;
           this.connectWs();
-        }, jitter);
+        }, delay);
         if (typeof this.reconnectTimer === 'object' && 'unref' in this.reconnectTimer)
           this.reconnectTimer.unref();
       }
@@ -406,6 +449,8 @@ export class HubConnection {
         break;
       }
       case 'registered':
+        this.registered = true;
+        this.clearFirstConnectTimer();
         this.myPlayerId = msg.player_id;
         log(`[hub] registered as player_id=${msg.player_id}`);
         this.emit({ type: 'registered', playerId: msg.player_id });
@@ -460,6 +505,7 @@ export class HubConnection {
     this.closed = true;
     log('[hub] force disconnect');
     this.stopKeepaliveTimer();
+    this.clearFirstConnectTimer();
     this.ws?.close();
     this.ws = null;
   }
@@ -487,6 +533,7 @@ export class HubConnection {
   disconnect() {
     this.closed = true;
     this.stopKeepaliveTimer();
+    this.clearFirstConnectTimer();
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

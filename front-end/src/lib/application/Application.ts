@@ -1412,6 +1412,12 @@ export function createApplication() {
           // otherwise undo explicit setBusy.
           return hubPresenceNow();
         },
+        // A saved session needs its hub back however long that takes; otherwise
+        // a hub that is missing or silent should be reported promptly.
+        {
+          failFastFirstConnect:
+            options.resetSession === true || storageRepository.loadState().session === null,
+        },
       );
     } catch (err) {
       console.error('[Shell] HubConnection failed for origin=%s', origin, err);
