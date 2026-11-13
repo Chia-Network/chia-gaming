@@ -502,6 +502,10 @@ export function reduceSessionNotification(
 
   if ('MoveRejected' in notification && notification.MoveRejected) {
     const rejected = notification.MoveRejected;
+    const rejectedId = String(rejected.id);
+    if (current.model.game.currentHandIds.includes(rejectedId)) {
+      step({ type: 'notification-move-rejected', id: rejectedId });
+    }
     step({
       type: 'push-game-notification',
       notification: {

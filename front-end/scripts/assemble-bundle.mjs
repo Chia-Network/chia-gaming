@@ -74,6 +74,24 @@ if (existsSync(GAMES_DIR)) {
 const dirIsEmpty = (d) => !existsSync(d) || readdirSync(d).length === 0;
 const errors = [];
 
+function floorCheckDebugSidecars(dir) {
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) {
+      floorCheckDebugSidecars(path);
+    } else if (
+      path.endsWith('.clvm.bin') &&
+      !path.endsWith('.debug.clvm.bin') &&
+      !path.endsWith('factory_args.clvm.bin')
+    ) {
+      const sidecar = path.replace(/\.clvm\.bin$/, '.debug.clvm.bin');
+      if (!existsSync(sidecar)) {
+        errors.push(`missing debug sidecar for ${relative(APP, path)}`);
+      }
+    }
+  }
+}
+
 for (const f of ['index.js', 'index.css', ...WASM_FILES]) {
   if (!existsSync(join(APP, f))) {
     errors.push(`missing required file: ${f}`);
@@ -88,6 +106,7 @@ if (dirIsEmpty(join(APP, 'games'))) {
 if (dirIsEmpty(join(APP, 'images'))) {
   errors.push('images/ is missing or empty');
 }
+floorCheckDebugSidecars(APP);
 
 if (errors.length) {
   throw new Error(`assemble-bundle: incomplete bundle in ${APP}:\n  - ${errors.join('\n  - ')}`);

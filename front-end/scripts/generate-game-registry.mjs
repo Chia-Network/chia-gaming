@@ -68,6 +68,9 @@ export const CORE_PRESET_FILES = [
 ] as const;
 export const GAME_PRESET_FILES = ${presetList} as const;
 export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
+export const DEBUG_PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES].map((file) =>
+  file.replace(/\\.clvm\\.bin$/, '.debug.clvm.bin'),
+);
 `,
 );
 
@@ -83,7 +86,12 @@ export const GENERATED_GAME_PACKAGES_BY_KEY = {
 ${packageMap}
 } as const;
 export const GENERATED_GAME_PACKAGES = Object.values(GENERATED_GAME_PACKAGES_BY_KEY);
-export { PRESET_FILES, GAME_PRESET_FILES, CORE_PRESET_FILES } from './gamePresets';
+export {
+  PRESET_FILES,
+  DEBUG_PRESET_FILES,
+  GAME_PRESET_FILES,
+  CORE_PRESET_FILES,
+} from './gamePresets';
 `,
 );
 

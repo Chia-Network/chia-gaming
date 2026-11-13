@@ -4,7 +4,7 @@ use std::rc::Rc;
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
 
-use clvmr::{run_program, NodePtr};
+use clvmr::NodePtr;
 
 use clvm_traits::{clvm_curried_args, ClvmEncoder, ToClvm, ToClvmError};
 use clvm_utils::CurriedProgram;
@@ -15,6 +15,7 @@ use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{
     Evidence, ReadableMove, StateUpdateProgram, ValidationInfo,
 };
+use crate::clvm_execution::run_clvm;
 use crate::common::load_clvm::read_binary_puzzle;
 use crate::common::standard_coin::ChiaIdentity;
 #[cfg(test)]
@@ -23,8 +24,8 @@ use crate::common::types::{
     Puzzle, Spend, SpendBundle, ToQuotedProgram,
 };
 use crate::common::types::{
-    atom_from_clvm, chia_dialect, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node,
-    Program, ProgramRef, PublicKey, PuzzleHash, Sha256tree, Timeout,
+    atom_from_clvm, AllocEncoder, Amount, Error, GameID, Hash, IntoErr, Node, Program, ProgramRef,
+    PublicKey, PuzzleHash, Sha256tree, Timeout,
 };
 use crate::referee::types::{GameMoveDetails, GameMoveStateInfo, ValidationInfoHash};
 use crate::referee::types::{
@@ -743,9 +744,7 @@ impl ExhaustiveMoveInputs {
             .into_gen()?;
         let program_to_concat = Program::from_hex("ff0eff02ff0580")?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
-        let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)
-            .into_gen()?
-            .1;
+        let result_atom = run_clvm(allocator.allocator(), pnode, args, 0)?.1;
         if let Some(result_move_data) = atom_from_clvm(allocator, result_atom) {
             Ok(result_move_data)
         } else {
@@ -806,9 +805,7 @@ impl ExhaustiveMoveInputs {
             "ff0eff02ff05ff0bff17ff2fff5fff8200bfff82017fff8202ffff8205ff80",
         )?;
         let pnode = program_to_concat.to_clvm(allocator).into_gen()?;
-        let result_atom = run_program(allocator.allocator(), &chia_dialect(), pnode, args, 0)
-            .into_gen()?
-            .1;
+        let result_atom = run_clvm(allocator.allocator(), pnode, args, 0)?.1;
         if let Some(mut result_move_data) = atom_from_clvm(allocator, result_atom) {
             result_move_data.append(&mut tail_bytes);
             Ok(result_move_data)

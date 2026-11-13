@@ -1,3 +1,4 @@
+import { scheduleClvmDiagnostic } from './wasmLoader';
 import { SessionRuntimeRetiredError } from './sessionMachineTypes';
 import { Program } from 'clvm-lib';
 import { type SessionWallet, type SessionFunding } from '../wallet/sessionWallet';
@@ -335,7 +336,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       return snapshotRegisteredGameHand(gameType, this.activeHand);
     },
     receive: (update) => {
-      this.requireActiveHand().receive(update);
+      const hand = this.requireActiveHand();
+      const before = hand.getState();
+      hand.receive(update);
+      if (hand.getState() === before) return null;
       return this.snapshotActiveHand();
     },
     clear: () => {
@@ -481,6 +485,15 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', this.beforeUnloadHandler);
     }
+  }
+
+  recordClvmDiagnostic(line: string): boolean {
+    if (!this.executionActive || this.retired || this.terminalSealed) return false;
+    this.enqueue(() => {
+      this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, line);
+      this.requestCommit();
+    });
+    return true;
   }
 
   private activateExecutionPersistence(): void {
@@ -1315,6 +1328,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     return (
       'Notification' in event ||
       'Log' in event ||
+      'ClvmDiagnostic' in event ||
       'ReceiveError' in event ||
       'ChannelCoinConfirmed' in event ||
       'ChannelCreationTimedOut' in event
@@ -1510,6 +1524,9 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     } else if ('Log' in event) {
       this.diagnosticLog = appendDiagnosticEntry(this.diagnosticLog, event.Log);
       this.receiveEvent({ type: 'log', message: event.Log });
+    } else if ('ClvmDiagnostic' in event) {
+      if (!this.wc) throw new Error('received CLVM diagnostic before WASM was loaded');
+      scheduleClvmDiagnostic(this.wc, event.ClvmDiagnostic);
     } else if ('NeedCoinSpend' in event) {
       this.queueFunding(event.NeedCoinSpend);
     } else if ('ChannelCoinConfirmed' in event) {

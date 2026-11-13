@@ -7,6 +7,7 @@
 #[macro_use]
 pub mod common;
 pub mod channel_state;
+pub mod clvm_execution;
 /// Provides as simple as possible a full blockchain interface that can be spoken
 /// with via a trait interface that's either local and synchronous or over a pipe.
 pub mod game_session;

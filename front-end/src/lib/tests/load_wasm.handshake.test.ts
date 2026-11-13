@@ -258,7 +258,10 @@ it(
       const controller = new SessionController(poller, id, 100n, 100n, cradle.peerConnection);
       controller.setWallet(poller);
       const peer = controller.getPeerProtocol();
-      acceptanceCalls.push(jest.spyOn(peer, 'accept_session'));
+      // Keep the mock handle because diagnostic wrappers wrap methods on access.
+      const acceptSession = jest.fn(peer.accept_session);
+      peer.accept_session = acceptSession;
+      acceptanceCalls.push(acceptSession);
       controller.loadWasm(wasm);
       controller.iStarted = index === 0;
       const channel = await peer.open_channel(

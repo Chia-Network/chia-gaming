@@ -21,4 +21,9 @@ export const GENERATED_GAME_PACKAGES_BY_KEY = {
   krunk: pkg2,
 } as const;
 export const GENERATED_GAME_PACKAGES = Object.values(GENERATED_GAME_PACKAGES_BY_KEY);
-export { PRESET_FILES, GAME_PRESET_FILES, CORE_PRESET_FILES } from './gamePresets';
+export {
+  PRESET_FILES,
+  DEBUG_PRESET_FILES,
+  GAME_PRESET_FILES,
+  CORE_PRESET_FILES,
+} from './gamePresets';

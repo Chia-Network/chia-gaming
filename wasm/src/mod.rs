@@ -4,7 +4,8 @@ mod gaming_wasm {
     use chia_gaming::peer_session::coordination::TerminalCommand;
     use chia_gaming::peer_session::session::ChannelOutput;
 
-    use std::collections::BTreeMap;
+    use std::cell::RefCell;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::convert::TryFrom;
     #[cfg(target_family = "wasm")]
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -15,6 +16,9 @@ mod gaming_wasm {
     use rand_chacha::ChaCha8Rng;
     use serde::{Deserialize, Serialize};
 
+    use chia_gaming::clvm_execution::{
+        diagnose_clvm as diagnose_clvm_token, DebugMetadataCollection, DiagnosticToken,
+    };
     use chia_gaming::common::types::ChaCha8SerializationWrapper;
 
     use wasm_bindgen::prelude::*;
@@ -144,6 +148,16 @@ mod gaming_wasm {
         status: &'static str,
     }
 
+    #[derive(Default)]
+    struct DebugMetadataCache {
+        names: BTreeSet<String>,
+        metadata: DebugMetadataCollection,
+    }
+
+    thread_local! {
+        static DEBUG_METADATA: RefCell<DebugMetadataCache> = RefCell::new(DebugMetadataCache::default());
+    }
+
     #[cfg(target_family = "wasm")]
     unsafe extern "C" {
         fn __wasm_call_ctors();
@@ -169,6 +183,33 @@ mod gaming_wasm {
     #[wasm_bindgen]
     pub fn cache_file(name: &str, data: &[u8]) {
         wasm_cache_file(name, data);
+    }
+
+    #[wasm_bindgen]
+    pub fn cache_debug_metadata(name: &str, data: &[u8]) -> Result<(), JsValue> {
+        if !name.ends_with(".debug.clvm.bin") {
+            return Err(js_error(
+                "debug metadata name must end with .debug.clvm.bin",
+            ));
+        }
+        DEBUG_METADATA.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            if cache.names.contains(name) {
+                return Err(js_error(&format!("duplicate debug metadata name {name}")));
+            }
+            cache
+                .metadata
+                .insert(data)
+                .map_err(|error| js_error(&error))?;
+            cache.names.insert(name.to_string());
+            Ok(())
+        })
+    }
+
+    #[wasm_bindgen]
+    pub fn diagnose_clvm(token: &str) -> Result<String, JsValue> {
+        let token = DiagnosticToken::parse(token).map_err(|error| js_error(&error))?;
+        Ok(DEBUG_METADATA.with(|cache| diagnose_clvm_token(token, &cache.borrow().metadata)))
     }
 
     pub(super) struct ChannelConfig {
@@ -234,7 +275,17 @@ mod gaming_wasm {
     impl ErrIntoJs for types::Error {
         type EResult = JsValue;
         fn into_js(self) -> Self::EResult {
-            js_error(&format!("{self:?}"))
+            let token = self.diagnostic_token().map(|token| token.to_string());
+            let error = js_sys::Error::new(&format!("{self:?}"));
+            if let Some(token) = token {
+                js_sys::Reflect::set(
+                    error.as_ref(),
+                    &JsValue::from_str("clvmDiagnosticToken"),
+                    &JsValue::from_str(&token),
+                )
+                .expect("setting diagnostic token on Error must succeed");
+            }
+            error.into()
         }
     }
 
@@ -324,6 +375,35 @@ mod gaming_wasm {
         result
     }
 
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ClvmRuntimeOutput {
+        prints: Vec<String>,
+        diagnostic_tokens: Vec<String>,
+    }
+
+    // A thrown call has no ChannelOutput. Transfer its buffered diagnostics to
+    // the error instead, so the host can deliver them before observing failure.
+    fn call_with_error_output<F, T>(
+        channel: &mut Channel,
+        f: F,
+    ) -> Result<T, (types::Error, ClvmRuntimeOutput)>
+    where
+        F: FnOnce(&mut Channel) -> Result<T, types::Error>,
+    {
+        call_releasing_allocator(channel, f).map_err(|error| {
+            let output = ClvmRuntimeOutput {
+                prints: channel.allocator.drain_runtime_prints(),
+                diagnostic_tokens: channel
+                    .allocator
+                    .drain_clvm_diagnostics()
+                    .map(|token| token.to_string())
+                    .collect(),
+            };
+            (error, output)
+        })
+    }
+
     impl PeerProtocol {
         fn with_game<T>(
             &self,
@@ -333,7 +413,17 @@ mod gaming_wasm {
             let channel = channel
                 .as_mut()
                 .ok_or_else(|| js_error("session has no channel"))?;
-            call_releasing_allocator(channel, f).into_js()
+            call_with_error_output(channel, f).map_err(|(error, output)| {
+                let error = error.into_js();
+                js_sys::Reflect::set(
+                    &error,
+                    &"clvmRuntimeOutput".into(),
+                    &serde_wasm_bindgen::to_value(&output)
+                        .expect("runtime output contains only strings"),
+                )
+                .expect("setting runtime output on Error must succeed");
+                error
+            })
         }
 
         fn with_game_output(
@@ -376,13 +466,14 @@ mod gaming_wasm {
             let succeeded = match f(self) {
                 Ok(()) => true,
                 Err(error) => {
-                    self.cradle.push_event(GameSessionEvent::Notification(
-                        GameNotification::ActionFailed {
+                    self.cradle.push_event(
+                        &mut self.allocator,
+                        GameSessionEvent::Notification(GameNotification::ActionFailed {
                             id: context.as_ref().map(|(id, _)| *id),
                             action: context.map(|(_, action)| action),
                             reason: format!("{error:?}"),
-                        },
-                    ));
+                        }),
+                    );
                     false
                 }
             };
@@ -417,6 +508,15 @@ mod gaming_wasm {
         use super::*;
 
         fn session() -> Channel {
+            for name in [
+                "clsp/referee/onchain/referee.clvm.bin",
+                "clsp/unroll/unroll_puzzle_state_channel_unrolling.clvm.bin",
+            ] {
+                let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join(name);
+                wasm_cache_file(name, &std::fs::read(path).unwrap());
+            }
             let mut allocator = AllocEncoder::new();
             let mut rng = ChaCha8Rng::from_seed([42; 32]);
             let identity = ChiaIdentity::new(&mut allocator, rng.random()).unwrap();
@@ -453,6 +553,68 @@ mod gaming_wasm {
                 .to_clvm(&mut cradle.allocator)
                 .unwrap();
             Program::from_nodeptr(&cradle.allocator, node)
+        }
+
+        fn fail_after_printing(channel: &mut Channel) -> Result<(), types::Error> {
+            // (c ("not_an_operator")
+            //    ("debug_print" (q . "game.rue:4:5") (q . "before error")))
+            let program = Program::from_hex(concat!(
+                "ff04ffff8f6e6f745f616e5f6f70657261746f7280ffff8b64656275675f7072696e74",
+                "ffff018c67616d652e7275653a343a35ffff018c6265666f7265206572726f728080",
+            ))?
+            .to_nodeptr(&mut channel.allocator)?;
+            chia_gaming::clvm_execution::run_clvm_with_runtime_prints(
+                &mut channel.allocator,
+                program,
+                clvmr::allocator::NodePtr::NIL,
+                1_000_000,
+            )?;
+            Ok(())
+        }
+
+        #[test]
+        fn failed_channel_action_emits_print_and_diagnostic_before_error() {
+            let mut channel = session();
+            let output = channel.action(None, fail_after_printing).unwrap();
+            assert!(!output.action_succeeded);
+            let events: Vec<_> = output.drain.events.into_iter().collect();
+            assert!(matches!(&events[0], GameSessionEvent::Log(line)
+                if line == "[clvm-print] game.rue:4:5: \"before error\""));
+            assert!(matches!(&events[1], GameSessionEvent::ClvmDiagnostic(_)));
+            assert!(matches!(
+                &events[2],
+                GameSessionEvent::Notification(GameNotification::ActionFailed { .. })
+            ));
+            let followup = channel.collect(true).unwrap();
+            assert!(!followup.drain.events.iter().any(|event| matches!(
+                event,
+                GameSessionEvent::Log(_) | GameSessionEvent::ClvmDiagnostic(_)
+            )));
+        }
+
+        #[test]
+        fn thrown_channel_call_transfers_output_without_leaving_stale_events() {
+            let mut channel = session();
+            let baseline = allocation_counts(&channel);
+            let (error, output) = call_with_error_output(&mut channel, fail_after_printing)
+                .expect_err("call should throw");
+            let token = error
+                .diagnostic_token()
+                .expect("original error token")
+                .to_string();
+            assert_eq!(
+                output.prints,
+                ["[clvm-print] game.rue:4:5: \"before error\""]
+            );
+            assert_eq!(output.diagnostic_tokens, [token]);
+            assert_eq!(allocation_counts(&channel), baseline);
+            for _ in 0..2 {
+                let followup = channel.collect(true).unwrap();
+                assert!(!followup.drain.events.iter().any(|event| matches!(
+                    event,
+                    GameSessionEvent::Log(_) | GameSessionEvent::ClvmDiagnostic(_)
+                )));
+            }
         }
 
         #[test]
@@ -1004,6 +1166,9 @@ mod gaming_wasm {
             )),
             GameSessionEvent::Notification(n) => notification_event_to_js(n),
             GameSessionEvent::Log(line) => json_event_to_js(serde_json::json!({ "Log": line })),
+            GameSessionEvent::ClvmDiagnostic(token) => {
+                json_event_to_js(serde_json::json!({ "ClvmDiagnostic": token }))
+            }
             GameSessionEvent::CoinSolutionRequest(coin) => json_event_to_js(
                 serde_json::json!({ "CoinSolutionRequest": coin_string_to_hex(coin) }),
             ),

@@ -2,7 +2,6 @@ use std::borrow::Borrow;
 use std::rc::Rc;
 
 use clvm_traits::ToClvm;
-use clvmr::run_program;
 use serde::{Deserialize, Serialize};
 
 use crate::channel_state::game_handler::{
@@ -11,11 +10,12 @@ use crate::channel_state::game_handler::{
 use crate::channel_state::game_start_info::GameStartInfo;
 use crate::channel_state::types::{Evidence, ReadableMove, StateUpdateProgram};
 
+use crate::clvm_execution::run_clvm_probe_with_runtime_prints;
 use crate::common::standard_coin::ChiaIdentity;
 use crate::common::types::{
-    chia_dialect, u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend,
-    CoinString, Error, Hash, IntoErr, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash,
-    Sha256tree, Spend, MAX_BLOCK_COST_CLVM,
+    u64_from_atom, Aggsig, AllocEncoder, Amount, CoinCondition, CoinSpend, CoinString, Error, Hash,
+    IntoErr, Program, ProgramRef, PublicKey, Puzzle, PuzzleHash, Sha256tree, Spend,
+    MAX_BLOCK_COST_CLVM,
 };
 use crate::referee::my_turn::{MyTurnReferee, MyTurnRefereeGameState};
 use crate::referee::referee_initial_setup;
@@ -420,14 +420,12 @@ impl TheirTurnReferee {
             .allocator()
             .new_pair(curried_args, slash_args)
             .into_gen()?;
-        Ok(run_program(
-            allocator.allocator(),
-            &chia_dialect(),
+        Ok(run_clvm_probe_with_runtime_prints(
+            allocator,
             referee_clvm,
             args,
             MAX_BLOCK_COST_CLVM,
-        )
-        .is_ok())
+        ))
     }
 
     fn inspect_peer_move(

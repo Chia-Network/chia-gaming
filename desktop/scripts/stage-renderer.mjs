@@ -5,8 +5,16 @@
 // script. Floor checks at the end fail the build loudly rather than shipping a
 // bundle whose wasm or chialisp assets are missing.
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DESKTOP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -66,6 +74,25 @@ const clsp = join(OUT, 'clsp');
 if (!existsSync(clsp) || readdirSync(clsp).length === 0) {
   errors.push('clsp/ is missing or empty (no compiled .hex)');
 }
+
+function floorCheckDebugSidecars(dir) {
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    if (statSync(path).isDirectory()) {
+      floorCheckDebugSidecars(path);
+    } else if (
+      path.endsWith('.clvm.bin') &&
+      !path.endsWith('.debug.clvm.bin') &&
+      !path.endsWith('factory_args.clvm.bin')
+    ) {
+      const sidecar = path.replace(/\.clvm\.bin$/, '.debug.clvm.bin');
+      if (!existsSync(sidecar)) {
+        errors.push(`missing debug sidecar for ${relative(OUT, path)}`);
+      }
+    }
+  }
+}
+floorCheckDebugSidecars(OUT);
 
 if (errors.length) {
   throw new Error(`stage-renderer: incomplete renderer in ${OUT}:\n  - ${errors.join('\n  - ')}`);

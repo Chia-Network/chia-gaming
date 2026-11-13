@@ -91,6 +91,7 @@ export type GameUpdate =
       moverShare: bigint;
     }
   | { type: 'message-readable'; memberIndex: number; readable: Program }
+  | { type: 'move-rejected'; memberIndex: number }
   | { type: 'hand-ended'; memberIndex: number; outcome: SettlementOutcome | null };
 
 export interface GameHandState<TState> {

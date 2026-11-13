@@ -118,6 +118,7 @@ export type SessionMachineEvent =
       id: string;
       terminal: GameTerminalModel;
     }
+  | { type: 'notification-move-rejected'; id: string }
   | { type: 'notification-abandoned' }
   | {
       type: 'hand-state-changed';
