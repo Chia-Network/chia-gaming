@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto';
+import { expectConsoleError } from '../../../scripts/testSetup';
 import { createApplication } from '../application/Application';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { storageRepository } from '../session/storageRepository';
@@ -7,6 +8,7 @@ import { cloudBlockchainInfo } from '../wallet/CloudBlockchainInterface';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { sageBlockchainInfo } from '../wallet/SageBlockchainInterface';
 import { WalletConnection } from '../wallet/WalletConnection';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
 import type { ConnectionSetup } from '../../types/ChiaGaming';
 
 function deferred<T>() {
@@ -18,6 +20,129 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
+
+describe('Cloud vault selection through the wallet owner', () => {
+  const first = { id: 'Wallet_a', name: 'First', address: null };
+  const second = { id: 'Wallet_b', name: 'Second', address: null };
+
+  beforeEach(() => {
+    jest.spyOn(cloudBlockchainInfo, 'beginConnect').mockResolvedValue({
+      qrUri: '',
+      skipQr: true,
+      finalize: jest.fn(),
+    });
+    jest.spyOn(cloudBlockchainInfo, 'isConnected').mockReturnValue(false);
+    jest.spyOn(cloudBlockchainInfo, 'isReadyForPlay').mockReturnValue(false);
+    jest.spyOn(cloudBlockchainInfo, 'onConnectionChange').mockReturnValue(() => {});
+    jest.spyOn(cloudBlockchainInfo, 'onPlayReadinessChange').mockReturnValue(() => {});
+    jest.spyOn(cloudBlockchainInfo, 'listWallets').mockResolvedValue([first, second]);
+    jest.spyOn(cloudBlockchainInfo, 'getWalletIdentity').mockReturnValue(first);
+  });
+
+  it('clears replaced grants and ignores an older connection list', async () => {
+    const wallet = new WalletConnection(() => {});
+    try {
+      await wallet.connect('cloud');
+      expect(wallet.view.grantedWallets).toEqual([first, second]);
+      const oldList = deferred<(typeof first)[]>();
+      jest.mocked(cloudBlockchainInfo.listWallets).mockReturnValueOnce(oldList.promise);
+      jest.mocked(cloudBlockchainInfo.getWalletIdentity).mockReturnValue(second);
+      await wallet.connect('cloud');
+      expect(wallet.view.walletIdentity).toEqual(second);
+      expect(wallet.view.grantedWallets).toEqual([]);
+      jest.mocked(cloudBlockchainInfo.listWallets).mockResolvedValue([second]);
+      await wallet.connect('cloud');
+      oldList.resolve([first]);
+      await Promise.resolve();
+      expect(wallet.view.grantedWallets).toEqual([second]);
+    } finally {
+      wallet.stopLocalActivity();
+    }
+  });
+
+  it('keeps replaced grants empty when the new list fails', async () => {
+    const wallet = new WalletConnection(() => {});
+    try {
+      await wallet.connect('cloud');
+      const list = deferred<(typeof first)[]>();
+      jest.mocked(cloudBlockchainInfo.listWallets).mockReturnValueOnce(list.promise);
+      await wallet.connect('cloud');
+      expect(wallet.view.grantedWallets).toEqual([]);
+      expectConsoleError('[wallet] listing granted wallets failed');
+      list.reject(new Error('Wallet unavailable'));
+      await Promise.resolve();
+      expect(wallet.view.grantedWallets).toEqual([]);
+    } finally {
+      wallet.stopLocalActivity();
+    }
+  });
+
+  it('exposes balance failures without treating unknown funds as zero, then clears on success', async () => {
+    const start = jest.spyOn(BlockchainPoller.prototype, 'startBalanceInterest');
+    const wallet = new WalletConnection(() => {});
+    try {
+      await wallet.connect('cloud');
+      const callbacks = start.mock.calls.at(-1)![1];
+      callbacks.onBalance(100n);
+      callbacks.onError!(new Error('Wallet unavailable'));
+      expect(wallet.view.balance).toBeUndefined();
+      expect(wallet.view).toMatchObject({ balanceError: 'Wallet unavailable' });
+      callbacks.onBalance(200n);
+      expect(wallet.view).toMatchObject({ balance: 200n, balanceError: null });
+    } finally {
+      wallet.stopLocalActivity();
+    }
+  });
+
+  it.each([false, true])(
+    'finishes a vault switch only for its live owner, retired=%s',
+    async (retired) => {
+      const finish = deferred<void>();
+      jest.spyOn(cloudBlockchainInfo, 'selectWallet').mockReturnValue(finish.promise);
+      const emit = jest.fn();
+      const wallet = new WalletConnection(emit);
+      try {
+        await wallet.connect('cloud');
+        expect(wallet.view.grantedWallets).toEqual([first, second]);
+        const switching = wallet.selectWallet(second.id);
+        expect(wallet.view).toMatchObject({
+          switchingWallet: true,
+          walletIdentity: first,
+          balance: undefined,
+        });
+        if (retired) wallet.stopLocalActivity();
+        emit.mockClear();
+        jest.mocked(cloudBlockchainInfo.getWalletIdentity).mockReturnValue(second);
+        finish.resolve();
+        await switching;
+        if (retired) {
+          expect(emit).not.toHaveBeenCalled();
+          expect(wallet.sessionAccess()).toBeNull();
+          expect(wallet.view.walletIdentity).toBeNull();
+        } else {
+          expect(wallet.view).toMatchObject({ switchingWallet: false, walletIdentity: second });
+          expect(wallet.sessionAccess()).not.toBeNull();
+        }
+      } finally {
+        wallet.stopLocalActivity();
+      }
+    },
+  );
+
+  it('discards a granted-vault list that arrives after retirement', async () => {
+    const list = deferred<(typeof first)[]>();
+    jest.mocked(cloudBlockchainInfo.listWallets).mockReturnValue(list.promise);
+    const emit = jest.fn();
+    const wallet = new WalletConnection(emit);
+    await wallet.connect('cloud');
+    wallet.stopLocalActivity();
+    emit.mockClear();
+    list.resolve([first, second]);
+    await Promise.resolve();
+    expect(emit).not.toHaveBeenCalled();
+    expect(wallet.view.grantedWallets).toEqual([]);
+  });
+});
 
 beforeEach(async () => {
   storageRepository._resetForTests();

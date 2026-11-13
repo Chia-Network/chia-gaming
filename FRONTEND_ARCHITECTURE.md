@@ -1725,6 +1725,34 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   successful broadcast) or a failure with no peer answer falls back to Coinset
   `push_tx` with the exact bytes, where a duplicate is acknowledged.
 
+  **Balance and top-up.** Cloud's `getBalance` reads the XCH asset's
+  `spendableAmount`, which excludes coins locked in pending offers and Buy XCH
+  payouts still inside their clawback window. The optional
+  `getTopUpOptions()` interface method returns the wallet's receive address
+  and the Cloud Wallet `/buy-xch?walletId=…` page, whose `walletId` preselects
+  the vault the game funds from. The public testnet Cloud Wallet sells no XCH,
+  so testnet offers the link only for an overridden (local) Cloud Wallet.
+  Application compares the balance against buy-in plus `defaultFee` for the
+  New Session dialog and rejects Accept while funds are short. Shell displays
+  the shortfall and Buy/Deposit actions; WalletConnection increases balance
+  polling to every 5s until the shortfall clears.
+  On the web, Buy opens a popup. When an order goes through, the page posts
+  `{ type: 'chia-cloud-wallet/buy-order', status: 'submitted' }` to its
+  opener, accepted only from the Cloud Wallet origin and that popup, and Shell
+  shows that the purchase was placed. The message carries no order details and
+  never counts as funds: only the balance enables Accept. The desktop app opens
+  the page in the system browser through `openInBrowser`, as it does for
+  signature approval, so there the balance poll alone reports the result.
+  A grant can cover several wallets and the game funds from one of them, so
+  `getWalletIdentity()` gives the Wallet tab that wallet's name and address.
+  When the grant covers more than one, the tab lists them (`listWallets()`)
+  and requests a switch through Application, which permits it only while no
+  session or acceptance is live: channel funding and fee reservations belong
+  to the wallet that made them. WalletConnection owns the pending switch,
+  refreshes balance on completion, and ignores results after retirement. The
+  provider keeps the previous wallet if reading the requested wallet fails.
+
+
   **Fee rates.** When its mempool is full, the node rejects fees below 5 mojos
   per cost unit with `INVALID_FEE_TOO_CLOSE_TO_ZERO`, including zero fees.
   `INVALID_FEE_LOW_FEE` means the rate does not beat the current competing
@@ -1734,6 +1762,7 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   fee editors accept any nonnegative amount without promising admission. Error
   messages distinguish the rate floor from the competitive threshold and do not
   recommend zero as a bypass. For ordinary WalletConnect submissions,
+
   `createFeeSpend` makes a persisted signed offer whose wallet spend asserts the
   Rust-specified target coin is spent concurrently and reserves the fee. Cloud
   Wallet returns its native-fee offer instead. JavaScript passes

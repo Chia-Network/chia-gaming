@@ -446,6 +446,22 @@ export type WalletOfferProvider =
   | RecoverableWalletOfferProvider
   | RecoverableAfterBeginWalletOfferProvider;
 
+/** How the connected wallet is shown to the user. */
+export type WalletIdentity = {
+  id: string;
+  name: string | null;
+  /** Bech32 receive address. */
+  address: string | null;
+};
+
+/** Ways the user can add XCH to the connected wallet. */
+export type WalletTopUpOptions = {
+  /** Wallet-hosted purchase page for this wallet; null where purchase is unavailable. */
+  buyUrl: string | null;
+  /** Bech32 receive address for transfers from any other wallet. */
+  depositAddress: string | null;
+};
+
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
   fundingMode?: 'offer-settlement';
@@ -461,7 +477,19 @@ export interface InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<WalletSubmitOutcome>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
+  /** Wallet funds available to fund a channel now. */
   getBalance(): Promise<bigint>;
+  /** Absent for backends that offer no top-up path. */
+  getTopUpOptions?(): WalletTopUpOptions;
+  /** Which of the user's wallets is connected; null until it is known. */
+  getWalletIdentity?(): WalletIdentity | null;
+  /** The wallets the user let the game use, for backends that grant several. */
+  listWallets?(): Promise<WalletIdentity[]>;
+  /**
+   * Switches to `walletId`, one of `listWallets()`, keeping the current wallet
+   * if that fails. Never call it while a session holds funds.
+   */
+  selectWallet?(walletId: string): Promise<void>;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
   selectCoins(uniqueId: string, amount: bigint): Promise<string | null>;
   getHeightInfo(): Promise<bigint>;

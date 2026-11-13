@@ -21,7 +21,7 @@ import {
 } from '../lib/session/model';
 import { parseOptionalBigInt } from '../lib/session/peerSessionParams';
 import { installHubIframeAuthentication } from '../services/hubIframeAuthentication';
-import { CoinOfInterestEntry, HubLiveness } from '../types/ChiaGaming';
+import { CoinOfInterestEntry, HubLiveness, WalletIdentity } from '../types/ChiaGaming';
 import { formatMojos } from '../util';
 import { isElectronDistribution } from '../util/distribution';
 import { Button } from './ui/button';
@@ -34,6 +34,7 @@ import GameSession, { GameSessionErrorBoundary, UncaughtClientErrorReporter } fr
 import { HubIframe } from './HubIframe';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 import { Setup2048Provider } from './Setup2048';
+import { WalletTopUp } from './WalletTopUp';
 import WalletRecoveryNotice from './WalletRecoveryNotice';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { ChevronDownIcon } from 'lucide-react';
@@ -86,6 +87,13 @@ function SessionBuyIn({
       Unroll timeout: <strong>{effectiveUnrollTimeout.toString()}</strong> blocks
     </>
   );
+}
+
+function walletLabel(wallet: WalletIdentity): string {
+  const name = wallet.name ?? 'Wallet';
+  return wallet.address
+    ? `${name} (${wallet.address.slice(0, 8)}…${wallet.address.slice(-4)})`
+    : name;
 }
 
 const TAB_DEFS: { id: TabId; label: string }[] = [
@@ -372,6 +380,9 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     sessionPhase,
     coins,
     pendingAdvisory,
+    consentShortfall,
+    topUpOptions,
+    walletSwitchAllowed,
     blockchainReady,
     pendingProposal,
     activeTab,
@@ -402,7 +413,24 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     preparingConnection,
     error: connectError,
     balance,
+    balanceError,
+    walletIdentity,
+    grantedWallets,
+    switchingWallet,
+    switchWalletError,
   } = walletView;
+  const balanceStatus =
+    walletConnected && balance === undefined ? (
+      <p
+        className={balanceError ? 'text-sm text-alert-text mb-4' : 'text-sm text-canvas-text mb-4'}
+        role="status"
+      >
+        {balanceError
+          ? `Unable to load wallet balance: ${balanceError}. Check your wallet connection; retrying automatically.`
+          : 'Checking wallet balance…'}
+      </p>
+    ) : null;
+  const awaitingTopUp = consentShortfall > 0n;
   const [showTransactionPublishControl, setShowTransactionPublishControl] = useState(false);
   useEffect(() => {
     if (showTransactionPublishControl) return;
@@ -724,10 +752,22 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             unrollTimeout={pendingAdvisory.unroll_timeout}
           />
         </p>
+        {balanceStatus}
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
-            disabled={!walletConnected || !blockchainReady}
+            disabled={
+              !walletConnected ||
+              !blockchainReady ||
+              balance === undefined ||
+              awaitingTopUp ||
+              switchingWallet
+            }
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -754,10 +794,22 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             unrollTimeout={pendingProposal.unroll_timeout}
           />
         </p>
+        {balanceStatus}
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
-            disabled={!walletConnected || !blockchainReady}
+            disabled={
+              !walletConnected ||
+              !blockchainReady ||
+              balance === undefined ||
+              awaitingTopUp ||
+              switchingWallet
+            }
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -964,11 +1016,59 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   <span className="inline-block w-3 h-3 rounded-full bg-success-solid" />
                   <span className="text-lg font-semibold text-canvas-text-contrast">Connected</span>
                 </div>
+                {walletIdentity && grantedWallets.length > 1 ? (
+                  <label className="flex flex-col gap-1 w-full max-w-xs text-sm text-canvas-text">
+                    <span>Play with</span>
+                    {/* appearance-none drops the platform chrome, which ignores padding, so
+                        the select sizes like the inputs; the chevron replaces its arrow. */}
+                    <div className="relative">
+                      <select
+                        value={walletIdentity.id}
+                        disabled={!walletSwitchAllowed}
+                        onChange={(event) =>
+                          dispatch({ type: 'wallet-switch', walletId: event.target.value })
+                        }
+                        className="w-full appearance-none pl-3 pr-8 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {grantedWallets.map((wallet) => (
+                          <option key={wallet.id} value={wallet.id}>
+                            {walletLabel(wallet)}
+                          </option>
+                        ))}
+                      </select>
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-canvas-text"
+                      >
+                        ▾
+                      </span>
+                    </div>
+                    {!walletSwitchAllowed && (
+                      <span className="text-xs">Finish the session to switch wallets.</span>
+                    )}
+                    {switchWalletError && (
+                      <span className="text-xs text-alert-text break-words">
+                        Could not switch wallets: {switchWalletError}
+                      </span>
+                    )}
+                  </label>
+                ) : (
+                  walletIdentity && (
+                    <p
+                      className="text-sm text-canvas-text"
+                      title={walletIdentity.address ?? undefined}
+                    >
+                      {walletLabel(walletIdentity)}
+                    </p>
+                  )
+                )}
+                {balanceStatus}
                 {balance !== undefined && (
                   <p className="text-2xl font-bold text-canvas-text-contrast">
                     {balance.toLocaleString()} {currency.mojos}
                   </p>
                 )}
+                {topUpOptions && <WalletTopUp options={topUpOptions} shortfall={0n} />}
                 <div className="w-full max-w-xs text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>
