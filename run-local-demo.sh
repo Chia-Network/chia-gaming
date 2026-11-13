@@ -247,7 +247,7 @@ node "$SCRIPT_DIR/static-server.js" "$GAME_SERVE" "$GAME_PORT" &
 PIDS+=($!)
 
 echo "=== Starting hub (hub-service + hub-frontend on port $HUB_PORT) ==="
-(cd "$HUB_SERVICE_DIR" && PORT=$HUB_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$HUB_PORT" --dir "$HUB_SERVE") &
+(cd "$HUB_SERVICE_DIR" && PORT=$HUB_PORT exec node ./dist/index-rollup.cjs --self "http://localhost:$HUB_PORT" --dir "$HUB_SERVE" --redirect-html-to "http://localhost:$GAME_PORT") &
 PIDS+=($!)
 
 echo "=== Waiting for services ==="

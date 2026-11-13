@@ -65,7 +65,7 @@ describe('wallet recovery notice after changing wallets', () => {
 
   async function mount() {
     await act(async () => {
-      const wallet = new WalletConnection('test', (event) => {
+      const wallet = new WalletConnection((event) => {
         if (event.type === 'view' && renderer)
           renderer.update(<WalletRecoveryNotice notice={event.view.recoveryNotice} />);
       });

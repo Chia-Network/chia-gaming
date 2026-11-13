@@ -124,6 +124,7 @@ export class CoinsetClient {
       }>('get_coin_records_by_names', {
         names: uniqueNames,
         include_spent_coins: true,
+        allow_missing: true,
       });
       if (response.success !== true || !Array.isArray(response.coin_records)) {
         throw new Error('Malformed Coinset get_coin_records_by_names response');

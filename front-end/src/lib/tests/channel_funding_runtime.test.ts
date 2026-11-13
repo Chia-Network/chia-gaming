@@ -92,6 +92,65 @@ describe('durable channel funding record', () => {
     controller.cleanup();
   });
 
+  it('waits for readiness after a funding preflight without recording a lost wallet mutation', async () => {
+    let ready = true;
+    let readiness: (ready: boolean) => void = () => {};
+    const begin = jest
+      .fn()
+      .mockImplementationOnce(async () => {
+        ready = false;
+        readiness(false);
+        return { kind: 'unavailable', mutation: 'not-started', reason: 'Wallet is syncing' };
+      })
+      .mockResolvedValue({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer1synced' },
+        tradeId: 'synced-trade',
+      });
+    const { controller, cradle, blockchain } = setup(jest.fn(), {
+      ...bestEffortWalletRpc(begin),
+      isReadyForPlay: () => ready,
+      onPlayReadinessChange: (listener) => {
+        readiness = listener;
+        return () => {};
+      },
+    });
+    cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+    cradle.wallet_callback_failed = jest.fn(() => wasmResult());
+    try {
+      commitRuntime(controller, new ControlledRuntime());
+      controller.setWallet(blockchain);
+      const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
+      expect(cradle.wallet_callback_failed).not.toHaveBeenCalled();
+      for (let n = 0; n < 3; n++) {
+        controller.flushDeferredWork();
+        await controller.flushPendingWork();
+      }
+      expect(begin).toHaveBeenCalledTimes(1);
+      ready = true;
+      readiness(true);
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+      expect(begin).toHaveBeenCalledTimes(2);
+      expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1synced');
+      expect(storageRepository.channelFundingOperations()).toEqual([
+        expect.objectContaining({
+          stage: 'awaiting-channel',
+          providerReservationId: 'synced-trade',
+        }),
+      ]);
+      expect(storageRepository.channelFundingOperations()[0]).not.toHaveProperty('orphanRisk');
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+    }
+  });
+
   it('keeps the session while a replacement wallet resumes monitoring and funds new work', async () => {
     const { controller, cradle } = setup(jest.fn());
     commitRuntime(controller, new ControlledRuntime());

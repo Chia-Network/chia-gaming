@@ -35,6 +35,11 @@ import {
   type WalletProviderRegistryEvent,
 } from './walletProviderRegistry';
 import { StorageAuthorityLostError } from './indexedDb';
+import {
+  finishRetiredFundingCancellation,
+  flushFundingCancellations,
+  runFundingCancellation,
+} from './walletReservationRetirement';
 
 interface FundingFlight extends ProviderFlight {
   completion?: WalletOfferCompletion;
@@ -262,6 +267,7 @@ export class ChannelFundingRuntime {
     }
     if (
       completion.kind === 'unavailable' &&
+      completion.mutation !== 'not-started' &&
       !exactRecovery &&
       !replacement &&
       canLosePreIdResponse(provider)
@@ -472,9 +478,7 @@ export class ChannelFundingRuntime {
       return Promise.resolve();
     if (!this.providerRegistry.provider(entry.owner.providerScope)) return Promise.resolve();
     const generation = storageRepository.lifecycleGeneration;
-    return coalesceProviderFlight(this.inFlight, `cancel:${providerReservationId}`, () =>
-      this.performCancellation(entry, generation),
-    );
+    return runFundingCancellation(entry, () => this.performCancellation(entry, generation));
   }
 
   private async performCancellation(
@@ -491,11 +495,19 @@ export class ChannelFundingRuntime {
         entry.providerReservationId,
         entry.stage === 'cancelling' ? entry.recoveryId : undefined,
       );
-      if (
-        !storageRepository.isGenerationCurrent(generation) ||
-        this.reservation(entry.providerReservationId)?.stage !== entry.stage
-      )
+      if (!storageRepository.isGenerationCurrent(generation)) return;
+      const remaining = this.reservation(entry.providerReservationId);
+      if (!remaining) {
+        if (outcome.status === 'pending') {
+          await finishRetiredFundingCancellation(provider, {
+            ...entry,
+            stage: 'cancelling',
+            recoveryId: outcome.recoveryId,
+          });
+        }
         return;
+      }
+      if (remaining.stage !== entry.stage) return;
       if (
         outcome.status === 'unavailable' &&
         provider.capability === 'recoverable-after-begin' &&
@@ -601,27 +613,24 @@ export class ChannelFundingRuntime {
     const restored = this.inFlight.has(restoredKey);
     const epoch = BigInt(this.providerRegistry.readinessEpoch(entry.owner.providerScope));
     if (epoch === 0n || (!restored && epoch <= entry.lastAttemptEpoch)) return;
-    const flightKey =
-      entry.stage === 'best-effort-cancellation-uncertain'
-        ? `cancel:${entry.providerReservationId}`
-        : `replace:${channelFundingKey(entry.owner, entry.purpose)}`;
     if (entry.stage === 'best-effort-cancellation-uncertain') {
-      void coalesceProviderFlight(
-        this.inFlight,
-        flightKey,
+      void runFundingCancellation(
+        entry,
         async () => {
           const generation = storageRepository.lifecycleGeneration;
-          const current = this.reservation(entry.providerReservationId);
-          if (current?.stage !== 'best-effort-cancellation-uncertain') return;
-          if (restored || epoch > current.lastAttemptEpoch) {
-            this.replace(current, { ...current, lastAttemptEpoch: epoch });
+          const live = this.reservation(entry.providerReservationId);
+          if (live && live.stage !== 'best-effort-cancellation-uncertain') return;
+          // Retirement may remove the entry before this flight launches. Its
+          // captured reservation still owns the one best-effort cancellation.
+          let current = live ?? entry;
+          if (live && (restored || epoch > current.lastAttemptEpoch)) {
+            const updated = { ...current, lastAttemptEpoch: epoch };
+            this.replace(current, updated);
+            current = updated;
           }
           this.inFlight.delete(restoredKey);
           await checkpointProviderState(generation);
-          await this.performCancellation(
-            this.reservation(entry.providerReservationId)!,
-            generation,
-          );
+          await this.performCancellation(current, generation);
         },
         () => {
           const current = this.reservation(entry.providerReservationId);
@@ -634,7 +643,7 @@ export class ChannelFundingRuntime {
     }
     void coalesceProviderFlight(
       this.inFlight,
-      flightKey,
+      `replace:${channelFundingKey(entry.owner, entry.purpose)}`,
       (flight: FundingFlight) =>
         this.launchUncertainCreation(entry, epoch, restored, restoredKey, flight),
       () => {
@@ -695,6 +704,7 @@ export class ChannelFundingRuntime {
 
   async flush(): Promise<void> {
     for (;;) {
+      await flushFundingCancellations();
       const active = [...this.inFlight.entries()]
         .filter(([key]) => !key.startsWith('completed:') && !key.startsWith('restored:'))
         .map(([, flight]) => flight.promise);

@@ -30,7 +30,7 @@ function clearGameSession(): Promise<void> {
 }
 
 describe('flat state', () => {
-  it('defaults the transaction fee to the effective nonzero floor', () => {
+  it('defaults the transaction fee without treating it as a network minimum', () => {
     expect(storageRepository.query('defaultFee')).toBe(100_000_000n);
   });
 
@@ -38,6 +38,40 @@ describe('flat state', () => {
     const id = storageRepository.getPlayerId();
     expect(id).toBeTruthy();
     expect(storageRepository.getPlayerId()).toBe(id);
+  });
+
+  it('keeps the saved player ID when startup reads identity before claiming storage', async () => {
+    const savedPlayerId = storageRepository.getPlayerId();
+    await saveLiveFields({ ...sampleSession, playerId: savedPlayerId });
+    const owner = {
+      installationPlayerId: savedPlayerId,
+      peerSessionId: 'saved-session',
+      providerScope: { provider: 'simulator' as const, identity: savedPlayerId },
+    };
+    storageRepository.replaceFeeAttachments([
+      {
+        owner,
+        submissionId: 'retained-submission',
+        providerReservationId: 'retained-fee',
+        stage: 'retained-for-replay',
+        reason: 'saved-fee-for-replay',
+      },
+    ]);
+    await storageRepository.checkpointDomainMutations();
+
+    for (let reload = 0; reload < 2; reload++) {
+      storageRepository._resetForTests();
+      expect(storageRepository.getPlayerId()).not.toBe(savedPlayerId);
+      await storageRepository.updatePreference({ key: 'alias', value: 'Before claim' });
+      const claimed = await storageRepository.claimApplicationState();
+      expect(claimed.identity.playerId).toBe(savedPlayerId);
+      expect(storageRepository.getPlayerId()).toBe(savedPlayerId);
+      expect(claimed.feeAttachments[0]?.owner).toEqual(owner);
+      expect(claimed.feeAttachments[0]?.stage).toBe('retained-for-replay');
+      expect(claimed.preferences.alias).toBe('Before claim');
+      await storageRepository.checkpointDomainMutations();
+      expect((await readApplicationState())?.identity.playerId).toBe(savedPlayerId);
+    }
   });
 
   it('getSessionId generates and persists a session ID', () => {
@@ -212,6 +246,19 @@ describe('flat state', () => {
     expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { hubUrl: 'http://localhost:3003' },
     });
+  });
+
+  it('keeps lastHubUrl after the hub disconnects and the app restarts', async () => {
+    await storageRepository.updatePreference({ key: 'lastHubUrl', value: 'https://my-hub.test' });
+    await storageRepository.updatePreference({ key: 'hubUrl', value: 'https://my-hub.test' });
+    await storageRepository.updatePreference({ key: 'hubUrl', value: undefined });
+    await storageRepository.checkpointDomainMutations();
+
+    storageRepository._resetForTests();
+    await storageRepository.claimApplicationState();
+
+    expect(storageRepository.query('lastHubUrl')).toBe('https://my-hub.test');
+    expect(storageRepository.query('hubUrl')).toBeUndefined();
   });
 
   it('aggregate clear keeps logs, connection prefs, and pre-cradle handshake', async () => {
