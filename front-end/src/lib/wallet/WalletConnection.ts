@@ -40,6 +40,7 @@ export interface WalletView {
   showSetup: boolean;
   error: string | null;
   balance: bigint | undefined;
+  balanceError: string | null;
 }
 export type WalletEvent =
   | { type: 'view'; view: WalletView }
@@ -76,6 +77,7 @@ export class WalletConnection {
     showSetup: false,
     error: null,
     balance: undefined,
+    balanceError: null,
   };
   private provider: InternalBlockchainInterface | null = null;
   private setup: ConnectionSetup | null = null;
@@ -119,7 +121,7 @@ export class WalletConnection {
     if (active) this.poller?.start();
     else this.poller?.pauseChainPolling();
   }
-  setAwaitingTopUp(active: boolean): void {
+  setFundingBalancePolling(active: boolean): void {
     this.poller?.setBalanceInterval(
       active ? TOP_UP_BALANCE_POLL_INTERVAL_MS : BALANCE_POLL_INTERVAL_MS,
     );
@@ -169,6 +171,9 @@ export class WalletConnection {
     this.update({
       hasProvider: true,
       walletIdentity: provider.getWalletIdentity?.() ?? null,
+      grantedWallets: [],
+      balance: undefined,
+      balanceError: null,
       connected: true,
       recovering: false,
       connecting: false,
@@ -211,7 +216,12 @@ export class WalletConnection {
     if (!provider?.selectWallet || this.view.connecting || this.view.switchingWallet) return;
     const attempt = this.connectionAttempt;
     this.poller?.stopBalanceInterest();
-    this.update({ switchingWallet: true, switchWalletError: null, balance: undefined });
+    this.update({
+      switchingWallet: true,
+      switchWalletError: null,
+      balance: undefined,
+      balanceError: null,
+    });
     try {
       await provider.selectWallet(walletId);
       if (attempt === this.connectionAttempt && this.provider === provider)
@@ -230,9 +240,14 @@ export class WalletConnection {
   watchBalance(): void {
     this.poller?.stopBalanceInterest();
     this.poller?.startBalanceInterest(BALANCE_POLL_INTERVAL_MS, {
-      onBalance: (balance) => this.update({ balance }),
-      onError: () => {},
+      onBalance: (balance) => this.update({ balance, balanceError: null }),
+      onError: (error) =>
+        this.update({
+          balance: undefined,
+          balanceError: error instanceof Error ? error.message : String(error),
+        }),
     });
+    this.update({ balance: undefined, balanceError: null });
   }
 
   async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
@@ -379,6 +394,7 @@ export class WalletConnection {
       preparingConnection: false,
       showSetup: false,
       balance: undefined,
+      balanceError: null,
     });
     try {
       await provider?.disconnect();
@@ -410,6 +426,8 @@ export class WalletConnection {
       recovering: false,
       walletIdentity: null,
       grantedWallets: [],
+      balance: undefined,
+      balanceError: null,
       switchingWallet: false,
       switchWalletError: null,
     });

@@ -14,6 +14,7 @@ import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset
 import * as sessionHost from '../session/sessionHost';
 import { storageRepository } from '../session/storageRepository';
 import * as wasmInit from '../session/wasmLoader';
+import { BlockchainPoller, TOP_UP_BALANCE_POLL_INTERVAL_MS } from '../wallet/BlockchainPoller';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
 import {
@@ -224,6 +225,8 @@ describe('Shell production restore composition', () => {
         cancel: jest.fn(),
       });
       jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockResolvedValue(10n);
+      const interval = jest.spyOn(BlockchainPoller.prototype, 'setBalanceInterval');
+      const balanceInterest = jest.spyOn(BlockchainPoller.prototype, 'startBalanceInterest');
       let resolveBalance!: (balance: bigint) => void;
       jest.spyOn(realBlockchainInfo, 'getBalance').mockReturnValue(
         new Promise((resolve) => {
@@ -297,6 +300,12 @@ describe('Shell production restore composition', () => {
       });
       await waitForText(renderer!, 'New Session');
       expect(application.snapshot().walletView.balance).toBeUndefined();
+      await waitForText(renderer!, 'Checking wallet balance');
+      expect(interval).toHaveBeenLastCalledWith(TOP_UP_BALANCE_POLL_INTERVAL_MS);
+      act(() => balanceInterest.mock.calls.at(-1)![1].onError!(new Error('Wallet unavailable')));
+      await waitForText(renderer!, 'Unable to load wallet balance: Wallet unavailable');
+      expect(application.snapshot().consentShortfall).toBe(0n);
+      expect(interval).toHaveBeenLastCalledWith(TOP_UP_BALANCE_POLL_INTERVAL_MS);
       expect(renderer!.root.findByProps({ children: 'Accept' }).props.disabled).toBe(true);
       await act(async () => {
         await application.dispatch({ type: 'accept-session' });
@@ -309,6 +318,7 @@ describe('Shell production restore composition', () => {
       for (let n = 0; n < 30 && application.snapshot().walletView.balance === undefined; n++)
         await flushEffects();
       expect(application.snapshot().walletView.balance).toBe(1_000_000_000_000n);
+      expect(application.snapshot().walletView.balanceError).toBeNull();
       expect(renderer!.root.findByProps({ children: 'Accept' }).props.disabled).toBe(false);
     },
   );

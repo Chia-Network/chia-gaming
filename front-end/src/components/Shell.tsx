@@ -413,11 +413,23 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     preparingConnection,
     error: connectError,
     balance,
+    balanceError,
     walletIdentity,
     grantedWallets,
     switchingWallet,
     switchWalletError,
   } = walletView;
+  const balanceStatus =
+    walletConnected && balance === undefined ? (
+      <p
+        className={balanceError ? 'text-sm text-alert-text mb-4' : 'text-sm text-canvas-text mb-4'}
+        role="status"
+      >
+        {balanceError
+          ? `Unable to load wallet balance: ${balanceError}. Check your wallet connection; retrying automatically.`
+          : 'Checking wallet balance…'}
+      </p>
+    ) : null;
   const awaitingTopUp = consentShortfall > 0n;
   const [showTransactionPublishControl, setShowTransactionPublishControl] = useState(false);
   useEffect(() => {
@@ -740,6 +752,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             unrollTimeout={pendingAdvisory.unroll_timeout}
           />
         </p>
+        {balanceStatus}
         {awaitingTopUp && (
           <div className="mb-4">
             <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
@@ -781,6 +794,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             unrollTimeout={pendingProposal.unroll_timeout}
           />
         </p>
+        {balanceStatus}
         {awaitingTopUp && (
           <div className="mb-4">
             <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
@@ -1048,6 +1062,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     </p>
                   )
                 )}
+                {balanceStatus}
                 {balance !== undefined && (
                   <p className="text-2xl font-bold text-canvas-text-contrast">
                     {balance.toLocaleString()} {currency.mojos}

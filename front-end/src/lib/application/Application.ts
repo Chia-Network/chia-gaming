@@ -331,7 +331,11 @@ export function createApplication() {
     try {
       do {
         dirty = false;
-        walletOwner.setAwaitingTopUp(consentShortfall() > 0n);
+        walletOwner.setFundingBalancePolling(
+          consentShortfall() > 0n ||
+            ((sessions.state.pendingAdvisory !== null || sessions.state.pendingProposal !== null) &&
+              walletOwner.view.balance === undefined),
+        );
         updateAbandonTimer();
         updateRecovery();
         if (
