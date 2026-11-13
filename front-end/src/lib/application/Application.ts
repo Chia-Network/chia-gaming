@@ -15,7 +15,7 @@ import {
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import { isElectronDistribution } from '../../util/distribution';
+import { isElectronDistribution, isLocalDevHost } from '../../util/distribution';
 import { hubTrustError, requestHubTrust } from '../../util/hubTrust';
 import {
   acceptedHandNeedsGameTabAttention,
@@ -185,6 +185,7 @@ export type ApplicationIntent =
         | 'accept-session'
         | 'decline-session'
         | 'toggle-publish'
+        | 'request-full-reset'
         | 'confirm'
         | 'cancel-confirmation';
     }
@@ -294,6 +295,9 @@ export function createApplication() {
     update('transactionPublishNerfed', nerfed);
   }
   let started = false;
+  // Once a hard reset has torn the session down, nothing is left for the
+  // unload warning to protect, and it would veto the reset's own reload.
+  let hardResetStarted = false;
   const listeners = new Set<(event: ApplicationEvent) => void>();
   let frontend: SessionFrontend | null = null;
   let sessionPresentation: SessionPresentation | null = null;
@@ -480,6 +484,17 @@ export function createApplication() {
       },
     });
   };
+  const requestFullReset = () => {
+    update('confirmDialog', {
+      title: 'Reset everything?',
+      body: 'This deletes all data this app has saved in this browser, disconnects your wallet, and reloads. If a session is in progress you will lose the ability to resolve it and may lose the funds in it. This cannot be undone.',
+      confirmLabel: 'Full reset',
+      onConfirm: () => {
+        update('confirmDialog', null);
+        return recovery.retryHardReset();
+      },
+    });
+  };
   let hubWsUp = false;
   let lastHubActivity = 0;
   let pendingHubRemapEscalation: {
@@ -488,6 +503,8 @@ export function createApplication() {
   } | null = null;
   const recovery = new Recovery(
     {
+      // Local dev keeps the Resume / Start over choice; everyone else resumes.
+      autoResume: !isLocalDevHost(),
       onSessionId: (value) => update('sessionId', value),
       onRestore: async (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
@@ -511,7 +528,15 @@ export function createApplication() {
             save.preferences.blockchainType ?? storageRepository.query('blockchainType');
           if (bcType) void handleConnect(bcType, true);
         }
-        return { deferReady: source === 'automatic' && hasLiveSession };
+        // Non-active transports finish locally without session execution to
+        // report readiness. Only wait when performResume established it.
+        return {
+          deferReady:
+            source === 'automatic' &&
+            hasLiveSession &&
+            sessions.state.sessionConfig !== null &&
+            sessions.state.peerConn !== null,
+        };
       },
       onFreshClaim: (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
@@ -535,6 +560,7 @@ export function createApplication() {
         walletOwner.stopLocalActivity();
       },
       beforeHardReset: async () => {
+        hardResetStarted = true;
         detachSessionEvents?.();
         detachSessionEvents = undefined;
         frontend = null;
@@ -2550,6 +2576,8 @@ export function createApplication() {
         return handleDashboardAction(intent.action);
       case 'toggle-publish':
         return toggleTransactionPublishNerf();
+      case 'request-full-reset':
+        return requestFullReset();
       case 'history':
         return appendHistory(intent.line);
       case 'confirm':
@@ -2576,6 +2604,7 @@ export function createApplication() {
         ),
         (() => {
           const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (hardResetStarted) return;
             if (!shouldWarnOnSessionUnload(sessions.state.sessionPhase)) return;
             event.preventDefault();
             event.returnValue = '';

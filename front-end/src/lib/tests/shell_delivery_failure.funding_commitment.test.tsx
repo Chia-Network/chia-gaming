@@ -175,7 +175,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
         __chiaHub: { requestTrust },
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
-        location: { reload: jest.fn() },
+        location: { hostname: 'localhost', reload: jest.fn() },
       },
     });
     Object.defineProperty(globalThis, 'document', {

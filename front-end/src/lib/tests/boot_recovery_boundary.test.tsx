@@ -81,6 +81,7 @@ function ShellBootHarness(props: {
   externalHub: Promise<void>;
   externalWallet: Promise<void>;
   reload: () => void;
+  autoResume?: boolean;
   onRestore?: (
     save: Parameters<BootRecoveryBoundaryDependencies['onRestore']>[0],
     source: BootRestoreSource,
@@ -93,6 +94,7 @@ function ShellBootHarness(props: {
   const [walletReady] = useState(false);
   const [hubReady] = useState(false);
   const boundary = useBootRecoveryBoundary({
+    autoResume: props.autoResume ?? false,
     onSessionId: props.onSessionId ?? (() => {}),
     onRestore:
       props.onRestore ??
@@ -280,6 +282,47 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     claim.mockRestore();
   });
 
+  it('reloads to finish a retried hard reset that is only blocked', async () => {
+    const originalIndexedDb = indexedDB;
+    localStorage.setItem('appState_pendingWipe', '1');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: {
+        databases: jest.fn().mockResolvedValue([{ name: SESSION_DB_NAME }]),
+        deleteDatabase: jest.fn(() => {
+          const request: { onblocked?: () => void } = {};
+          setTimeout(() => request.onblocked?.(), 0);
+          return request;
+        }),
+      },
+    });
+    const reload = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload,
+        }),
+      );
+    });
+    await waitForRender(renderer!, 'pending hard reset is still blocked');
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
+    });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem('appState_pendingWipe')).toBe('1');
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: originalIndexedDb,
+    });
+    warn.mockRestore();
+  });
+
   it('shows local loading then restores while hub and wallet remain unresolved', async () => {
     await storageRepository.claimApplicationState();
     const save = liveSave({
@@ -319,6 +362,45 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(renderer!.root.findByProps({ children: 'Wallet reconnecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Wallet action' }).props.disabled).toBe(true);
     expect(renderer!.root.findByProps({ children: 'Hub action' }).props.disabled).toBe(true);
+  });
+
+  it('auto-resumes a durable live session without offering Resume or Start over', async () => {
+    await storageRepository.claimApplicationState();
+    const save = liveSave({
+      pairingToken: 'auto-resume-pair',
+      serializedGameSession: new Uint8Array([4, 5, 6]),
+    });
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const onRestore = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload: jest.fn(),
+          autoResume: true,
+          onRestore,
+        }),
+      );
+    });
+    for (let attempt = 0; attempt < 20 && onRestore.mock.calls.length === 0; attempt++) {
+      await flushEffects();
+    }
+
+    expect(onRestore).toHaveBeenCalledTimes(1);
+    expect(onRestore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session: expect.objectContaining({
+          pairing: expect.objectContaining({ token: 'auto-resume-pair' }),
+        }),
+      }),
+      'automatic',
+    );
+    expect(renderer!.root.findAllByProps({ children: 'Resume Session' })).toHaveLength(0);
   });
 
   it('offers and restores a durable live session without localStorage hints', async () => {

@@ -8,3 +8,11 @@
 export function isElectronDistribution(): boolean {
   return typeof window !== 'undefined' && window.__chiaDistribution === 'electron';
 }
+
+// `pnpm run dev` (run-local-demo.sh) serves the player app from localhost.
+// Deployed web builds and the Electron `chiagaming://app` origin never do.
+const LOCAL_DEV_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+export function isLocalDevHost(): boolean {
+  return typeof window !== 'undefined' && LOCAL_DEV_HOSTNAMES.has(window.location.hostname);
+}

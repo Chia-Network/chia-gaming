@@ -155,7 +155,7 @@ describe('Shell production restore composition', () => {
         __chiaHub: { requestTrust },
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
-        location: { reload: jest.fn() },
+        location: { hostname: 'localhost', reload: jest.fn() },
       },
     });
     Object.defineProperty(globalThis, 'document', {
@@ -238,6 +238,103 @@ describe('Shell production restore composition', () => {
       renderer!.root.find((node) => node.type === 'input' && node.props.role === 'combobox').props
         .value,
     ).toBe('http://localhost:3003');
+  });
+
+  it.each(
+    (['pre-handshake', 'live'] as const).flatMap((phase) =>
+      (['proposal-received', 'outbound-reject', 'inbound-reject'] as const).map((disposition) => ({
+        phase,
+        disposition,
+      })),
+    ),
+  )('finishes production auto-resume for $phase / $disposition', async ({ phase, disposition }) => {
+    window.location.hostname = 'play.example.test';
+    await storageRepository.claimApplicationState();
+    const save = (phase === 'live' ? activeSave : baseSave)({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      pairingToken: 'saved-pairing',
+      gameSessionId: '33'.repeat(16),
+      myContribution: '1000',
+      theirContribution: '1000',
+      perGameAmount: '100',
+      iStarted: false,
+      transportDisposition: disposition,
+      sessionPeerId: 'p_' + '22'.repeat(16),
+      opponentAlias: 'Saved peer',
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    for (
+      let attempt = 0;
+      attempt < 30 && application.snapshot().bootState.kind !== 'ready';
+      attempt++
+    ) {
+      await flushEffects();
+    }
+
+    expect(application.snapshot()).toMatchObject({
+      bootState: { kind: 'ready' },
+      restoreStatus: 'restored',
+      sessionConfig: null,
+      sessionFrontend: null,
+    });
+    expect(renderer!.root.findAllByProps({ children: 'Restoring your session…' })).toHaveLength(0);
+    expect(renderer!.root.findAllByProps({ children: 'Resume Session' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ children: 'Connect to Hub' })).toBeDefined();
+    if (phase === 'pre-handshake' && disposition === 'proposal-received') {
+      expect(renderer!.root.findByProps({ children: 'Saved peer' })).toBeDefined();
+      expect(renderer!.root.findByProps({ children: 'Accept' }).props.disabled).toBe(true);
+      expect(renderer!.root.findByProps({ children: 'Decline' }).props.disabled).toBeFalsy();
+    }
+    expect(sessionHost.createSessionController).not.toHaveBeenCalled();
+    expect(realBlockchainInfo.beginConnect).toHaveBeenCalledTimes(1);
+    expect(unhandledRejections).toEqual([]);
+  });
+
+  it('keeps production auto-resume pending while an active live session is restoring', async () => {
+    window.location.hostname = 'play.example.test';
+    const model = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+      restore: { status: 'restoring', error: null },
+    });
+    const session = stubApplicationSession(model);
+    jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+    await storageRepository.claimApplicationState();
+    const save = activeSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    for (let attempt = 0; attempt < 30 && !application.snapshot().sessionConfig; attempt++) {
+      await flushEffects();
+    }
+    expect(application.snapshot()).toMatchObject({
+      bootState: { kind: 'autoResuming' },
+      restoreStatus: 'restoring',
+      sessionConfig: { restoring: true },
+    });
+    act(() => {
+      session.publish({ ...model, restore: { status: 'restored', error: null } });
+    });
+    expect(application.snapshot()).toMatchObject({
+      bootState: { kind: 'ready' },
+      restoreStatus: 'restored',
+    });
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
@@ -1114,6 +1211,14 @@ describe('Shell production restore composition', () => {
       await application.dispatch({ type: 'resume' });
     });
     await flushEffects();
+    const unloadVetoed = () => {
+      const event = { preventDefault: jest.fn(), returnValue: undefined };
+      for (const [type, listener] of jest.mocked(window.addEventListener).mock.calls) {
+        if (type === 'beforeunload') (listener as (event: unknown) => void)(event);
+      }
+      return event.preventDefault.mock.calls.length > 0;
+    };
+    expect(unloadVetoed()).toBe(true);
     await act(async () => {
       await application.dispatch({ type: 'reset' });
     });
@@ -1121,5 +1226,7 @@ describe('Shell production restore composition', () => {
     expect(controller.cleanup).toHaveBeenCalledTimes(1);
     expect(hardReset).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['controller', 'storage']);
+    // The reset's own reload must not be vetoed by the live-session warning.
+    expect(unloadVetoed()).toBe(false);
   });
 });
