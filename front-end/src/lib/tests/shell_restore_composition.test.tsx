@@ -205,6 +205,41 @@ describe('Shell production restore composition', () => {
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
   });
 
+  it('remembers an automatically connected hub after disconnect', async () => {
+    requestTrust.mockResolvedValue('trusted');
+    await storageRepository.claimApplicationState();
+    await storageRepository.updateCommon({
+      preferences: { hubUrl: 'http://localhost:3003' },
+    });
+    expect(storageRepository.query('lastHubUrl')).toBeUndefined();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    await act(async () => {
+      await application.dispatch({ type: 'resume' });
+    });
+    for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
+    expect(mockHub).not.toBeNull();
+
+    await act(async () => {
+      await application.dispatch({ type: 'hub-disconnect' });
+    });
+    await flushEffects();
+
+    expect(storageRepository.query('hubUrl')).toBeUndefined();
+    expect(storageRepository.query('lastHubUrl')).toBe('http://localhost:3003');
+    expect(
+      renderer!.root.find((node) => node.type === 'input' && node.props.role === 'combobox').props
+        .value,
+    ).toBe('http://localhost:3003');
+  });
+
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
     await storageRepository.claimApplicationState();
     const save = baseSave({
@@ -436,6 +471,14 @@ describe('Shell production restore composition', () => {
         await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
 
+      expect(storageRepository.getPlayerId()).toBe(save.identity.playerId);
+      expect(jest.mocked(sessionHost.createSessionController).mock.calls.at(-1)?.[2]).toBe(
+        save.identity.playerId,
+      );
+      expect(jest.mocked(realBlockchainInfo.beginConnect).mock.calls.at(-1)?.[0]).toBe(
+        save.identity.playerId,
+      );
+
       if (!restored) {
         jest.useFakeTimers();
         act(() => {
@@ -586,24 +629,50 @@ describe('Shell production restore composition', () => {
     for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     await flushEffects();
     const walletTab = () => renderer!.root.findByProps({ 'aria-label': 'Wallet, connected' });
+    const selectTab = (id: string) =>
+      renderer!.root
+        .findAll(
+          (node) =>
+            node.props['data-slot'] === 'tabs' && typeof node.props.onValueChange === 'function',
+        )[0]
+        .props.onValueChange(id);
     expect(walletTab()).toBeDefined();
     act(() => connectionChanged(false, true));
     expect(walletTab()).toBeDefined();
     expect(storageRepository.query('walletAlert')).toBe(false);
     expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
-    act(() => walletTab().props.onClick());
+    expect(walletTab()).toBeDefined();
+    act(() => selectTab('wallet'));
     await waitForText(renderer!, 'Connected');
+    // Total fees are preferences, not a fixed network admission threshold.
+    // In particular, a nonzero amount below the default is still valid input.
+    for (const fee of [1n, 100_000_000n, 0n]) {
+      const currentFee = String(storageRepository.query('defaultFee'));
+      const editFee = renderer!.root.find(
+        (node) => node.type === 'button' && node.children[0] === currentFee,
+      );
+      act(() => editFee.props.onClick());
+      const input = renderer!.root.findByProps({ inputMode: 'numeric' });
+      act(() => input.props.onChange({ target: { value: '-1' } }));
+      expect(renderer!.root.findByProps({ children: 'Set' }).props.disabled).toBe(true);
+      act(() => input.props.onChange({ target: { value: fee.toString() } }));
+      const setFee = renderer!.root.findByProps({ children: 'Set' });
+      expect(setFee.props.disabled).toBe(false);
+      await act(async () => setFee.props.onClick());
+      expect(storageRepository.query('defaultFee')).toBe(fee);
+    }
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' })).toHaveLength(0);
     act(() => connectionChanged(true, false));
     expect(walletTab()).toBeDefined();
     expect(storageRepository.query('walletAlert')).toBe(false);
     // Failure of automatic recovery, including session deletion, is actionable.
-    act(() => renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' }).props.onClick());
+    expect(renderer!.root.findByProps({ 'aria-label': 'Hub, disconnected' })).toBeDefined();
+    act(() => selectTab('hub'));
     act(() => connectionChanged(false, true));
     act(() => connectionChanged(false, false));
     expect(storageRepository.query('walletAlert')).toBe(true);
-    const lostTab = renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' });
-    act(() => lostTab.props.onClick());
+    expect(renderer!.root.findByProps({ 'aria-label': 'Wallet, disconnected' })).toBeDefined();
+    act(() => selectTab('wallet'));
     await waitForText(renderer!, 'Connection was lost');
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' }).length).toBeGreaterThan(0);
   });

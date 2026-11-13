@@ -742,7 +742,7 @@ describe('transaction submission', () => {
     expect(cradle.reject_submission_attempt).toHaveBeenCalledWith('rejected');
     expect(cradle.chain_snapshot_ready).not.toHaveBeenCalled();
     expect(errors).toEqual([expect.stringMatching(/Wallet rejected transaction rejected/)]);
-    expect(errors[0]).toMatch(/effectively zero/i);
+    expect(errors[0]).toMatch(/fee rate/i);
   });
 
   it('abandons a past-deadline rejection instead of waiting to rebroadcast it', async () => {
@@ -885,12 +885,20 @@ describe('transaction submission', () => {
 
   it('rewrites fee-rate rejections into an actionable message and passes others through', () => {
     const rewritten = rewriteFeeRateRejection('Err.INVALID_FEE_TOO_CLOSE_TO_ZERO');
-    expect(rewritten).toMatch(/effectively zero/i);
+    expect(rewritten).toMatch(/fee rate/i);
+    expect(rewritten).toContain('complete transaction');
+    expect(rewritten).toContain('100,000,000 mojos may not be enough');
+    expect(rewritten).toContain('A zero fee does not bypass this check');
+    expect(rewritten).not.toMatch(/below 100,000,000|to at least/);
     expect(rewritten).toMatch(/100,000,000/);
     // Original text is retained for diagnosis.
     expect(rewritten).toMatch(/INVALID_FEE_TOO_CLOSE_TO_ZERO/);
 
-    expect(rewriteFeeRateRejection('Err.INVALID_FEE_LOW_FEE')).toMatch(/effectively zero/i);
+    const congested = rewriteFeeRateRejection('Err.INVALID_FEE_LOW_FEE');
+    expect(congested).toContain('competing transactions');
+    expect(congested).toContain('may exceed 5 mojos per cost unit');
+    expect(congested).not.toContain('effectively zero');
+    expect(congested).toContain('Err.INVALID_FEE_LOW_FEE');
 
     // Unrelated errors are returned unchanged.
     const unrelated = 'spend rejected: status=[3,99] something else';

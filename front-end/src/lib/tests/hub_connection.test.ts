@@ -113,6 +113,7 @@ class MockWebSocket {
   static CLOSED = 3;
 
   static instance: MockWebSocket | null = null;
+  static autoOpen = true;
 
   url: string;
   readyState = MockWebSocket.CONNECTING;
@@ -129,11 +130,13 @@ class MockWebSocket {
   constructor(url: string) {
     this.url = url;
     MockWebSocket.instance = this;
-    queueMicrotask(() => {
-      if (this.closed) return;
-      this.readyState = MockWebSocket.OPEN;
-      this.onopen?.({ type: 'open' });
-    });
+    if (MockWebSocket.autoOpen) {
+      queueMicrotask(() => {
+        if (this.closed) return;
+        this.readyState = MockWebSocket.OPEN;
+        this.onopen?.({ type: 'open' });
+      });
+    }
   }
 
   send(data: string | Uint8Array | ArrayBuffer) {
@@ -244,6 +247,7 @@ beforeEach(() => {
   hubDisconnectCount = 0;
   expectedHubDisconnects = 0;
   MockWebSocket.instance = null;
+  MockWebSocket.autoOpen = true;
 });
 
 afterEach(() => {
@@ -719,6 +723,127 @@ describe('close', () => {
 describe('retry budget', () => {
   it('MAX_RECONNECT_ATTEMPTS is a positive number', () => {
     expect(HubConnection.MAX_RECONNECT_ATTEMPTS).toBeGreaterThan(0);
+  });
+});
+
+describe('first connection fail-fast', () => {
+  beforeEach(() => {
+    // Fake timers flush queued microtasks when advancing retries. Keep each
+    // socket connecting until the test explicitly opens or refuses it.
+    MockWebSocket.autoOpen = false;
+  });
+
+  function makeFailFastConnection(observer: ReturnType<typeof makeObserver>): HubConnection {
+    const conn = new HubConnection('http://t', SESSION_ID, observer.emit, observer.getPresence, {
+      failFastFirstConnect: true,
+    });
+    activeConnections.add(conn);
+    return conn;
+  }
+  // Fail the newest socket as a refused or unresolvable host does.
+  const refuse = () => MockWebSocket.instance!._fireClose();
+  const open = () => {
+    const ws = MockWebSocket.instance!;
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.({ type: 'open' });
+  };
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('gives up 10 seconds after an unreachable hub keeps refusing', () => {
+    jest.useFakeTimers();
+    expectedHubDisconnects = 1;
+    const cb = makeObserver();
+    makeFailFastConnection(cb);
+    refuse();
+    // First retry is 5000ms ± 25% jitter.
+    jest.advanceTimersByTime(7500);
+    refuse();
+    expect(cb.events('closed')).toHaveLength(0);
+
+    // The final attempt lands on the 10 second deadline.
+    jest.advanceTimersByTime(2500);
+    const last = MockWebSocket.instance!;
+    refuse();
+    expect(cb.events('closed')).toHaveLength(1);
+
+    jest.advanceTimersByTime(120_000);
+    expect(MockWebSocket.instance).toBe(last);
+    expect(cb.events('closed')).toHaveLength(1);
+  });
+
+  it('gives up after 30 seconds when the hub never answers the connection', () => {
+    jest.useFakeTimers();
+    const cb = makeObserver();
+    makeFailFastConnection(cb);
+
+    jest.advanceTimersByTime(29_999);
+    expect(cb.events('closed')).toHaveLength(0);
+    jest.advanceTimersByTime(1);
+    expect(cb.events('closed')).toHaveLength(1);
+  });
+
+  it('closes a still-connecting retry when it gives up, and ignores its late open', () => {
+    jest.useFakeTimers();
+    expectedHubDisconnects = 1;
+    const cb = makeObserver();
+    makeFailFastConnection(cb);
+    refuse();
+    jest.advanceTimersByTime(7500);
+    // The retry hangs: it neither opens nor fails.
+    const retry = MockWebSocket.instance!;
+    expect(retry.readyState).toBe(MockWebSocket.CONNECTING);
+    const close = jest.spyOn(retry, 'close');
+
+    jest.advanceTimersByTime(22_500);
+    expect(cb.events('closed')).toHaveLength(1);
+    expect(close).toHaveBeenCalled();
+
+    retry.readyState = MockWebSocket.OPEN;
+    retry.onopen?.({ type: 'open' });
+    expect(retry.sentControl).toEqual([]);
+    expect(cb.events('reconnected')).toHaveLength(0);
+  });
+
+  it('gives up after 30 seconds when the socket opens but the hub never registers', () => {
+    jest.useFakeTimers();
+    const cb = makeObserver();
+    makeFailFastConnection(cb);
+    open();
+
+    jest.advanceTimersByTime(30_000);
+    expect(cb.events('closed')).toHaveLength(1);
+  });
+
+  it('keeps the normal retry budget once the hub has registered', () => {
+    jest.useFakeTimers();
+    expectedHubDisconnects = 1;
+    const cb = makeObserver();
+    makeFailFastConnection(cb);
+    open();
+    MockWebSocket.instance!._fire({ type: 'registered', player_id: playerBytes(SENDER_ID) });
+
+    jest.advanceTimersByTime(30_000);
+    const first = MockWebSocket.instance!;
+    first._fireClose();
+    jest.advanceTimersByTime(7500);
+    expect(MockWebSocket.instance).not.toBe(first);
+    expect(cb.events('closed')).toHaveLength(0);
+  });
+
+  it('keeps retrying an unreachable hub when fail-fast is not requested', () => {
+    jest.useFakeTimers();
+    expectedHubDisconnects = 1;
+    const cb = makeObserver();
+    makeConnection('http://t', 's1', cb);
+    refuse();
+    jest.advanceTimersByTime(7500);
+    refuse();
+    jest.advanceTimersByTime(15_000);
+    refuse();
+    expect(cb.events('closed')).toHaveLength(0);
   });
 });
 

@@ -138,6 +138,7 @@ function shouldLogRpcTraffic(method: WalletConnectMethod): boolean {
   return (
     method !== ChiaMethod.GetCoinRecordsByNames &&
     method !== ChiaMethod.GetHeightInfo &&
+    method !== ChiaMethod.GetSyncStatus &&
     method !== ChiaMethod.GetWalletBalance &&
     method !== SageMethod.GetAssetBalance
   );
@@ -217,6 +218,7 @@ function isReadOnlyRpc(method: WalletConnectMethod): boolean {
     method === ChiaMethod.GetWallets ||
     method === ChiaMethod.GetWalletBalance ||
     method === ChiaMethod.GetHeightInfo ||
+    method === ChiaMethod.GetSyncStatus ||
     method === ChiaMethod.GetCoinRecordsByNames ||
     method === ChiaMethod.GetPuzzleAndSolution ||
     method === ChiaMethod.GetFullNodePeerCount ||
@@ -553,6 +555,7 @@ export const rpc = {
   getNextAddress,
   selectCoins,
   getHeightInfo,
+  getSyncStatus: () => request<{ synced: boolean; syncing: boolean }>(ChiaMethod.GetSyncStatus, {}),
   createOfferForIds,
   cancelOffer,
   pushTransactions,

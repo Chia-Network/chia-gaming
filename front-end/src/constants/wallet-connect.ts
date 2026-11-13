@@ -16,6 +16,7 @@ export enum ChiaMethod {
   GetWalletBalance = 'chia_getWalletBalance',
   GetNextAddress = 'chia_getNextAddress',
   GetHeightInfo = 'chia_getHeightInfo',
+  GetSyncStatus = 'chia_getSyncStatus',
   SelectCoins = 'chia_selectCoins',
   CreateOfferForIds = 'chia_createOfferForIds',
   CancelOffer = 'chia_cancelOffer',

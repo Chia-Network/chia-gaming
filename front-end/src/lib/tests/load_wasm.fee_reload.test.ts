@@ -1,3 +1,5 @@
+import { protocolIdForCatalog } from '../gameIdentities';
+import type { WalletOfferCompletion, WalletOfferProvider } from '../../types/ChiaGaming';
 import { observeWasmEvents } from './session_execution.harness';
 import { channelFundingRuntime } from '../session/channelFundingRuntime';
 import { readApplicationState } from '../session/indexedDb';
@@ -6,6 +8,7 @@ import { storageRepository } from '../session/storageRepository';
 import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import {
   createActivePair,
+  exchangeUntilIdle,
   flushWrapperDrain,
   LONG_WASM_TEST_TIMEOUT,
   pollOnce,
@@ -14,6 +17,121 @@ import {
 import { createReloadableSessionLane, injectSessionReload } from './reload_injection.harness';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
+
+it(
+  'resumes the same pending fee after provider loss at its checkpoint and Rust base fallback',
+  async () => {
+    const poller = await startSimulator(['cafe00017', 'dead00017']);
+    if (!poller) return;
+    poller.pauseChainPolling();
+    await pollOnce(poller);
+    const adapters = await createActivePair(poller, 17);
+    const controller = adapters[0].blob!;
+    const status = controller.lastChannelStatus;
+    assert.ok(status);
+    const lane = createReloadableSessionLane(
+      adapters[0],
+      controller,
+      createSessionModel({ channel: { status: channelStatusModelFromPayload(status) } }),
+    );
+    // Both simulated peers share one repository; this lane owns its checkpoint.
+    const detachPersistence = storageRepository.attachRuntime(controller);
+    controller.getFee = () => 10n;
+    const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
+    const originalSpend = fakeBlockchainInfo.spend;
+    const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
+    let material: WalletOfferCompletion | undefined;
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: controller.getWalletProviderScope(),
+      beginCreation: jest.fn(async (operation, request) => {
+        material = await fakeBlockchainInfo.beginWalletOffer(operation, request);
+        assert.equal(material.kind, 'created-reserved');
+        return { kind: 'pending', recoveryId: 'checkpoint-fee-recovery' };
+      }),
+      reconcileCreation: jest.fn(async () => {
+        assert.ok(material);
+        return material;
+      }),
+      beginCancellation: jest.fn((id) => fakeBlockchainInfo.beginWalletOfferCancellation(id)),
+      reconcileCancellation: jest.fn(),
+    };
+    fakeBlockchainInfo.getWalletOfferProvider = () => provider;
+    channelFundingRuntime.attachProvider(provider);
+    const fees: Array<bigint | undefined> = [];
+    fakeBlockchainInfo.spend = async (...args) => {
+      fees.push(args[4]);
+      return { status: 'acknowledged' };
+    };
+    let disconnected = false;
+    let checkpointedStage: string | undefined;
+    const checkpoint = jest
+      .spyOn(storageRepository, 'checkpointDomainMutations')
+      .mockImplementation(async () => {
+        await realCheckpoint();
+        if (!disconnected && storageRepository.feeAttachments()[0]?.stage === 'creating') {
+          const saved = await readApplicationState();
+          checkpointedStage = saved?.feeAttachments[0]?.stage;
+          disconnected = true;
+          channelFundingRuntime.detachProvider(provider);
+        }
+      });
+    try {
+      assert.equal(controller.goOnChain(), true);
+      await flushWrapperDrain(adapters);
+      assert.equal(disconnected, true);
+      assert.equal(checkpointedStage, 'creating', 'provider loss must follow the durable request');
+      assert.deepEqual(fees, [undefined], 'Rust must acknowledge the base fallback');
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).not.toHaveBeenCalled();
+      const pending = storageRepository.feeAttachments();
+      assert.equal(pending.length, 1);
+      assert.equal(pending[0]?.stage, 'creating');
+      assert.equal(pending[0]?.stage === 'creating' && pending[0].disposition, 'active');
+
+      controller.setWallet(null);
+      controller.setWallet(poller);
+      await flushWrapperDrain(adapters);
+      await lane.runtime.flush();
+
+      assert.deepEqual(
+        fees,
+        [undefined, 10n],
+        'wallet readiness must upgrade the same Rust intent',
+      );
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          purpose: { kind: 'fee', operationId: pending[0]!.submissionId },
+        }),
+        expect.anything(),
+        'checkpoint-fee-recovery',
+        expect.objectContaining({ mode: 'delivery' }),
+      );
+      expect(provider.beginCancellation).not.toHaveBeenCalled();
+      assert.equal(storageRepository.feeAttachments()[0]?.stage, 'retained-for-replay');
+      assert.equal(storageRepository.feeAttachments()[0]?.submissionId, pending[0]!.submissionId);
+      assert.deepEqual(
+        (await readApplicationState())?.feeAttachments,
+        storageRepository.feeAttachments(),
+      );
+    } finally {
+      checkpoint.mockRestore();
+      for (const adapter of adapters) {
+        if (adapter.blob) poller.detachGameSession(adapter.blob);
+      }
+      poller.pauseChainPolling();
+      for (const adapter of adapters) adapter.blob?.cleanup();
+      lane.subscription.unsubscribe();
+      detachPersistence();
+      channelFundingRuntime.detachProvider(provider);
+      fakeBlockchainInfo.getWalletOfferProvider = originalProvider;
+      fakeBlockchainInfo.spend = originalSpend;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
 
 it(
   'broadcasts base, upgrades later under one intent, and exactly replays the upgrade',
@@ -202,6 +320,212 @@ it(
       fakeBlockchainInfo.spend = originalSpend;
       fakeBlockchainInfo.beginWalletOffer = originalBeginWalletOffer;
       fakeBlockchainInfo.beginWalletOfferCancellation = originalReleaseWalletOffer;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
+it(
+  'revokes pending fee approval when the peer spends the channel coin before output discovery',
+  async () => {
+    const poller = await startSimulator(['cafe00018', 'dead00018']);
+    if (!poller) return;
+    poller.pauseChainPolling();
+    await pollOnce(poller);
+    const adapters = await createActivePair(poller, 18);
+    const controller = adapters[0].blob!;
+    controller.getFee = () => 10n;
+    const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
+    let material: WalletOfferCompletion | undefined;
+    let target: string | undefined;
+    let approvalStarted!: () => void;
+    const approving = new Promise<void>((resolve) => {
+      approvalStarted = resolve;
+    });
+    const provider: WalletOfferProvider = {
+      capability: 'recoverable',
+      scope: controller.getWalletProviderScope(),
+      beginCreation: jest.fn(async (operation, request) => {
+        assert.equal(request.kind, 'fee');
+        if (request.kind === 'fee') target = request.concurrentSpendCoinId;
+        material = await fakeBlockchainInfo.beginWalletOffer(operation, request);
+        assert.equal(material.kind, 'created-reserved');
+        return { kind: 'pending', recoveryId: 'spent-input-fee' };
+      }),
+      reconcileCreation: jest.fn(async (_operation, _request, _id, options) => {
+        if (options?.mode === 'observe-only') {
+          assert.ok(material);
+          return material;
+        }
+        assert.equal(options?.mode, 'delivery');
+        assert.equal(options.allowApproval?.(), true);
+        return new Promise<WalletOfferCompletion>((resolve) => {
+          const unsubscribe = options.onApprovalChange?.(() => {
+            if (options.allowApproval?.()) return;
+            unsubscribe?.();
+            resolve({ kind: 'unavailable', reason: 'approval revoked' });
+          });
+          approvalStarted();
+        });
+      }),
+      beginCancellation: jest.fn((id) => fakeBlockchainInfo.beginWalletOfferCancellation(id)),
+      reconcileCancellation: jest.fn(),
+    };
+    fakeBlockchainInfo.getWalletOfferProvider = () => provider;
+    channelFundingRuntime.attachProvider(provider);
+    try {
+      assert.equal(controller.goOnChain(), true);
+      await approving;
+      assert.ok(target);
+      const watched = controller.snapshotWatchedCoins().find((coin) => coin.coin_name === target);
+      assert.ok(watched);
+
+      assert.equal(adapters[1].blob!.goOnChain(), true);
+      await flushWrapperDrain([adapters[1]]);
+      const height = await fakeBlockchainInfo.farmBlock();
+      const [record] = await fakeBlockchainInfo.getCoinRecordsByNames([target]);
+      assert.ok(record?.spent, 'the peer must actually spend the coin in the simulator');
+      // The first poll knows only the input. Discovering its outputs is later
+      // protocol work and must not delay cancellation of the old fee request.
+      await controller.reportCoinStates(height, [
+        {
+          coin: watched.coin_string,
+          created_height: record.confirmedBlockIndex,
+          spent_height: record.spentBlockIndex,
+        },
+      ]);
+      await flushWrapperDrain(adapters);
+      await controller.reportChainSnapshotReady(height);
+      controller.setWallet(null);
+      controller.setWallet(poller);
+      await flushWrapperDrain(adapters);
+
+      expect(provider.beginCreation).toHaveBeenCalledTimes(1);
+      expect(provider.reconcileCreation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'spent-input-fee',
+        { mode: 'observe-only' },
+      );
+      expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
+      assert.deepEqual(storageRepository.feeAttachments(), []);
+    } finally {
+      poller.pauseChainPolling();
+      for (const adapter of adapters) adapter.blob?.cleanup();
+      fakeBlockchainInfo.getWalletOfferProvider = originalProvider;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
+it.each(['channel spend', 'on-chain game move'])(
+  'keeps one fee approval for %s when a fresh snapshot arrives during wallet approval',
+  async (transactionKind) => {
+    const poller = await startSimulator(['cafe00016', 'dead00016']);
+    if (!poller) return;
+    poller.pauseChainPolling();
+    await pollOnce(poller);
+    const provider = fakeBlockchainInfo.getWalletOfferProvider();
+    if (provider) channelFundingRuntime.attachProvider(provider);
+    const adapters = await createActivePair(poller, 16);
+    let controller = adapters[0].blob!;
+    let gameId: string | undefined;
+    if (transactionKind === 'on-chain game move') {
+      const statuses = ['', ''];
+      const subscriptions = adapters.map((adapter, index) =>
+        observeWasmEvents(adapter.blob!).subscribe((event) => {
+          if (event.type !== 'notification') return;
+          if (event.data.ProposalAcceptedGroup) {
+            gameId = String(event.data.ProposalAcceptedGroup.members[0].id);
+          }
+          if (event.data.GameStatus) statuses[index] = event.data.GameStatus.status;
+        }),
+      );
+      try {
+        const [proposalId] = controller.proposeGame({
+          game_type: protocolIdForCatalog('calpoker'),
+          timeout: 15n,
+          sender_is_player_a: false,
+          parameters: 20n,
+        });
+        await exchangeUntilIdle(adapters);
+        adapters[1].blob!.acceptProposal(proposalId);
+        await exchangeUntilIdle(adapters);
+        assert.ok(gameId);
+        controller.makeMove(gameId, null);
+        await exchangeUntilIdle(adapters);
+        for (const adapter of adapters) poller.attachGameSession(adapter.blob!);
+        assert.equal(controller.goOnChain(), true);
+        await flushWrapperDrain(adapters);
+        for (let block = 0; block < 80 && !statuses.includes('on-chain-my-turn'); block += 1) {
+          await fakeBlockchainInfo.farmBlock();
+          await pollOnce(poller);
+          await flushWrapperDrain(adapters);
+        }
+        const moverIndex = statuses.indexOf('on-chain-my-turn');
+        assert.ok(moverIndex >= 0, `expected a real on-chain game turn, got ${statuses}`);
+        controller = adapters[moverIndex].blob!;
+      } finally {
+        subscriptions.forEach((subscription) => subscription.unsubscribe());
+      }
+    }
+    controller.getFee = () => 10n;
+    const originalBegin = fakeBlockchainInfo.beginWalletOffer;
+    const originalCancel = fakeBlockchainInfo.beginWalletOfferCancellation;
+    let enteredApproval!: () => void;
+    let approve!: () => void;
+    const approvalStarted = new Promise<void>((resolve) => {
+      enteredApproval = resolve;
+    });
+    const approval = new Promise<void>((resolve) => {
+      approve = resolve;
+    });
+    let creations = 0;
+    const feeSubmissionIds: string[] = [];
+    let cancellations = 0;
+    fakeBlockchainInfo.beginWalletOffer = async (...args) => {
+      if (args[1].kind === 'fee') {
+        creations += 1;
+        feeSubmissionIds.push(args[0].purpose.operationId);
+        enteredApproval();
+        await approval;
+      }
+      return originalBegin.apply(fakeBlockchainInfo, args);
+    };
+    fakeBlockchainInfo.beginWalletOfferCancellation = async (...args) => {
+      cancellations += 1;
+      return originalCancel.apply(fakeBlockchainInfo, args);
+    };
+    try {
+      if (gameId) controller.makeMove(gameId, null);
+      else assert.equal(controller.goOnChain(), true);
+      await approvalStarted;
+      await controller.reportChainSnapshotReady(poller.getPeak());
+      approve();
+      await flushWrapperDrain(adapters);
+      await controller.reportChainSnapshotReady(poller.getPeak());
+      await flushWrapperDrain(adapters);
+      assert.equal(
+        creations,
+        1,
+        `fresh synchronization must preserve the pending fee approval; submission IDs=${feeSubmissionIds}`,
+      );
+      assert.equal(
+        cancellations,
+        0,
+        'a live fee approval must not be retired by fresh synchronization',
+      );
+      assert.equal(storageRepository.feeAttachments()[0]?.stage, 'retained-for-replay');
+      assert.equal(storageRepository.feeAttachments()[0]?.submissionId, feeSubmissionIds[0]);
+    } finally {
+      approve();
+      for (const adapter of adapters) {
+        if (adapter.blob) poller.detachGameSession(adapter.blob);
+      }
+      poller.pauseChainPolling();
+      for (const adapter of adapters) adapter.blob?.cleanup();
+      fakeBlockchainInfo.beginWalletOffer = originalBegin;
+      fakeBlockchainInfo.beginWalletOfferCancellation = originalCancel;
     }
   },
   LONG_WASM_TEST_TIMEOUT,

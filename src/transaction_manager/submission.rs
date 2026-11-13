@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::common::types::{aggregate_wallet_fee_bundle, CoinString, Error, Hash};
+use crate::common::types::{aggregate_wallet_fee_bundle, CoinID, CoinString, Error, Hash};
 use crate::session_phases::effects::{
     AttachmentFailurePolicy, SubmissionFeeIntent, TransactionSubmission,
 };
@@ -118,6 +118,16 @@ impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
 }
 
 impl SubmissionBook {
+    /// A genuine process restore has no surviving host delivery consumers. Keep
+    /// their tokens as predecessors, but let the fresh snapshot reclaim them.
+    pub(super) fn restore_runtime(&mut self) {
+        for submission in &mut self.submitted {
+            if let Some(attempt) = submission.active_attempt.take() {
+                submission.completed_attempt = Some(attempt);
+            }
+        }
+    }
+
     fn validate_restored_state(&self) -> Result<(), String> {
         let mut ids = HashSet::new();
         let mut intent_fingerprints = Vec::new();
@@ -207,11 +217,11 @@ impl SubmissionBook {
                     ));
                 }
             }
-            if submission.chain_terminality == SubmissionChainTerminality::Landed
+            if submission.chain_terminality != SubmissionChainTerminality::Active
                 && submission.active_attempt.is_some()
             {
                 return Err(format!(
-                    "landed submission {} retains an active delivery attempt",
+                    "non-active submission {} retains an active delivery attempt",
                     submission.id
                 ));
             }
@@ -492,7 +502,7 @@ impl SubmissionBook {
         self.submitted
             .iter()
             .filter(|tx| {
-                tx.chain_terminality == SubmissionChainTerminality::Active
+                tx.chain_terminality != SubmissionChainTerminality::Landed
                     || tx
                         .expected_output_coins()
                         .expect("validated retained base bundle must remain parseable")
@@ -782,10 +792,6 @@ impl SubmissionBook {
             .collect()
     }
 
-    pub(super) fn all_ids(&self) -> HashSet<u64> {
-        self.submitted.iter().map(|tx| tx.id).collect()
-    }
-
     pub(super) fn finish_replay_if_advanced(&mut self, height: u64) {
         self.replay_epoch.finish_if_advanced(height);
     }
@@ -801,28 +807,31 @@ impl SubmissionBook {
     pub(super) fn reconcile_chain_terminality(
         &mut self,
         observed_created: &HashSet<CoinString>,
+        spent_inputs: &HashSet<CoinID>,
         reorg: bool,
         causally_rolled_back_ids: &HashSet<u64>,
     ) {
-        let mut newly_landed_ids = Vec::new();
+        let mut stopped_ids = Vec::new();
         for tx in &mut self.submitted {
             let expected_output_coins = tx
                 .expected_output_coins()
                 .expect("validated retained base bundle must remain parseable");
-            if expected_output_coins.is_empty() {
-                continue;
-            }
             let output_observed = expected_output_coins
                 .iter()
                 .any(|coin| observed_created.contains(coin));
             if output_observed {
                 tx.chain_terminality = SubmissionChainTerminality::Landed;
-                newly_landed_ids.push(tx.id);
-            } else if reorg || causally_rolled_back_ids.contains(&tx.id) {
+                stopped_ids.push(tx.id);
+            } else if tx.spent_coin_ids().any(|id| spent_inputs.contains(&id)) {
+                if reorg || tx.chain_terminality != SubmissionChainTerminality::Landed {
+                    tx.chain_terminality = SubmissionChainTerminality::InputSpent;
+                }
+                stopped_ids.push(tx.id);
+            } else if causally_rolled_back_ids.contains(&tx.id) {
                 tx.chain_terminality = SubmissionChainTerminality::Active;
             }
         }
-        for id in newly_landed_ids {
+        for id in stopped_ids {
             self.replay_epoch.remove(id);
             self.pending_deliveries
                 .retain(|pending| pending.intent.id != Some(id));
@@ -838,7 +847,7 @@ impl SubmissionBook {
     pub(super) fn causally_rolled_back_ids(
         &self,
         explicitly_absent: &HashSet<CoinString>,
-        explicitly_live_input_ids: &HashSet<crate::common::types::CoinID>,
+        explicitly_live_input_ids: &HashSet<CoinID>,
     ) -> HashSet<u64> {
         self.submitted
             .iter()
@@ -846,13 +855,22 @@ impl SubmissionBook {
                 let expected_output_coins = tx
                     .expected_output_coins()
                     .expect("validated retained base bundle must remain parseable");
-                tx.chain_terminality == SubmissionChainTerminality::Landed
-                    && expected_output_coins
-                        .iter()
-                        .any(|coin| explicitly_absent.contains(coin))
+                tx.chain_terminality != SubmissionChainTerminality::Active
+                    && (tx.chain_terminality == SubmissionChainTerminality::InputSpent
+                        || expected_output_coins
+                            .iter()
+                            .any(|coin| explicitly_absent.contains(coin)))
+                    // Every external input must be spendable again. Coins
+                    // created and consumed inside this bundle are recreated on
+                    // replay, so they need not exist in the replacement chain.
                     && tx
                         .spent_coin_ids()
-                        .any(|coin_id| explicitly_live_input_ids.contains(&coin_id))
+                        .filter(|coin_id| {
+                            !expected_output_coins
+                                .iter()
+                                .any(|coin| coin.to_coin_id() == *coin_id)
+                        })
+                        .all(|coin_id| explicitly_live_input_ids.contains(&coin_id))
             })
             .map(|tx| tx.id)
             .collect()
@@ -930,12 +948,27 @@ impl SubmissionBook {
         {
             return;
         }
-        let has_active_attempt = self
-            .submitted
-            .iter()
-            .find(|tx| tx.id == id)
-            .and_then(|tx| tx.active_attempt.as_ref())
-            .is_some();
+        let Some(tx) = self.submitted.iter().find(|tx| tx.id == id) else {
+            return;
+        };
+        if tx.chain_terminality != SubmissionChainTerminality::Active {
+            return;
+        }
+        let has_active_attempt = tx.active_attempt.is_some();
+        // A new chain snapshot or readiness notification does not end an
+        // in-flight wallet approval for this exact fee intent. Real process
+        // restore relinquishes abandoned consumers in restore_runtime instead.
+        if matches!(
+            trigger,
+            DeliveryTrigger::FreshChain | DeliveryTrigger::ProviderReadiness
+        ) && tx.unresolved_fee_intent().is_some()
+            && tx
+                .active_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.finalized_variant_fingerprint.is_none())
+        {
+            return;
+        }
         if has_active_attempt
             && !matches!(
                 trigger,
@@ -946,9 +979,6 @@ impl SubmissionBook {
         {
             return;
         }
-        let Some(tx) = self.submitted.iter().find(|tx| tx.id == id) else {
-            return;
-        };
         if goal == SubmissionDeliveryGoal::FeeUpgrade && tx.unresolved_fee_intent().is_none() {
             return;
         }

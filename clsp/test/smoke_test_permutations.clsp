@@ -1,7 +1,0 @@
-(include *standard-cl-26*)
-(import std.map)
-(import std.prepend)
-(import std.print)
-(import std.permutations)
-
-(export (X) (permutations X))
