@@ -446,6 +446,14 @@ export type WalletOfferProvider =
   | RecoverableWalletOfferProvider
   | RecoverableAfterBeginWalletOfferProvider;
 
+/** Ways the user can add XCH to the connected wallet. */
+export type WalletTopUpOptions = {
+  /** Wallet-hosted purchase page for this wallet; null where purchase is unavailable. */
+  buyUrl: string | null;
+  /** Bech32 receive address for transfers from any other wallet. */
+  depositAddress: string | null;
+};
+
 export interface InternalBlockchainInterface {
   requestGapMs?: number;
   fundingMode?: 'offer-settlement';
@@ -461,7 +469,10 @@ export interface InternalBlockchainInterface {
     fee?: bigint,
   ): Promise<WalletSubmitOutcome>;
   getAddress(): Promise<BlockchainInboundAddressResult>;
+  /** Wallet funds available to fund a channel now. */
   getBalance(): Promise<bigint>;
+  /** Absent for backends that offer no top-up path. */
+  getTopUpOptions?(): WalletTopUpOptions;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;
   selectCoins(uniqueId: string, amount: bigint): Promise<string | null>;
   getHeightInfo(): Promise<bigint>;

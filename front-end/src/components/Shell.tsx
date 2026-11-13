@@ -34,6 +34,7 @@ import GameSession, { GameSessionErrorBoundary, UncaughtClientErrorReporter } fr
 import { HubIframe } from './HubIframe';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 import { Setup2048Provider } from './Setup2048';
+import { WalletTopUp } from './WalletTopUp';
 import WalletRecoveryNotice from './WalletRecoveryNotice';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { ChevronDownIcon } from 'lucide-react';
@@ -372,6 +373,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     sessionPhase,
     coins,
     pendingAdvisory,
+    consentShortfall,
+    topUpOptions,
     blockchainReady,
     pendingProposal,
     activeTab,
@@ -403,6 +406,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     error: connectError,
     balance,
   } = walletView;
+  const awaitingTopUp = consentShortfall > 0n;
   const [showTransactionPublishControl, setShowTransactionPublishControl] = useState(false);
   useEffect(() => {
     if (showTransactionPublishControl) return;
@@ -724,10 +728,15 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             unrollTimeout={pendingAdvisory.unroll_timeout}
           />
         </p>
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
-            disabled={!walletConnected || !blockchainReady}
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -754,10 +763,15 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             unrollTimeout={pendingProposal.unroll_timeout}
           />
         </p>
+        {awaitingTopUp && (
+          <div className="mb-4">
+            <WalletTopUp options={topUpOptions} shortfall={consentShortfall} />
+          </div>
+        )}
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
-            disabled={!walletConnected || !blockchainReady}
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
             Accept
@@ -969,6 +983,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     {balance.toLocaleString()} {currency.mojos}
                   </p>
                 )}
+                {topUpOptions && <WalletTopUp options={topUpOptions} shortfall={0n} />}
                 <div className="w-full max-w-xs text-sm text-canvas-text">
                   <div className="flex items-center gap-2 mb-1">
                     <span>Transaction fee</span>

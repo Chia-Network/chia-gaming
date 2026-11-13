@@ -1,3 +1,5 @@
+import { isTestnet } from '../../constants/currency';
+import { CLOUD_WALLET_OVERRIDE } from '../../constants/env';
 import { log } from '../../services/log';
 import { CoinsetClient } from './coinsetClient';
 import {
@@ -13,6 +15,7 @@ import {
   WalletOfferRequest,
   WalletOfferReconciliationOptions,
   WalletSubmitOutcome,
+  WalletTopUpOptions,
 } from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { WalletSpendBundle } from '../../types/rpc/PushTransactions';
@@ -138,6 +141,7 @@ export interface RefusedCloudCancellation {
 export class CloudBlockchainInterface implements InternalBlockchainInterface {
   readonly fundingMode = 'offer-settlement' as const;
   blockchainAddressData: BlockchainInboundAddressResult = { puzzleHash: '' };
+  private depositAddress: string | null = null;
 
   private auth: CloudWalletAuthState | null = null;
   private authEpoch = 0;
@@ -330,13 +334,13 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     const data = await this.gql<{
       wallet: {
         id: string;
-        address: { puzzleHash: string } | null;
+        address: { puzzleHash: string; address: string } | null;
       } | null;
     }>(
       `query($id: ID!) {
         wallet(id: $id) {
           id
-          address { puzzleHash }
+          address { puzzleHash address }
         }
       }`,
       { id: walletId },
@@ -350,20 +354,42 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     }
     beforeReady();
     this.blockchainAddressData = { puzzleHash: ph };
+    this.depositAddress = data.wallet.address?.address || null;
     this.monitoringReady = true;
     this.fireConnectionChange(true);
     log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${ph}`);
   }
 
+  // spendableAmount excludes coins locked in pending offers and clawback
+  // payouts that have not matured, so a purchase still settling is not
+  // reported as playable.
   async getBalance(): Promise<bigint> {
     const walletId = this.requireWalletId();
     const data = await this.gql<{
-      wallet: { balance: string | number | bigint } | null;
-    }>(`query($id: ID!) { wallet(id: $id) { balance } }`, { id: walletId });
-    if (!data.wallet || data.wallet.balance == null) {
+      wallet: { asset: { spendableAmount: string | number | bigint } | null } | null;
+    }>(`query($id: ID!) { wallet(id: $id) { asset(assetHash: null) { spendableAmount } } }`, {
+      id: walletId,
+    });
+    const spendable = data.wallet?.asset?.spendableAmount;
+    if (spendable == null) {
       throw new Error('Cloud Wallet balance unavailable');
     }
-    return BigInt(data.wallet.balance);
+    return BigInt(spendable);
+  }
+
+  // The public testnet Cloud Wallet sells no XCH. An overridden (local) Cloud
+  // Wallet runs on testnet but may enable Buy XCH, so it keeps the link. The
+  // walletId preselects the vault the game funds from.
+  getTopUpOptions(): WalletTopUpOptions {
+    const sellsXch = !isTestnet() || !!CLOUD_WALLET_OVERRIDE.uiUrl;
+    const walletId = this.auth?.walletId;
+    return {
+      buyUrl:
+        sellsXch && walletId
+          ? `${getCloudWalletUiUrl()}/buy-xch?walletId=${encodeURIComponent(walletId)}`
+          : null,
+      depositAddress: this.depositAddress,
+    };
   }
 
   async selectCoins(_uniqueId: string, amount: bigint): Promise<string | null> {
@@ -1115,6 +1141,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     this.walletOfferProvider = null;
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: '' };
+    this.depositAddress = null;
     this.fireConnectionChange(false);
   }
 

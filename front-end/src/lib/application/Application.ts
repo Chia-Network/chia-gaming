@@ -109,6 +109,7 @@ import { storageRepository } from '../session/storageRepository';
 import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { ensurePeerProtocolLoaded, ensureWasmLoaded } from '../session/wasmLoader';
 import { isErrorSettlementOutcome } from '../settlement';
+import { fundingShortfall } from '../wallet/fundingShortfall';
 import type { SessionWallet } from '../wallet/sessionWallet';
 import { WalletConnection, type WalletEvent, type WalletView } from '../wallet/WalletConnection';
 import { createAcceptLifecycle, createShellSessionState } from './applicationSession';
@@ -328,6 +329,7 @@ export function createApplication() {
     try {
       do {
         dirty = false;
+        walletOwner.setAwaitingTopUp(consentShortfall() > 0n);
         updateAbandonTimer();
         updateRecovery();
         if (
@@ -2445,11 +2447,20 @@ export function createApplication() {
     }
     publish();
   }
+  function consentShortfall(): bigint {
+    const buyIn =
+      sessions.state.pendingAdvisory?.my_amount ?? sessions.state.pendingProposal?.responder_amount;
+    return buyIn === undefined
+      ? 0n
+      : fundingShortfall(state.walletView.balance, buyIn, state.defaultFee);
+  }
   function snapshot() {
     const { peerConn: _peer, ...sessionState } = sessions.state;
     const { confirmDialog, ...presentation } = state;
     return {
       ...presentation,
+      consentShortfall: consentShortfall(),
+      topUpOptions: walletOwner.topUpOptions(),
       ...sessionState,
       alias: storageRepository.query('alias'),
       theme: storageRepository.query('theme'),
@@ -2519,6 +2530,7 @@ export function createApplication() {
       case 'hub-disconnect':
         return handleDisconnectHub();
       case 'accept-session':
+        if (consentShortfall() > 0n) return;
         if (sessions.state.pendingAdvisory)
           return acceptPendingAdvisory(sessions.state.pendingAdvisory);
         if (sessions.state.pendingProposal)

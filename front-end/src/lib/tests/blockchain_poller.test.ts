@@ -1055,6 +1055,34 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it('re-paces live balance interest and never revives stopped interest', async () => {
+    jest.useFakeTimers();
+    const rpc = new Proxy(
+      {
+        getBalance: jest.fn().mockResolvedValue(5n),
+      } as unknown as InternalBlockchainInterface,
+      {
+        get: (target, prop) =>
+          (target as Record<string, unknown>)[prop as string] ?? (() => Promise.resolve(undefined)),
+      },
+    );
+    const poller = new BlockchainPoller(rpc, 1000);
+    poller.startBalanceInterest(60_000, { onBalance: () => {} });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(1);
+
+    poller.setBalanceInterval(5000);
+    await jest.advanceTimersByTimeAsync(0);
+    await jest.advanceTimersByTimeAsync(5000);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(3);
+
+    poller.stopBalanceInterest();
+    poller.setBalanceInterval(5000);
+    await jest.advanceTimersByTimeAsync(60_000);
+    expect(rpc.getBalance).toHaveBeenCalledTimes(3);
+    jest.useRealTimers();
+  });
+
   it('keeps balance interest alive across game-session stop()', async () => {
     jest.useFakeTimers();
     const balances: bigint[] = [];

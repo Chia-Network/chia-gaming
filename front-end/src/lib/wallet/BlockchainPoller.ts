@@ -22,6 +22,8 @@ import { providerScopeKey, type ProviderOwner } from '../session/providerKeys';
 
 export const CHAIN_POLL_INTERVAL_MS = 10000;
 export const BALANCE_POLL_INTERVAL_MS = 60000;
+// While the user is topping up to cover a buy-in.
+export const TOP_UP_BALANCE_POLL_INTERVAL_MS = 5000;
 
 class BlockchainRpcUnavailableError extends Error {
   constructor(label: string) {
@@ -436,6 +438,16 @@ export class BlockchainPoller {
     this.balanceCallbacks = callbacks;
     this.balancePollIntervalMs = intervalMs;
     this.ensureConnectionListener();
+    if (this.isConnected()) {
+      this.balancePollingScheduler.start(intervalMs);
+    }
+  }
+
+  // Re-paces existing balance interest. A no-op without interest, so a late
+  // caller cannot revive polling after stopBalanceInterest().
+  setBalanceInterval(intervalMs: number): void {
+    if (!this.balanceCallbacks || intervalMs === this.balancePollIntervalMs) return;
+    this.balancePollIntervalMs = intervalMs;
     if (this.isConnected()) {
       this.balancePollingScheduler.start(intervalMs);
     }
