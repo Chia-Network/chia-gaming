@@ -528,7 +528,15 @@ export function createApplication() {
             save.preferences.blockchainType ?? storageRepository.query('blockchainType');
           if (bcType) void handleConnect(bcType, true);
         }
-        return { deferReady: source === 'automatic' && hasLiveSession };
+        // Non-active transports finish locally without session execution to
+        // report readiness. Only wait when performResume established it.
+        return {
+          deferReady:
+            source === 'automatic' &&
+            hasLiveSession &&
+            sessions.state.sessionConfig !== null &&
+            sessions.state.peerConn !== null,
+        };
       },
       onFreshClaim: (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
