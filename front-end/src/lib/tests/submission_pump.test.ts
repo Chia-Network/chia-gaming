@@ -313,6 +313,56 @@ describe('submission pump delivery and lifecycle', () => {
     }
   });
 
+  it.each([
+    { status: 'acknowledged' as const },
+    { status: 'rejected' as const, detail: 'old rejection' },
+    { status: 'unavailable' as const, detail: 'old transport failure' },
+  ])(
+    'delivers a revived intent while its retired attempt unwinds with $status',
+    async (outcome) => {
+      let finishOld!: (value: typeof outcome) => void;
+      const spend = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<typeof outcome>((resolve) => {
+              finishOld = resolve;
+            }),
+        )
+        .mockResolvedValue({ status: 'acknowledged' });
+      const { controller, cradle, submit } = setup(spend);
+      const lease = new ControlledRuntime();
+      const old = submission('revived-during-unwind');
+      const revived = nextAttempt(old, 'revived-during-unwind-attempt-2');
+      try {
+        commitRuntime(controller, lease);
+        submit(old);
+        await lease.launch(`submission:${old.id}`);
+        await waitFor(() => spend.mock.calls.length === 1);
+        expect(spend).toHaveBeenCalledTimes(1);
+        (
+          controller as unknown as { handleRetiredSubmissionIds(ids: string[]): void }
+        ).handleRetiredSubmissionIds([old.id]);
+        submit(old);
+        expect(lease.has(`submission:${old.id}`)).toBe(false);
+        submit(revived);
+        expect(lease.has(`submission:${old.id}`)).toBe(true);
+        await lease.launch(`submission:${old.id}`);
+        expect(spend).toHaveBeenCalledTimes(1);
+        finishOld(outcome);
+        await controller.flushPendingWork();
+        expect(spend).toHaveBeenCalledTimes(2);
+        expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
+        expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(revived.attempt_token);
+        expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
+        expect(cradle.submission_attempt_unavailable).not.toHaveBeenCalled();
+        expect(cradle.relinquish_submission_attempt).not.toHaveBeenCalledWith(old.attempt_token);
+      } finally {
+        controller.cleanup();
+      }
+    },
+  );
+
   it('replaces an unlaunched bridge entry with the latest Rust attempt', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
     const { controller, cradle, submit } = setup(spend);

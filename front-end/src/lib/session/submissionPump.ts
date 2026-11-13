@@ -73,7 +73,17 @@ export class SubmissionPump {
   submit(submission: TransactionSubmission): void {
     if (this.retired) return;
     const existing = this.entries.get(submission.id);
-    if (!existing) {
+    if (existing) {
+      if (existing.submission.attempt_token === submission.attempt_token) return;
+      if (submission.predecessor_attempt_token !== existing.submission.attempt_token) {
+        throw new Error(
+          `Submission ${submission.id} successor ${submission.attempt_token} does not name active predecessor ${existing.submission.attempt_token}`,
+        );
+      }
+    }
+    // Retirement belongs to the old delivery attempt. A Rust-issued revival
+    // needs its own entry so late completion cannot retire or gate new work.
+    if (!existing || existing.retired) {
       this.entries.set(submission.id, {
         submission,
         awaitingFreshSync: false,
@@ -82,12 +92,6 @@ export class SubmissionPump {
       });
       this.schedule(submission.id);
       return;
-    }
-    if (existing.submission.attempt_token === submission.attempt_token) return;
-    if (submission.predecessor_attempt_token !== existing.submission.attempt_token) {
-      throw new Error(
-        `Submission ${submission.id} successor ${submission.attempt_token} does not name active predecessor ${existing.submission.attempt_token}`,
-      );
     }
 
     const displaced = existing.submission;
