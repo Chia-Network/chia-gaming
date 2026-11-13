@@ -598,6 +598,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     if (operation && operation.stage !== 'creating' && operation.stage !== 'awaiting-channel') {
       return;
     }
+    if (this.blockchain.rpc.isReadyForPlay?.() === false) return;
     const generation = storageRepository.lifecycleGeneration;
     const effect = this.releaseAfterPersistence(
       `funding:${pending.purpose.operationId}:${++this.fundingEffectSequence}`,
@@ -799,6 +800,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       (ready) => {
         this.submissionPump.providerReady(ready);
         if (ready) {
+          this.scheduleFunding();
           this.syncPendingCoinSolutionRequests();
           this.retryPendingCoinSolutionDeliveries();
           this.requestFeeUpgrades();

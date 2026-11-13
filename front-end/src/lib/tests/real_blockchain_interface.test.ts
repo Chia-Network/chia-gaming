@@ -493,8 +493,57 @@ describe('RealBlockchainInterface', () => {
       kind: 'funding',
       offer: { '1': -100n },
     });
-    expect(result).toMatchObject({ kind: 'unavailable' });
+    expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
     expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new WalletConnectTransportError('sync-status transport lost'),
+    new WalletConnectResponseError('sync-status request refused'),
+    new Error('sync-status request failed'),
+  ])('preserves preflight provenance when a sync read fails: %s', async (error) => {
+    const blockchain = new RealBlockchainInterface();
+    (rpc.getSyncStatus as jest.Mock).mockRejectedValue(error);
+    const result = await blockchain.getWalletOfferProvider()!.beginCreation(offerOperation, {
+      kind: 'funding',
+      offer: { '1': -100n },
+    });
+    expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
+    expect(blockchain.isReadyForPlay()).toBe(false);
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+  });
+
+  it('preserves preflight provenance if the connection retires during the sync read', async () => {
+    jest.useFakeTimers();
+    const blockchain = new RealBlockchainInterface();
+    try {
+      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
+      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
+      blockchain.onPlayReadinessChange(() => {});
+      await connectAndWait(blockchain);
+      await jest.advanceTimersByTimeAsync(1000);
+      let finish!: (status: { synced: boolean; syncing: boolean }) => void;
+      (rpc.getSyncStatus as jest.Mock).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const pending = blockchain.getWalletOfferProvider()!.beginCreation(offerOperation, {
+        kind: 'funding',
+        offer: { '1': -100n },
+      });
+      await blockchain.disconnect();
+      finish({ synced: true, syncing: false });
+      await expect(pending).resolves.toMatchObject({
+        kind: 'unavailable',
+        mutation: 'not-started',
+      });
+      expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+    } finally {
+      await blockchain.disconnect();
+      jest.useRealTimers();
+    }
   });
 
   it('reuses the change address but verifies monitoring wallet existence across reloads', async () => {

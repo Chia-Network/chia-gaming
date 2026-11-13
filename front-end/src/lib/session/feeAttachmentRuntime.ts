@@ -311,6 +311,7 @@ export class FeeAttachmentRuntime {
     if (outcome === null) return notInvoked();
     if (
       outcome.kind === 'unavailable' &&
+      outcome.mutation !== 'not-started' &&
       !recoveryId &&
       !replacement &&
       canLosePreIdResponse(provider)

@@ -19,6 +19,7 @@ export interface SessionPreferenceQueries {
   walletAlert: boolean;
   hubAlert: boolean;
   hubUrl: string | undefined;
+  lastHubUrl: string | undefined;
 }
 
 export type SessionPreferenceUpdate =
@@ -29,7 +30,7 @@ export type SessionPreferenceUpdate =
   | { key: 'feeUnit'; value: 'mojo' | 'xch' }
   | { key: 'activeTab'; value: string }
   | { key: 'unreadGame' | 'walletAlert' | 'hubAlert'; value: boolean }
-  | { key: 'hubUrl'; value: string | undefined };
+  | { key: 'hubUrl' | 'lastHubUrl'; value: string | undefined };
 
 export function selectSessionPreference<K extends keyof SessionPreferenceQueries>(
   state: DurableApplicationState,
@@ -49,6 +50,7 @@ export function selectSessionPreference<K extends keyof SessionPreferenceQueries
     walletAlert: preferences.walletAlert ?? false,
     hubAlert: preferences.hubAlert ?? false,
     hubUrl: preferences.hubUrl,
+    lastHubUrl: preferences.lastHubUrl,
   };
   return values[key];
 }
@@ -73,7 +75,8 @@ function preferencePatch(update: SessionPreferenceUpdate): Partial<SessionPrefer
     case 'hubAlert':
       return { [update.key]: update.value || undefined };
     case 'hubUrl':
-      return { hubUrl: update.value || undefined };
+    case 'lastHubUrl':
+      return { [update.key]: update.value || undefined };
     default:
       return { [update.key]: update.value };
   }

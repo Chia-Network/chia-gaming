@@ -267,6 +267,7 @@ export class ChannelFundingRuntime {
     }
     if (
       completion.kind === 'unavailable' &&
+      completion.mutation !== 'not-started' &&
       !exactRecovery &&
       !replacement &&
       canLosePreIdResponse(provider)

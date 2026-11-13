@@ -664,9 +664,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (!(await this.checkSyncReadiness())) {
         return {
           kind: 'unavailable',
+          mutation: 'not-started',
           reason: 'Wait for the Chia wallet to finish syncing before funding a session.',
         };
       }
+    } catch (error) {
+      this.setReadyForPlay(false);
+      return { kind: 'unavailable', mutation: 'not-started', reason: collectErrorText(error) };
+    }
+    try {
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
         conditions.push({

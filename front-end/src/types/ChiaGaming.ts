@@ -264,7 +264,12 @@ export type WalletOfferCompletion =
   | WalletOfferReservedCompletion
   | WalletOfferEphemeralCompletion
   | { kind: 'failure'; reason: string }
-  | { kind: 'unavailable'; reason: string };
+  | {
+      kind: 'unavailable';
+      reason: string;
+      /** Explicit proof that no wallet creation mutation was dispatched. Omission means unknown. */
+      mutation?: 'not-started';
+    };
 
 export type WalletOfferBeginOutcome =
   WalletOfferCompletion | { kind: 'pending'; recoveryId: string };
