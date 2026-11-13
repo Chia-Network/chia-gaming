@@ -13,6 +13,7 @@ import {
   WalletOfferOperation,
   WalletOfferProvider,
   WalletOfferRequest,
+  WalletOfferReconciliationOptions,
   WalletSubmitOutcome,
   WalletTopUpOptions,
   WalletIdentity,
@@ -128,6 +129,11 @@ export interface BlockedCloudWalletApproval {
   attach: (popup: Window) => void;
 }
 
+type PendingCloudWalletApproval = BlockedCloudWalletApproval & {
+  allowApproval: () => boolean;
+  withdraw: () => void;
+};
+
 export interface RefusedCloudCancellation {
   offerId: string;
   detail: string;
@@ -145,7 +151,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   private readonly approvalsOpenedInBrowser = new Set<string>();
   // Waiters for one signature request share its named window.
   private readonly approvalWindowWaiters = new Map<Window, number>();
-  private blockedApprovals: readonly BlockedCloudWalletApproval[] = [];
+  private blockedApprovals: readonly PendingCloudWalletApproval[] = [];
   private readonly blockedApprovalListeners = new Set<() => void>();
   private refusedCancellations: readonly RefusedCloudCancellation[] = [];
   private readonly refusedCancellationListeners = new Set<() => void>();
@@ -180,15 +186,34 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
       this.walletOfferProvider?.scope.provider !== 'cloud' ||
       this.walletOfferProvider.scope.walletId !== walletId
     ) {
+      const scopeUnavailable = 'Reconnect the original Cloud Wallet account to resume this offer';
       this.walletOfferProvider = {
         capability: 'recoverable-after-begin',
         scope: { provider: 'cloud', walletId },
-        beginCreation: (operation, request) => this.beginWalletOffer(operation, request),
-        reconcileCreation: (operation, request, recoveryId) =>
-          this.reconcileWalletOffer(operation, request, recoveryId),
-        beginCancellation: (tradeId) => this.beginWalletOfferCancellation(tradeId),
-        reconcileCancellation: (tradeId, recoveryId) =>
-          this.reconcileWalletOfferCancellation(tradeId, recoveryId),
+        beginCreation: async (operation, request) => {
+          if (this.auth?.walletId !== walletId) {
+            return { kind: 'unavailable', reason: scopeUnavailable };
+          }
+          return this.beginWalletOffer(operation, request);
+        },
+        reconcileCreation: async (operation, request, recoveryId, options) => {
+          if (this.auth?.walletId !== walletId) {
+            return { kind: 'unavailable', reason: scopeUnavailable };
+          }
+          return this.reconcileWalletOffer(operation, request, recoveryId, options);
+        },
+        beginCancellation: async (tradeId) => {
+          if (this.auth?.walletId !== walletId) {
+            return { status: 'unavailable', detail: scopeUnavailable };
+          }
+          return this.beginWalletOfferCancellation(tradeId);
+        },
+        reconcileCancellation: async (tradeId, recoveryId) => {
+          if (this.auth?.walletId !== walletId) {
+            return { status: 'unavailable', detail: scopeUnavailable };
+          }
+          return this.reconcileWalletOfferCancellation(tradeId, recoveryId);
+        },
       };
     }
     return this.walletOfferProvider;
@@ -493,7 +518,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     };
   }
 
-  private setBlockedApprovals(next: readonly BlockedCloudWalletApproval[]): void {
+  private setBlockedApprovals(next: readonly PendingCloudWalletApproval[]): void {
     this.blockedApprovals = next;
     for (const cb of this.blockedApprovalListeners) cb();
   }
@@ -523,6 +548,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   /** Call from a click handler: browsers allow one popup per recent user gesture. */
   openBlockedApproval(): boolean {
+    for (const entry of this.blockedApprovals) {
+      if (!entry.allowApproval()) entry.withdraw();
+    }
     const next = this.blockedApprovals[0];
     if (!next) return true;
     const popup = this.openApprovePopup(next.signatureRequestId);
@@ -628,31 +656,71 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     source: string,
     poll: (signal: AbortSignal) => Promise<T>,
     blockedPopupWaitMs = APPROVE_TIMEOUT_MS,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<T> {
     const polling = new AbortController();
+    if (options?.mode === 'observe-only') return poll(polling.signal);
+    const allowApproval = options?.allowApproval ?? (() => true);
+    if (!allowApproval()) {
+      throw new SignatureRequestUnavailableError(
+        `Cloud Wallet ${source} approval is no longer needed`,
+      );
+    }
+    // Revocation ends this delivery; durable reservation recovery owns any later observation.
+    let withdrawApproval = () => {};
+    let rejectRevocation!: (error: Error) => void;
+    const approvalRevoked = new Promise<never>((_resolve, reject) => {
+      rejectRevocation = reject;
+    });
+    const revokeApproval = () => {
+      if (allowApproval()) return;
+      withdrawApproval();
+      rejectRevocation(
+        new SignatureRequestUnavailableError(`Cloud Wallet ${source} approval is no longer needed`),
+      );
+    };
+    const stopApprovalChanges = options?.onApprovalChange?.(revokeApproval);
     const desktop = desktopCloudWalletBridge();
     if (desktop) {
-      // Approval needs a passkey, so it runs in the system browser; polling
-      // observes the outcome, including rejection. Reconciliation retries this
-      // on every readiness epoch, so each request opens a browser tab once per
-      // run rather than on every retry.
-      const id = canonicalSignatureRequestId(signatureRequestId);
-      if (!this.approvalsOpenedInBrowser.has(id)) {
-        const opened = await desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId));
-        if (!opened) {
-          throw new SignatureRequestUnavailableError(
-            `Could not open the browser to approve Cloud Wallet ${source}`,
-          );
+      try {
+        revokeApproval();
+        if (!allowApproval()) return await approvalRevoked;
+        // Approval needs a passkey, so it runs in the system browser; polling
+        // observes the outcome, including rejection. Reconciliation retries this
+        // on every readiness epoch, so each request opens a browser tab once per
+        // run rather than on every retry.
+        const id = canonicalSignatureRequestId(signatureRequestId);
+        if (!this.approvalsOpenedInBrowser.has(id)) {
+          const opened = await Promise.race([
+            desktop.openInBrowser(signatureRequestApproveUrl(signatureRequestId)),
+            approvalRevoked,
+          ]);
+          if (!opened) {
+            throw new SignatureRequestUnavailableError(
+              `Could not open the browser to approve Cloud Wallet ${source}`,
+            );
+          }
+          this.approvalsOpenedInBrowser.add(id);
         }
-        this.approvalsOpenedInBrowser.add(id);
+        return await Promise.race([poll(polling.signal), approvalRevoked]);
+      } finally {
+        stopApprovalChanges?.();
+        polling.abort();
       }
-      return poll(polling.signal);
     }
     let openPopup: Window | null = null;
     let disposeApproval = () => {};
-    let blockedApproval: BlockedCloudWalletApproval | null = null;
+    let blockedApproval: PendingCloudWalletApproval | null = null;
     let blockedTimer: ReturnType<typeof setTimeout> | undefined;
     let closedWatch: ReturnType<typeof setInterval> | undefined;
+    withdrawApproval = () => {
+      clearTimeout(blockedTimer);
+      if (blockedApproval && this.blockedApprovals.includes(blockedApproval)) {
+        this.setBlockedApprovals(
+          this.blockedApprovals.filter((entry) => entry !== blockedApproval),
+        );
+      }
+    };
     const approvalFailure = new Promise<never>((_resolve, reject) => {
       const attach = (popup: Window) => {
         clearTimeout(blockedTimer);
@@ -683,7 +751,15 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         );
       };
       const promptToOpen = (reason: BlockedCloudWalletApproval['reason']) => {
-        blockedApproval = { signatureRequestId, source, reason, attach };
+        if (!allowApproval()) return;
+        blockedApproval = {
+          signatureRequestId,
+          source,
+          reason,
+          attach,
+          allowApproval,
+          withdraw: revokeApproval,
+        };
         this.setBlockedApprovals([...this.blockedApprovals, blockedApproval]);
         blockedTimer = setTimeout(() => {
           reject(
@@ -695,6 +771,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           );
         }, blockedPopupWaitMs);
       };
+      if (!allowApproval()) {
+        revokeApproval();
+        return;
+      }
       const popup = this.openApprovePopup(signatureRequestId);
       if (popup) {
         attach(popup);
@@ -702,9 +782,11 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         promptToOpen('blocked');
       }
     });
+    revokeApproval();
     try {
-      return await Promise.race([poll(polling.signal), approvalFailure]);
+      return await Promise.race([poll(polling.signal), approvalFailure, approvalRevoked]);
     } finally {
+      stopApprovalChanges?.();
       polling.abort();
       clearTimeout(blockedTimer);
       clearInterval(closedWatch);
@@ -874,6 +956,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     _operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
     try {
       const result = await this.trackSignatureRequest(
@@ -881,6 +964,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
         request.kind,
         (signal) => this.pollSignatureRequestOffer(recoveryId, signal),
         request.kind === 'fee' ? BLOCKED_FEE_POPUP_WAIT_MS : undefined,
+        options,
       );
       return {
         kind: 'created-reserved',
@@ -897,10 +981,9 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
 
   private async pollCancellationSignatureRequest(
     signatureRequestId: string,
-    signal: AbortSignal,
   ): Promise<WalletOfferCancellationOutcome> {
     const started = Date.now();
-    while (!signal.aborted && Date.now() - started < APPROVE_TIMEOUT_MS) {
+    while (Date.now() - started < APPROVE_TIMEOUT_MS) {
       const data = await this.gql<{
         signatureRequest: { id: string; status: string } | null;
       }>(
@@ -942,7 +1025,8 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     }
     return {
       status: 'unavailable',
-      detail: 'Timed out polling Cloud Wallet cancellation',
+      detail:
+        'Timed out polling Cloud Wallet cancellation; cleanup only cancels offers off chain and will not request approval',
     };
   }
 
@@ -1011,14 +1095,12 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     recoveryId: string,
   ): Promise<WalletOfferCancellationOutcome> {
     try {
-      return await this.trackSignatureRequest(recoveryId, 'offer cancellation', (signal) =>
-        this.pollCancellationSignatureRequest(recoveryId, signal),
-      );
+      // Off-chain cancellation never needs approval. Observe any existing request,
+      // including one restored from an earlier build, without opening a signing UI.
+      return await this.pollCancellationSignatureRequest(recoveryId);
     } catch (error) {
       const detail = boundedCancellationDetail(cloudErrorDetail(error));
-      return error instanceof SignatureRequestRejectedError
-        ? { status: 'rejected', detail }
-        : { status: 'unavailable', detail };
+      return { status: 'unavailable', detail };
     }
   }
 

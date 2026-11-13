@@ -1,5 +1,4 @@
-import { createElement } from 'react';
-import { act, create } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
 import { restorePeerState } from './peer_protocol.harness';
 
 import type { HubConnection } from '../../services/HubConnection';
@@ -87,7 +86,7 @@ describe('createSessionRejection authority owner', () => {
     jest.spyOn(storageRepository, 'write').mockRejectedValueOnce(cleanupFailure);
     const error = jest.spyOn(console, 'error').mockImplementation(() => {});
     act(() => {
-      renderer = create(createElement(Harness));
+      Harness();
     });
 
     await act(async () => {
@@ -118,7 +117,7 @@ describe('createSessionRejection authority owner', () => {
       mockRootPatching();
       jest.spyOn(storageRepository, 'write').mockRejectedValueOnce(failure);
       act(() => {
-        renderer = create(createElement(Harness));
+        Harness();
       });
 
       await act(async () => {
@@ -143,7 +142,7 @@ describe('createSessionRejection authority owner', () => {
     );
 
     act(() => {
-      renderer = create(createElement(Harness));
+      Harness();
     });
     let rejection!: Promise<void>;
     act(() => {

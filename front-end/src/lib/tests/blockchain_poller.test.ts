@@ -1,6 +1,10 @@
 import 'fake-indexeddb/auto';
 
-import { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
+import {
+  InternalBlockchainInterface,
+  WalletSubmitOutcome,
+  type WalletOfferReconciliationOptions,
+} from '../../types/ChiaGaming';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { coinRecordToName } from '../../util/coinWatch';
 import { ChannelFundingRuntime, channelFundingRuntime } from '../session/channelFundingRuntime';
@@ -715,6 +719,181 @@ describe('BlockchainPoller', () => {
     await expect(readResult).resolves.toBe(7n);
     await expect(mutationResult).resolves.toBeNull();
     jest.useRealTimers();
+  });
+
+  it.each(['delivery', 'observe-only'] as const)(
+    'forwards %s reconciliation ownership through the queued provider',
+    async (mode) => {
+      const reconcileCreation = jest
+        .fn()
+        .mockResolvedValue({ kind: 'unavailable', reason: 'pending' });
+      const source = {
+        capability: 'recoverable-after-begin' as const,
+        scope: fundingOperation.owner.providerScope,
+        beginCreation: jest.fn(),
+        reconcileCreation,
+        beginCancellation: jest.fn(),
+        reconcileCancellation: jest.fn(),
+      };
+      const rpc = makeRpc([10n]);
+      rpc.isConnected = () => true;
+      rpc.getWalletOfferProvider = () => source;
+      const poller = new BlockchainPoller(rpc, 1000);
+      const provider = poller.rpc.getWalletOfferProvider()!;
+      if (provider.capability !== 'recoverable-after-begin')
+        throw new Error('expected recoverable provider');
+      const options: WalletOfferReconciliationOptions =
+        mode === 'observe-only'
+          ? { mode }
+          : { mode, allowApproval: () => false, onApprovalChange: jest.fn(() => () => {}) };
+      await provider.reconcileCreation(fundingOperation, walletRequest, 'exact-request', options);
+      expect(reconcileCreation).toHaveBeenCalledWith(
+        fundingOperation,
+        walletRequest,
+        'exact-request',
+        options,
+      );
+      expect(reconcileCreation.mock.calls[0][3]).toBe(options);
+    },
+  );
+
+  it.each(['creation', 'cancellation'] as const)(
+    'does not let pending %s reconciliation hold broadcasts or chain reads',
+    async (kind) => {
+      jest.useFakeTimers();
+      const pending = deferred<void>();
+      const starts: Array<{ label: string; at: number }> = [];
+      const start = (label: string) => starts.push({ label, at: performance.now() });
+      const source = {
+        capability: 'recoverable-after-begin' as const,
+        scope: fundingOperation.owner.providerScope,
+        beginCreation: jest.fn(),
+        reconcileCreation: async () => {
+          start('observation');
+          await pending.promise;
+          return { kind: 'unavailable' as const, reason: 'pending' };
+        },
+        beginCancellation: jest.fn(),
+        reconcileCancellation: async () => {
+          start('observation');
+          await pending.promise;
+          return { status: 'unavailable' as const, detail: 'pending' };
+        },
+      };
+      const rpc = makeRpc([10n]);
+      rpc.isConnected = () => true;
+      rpc.requestGapMs = 50;
+      rpc.getWalletOfferProvider = () => source;
+      rpc.spend = async () => {
+        start('broadcast');
+        return { status: 'acknowledged' };
+      };
+      rpc.getHeightInfo = async () => {
+        start('height');
+        return 10n;
+      };
+      const poller = new BlockchainPoller(rpc, 1000);
+      const provider = poller.rpc.getWalletOfferProvider()!;
+      if (provider.capability !== 'recoverable-after-begin')
+        throw new Error('expected recoverable provider');
+      const observation =
+        kind === 'creation'
+          ? provider.reconcileCreation(fundingOperation, walletRequest, 'exact-request', {
+              mode: 'observe-only',
+            })
+          : provider.reconcileCancellation('exact-trade', 'exact-request');
+      await advanceLane(0);
+      expect(starts).toEqual([{ label: 'observation', at: 0 }]);
+      const broadcast = poller.rpc.spend('blob', {}, '11'.repeat(32));
+      const height = poller.rpc.getHeightInfo();
+      try {
+        await advanceLane(49);
+        expect(starts).toHaveLength(1);
+        await advanceLane(1);
+        expect(starts[1]).toEqual({ label: 'broadcast', at: 50 });
+        await advanceLane(50);
+        expect(starts[2]).toEqual({ label: 'height', at: 100 });
+        await expect(broadcast).resolves.toEqual({ status: 'acknowledged' });
+        await expect(height).resolves.toBe(10n);
+      } finally {
+        pending.resolve();
+        await advanceLane(200);
+        await Promise.allSettled([observation, broadcast, height]);
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('preserves late creation observation results while disconnecting cancellation observation', async () => {
+    let connected = true;
+    let connectionChange: ((connected: boolean) => void) | undefined;
+    const creation = deferred<{
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }>();
+    const cancellation = deferred<{ status: 'cancelled' }>();
+    const reconcileCreation = jest.fn(() => creation.promise);
+    const reconcileCancellation = jest.fn(() => cancellation.promise);
+    const source = {
+      capability: 'recoverable-after-begin' as const,
+      scope: fundingOperation.owner.providerScope,
+      beginCreation: jest.fn(),
+      reconcileCreation,
+      beginCancellation: jest.fn(),
+      reconcileCancellation,
+    };
+    const rpc = makeRpc([10n]);
+    rpc.isConnected = () => connected;
+    rpc.onConnectionChange = (listener) => {
+      connectionChange = listener;
+      return () => {
+        connectionChange = undefined;
+      };
+    };
+    rpc.getWalletOfferProvider = () => source;
+    const poller = new BlockchainPoller(rpc, 1000);
+    ensureConnectionListener(poller);
+    const provider = poller.rpc.getWalletOfferProvider()!;
+    if (provider.capability !== 'recoverable-after-begin')
+      throw new Error('expected recoverable provider');
+    let creationSettled = false;
+    const created = provider
+      .reconcileCreation(fundingOperation, walletRequest, 'exact-create', { mode: 'observe-only' })
+      .finally(() => {
+        creationSettled = true;
+      });
+    const cancelled = provider.reconcileCancellation('trade', 'exact-cancel');
+    const cancelledExpectation = expect(cancelled).rejects.toThrow(
+      'RPC request discarded during disconnect: reconcileWalletOfferCancellation',
+    );
+    void cancelledExpectation.catch(() => {});
+    for (
+      let attempt = 0;
+      attempt < 30 && reconcileCancellation.mock.calls.length === 0;
+      attempt += 1
+    )
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    try {
+      expect(reconcileCreation).toHaveBeenCalledTimes(1);
+      expect(reconcileCancellation).toHaveBeenCalledTimes(1);
+      connected = false;
+      connectionChange?.(false);
+      await cancelledExpectation;
+      expect(creationSettled).toBe(false);
+    } finally {
+      creation.resolve({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer1late' },
+        tradeId: 'known-late-trade',
+      });
+      cancellation.resolve({ status: 'cancelled' });
+      await Promise.allSettled([created, cancelled]);
+    }
+    await expect(created).resolves.toMatchObject({
+      kind: 'created-reserved',
+      tradeId: 'known-late-trade',
+    });
   });
 
   it('runs serialized wallet mutations independently of queued reads', async () => {

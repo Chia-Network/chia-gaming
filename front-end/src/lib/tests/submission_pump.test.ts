@@ -21,6 +21,91 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe('submission pump delivery and lifecycle', () => {
+  it('requests one fee per distinct transaction when submissions and readiness are repeated', async () => {
+    const beginCreation = jest.fn().mockImplementation((operation) => ({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: `offer-${operation.purpose.operationId}` },
+      tradeId: `trade-${operation.purpose.operationId}`,
+    }));
+    const { blockchain, controller, submit } = setup(
+      jest.fn().mockResolvedValue({ status: 'acknowledged' }),
+      bestEffortWalletRpc(beginCreation),
+    );
+    const lease = new ControlledRuntime();
+    try {
+      commitRuntime(controller, lease);
+      for (const [id, target] of [
+        ['channel-spend', '22'],
+        ['unroll-spend', '33'],
+      ]) {
+        const tx = { ...submission(id), fee_request: { target: target.repeat(32), amount: '10' } };
+        submit(tx);
+        submit(tx);
+        await lease.launch(`submission:${id}`);
+        await controller.flushPendingWork();
+      }
+      blockchain.refreshProviderReadiness();
+      await controller.flushPendingWork();
+      expect(beginCreation).toHaveBeenCalledTimes(2);
+      expect(beginCreation.mock.calls.map(([, request]) => request.concurrentSpendCoinId)).toEqual([
+        '22'.repeat(32),
+        '33'.repeat(32),
+      ]);
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+    }
+  });
+
+  it('rebroadcasts a restored fee-bearing transaction without acquiring another offer', async () => {
+    const beginCreation = jest.fn();
+    const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const { blockchain, controller, cradle, submit } = setup(
+      spend,
+      bestEffortWalletRpc(beginCreation),
+    );
+    const selector = (
+      controller as unknown as {
+        walletProviderOwnerSelector(): { installationPlayerId: string; peerSessionId: string };
+      }
+    ).walletProviderOwnerSelector();
+    storageRepository._replaceApplicationStateForTests({
+      ...storageRepository.loadState(),
+      walletContext: controller.getWalletProviderScope(),
+      feeAttachments: [
+        {
+          owner: { ...selector, providerScope: controller.getWalletProviderScope() },
+          submissionId: 'restored-fee-bearing',
+          stage: 'retained-for-replay',
+          providerReservationId: 'original-offer',
+          reason: 'fee-offer-created',
+        },
+      ],
+    });
+    const lease = new ControlledRuntime();
+    try {
+      commitRuntime(controller, lease);
+      submit(submission('restored-fee-bearing'));
+      await lease.launch('submission:restored-fee-bearing');
+      await controller.flushPendingWork();
+      expect(beginCreation).not.toHaveBeenCalled();
+      expect(cradle.finalize_submission_attempt).toHaveBeenCalledWith(
+        'restored-fee-bearing-attempt-1',
+        undefined,
+      );
+      expect(spend).toHaveBeenCalledTimes(1);
+      expect(storageRepository.feeAttachments()).toEqual([
+        expect.objectContaining({
+          stage: 'retained-for-replay',
+          providerReservationId: 'original-offer',
+        }),
+      ]);
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+    }
+  });
+
   it('does not recreate an unresolved fee reservation through a different wallet', async () => {
     const { blockchain, controller, submit } = setup(
       jest.fn().mockResolvedValue({ status: 'acknowledged' }),
@@ -227,6 +312,56 @@ describe('submission pump delivery and lifecycle', () => {
       controller.cleanup();
     }
   });
+
+  it.each([
+    { status: 'acknowledged' as const },
+    { status: 'rejected' as const, detail: 'old rejection' },
+    { status: 'unavailable' as const, detail: 'old transport failure' },
+  ])(
+    'delivers a revived intent while its retired attempt unwinds with $status',
+    async (outcome) => {
+      let finishOld!: (value: typeof outcome) => void;
+      const spend = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<typeof outcome>((resolve) => {
+              finishOld = resolve;
+            }),
+        )
+        .mockResolvedValue({ status: 'acknowledged' });
+      const { controller, cradle, submit } = setup(spend);
+      const lease = new ControlledRuntime();
+      const old = submission('revived-during-unwind');
+      const revived = nextAttempt(old, 'revived-during-unwind-attempt-2');
+      try {
+        commitRuntime(controller, lease);
+        submit(old);
+        await lease.launch(`submission:${old.id}`);
+        await waitFor(() => spend.mock.calls.length === 1);
+        expect(spend).toHaveBeenCalledTimes(1);
+        (
+          controller as unknown as { handleRetiredSubmissionIds(ids: string[]): void }
+        ).handleRetiredSubmissionIds([old.id]);
+        submit(old);
+        expect(lease.has(`submission:${old.id}`)).toBe(false);
+        submit(revived);
+        expect(lease.has(`submission:${old.id}`)).toBe(true);
+        await lease.launch(`submission:${old.id}`);
+        expect(spend).toHaveBeenCalledTimes(1);
+        finishOld(outcome);
+        await controller.flushPendingWork();
+        expect(spend).toHaveBeenCalledTimes(2);
+        expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
+        expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(revived.attempt_token);
+        expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
+        expect(cradle.submission_attempt_unavailable).not.toHaveBeenCalled();
+        expect(cradle.relinquish_submission_attempt).not.toHaveBeenCalledWith(old.attempt_token);
+      } finally {
+        controller.cleanup();
+      }
+    },
+  );
 
   it('replaces an unlaunched bridge entry with the latest Rust attempt', async () => {
     const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
@@ -476,13 +611,10 @@ describe('submission pump delivery and lifecycle', () => {
       }
     });
 
-    it('keeps a restored offer a parallel recovery found, and never hands it to the successor', async () => {
-      const recovering = deferred<typeof created>();
+    it('reconciles a restored offer once and cancels it when its attempt is superseded', async () => {
       const displaced = deferred<typeof created>();
       const provider = refusingWallet();
-      provider.reconcileCreation
-        .mockReturnValueOnce(recovering.promise)
-        .mockReturnValueOnce(displaced.promise);
+      provider.reconcileCreation.mockReturnValue(displaced.promise);
       const { blockchain, controller, cradle, submit } = start(provider);
       const selector = (
         controller as unknown as {
@@ -515,18 +647,16 @@ describe('submission pump delivery and lifecycle', () => {
         blockchain.channelFundingRuntime.providerReconnectReady(
           blockchain.rpc.getWalletOfferProvider(selector)!,
         );
-        await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(provider.reconcileCreation).not.toHaveBeenCalled();
 
         commitRuntime(controller, lease);
         const first = { ...submission(id), fee_request: feeRequest };
         submit(first);
         await lease.launch(`submission:${id}`);
-        await waitFor(() => provider.reconcileCreation.mock.calls.length === 2);
+        await waitFor(() => provider.reconcileCreation.mock.calls.length === 1);
         submit({ ...nextAttempt(first, `${id}-attempt-2`), fee_request: feeRequest });
 
-        recovering.resolve(created);
-        await waitFor(() => storageRepository.feeAttachments()[0]?.stage === 'reserved');
-        await new Promise((resolve) => setTimeout(resolve, 20));
         displaced.resolve(created);
         await waitFor(() => provider.beginCancellation.mock.calls.length === 1);
         await waitFor(() => storageRepository.feeAttachments()[0]?.stage !== 'cancel-required');
@@ -537,6 +667,7 @@ describe('submission pump delivery and lifecycle', () => {
           () => (cradle.finalize_submission_attempt as jest.Mock).mock.calls.length > 0,
         );
 
+        expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
         expect(provider.beginCreation).not.toHaveBeenCalled();
         expect(provider.beginCancellation).toHaveBeenCalledTimes(1);
         expectFallback(cradle, id);
@@ -621,6 +752,7 @@ describe('submission pump delivery and lifecycle', () => {
           fee_request: { target: '22'.repeat(32), amount: '10' },
         });
         await lease.launch(`submission:retired-${landedVariant}`);
+        await controller.flushPendingWork();
         (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
           submissionDrain([], [`retired-${landedVariant}`]),
         );
@@ -661,6 +793,7 @@ describe('submission pump delivery and lifecycle', () => {
         fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:reconnect-cancel');
+      await controller.flushPendingWork();
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
         submissionDrain([], ['reconnect-cancel']),
       );

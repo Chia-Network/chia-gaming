@@ -510,14 +510,7 @@ class StorageRepository {
   }
 
   getPlayerId(): string {
-    const state = this.loadState();
-    if (!this.hasAuthority()) {
-      this.preAuthorityCommonPatch.identity = {
-        ...this.preAuthorityCommonPatch.identity,
-        playerId: state.identity.playerId,
-      };
-    }
-    return state.identity.playerId;
+    return this.root.identity.playerId;
   }
 
   async ensureHubIdentity(): Promise<string> {

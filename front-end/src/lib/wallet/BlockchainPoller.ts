@@ -202,6 +202,16 @@ export class BlockchainPoller {
     return this.enqueueRpc(this.mutationLane, label, run, preserveActiveCompletion);
   }
 
+  private observeWalletRequest<T>(
+    label: string,
+    run: () => Promise<T> | T,
+    preserveActiveCompletion = false,
+  ): Promise<T> {
+    // Status observation can outlive a delivery. It shares request-start spacing
+    // and connection fencing, but cannot occupy a mutation or chain-read lane.
+    return this.enqueueRpc(null, label, run, preserveActiveCompletion);
+  }
+
   private getQueuedWalletProvider(
     adapter: InternalBlockchainInterface,
     owner?: Parameters<InternalBlockchainInterface['getWalletOfferProvider']>[0],
@@ -228,10 +238,13 @@ export class BlockchainPoller {
             () => source.beginCreation(operation, request),
             true,
           ),
-        reconcileCreation: (operation, request, recoveryId) =>
-          this.enqueueMutation(
+        reconcileCreation: (operation, request, recoveryId, options) =>
+          this.observeWalletRequest(
             'reconcileWalletOffer',
-            () => source.reconcileCreation(operation, request, recoveryId),
+            () =>
+              options
+                ? source.reconcileCreation(operation, request, recoveryId, options)
+                : source.reconcileCreation(operation, request, recoveryId),
             true,
           ),
         beginCancellation: (tradeId) =>
@@ -239,7 +252,7 @@ export class BlockchainPoller {
             source.beginCancellation(tradeId),
           ),
         reconcileCancellation: (tradeId, recoveryId) =>
-          this.enqueueMutation('reconcileWalletOfferCancellation', () =>
+          this.observeWalletRequest('reconcileWalletOfferCancellation', () =>
             source.reconcileCancellation(tradeId, recoveryId),
           ),
       };
@@ -274,7 +287,7 @@ export class BlockchainPoller {
   }
 
   private enqueueRpc<T>(
-    lane: AsyncJobQueue,
+    lane: AsyncJobQueue | null,
     label: string,
     run: () => Promise<T> | T,
     preserveActiveCompletion = false,
@@ -317,7 +330,8 @@ export class BlockchainPoller {
         },
         onDiscard: rejectForDisconnect,
       };
-      lane.enqueue(job);
+      if (lane) lane.enqueue(job);
+      else void job.run();
     });
   }
 

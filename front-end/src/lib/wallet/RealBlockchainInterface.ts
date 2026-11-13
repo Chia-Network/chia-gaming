@@ -12,6 +12,7 @@ import {
 import { WalletType } from '../../types/WalletType';
 import { CoinRecord } from '../../types/rpc/CoinRecord';
 import { isExactDuplicateTransaction } from '../../util/walletSubmit';
+import { coinRecordToName } from '../../util/coinWatch';
 import {
   rpc,
   WalletConnectResponseError,
@@ -37,7 +38,7 @@ import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../../util/b
 import { jsonStringify } from '../../util/jsonSafe';
 import { walletConnectState } from './WalletConnectClient';
 
-const PEER_READINESS_POLL_MS = 5000;
+const SYNC_READINESS_POLL_MS = 5000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
@@ -369,12 +370,15 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private lastConnectedState = false;
   private lastRecoveringState = false;
   private coinRecordCache = new Map<string, CoinRecord>();
-  // Play readiness: use a verified full-node peer when the wallet supports the
-  // optional count RPC; otherwise connectivity is sufficient.
+  // Probe once using a known existing coin; never persist the decision or
+  // share it with another wallet connection.
+  private coinRecordsQueryCapability: { scope: string; supportsAllowMissing: boolean } | null =
+    null;
+  // New funding requires a synced wallet; a connected full-node peer alone
+  // does not establish a current chain view.
   private readyForPlay = false;
-  private unsupportedPeerCountScope: string | null = null;
-  private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
-  private peerPollEpoch = 0;
+  private syncPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private syncPollEpoch = 0;
   private wcSubscription: { unsubscribe: () => void } | null = null;
   private monitoringReady = false;
   private monitoringPromise: Promise<void> | null = null;
@@ -657,6 +661,18 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
     const { offer, extraConditions, coinIds, maxHeight } = request;
     try {
+      if (!(await this.checkSyncReadiness())) {
+        return {
+          kind: 'unavailable',
+          mutation: 'not-started',
+          reason: 'Wait for the Chia wallet to finish syncing before funding a session.',
+        };
+      }
+    } catch (error) {
+      this.setReadyForPlay(false);
+      return { kind: 'unavailable', mutation: 'not-started', reason: collectErrorText(error) };
+    }
+    try {
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
         conditions.push({
@@ -728,7 +744,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         // request must not select the first request's still-unspent coin.
         validateOnly: false,
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
-        allowUnsynced: true,
+        allowUnsynced: false,
       };
       log(`[wc-blockchain] createOfferForIds payload: ${jsonStringify(payload)}`);
       const response = await rpc.createOfferForIds(payload);
@@ -821,36 +837,88 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
 
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
     const uniqueNames = [...new Set(names)];
+    if (uniqueNames.length === 0) return [];
+    const getScope = () =>
+      `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
+    const scope = getScope();
+    const supportsAllowMissing =
+      this.coinRecordsQueryCapability?.scope === scope &&
+      this.coinRecordsQueryCapability.supportsAllowMissing;
+    // Released GUIs reject allowMissing itself. Begin with their original
+    // singleton request until a probe on a known existing coin accepts the flag.
+    const queries = supportsAllowMissing ? [uniqueNames] : uniqueNames.map((name) => [name]);
     const records: CoinRecord[] = [];
-    for (const name of uniqueNames) {
+    for (const queryNames of queries) {
       try {
-        const resp = await rpc.getCoinRecordsByNames({
-          names: [name],
-          includeSpentCoins: true,
-          allowUnsynced: true,
-        });
-        if ((resp as any)?.error) {
-          const cached = this.coinRecordCache.get(name);
-          if (cached) records.push(cached);
-          continue;
+        const query = (allowMissing: boolean) =>
+          rpc.getCoinRecordsByNames({
+            names: queryNames,
+            includeSpentCoins: true,
+            allowUnsynced: true,
+            ...(allowMissing ? { allowMissing: true } : {}),
+          });
+        const resp = await query(supportsAllowMissing);
+        if (resp?.success === false || (resp as any)?.error || !Array.isArray(resp?.coinRecords)) {
+          throw new Error('Wallet did not return coin records');
         }
-        const r = resp.coinRecords ?? [];
-        if (r.length > 0) {
-          log(`[wc-blockchain] getCoinRecordsByNames hit name=${name} count=${r.length}`);
-          this.coinRecordCache.set(name, r[0]);
+        const r = resp.coinRecords;
+        const byName = new Map<string, CoinRecord>();
+        if (queryNames.length === 1) {
+          if (r[0]) byName.set(queryNames[0], r[0]);
         } else {
-          this.coinRecordCache.delete(name);
+          for (const record of r) {
+            const name = await coinRecordToName(record);
+            if (!name) throw new Error('Wallet returned an invalid coin record');
+            byName.set(name, record);
+          }
+        }
+        for (const name of queryNames) {
+          const record = byName.get(name);
+          if (record) this.coinRecordCache.set(name, record);
+          else this.coinRecordCache.delete(name);
+        }
+        if (r.length > 0) {
+          log(
+            `[wc-blockchain] getCoinRecordsByNames hit names=${queryNames.join(',')} count=${r.length}`,
+          );
         }
         records.push(...r);
+        if (
+          r.length > 0 &&
+          getScope() === scope &&
+          this.coinRecordsQueryCapability?.scope !== scope
+        ) {
+          // Missing coins and rejected flags produce the same opaque error.
+          // Use the coin just found as a control, and record the attempt before
+          // awaiting it so overlapping reads cannot send duplicate probes.
+          const capability = { scope, supportsAllowMissing: false };
+          this.coinRecordsQueryCapability = capability;
+          try {
+            const probe = await query(true);
+            if (
+              getScope() === scope &&
+              probe?.success !== false &&
+              !(probe as any)?.error &&
+              Array.isArray(probe?.coinRecords) &&
+              probe.coinRecords.length > 0
+            ) {
+              capability.supportsAllowMissing = true;
+            }
+          } catch {
+            // Keep the successful legacy result and stay in legacy mode for
+            // this connection, even if the probe fails or times out.
+          }
+        }
       } catch {
         // WalletConnect may collapse the wallet's expected missing-coin result
         // and unrelated daemon failures into the same opaque "Internal Error".
-        // Preserve a last-known record so a transient failure cannot turn a
+        // Preserve last-known records so a transient failure cannot turn a
         // previously live coin into an authoritative disappearance. Unknown
         // names remain absent and polling retries them without noisy logging.
-        const cached = this.coinRecordCache.get(name);
-        if (cached) records.push(cached);
-        continue;
+        for (const name of queryNames) {
+          const cached = this.coinRecordCache.get(name);
+          if (cached) records.push(cached);
+        }
       }
     }
     return records;
@@ -953,21 +1021,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         /* ignore */
       }
     }
-    // Use peer-backed readiness when the wallet granted that optional method.
-    // Wallets without it are assumed ready once connected.
-    if (connected) {
-      const scope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
-      if (
-        this.unsupportedPeerCountScope !== scope &&
-        walletConnectState.supportsMethod(ChiaMethod.GetFullNodePeerCount)
-      ) {
-        this.startPeerReadinessPoll();
-      } else {
-        this.setReadyForPlay(true);
-      }
-    } else {
-      this.stopPeerReadinessPoll();
-    }
+    if (connected) this.startSyncReadinessPoll();
+    else this.stopSyncReadinessPoll();
   }
 
   private setReadyForPlay(ready: boolean) {
@@ -982,46 +1037,42 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  private startPeerReadinessPoll() {
-    const epoch = ++this.peerPollEpoch;
-    const scope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
+  private async checkSyncReadiness(): Promise<boolean> {
+    if (!walletConnectState.supportsMethod(ChiaMethod.GetSyncStatus)) {
+      this.setReadyForPlay(false);
+      throw new Error(
+        'Reconnect your Chia wallet to grant sync-status access before starting a session.',
+      );
+    }
+    const epoch = this.syncPollEpoch;
+    const status = await rpc.getSyncStatus();
+    if (epoch !== this.syncPollEpoch) return false;
+    const ready = status.synced === true && status.syncing === false;
+    this.setReadyForPlay(ready);
+    return ready;
+  }
+
+  private startSyncReadinessPoll() {
+    const epoch = ++this.syncPollEpoch;
     const check = async () => {
       try {
-        const peerCount = await rpc.getFullNodePeerCount({});
-        if (epoch !== this.peerPollEpoch) return;
-        log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
-        if (peerCount > 0n) {
-          this.setReadyForPlay(true);
-          return;
-        }
+        await this.checkSyncReadiness();
       } catch (e) {
-        if (epoch !== this.peerPollEpoch) return;
-        const errorText = String(e).toLowerCase();
-        if (
-          errorText.includes('-32601') ||
-          errorText.includes('method not found') ||
-          errorText.includes('unsupported method') ||
-          errorText.includes('method unsupported')
-        ) {
-          this.unsupportedPeerCountScope = scope;
-          log('[wc-blockchain] full node peer count unsupported; assuming ready');
-          this.setReadyForPlay(true);
-          return;
-        }
-        log(`[wc-blockchain] full node peer poll error: ${String(e)}`);
+        if (epoch !== this.syncPollEpoch) return;
+        this.setReadyForPlay(false);
+        log(`[wc-blockchain] wallet sync readiness: ${String(e)}`);
       }
-      if (epoch !== this.peerPollEpoch) return;
-      this.setReadyForPlay(false);
-      this.peerPollTimer = setTimeout(check, PEER_READINESS_POLL_MS);
+      if (epoch !== this.syncPollEpoch) return;
+      this.syncPollTimer = setTimeout(check, SYNC_READINESS_POLL_MS);
     };
     void check();
   }
 
-  private stopPeerReadinessPoll() {
-    this.peerPollEpoch++;
-    if (this.peerPollTimer) {
-      clearTimeout(this.peerPollTimer);
-      this.peerPollTimer = null;
+  private stopSyncReadinessPoll() {
+    this.syncPollEpoch++;
+    if (this.syncPollTimer) {
+      clearTimeout(this.syncPollTimer);
+      this.syncPollTimer = null;
     }
     this.setReadyForPlay(false);
   }
@@ -1035,12 +1086,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         if (walletConnectState.getProfile() !== 'chia-wallet') {
           this.markDisconnected();
           return;
-        }
-        if (evt.timedOutMethod === ChiaMethod.GetFullNodePeerCount) {
-          this.unsupportedPeerCountScope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
-          log(
-            '[wc-blockchain] full node peer count unsupported (query timed out); assuming ready after relay recovery',
-          );
         }
         if (evt.stateName === 'connected') {
           const epoch = this.monitoringEpoch;

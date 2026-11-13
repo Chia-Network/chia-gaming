@@ -5,7 +5,7 @@ import { getCurrencyLabels } from '../constants/currency';
 import { desktopCloudWalletBridge } from '../lib/wallet/cloudWalletOAuth';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { WalletTopUpOptions } from '../types/ChiaGaming';
-import { Button } from './button';
+import { Button } from './ui/button';
 
 const BUY_ORDER_MESSAGE_TYPE = 'chia-cloud-wallet/buy-order';
 
@@ -170,14 +170,13 @@ export function WalletTopUp(props: WalletTopUpProps) {
       )}
       <div className="flex gap-2 justify-center">
         {buyUrl && (
-          <Button variant="solid" color="primary" size="sm" onClick={() => void openBuy(buyUrl)}>
+          <Button variant="default" size="sm" onClick={() => void openBuy(buyUrl)}>
             Buy {currency.xch}
           </Button>
         )}
         {depositAddress && (
           <Button
             variant="outline"
-            color="neutral"
             size="sm"
             aria-expanded={showDeposit}
             onClick={() => setShowDeposit((v) => !v)}
@@ -211,12 +210,7 @@ export function WalletTopUp(props: WalletTopUpProps) {
             <img src={qrDataUrl} alt="Deposit address QR code" width={180} height={180} />
           )}
           <code className="text-xs break-all text-canvas-text">{depositAddress}</code>
-          <Button
-            variant="outline"
-            color="neutral"
-            size="sm"
-            onClick={() => void copy(depositAddress)}
-          >
+          <Button variant="outline" size="sm" onClick={() => void copy(depositAddress)}>
             {copyState === 'copied'
               ? 'Copied'
               : copyState === 'failed'

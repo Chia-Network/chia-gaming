@@ -833,11 +833,7 @@ describe('WalletConnect pairing teardown', () => {
     }
   });
 
-  it.each([
-    ChiaMethod.GetHeightInfo,
-    ChiaMethod.GetCoinRecordsByNames,
-    ChiaMethod.GetFullNodePeerCount,
-  ])(
+  it.each([ChiaMethod.GetHeightInfo, ChiaMethod.GetCoinRecordsByNames, ChiaMethod.GetSyncStatus])(
     'resumes actual chain polling after replacing a relay with a stalled %s',
     async (stalledMethod) => {
       jest.useFakeTimers();
@@ -856,6 +852,8 @@ describe('WalletConnect pairing teardown', () => {
             return Promise.resolve(encodePuzzleHashToBech32m('11'.repeat(32)));
           case ChiaMethod.GetWallets:
             return Promise.resolve([{ id: 2, type: 205 }]);
+          case ChiaMethod.GetSyncStatus:
+            return Promise.resolve({ synced: true, syncing: false });
           case ChiaMethod.GetHeightInfo:
             return Promise.resolve({ height: 100 });
           case ChiaMethod.GetCoinRecordsByNames:
@@ -865,13 +863,13 @@ describe('WalletConnect pairing teardown', () => {
         }
       });
       await establishSession(
-        stalledMethod === ChiaMethod.GetFullNodePeerCount
+        stalledMethod === ChiaMethod.GetSyncStatus
           ? {
               ...connectedSession,
               namespaces: {
                 chia: {
                   ...connectedSession.namespaces.chia,
-                  methods: [ChiaMethod.GetFullNodePeerCount],
+                  methods: [ChiaMethod.GetSyncStatus],
                 },
               },
             }
@@ -904,12 +902,12 @@ describe('WalletConnect pairing teardown', () => {
         expect(heights.length).toBeGreaterThan(0);
         expect(snapshots.length).toBeGreaterThan(0);
         expect(walletConnectState.getSession()?.topic).toBe(connectedSession.topic);
-        if (stalledMethod === ChiaMethod.GetFullNodePeerCount) {
+        if (stalledMethod === ChiaMethod.GetSyncStatus) {
           expect(
             mockClient.request.mock.calls.filter(
-              ([call]) => call.request.method === ChiaMethod.GetFullNodePeerCount,
-            ),
-          ).toHaveLength(1);
+              ([call]) => call.request.method === ChiaMethod.GetSyncStatus,
+            ).length,
+          ).toBeGreaterThan(1);
           expect(blockchain.isReadyForPlay()).toBe(true);
         }
         finishOld({ height: 999, coinRecords: [] });

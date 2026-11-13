@@ -207,8 +207,7 @@ export type ApplicationEvent = { type: 'batch-complete'; view: ApplicationView }
 export type ApplicationFrontend = Pick<Application, 'snapshot' | 'subscribe' | 'dispatch'>;
 
 export function createApplication() {
-  const uniqueId = storageRepository.getPlayerId();
-  const walletOwner = new WalletConnection(uniqueId, (event) => batch(() => walletEvents(event)));
+  const walletOwner = new WalletConnection((event) => batch(() => walletEvents(event)));
   const state: {
     sessionId: string;
     activeTab: TabId;
@@ -1416,6 +1415,12 @@ export function createApplication() {
           // otherwise undo explicit setBusy.
           return hubPresenceNow();
         },
+        // A saved session needs its hub back however long that takes; otherwise
+        // a hub that is missing or silent should be reported promptly.
+        {
+          failFastFirstConnect:
+            options.resetSession === true || storageRepository.loadState().session === null,
+        },
       );
     } catch (err) {
       console.error('[Shell] HubConnection failed for origin=%s', origin, err);
@@ -1430,6 +1435,8 @@ export function createApplication() {
       return;
     }
     hubConn = conn;
+    // Remember every attached hub, including a connection restored at boot.
+    storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
     peerSession?.attachCarrier(conn);
     void restoreRejections(conn, bootRejectionDescriptors).catch((error) => {
       console.error('[Shell] failed to restore rejection tombstones', error);
@@ -1443,6 +1450,8 @@ export function createApplication() {
       return;
     }
     if (trust === 'granted') {
+      // This connection continues after reloading with the new trust grant.
+      storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
       storageRepository.regenerateSessionId();
       storageRepository.updatePreference({ key: 'hubUrl', value: origin });
       window.location.reload();
@@ -2272,7 +2281,7 @@ export function createApplication() {
     const controller = (sessionController ??= createSessionController(
       wallet,
       peer,
-      uniqueId,
+      storageRepository.getPlayerId(),
       params.myContribution,
       params.theirContribution,
       params.iStarted,
@@ -2467,6 +2476,7 @@ export function createApplication() {
       ...sessionState,
       alias: storageRepository.query('alias'),
       theme: storageRepository.query('theme'),
+      lastHubUrl: storageRepository.query('lastHubUrl'),
       keepSession: shouldMountGameSession(
         !!sessions.state.sessionConfig && !!sessions.state.peerConn,
         state.walletView.connected,
