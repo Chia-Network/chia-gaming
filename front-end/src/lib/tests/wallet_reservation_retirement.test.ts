@@ -442,6 +442,157 @@ describe('wallet reservation retirement', () => {
     expect(storageRepository.channelFundingOperations()).toEqual([]);
   });
 
+  it.each(['wallet', 'checkpoint'] as const)(
+    'hands a timed-out funding cancellation to retirement while waiting for the %s',
+    async (waitingFor) => {
+      let completeCancellation!: (value: { status: 'cancelled' }) => void;
+      const cancel = jest.fn(
+        () =>
+          new Promise<{ status: 'cancelled' }>((resolve) => {
+            completeCancellation = resolve;
+          }),
+      );
+      channelFundingRuntime.attachProvider(provider(cancel));
+      install([]);
+      storageRepository.replaceChannelFunding([
+        {
+          owner,
+          purpose: { kind: 'funding', operationId: 'funding' },
+          stage: 'awaiting-channel',
+          providerReservationId: 'funding-trade',
+          request: { kind: 'funding', canonical: { amount: '100', fee: '0', conditions: [] } },
+          reason: 'funding-delivered',
+        },
+      ]);
+      let completeCheckpoint!: () => void;
+      const checkpoint =
+        waitingFor === 'checkpoint'
+          ? jest.spyOn(storageRepository, 'checkpointDomainMutations').mockImplementationOnce(
+              () =>
+                new Promise<void>((resolve) => {
+                  completeCheckpoint = resolve;
+                }),
+            )
+          : null;
+      try {
+        channelFundingRuntime.channelCreationTimedOut(
+          owner.installationPlayerId,
+          owner.peerSessionId,
+        );
+        await waitForCall(checkpoint ?? cancel);
+        storageRepository.retireSessionWalletReservations(owner.peerSessionId);
+        await flush();
+        expect(storageRepository.channelFundingOperations()).toEqual([]);
+        expect(cancel).toHaveBeenCalledTimes(waitingFor === 'checkpoint' ? 0 : 1);
+
+        if (waitingFor === 'checkpoint') {
+          completeCheckpoint();
+          await waitForCall(cancel);
+        }
+        completeCancellation({ status: 'cancelled' });
+        await channelFundingRuntime.flush();
+        await flush();
+        expect(cancel).toHaveBeenCalledTimes(1);
+        expect(cancel).toHaveBeenCalledWith('funding-trade');
+        expect(storageRepository.channelFundingOperations()).toEqual([]);
+      } finally {
+        checkpoint?.mockRestore();
+        completeCheckpoint?.();
+        completeCancellation?.({ status: 'cancelled' });
+      }
+    },
+  );
+
+  it('a new storage owner starts cancellation independently of an obsolete checkpoint', async () => {
+    const cancel = jest.fn().mockResolvedValue({ status: 'cancelled' });
+    channelFundingRuntime.attachProvider(provider(cancel));
+    install([]);
+    storageRepository.replaceChannelFunding([
+      {
+        owner,
+        purpose: { kind: 'funding', operationId: 'funding' },
+        stage: 'cancel-required',
+        providerReservationId: 'funding-trade',
+        reason: 'channel-creation-timed-out',
+      },
+    ]);
+    await storageRepository.write(structuredClone(storageRepository.loadState()));
+    let completeCheckpoint!: () => void;
+    const checkpoint = jest
+      .spyOn(storageRepository, 'checkpointDomainMutations')
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            completeCheckpoint = resolve;
+          }),
+      );
+    try {
+      channelFundingRuntime.retryCancelRequired(owner);
+      await waitForCall(checkpoint);
+      storageRepository.loseAuthority('takeover');
+      await storageRepository.claimApplicationState();
+      await waitForCall(cancel);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      completeCheckpoint();
+      await channelFundingRuntime.flush();
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
+      expect(cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      checkpoint.mockRestore();
+      completeCheckpoint?.();
+    }
+  });
+
+  it.each([
+    { stage: 'cancel-required', retireBeforeStart: false },
+    { stage: 'cancel-required', retireBeforeStart: true },
+    { stage: 'best-effort-cancellation-uncertain', retireBeforeStart: false },
+    { stage: 'best-effort-cancellation-uncertain', retireBeforeStart: true },
+  ] as const)(
+    'continues inherited $stage cancellation after retirement (before start: $retireBeforeStart)',
+    async ({ stage, retireBeforeStart }) => {
+      let complete!: (value: { status: 'pending'; recoveryId: string }) => void;
+      const beginCancellation = jest.fn(
+        () =>
+          new Promise<{ status: 'pending'; recoveryId: string }>((resolve) => {
+            complete = resolve;
+          }),
+      );
+      const reconcileCancellation = jest.fn().mockResolvedValue({ status: 'cancelled' });
+      channelFundingRuntime.attachProvider({
+        scope,
+        capability: 'recoverable-after-begin',
+        beginCreation: jest.fn(),
+        reconcileCreation: jest.fn(),
+        beginCancellation,
+        reconcileCancellation,
+      });
+      install([]);
+      storageRepository.replaceChannelFunding([
+        {
+          owner,
+          purpose: { kind: 'funding', operationId: 'funding' },
+          stage,
+          ...(stage === 'best-effort-cancellation-uncertain' ? { lastAttemptEpoch: 0n } : {}),
+          providerReservationId: 'funding-trade',
+          reason: 'channel-creation-timed-out',
+        },
+      ]);
+      channelFundingRuntime.retryCancelRequired(owner);
+      if (!retireBeforeStart) await waitForCall(beginCancellation);
+      storageRepository.retireSessionWalletReservations(owner.peerSessionId);
+      await waitForCall(beginCancellation);
+      await flush();
+      complete({ status: 'pending', recoveryId: 'exact-cancellation' });
+      await channelFundingRuntime.flush();
+      await flush();
+      expect(beginCancellation).toHaveBeenCalledTimes(1);
+      expect(reconcileCancellation).toHaveBeenCalledTimes(1);
+      expect(reconcileCancellation).toHaveBeenCalledWith('funding-trade', 'exact-cancellation');
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
+    },
+  );
+
   it.each([
     { engine: 'funding', status: 'unavailable' },
     { engine: 'fee', status: 'unavailable' },

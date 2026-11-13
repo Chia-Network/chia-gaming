@@ -1,6 +1,11 @@
 import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { log } from '../../services/log';
-import type { ChannelFundingEntry } from './channelFundingStore';
+import {
+  channelFundingKey,
+  type ChannelFundingCancellationEntry,
+  type ChannelFundingEntry,
+  type ChannelFundingTradeState,
+} from './channelFundingStore';
 import type { FeeAttachment } from './feeAttachmentStore';
 import type { DurableApplicationState } from './saveEnvelope';
 import { walletProviderRegistry } from './walletProviderRegistry';
@@ -8,6 +13,50 @@ import { isRecoverableProvider } from './providerCapabilities';
 import { providerRequestFromRecovery } from './channelFundingSelectors';
 import { providerScopeKey } from './providerKeys';
 import { storageRepository } from './storageRepository';
+import { coalesceProviderFlight, type ProviderFlight } from './providerExecution';
+
+// Funding cancellation outlives its durable entry when a session retires. Keep
+// its one flight here so retirement inherits work already waiting on persistence
+// or the wallet instead of launching a second cancellation.
+let fundingCancellationGeneration = -1;
+let fundingCancellations = new Map<string, ProviderFlight>();
+
+function currentFundingCancellations(): Map<string, ProviderFlight> {
+  const generation = storageRepository.lifecycleGeneration;
+  if (fundingCancellationGeneration !== generation) {
+    fundingCancellationGeneration = generation;
+    fundingCancellations = new Map();
+  }
+  return fundingCancellations;
+}
+
+export function runFundingCancellation(
+  entry: ChannelFundingTradeState,
+  cancel: () => Promise<void>,
+  resume?: () => void,
+  epoch?: bigint,
+): Promise<void> {
+  const key = JSON.stringify([
+    channelFundingKey(entry.owner, entry.purpose),
+    entry.providerReservationId,
+  ]);
+  return coalesceProviderFlight(currentFundingCancellations(), key, cancel, resume, epoch);
+}
+
+export async function flushFundingCancellations(): Promise<void> {
+  const flights = currentFundingCancellations();
+  while (flights.size > 0) {
+    await Promise.allSettled([...flights.values()].map((flight) => flight.promise));
+  }
+}
+
+/** Finish the exact provider request returned after its funding owner retired. */
+export function finishRetiredFundingCancellation(
+  provider: WalletOfferProvider,
+  entry: ChannelFundingCancellationEntry,
+): Promise<void> {
+  return cancelReservation(provider, entry);
+}
 
 /** Once replay is discarded, provider cancellation is best effort, not session debt. */
 export function retireWalletReservations(
@@ -41,7 +90,13 @@ export function cancelRetiredWalletReservation(
 ): void {
   // Let the retirement mutation remove its entries before checking live ownership.
   void Promise.resolve()
-    .then(() => cancelReservation(provider, entry))
+    .then(() =>
+      !('submissionId' in entry) &&
+      entry.stage !== 'creating' &&
+      entry.stage !== 'best-effort-uncertain'
+        ? runFundingCancellation(entry, () => cancelReservation(provider, entry))
+        : cancelReservation(provider, entry),
+    )
     .catch((error) => {
       log(`[wallet-retirement] best-effort cancellation failed: ${String(error)}`);
     });
