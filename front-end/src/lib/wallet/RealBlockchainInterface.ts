@@ -38,7 +38,7 @@ import { decodeBech32mPuzzleHash, encodePuzzleHashToBech32m } from '../../util/b
 import { jsonStringify } from '../../util/jsonSafe';
 import { walletConnectState } from './WalletConnectClient';
 
-const PEER_READINESS_POLL_MS = 5000;
+const SYNC_READINESS_POLL_MS = 5000;
 const ASSERT_BEFORE_HEIGHT_ABSOLUTE = 87n;
 const CREATE_COIN = 51n;
 const ASSERT_COIN_ANNOUNCEMENT = 61n;
@@ -374,12 +374,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   // share it with another wallet connection.
   private coinRecordsQueryCapability: { scope: string; supportsAllowMissing: boolean } | null =
     null;
-  // Play readiness: use a verified full-node peer when the wallet supports the
-  // optional count RPC; otherwise connectivity is sufficient.
+  // New funding requires a synced wallet; a connected full-node peer alone
+  // does not establish a current chain view.
   private readyForPlay = false;
-  private unsupportedPeerCountScope: string | null = null;
-  private peerPollTimer: ReturnType<typeof setTimeout> | null = null;
-  private peerPollEpoch = 0;
+  private syncPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private syncPollEpoch = 0;
   private wcSubscription: { unsubscribe: () => void } | null = null;
   private monitoringReady = false;
   private monitoringPromise: Promise<void> | null = null;
@@ -662,6 +661,18 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   ): Promise<Exclude<WalletOfferCompletion, { kind: 'created-ephemeral' }>> {
     const { offer, extraConditions, coinIds, maxHeight } = request;
     try {
+      if (!(await this.checkSyncReadiness())) {
+        return {
+          kind: 'unavailable',
+          mutation: 'not-started',
+          reason: 'Wait for the Chia wallet to finish syncing before funding a session.',
+        };
+      }
+    } catch (error) {
+      this.setReadyForPlay(false);
+      return { kind: 'unavailable', mutation: 'not-started', reason: collectErrorText(error) };
+    }
+    try {
       const conditions = [...(extraConditions ?? [])];
       if (maxHeight !== undefined) {
         conditions.push({
@@ -733,7 +744,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         // request must not select the first request's still-unspent coin.
         validateOnly: false,
         extraConditions: normalizedConditions.length ? normalizedConditions : undefined,
-        allowUnsynced: true,
+        allowUnsynced: false,
       };
       log(`[wc-blockchain] createOfferForIds payload: ${jsonStringify(payload)}`);
       const response = await rpc.createOfferForIds(payload);
@@ -1010,21 +1021,8 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         /* ignore */
       }
     }
-    // Use peer-backed readiness when the wallet granted that optional method.
-    // Wallets without it are assumed ready once connected.
-    if (connected) {
-      const scope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
-      if (
-        this.unsupportedPeerCountScope !== scope &&
-        walletConnectState.supportsMethod(ChiaMethod.GetFullNodePeerCount)
-      ) {
-        this.startPeerReadinessPoll();
-      } else {
-        this.setReadyForPlay(true);
-      }
-    } else {
-      this.stopPeerReadinessPoll();
-    }
+    if (connected) this.startSyncReadinessPoll();
+    else this.stopSyncReadinessPoll();
   }
 
   private setReadyForPlay(ready: boolean) {
@@ -1039,46 +1037,42 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     }
   }
 
-  private startPeerReadinessPoll() {
-    const epoch = ++this.peerPollEpoch;
-    const scope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
+  private async checkSyncReadiness(): Promise<boolean> {
+    if (!walletConnectState.supportsMethod(ChiaMethod.GetSyncStatus)) {
+      this.setReadyForPlay(false);
+      throw new Error(
+        'Reconnect your Chia wallet to grant sync-status access before starting a session.',
+      );
+    }
+    const epoch = this.syncPollEpoch;
+    const status = await rpc.getSyncStatus();
+    if (epoch !== this.syncPollEpoch) return false;
+    const ready = status.synced === true && status.syncing === false;
+    this.setReadyForPlay(ready);
+    return ready;
+  }
+
+  private startSyncReadinessPoll() {
+    const epoch = ++this.syncPollEpoch;
     const check = async () => {
       try {
-        const peerCount = await rpc.getFullNodePeerCount({});
-        if (epoch !== this.peerPollEpoch) return;
-        log(`[wc-blockchain] full node peer poll peerCount=${peerCount}`);
-        if (peerCount > 0n) {
-          this.setReadyForPlay(true);
-          return;
-        }
+        await this.checkSyncReadiness();
       } catch (e) {
-        if (epoch !== this.peerPollEpoch) return;
-        const errorText = String(e).toLowerCase();
-        if (
-          errorText.includes('-32601') ||
-          errorText.includes('method not found') ||
-          errorText.includes('unsupported method') ||
-          errorText.includes('method unsupported')
-        ) {
-          this.unsupportedPeerCountScope = scope;
-          log('[wc-blockchain] full node peer count unsupported; assuming ready');
-          this.setReadyForPlay(true);
-          return;
-        }
-        log(`[wc-blockchain] full node peer poll error: ${String(e)}`);
+        if (epoch !== this.syncPollEpoch) return;
+        this.setReadyForPlay(false);
+        log(`[wc-blockchain] wallet sync readiness: ${String(e)}`);
       }
-      if (epoch !== this.peerPollEpoch) return;
-      this.setReadyForPlay(false);
-      this.peerPollTimer = setTimeout(check, PEER_READINESS_POLL_MS);
+      if (epoch !== this.syncPollEpoch) return;
+      this.syncPollTimer = setTimeout(check, SYNC_READINESS_POLL_MS);
     };
     void check();
   }
 
-  private stopPeerReadinessPoll() {
-    this.peerPollEpoch++;
-    if (this.peerPollTimer) {
-      clearTimeout(this.peerPollTimer);
-      this.peerPollTimer = null;
+  private stopSyncReadinessPoll() {
+    this.syncPollEpoch++;
+    if (this.syncPollTimer) {
+      clearTimeout(this.syncPollTimer);
+      this.syncPollTimer = null;
     }
     this.setReadyForPlay(false);
   }
@@ -1092,12 +1086,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         if (walletConnectState.getProfile() !== 'chia-wallet') {
           this.markDisconnected();
           return;
-        }
-        if (evt.timedOutMethod === ChiaMethod.GetFullNodePeerCount) {
-          this.unsupportedPeerCountScope = `${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getAddress()}`;
-          log(
-            '[wc-blockchain] full node peer count unsupported (query timed out); assuming ready after relay recovery',
-          );
         }
         if (evt.stateName === 'connected') {
           const epoch = this.monitoringEpoch;

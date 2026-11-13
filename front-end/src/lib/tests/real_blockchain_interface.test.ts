@@ -20,6 +20,7 @@ jest.mock('../wallet/WalletConnectRpc', () => ({
     registerRemoteCoins: jest.fn(),
     selectCoins: jest.fn(),
     getFullNodePeerCount: jest.fn(async () => 1n),
+    getSyncStatus: jest.fn(),
   },
 }));
 
@@ -29,6 +30,7 @@ let mockWalletFingerprint = '123456';
 let mockWalletRequestEpoch = 0;
 let mockWalletChainId = 'chia:testnet11';
 let mockSupportsPeerCount = true;
+let mockSupportsSyncStatus = true;
 const mockWalletConnectState = {
   getObservable: () => ({
     subscribe: ({ next }: { next: (evt: any) => void }) => {
@@ -45,7 +47,9 @@ const mockWalletConnectState = {
   getAddress: jest.fn(() => mockWalletFingerprint),
   getRequestEpoch: jest.fn(() => mockWalletRequestEpoch),
   getChainId: jest.fn(() => mockWalletChainId),
-  supportsMethod: jest.fn(() => mockSupportsPeerCount),
+  supportsMethod: jest.fn((method: string) =>
+    method === 'chia_getSyncStatus' ? mockSupportsSyncStatus : mockSupportsPeerCount,
+  ),
   getProfile: jest.fn(() => 'chia-wallet'),
   selectProfile: jest.fn(),
   startConnect: jest.fn(async () => ({
@@ -149,6 +153,9 @@ describe('RealBlockchainInterface', () => {
     mockPushTransactions.mockReset();
     mockRegisterRemoteCoins.mockReset();
     mockSelectCoins.mockReset();
+    (rpc.getSyncStatus as jest.Mock)
+      .mockReset()
+      .mockResolvedValue({ synced: true, syncing: false });
     mockGetFullNodePeerCount.mockReset();
     mockGetFullNodePeerCount.mockResolvedValue(1n);
     mockWalletListeners.clear();
@@ -157,6 +164,7 @@ describe('RealBlockchainInterface', () => {
     mockWalletRequestEpoch = 0;
     mockWalletChainId = 'chia:testnet11';
     mockSupportsPeerCount = true;
+    mockSupportsSyncStatus = true;
     mockWalletConnectState.init.mockClear();
     mockWalletConnectState.getSession.mockClear();
     mockWalletConnectState.getAddress.mockClear();
@@ -294,6 +302,7 @@ describe('RealBlockchainInterface', () => {
         events.push([connected, recovering]),
       );
       await connectAndWait(blockchain);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
       expect(blockchain.isReadyForPlay()).toBe(true);
 
       mockWalletSession = undefined;
@@ -435,99 +444,104 @@ describe('RealBlockchainInterface', () => {
     }
   });
 
-  it('assumes enough peers when the wallet does not support the peer-count method', async () => {
-    jest.useFakeTimers();
-    try {
-      mockSupportsPeerCount = false;
-      mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
-      mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
-
-      const blockchain = new RealBlockchainInterface();
-      const ready: boolean[] = [];
-      blockchain.onPlayReadinessChange((r) => ready.push(r));
-
-      await connectAndWait(blockchain);
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-
-      expect(blockchain.isReadyForPlay()).toBe(true);
-      expect(ready).toEqual([true]);
-      expect(mockGetFullNodePeerCount).not.toHaveBeenCalled();
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it('waits for query timeout recovery before assuming an unresponsive peer-count method is unsupported', async () => {
+  it('does not treat a connected but syncing wallet as ready, and keeps checking after recovery', async () => {
     jest.useFakeTimers();
     try {
       mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
       mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
-      mockGetFullNodePeerCount.mockImplementation(() => new Promise(() => {}));
-
+      const sync = rpc.getSyncStatus as jest.Mock;
+      sync.mockResolvedValue({ synced: false, syncing: true });
       const blockchain = new RealBlockchainInterface();
       blockchain.onPlayReadinessChange(() => {});
-
       await connectAndWait(blockchain);
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-      expect(blockchain.isReadyForPlay()).toBe(false);
-
-      jest.advanceTimersByTime(7_000);
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-      expect(blockchain.isReadyForPlay()).toBe(false);
-      // Only the active transport query's deadline can identify a timed-out
-      // method; time spent queued behind wallet work is not an unsupported RPC.
-      for (const next of mockWalletListeners) {
-        next({
-          stateName: 'reconnecting',
-          connected: false,
-          timedOutMethod: 'chia_getFullNodePeerCount',
-        });
-      }
-      expect(blockchain.isReadyForPlay()).toBe(false);
-      for (const next of mockWalletListeners) next({ stateName: 'connected', connected: true });
       await jest.advanceTimersByTimeAsync(1000);
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      sync.mockResolvedValue({ synced: true, syncing: false });
+      await jest.advanceTimersByTimeAsync(10000);
       expect(blockchain.isReadyForPlay()).toBe(true);
-      expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
+      sync.mockResolvedValue({ synced: false, syncing: true });
+      await jest.advanceTimersByTimeAsync(10000);
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      await blockchain.disconnect();
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('assumes enough peers when the wallet rejects peer count as unsupported', async () => {
+  it('requires sync-status permission rather than assuming an old pairing is ready', async () => {
     jest.useFakeTimers();
     try {
+      mockSupportsSyncStatus = false;
       mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
       mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
-      mockGetFullNodePeerCount.mockRejectedValue(new Error('Method not found (code=-32601)'));
-
       const blockchain = new RealBlockchainInterface();
       blockchain.onPlayReadinessChange(() => {});
-
       await connectAndWait(blockchain);
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-
-      expect(blockchain.isReadyForPlay()).toBe(true);
-      expect(mockGetFullNodePeerCount).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(blockchain.isReadyForPlay()).toBe(false);
+      expect(rpc.getSyncStatus).not.toHaveBeenCalled();
+      await blockchain.disconnect();
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it('stays not-ready for play while no full node peer is present', async () => {
+  it('rechecks sync before funding even if the wallet previously reported ready', async () => {
+    const blockchain = new RealBlockchainInterface();
+    (rpc.getSyncStatus as jest.Mock).mockResolvedValue({ synced: false, syncing: true });
+    const result = await blockchain.getWalletOfferProvider()!.beginCreation(offerOperation, {
+      kind: 'funding',
+      offer: { '1': -100n },
+    });
+    expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new WalletConnectTransportError('sync-status transport lost'),
+    new WalletConnectResponseError('sync-status request refused'),
+    new Error('sync-status request failed'),
+  ])('preserves preflight provenance when a sync read fails: %s', async (error) => {
+    const blockchain = new RealBlockchainInterface();
+    (rpc.getSyncStatus as jest.Mock).mockRejectedValue(error);
+    const result = await blockchain.getWalletOfferProvider()!.beginCreation(offerOperation, {
+      kind: 'funding',
+      offer: { '1': -100n },
+    });
+    expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
+    expect(blockchain.isReadyForPlay()).toBe(false);
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
+  });
+
+  it('preserves preflight provenance if the connection retires during the sync read', async () => {
     jest.useFakeTimers();
+    const blockchain = new RealBlockchainInterface();
     try {
       mockGetNextAddress.mockResolvedValue(encodePuzzleHashToBech32m('11'.repeat(32)));
       mockGetWallets.mockResolvedValue([{ type: 205, id: 7n }]);
-      mockGetFullNodePeerCount.mockResolvedValue(0n);
-
-      const blockchain = new RealBlockchainInterface();
-      expect(blockchain.isReadyForPlay()).toBe(false);
-
+      blockchain.onPlayReadinessChange(() => {});
       await connectAndWait(blockchain);
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-
-      expect(blockchain.isReadyForPlay()).toBe(false);
+      await jest.advanceTimersByTimeAsync(1000);
+      let finish!: (status: { synced: boolean; syncing: boolean }) => void;
+      (rpc.getSyncStatus as jest.Mock).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const pending = blockchain.getWalletOfferProvider()!.beginCreation(offerOperation, {
+        kind: 'funding',
+        offer: { '1': -100n },
+      });
+      await blockchain.disconnect();
+      finish({ synced: true, syncing: false });
+      await expect(pending).resolves.toMatchObject({
+        kind: 'unavailable',
+        mutation: 'not-started',
+      });
+      expect(mockCreateOfferForIds).not.toHaveBeenCalled();
     } finally {
+      await blockchain.disconnect();
       jest.useRealTimers();
     }
   });
@@ -1328,7 +1342,7 @@ describe('RealBlockchainInterface', () => {
       driverDict: {},
       validateOnly: false,
       extraConditions: undefined,
-      allowUnsynced: true,
+      allowUnsynced: false,
     });
   });
 

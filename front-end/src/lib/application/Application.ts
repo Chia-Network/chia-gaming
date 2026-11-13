@@ -204,8 +204,7 @@ export type ApplicationEvent = { type: 'batch-complete'; view: ApplicationView }
 export type ApplicationFrontend = Pick<Application, 'snapshot' | 'subscribe' | 'dispatch'>;
 
 export function createApplication() {
-  const uniqueId = storageRepository.getPlayerId();
-  const walletOwner = new WalletConnection(uniqueId, (event) => batch(() => walletEvents(event)));
+  const walletOwner = new WalletConnection((event) => batch(() => walletEvents(event)));
   const state: {
     sessionId: string;
     activeTab: TabId;
@@ -2278,7 +2277,7 @@ export function createApplication() {
     const controller = (sessionController ??= createSessionController(
       wallet,
       peer,
-      uniqueId,
+      storageRepository.getPlayerId(),
       params.myContribution,
       params.theirContribution,
       params.iStarted,

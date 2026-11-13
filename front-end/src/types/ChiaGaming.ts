@@ -264,7 +264,12 @@ export type WalletOfferCompletion =
   | WalletOfferReservedCompletion
   | WalletOfferEphemeralCompletion
   | { kind: 'failure'; reason: string }
-  | { kind: 'unavailable'; reason: string };
+  | {
+      kind: 'unavailable';
+      reason: string;
+      /** Explicit proof that no wallet creation mutation was dispatched. Omission means unknown. */
+      mutation?: 'not-started';
+    };
 
 export type WalletOfferBeginOutcome =
   WalletOfferCompletion | { kind: 'pending'; recoveryId: string };
@@ -361,6 +366,15 @@ export type WalletOfferCancellationOutcome =
 export type WalletOfferCancellationBeginOutcome =
   WalletOfferCancellationOutcome | { status: 'pending'; recoveryId: string };
 
+/** Transient ownership check; cleanup observes existing requests without requesting approval. */
+export type WalletOfferReconciliationOptions =
+  | {
+      mode: 'delivery';
+      allowApproval: () => boolean;
+      onApprovalChange?: (listener: () => void) => () => void;
+    }
+  | { mode: 'observe-only' };
+
 interface WalletOfferProviderBase {
   readonly scope: WalletProviderScope;
 }
@@ -393,6 +407,7 @@ export interface RecoverableWalletOfferProvider extends WalletOfferProviderBase 
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
   reconcileCancellation(
@@ -416,6 +431,7 @@ export interface RecoverableAfterBeginWalletOfferProvider extends WalletOfferPro
     operation: WalletOfferOperation,
     request: WalletOfferRequest,
     recoveryId: string,
+    options?: WalletOfferReconciliationOptions,
   ): Promise<Exclude<WalletOfferCompletion, WalletOfferEphemeralCompletion>>;
   beginCancellation(tradeId: string): Promise<WalletOfferCancellationBeginOutcome>;
   reconcileCancellation(

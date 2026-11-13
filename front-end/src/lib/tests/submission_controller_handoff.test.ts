@@ -336,6 +336,7 @@ describe('submission controller handoff and quiescence', () => {
       expect.anything(),
       expect.anything(),
       'SR_late_fee',
+      { mode: 'observe-only' },
     );
     expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
     expect(beginWalletOfferCancellation).toHaveBeenCalledWith('trade-late-fee');

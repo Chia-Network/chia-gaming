@@ -113,6 +113,7 @@ class MockWebSocket {
   static CLOSED = 3;
 
   static instance: MockWebSocket | null = null;
+  static autoOpen = true;
 
   url: string;
   readyState = MockWebSocket.CONNECTING;
@@ -129,11 +130,13 @@ class MockWebSocket {
   constructor(url: string) {
     this.url = url;
     MockWebSocket.instance = this;
-    queueMicrotask(() => {
-      if (this.closed) return;
-      this.readyState = MockWebSocket.OPEN;
-      this.onopen?.({ type: 'open' });
-    });
+    if (MockWebSocket.autoOpen) {
+      queueMicrotask(() => {
+        if (this.closed) return;
+        this.readyState = MockWebSocket.OPEN;
+        this.onopen?.({ type: 'open' });
+      });
+    }
   }
 
   send(data: string | Uint8Array | ArrayBuffer) {
@@ -244,6 +247,7 @@ beforeEach(() => {
   hubDisconnectCount = 0;
   expectedHubDisconnects = 0;
   MockWebSocket.instance = null;
+  MockWebSocket.autoOpen = true;
 });
 
 afterEach(() => {
@@ -723,6 +727,12 @@ describe('retry budget', () => {
 });
 
 describe('first connection fail-fast', () => {
+  beforeEach(() => {
+    // Fake timers flush queued microtasks when advancing retries. Keep each
+    // socket connecting until the test explicitly opens or refuses it.
+    MockWebSocket.autoOpen = false;
+  });
+
   function makeFailFastConnection(observer: ReturnType<typeof makeObserver>): HubConnection {
     const conn = new HubConnection('http://t', SESSION_ID, observer.emit, observer.getPresence, {
       failFastFirstConnect: true,
@@ -730,8 +740,7 @@ describe('first connection fail-fast', () => {
     activeConnections.add(conn);
     return conn;
   }
-  // Fail the newest socket before the mock's deferred open, as a refused or
-  // unresolvable host does.
+  // Fail the newest socket as a refused or unresolvable host does.
   const refuse = () => MockWebSocket.instance!._fireClose();
   const open = () => {
     const ws = MockWebSocket.instance!;
@@ -769,8 +778,6 @@ describe('first connection fail-fast', () => {
     jest.useFakeTimers();
     const cb = makeObserver();
     makeFailFastConnection(cb);
-    // Never opens and never fails.
-    MockWebSocket.instance!.closed = true;
 
     jest.advanceTimersByTime(29_999);
     expect(cb.events('closed')).toHaveLength(0);
@@ -787,7 +794,7 @@ describe('first connection fail-fast', () => {
     jest.advanceTimersByTime(7500);
     // The retry hangs: it neither opens nor fails.
     const retry = MockWebSocket.instance!;
-    retry.closed = true;
+    expect(retry.readyState).toBe(MockWebSocket.CONNECTING);
     const close = jest.spyOn(retry, 'close');
 
     jest.advanceTimersByTime(22_500);

@@ -820,10 +820,13 @@ captured fee intent. Exact canonical content is used only for idempotent
 deduplication: different transactions that spend the same inputs receive
 different IDs, and rejection retires only the named intent. Wallet delivery
 acknowledgement and chain finality are separate. Ordinary reconnect replay is
-limited to unacknowledged submissions. A lower tip replays the surviving
-retained set once for that rollback epoch; at an equal-or-higher replacement
-tip, only an intent whose watched output is explicitly absent and whose own
-input is explicitly live is reactivated.
+limited to unacknowledged submissions. A lower tip replays still-active
+retained submissions once for that rollback epoch. A known-spent input keeps
+its submission stopped until coin records show all external inputs live again,
+regardless of whether the peak height increased or decreased. For a submission
+already observed landed, a watched output must also be explicitly absent.
+Coins created and consumed inside the bundle are recreated by replay and need
+not already exist in the replacement chain.
 All replay paths reuse the current exact Rust-owned broadcast variant.
 This is **transaction rebroadcast**: resubmission of exact chain bytes.
 WalletConnect `pushTransactions` is intrinsically idempotent for those exact

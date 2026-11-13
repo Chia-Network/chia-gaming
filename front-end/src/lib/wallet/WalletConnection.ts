@@ -75,10 +75,7 @@ export class WalletConnection {
   private detachReadiness: (() => void) | null = null;
   private poller: BlockchainPoller | null = null;
 
-  constructor(
-    private readonly playerId: string,
-    private readonly emit: (event: WalletEvent) => void,
-  ) {}
+  constructor(private readonly emit: (event: WalletEvent) => void) {}
 
   private readRecoveryNotice() {
     return walletRecoveryNotice(
@@ -187,7 +184,7 @@ export class WalletConnection {
     try {
       this.select(type);
       this.update({ connecting: true, preparingConnection: true });
-      const setup = await provider.beginConnect(this.playerId, fresh);
+      const setup = await provider.beginConnect(storageRepository.getPlayerId(), fresh);
       if (attempt !== this.connectionAttempt) return false;
       this.update({ preparingConnection: false });
       if (needsWalletPairing(setup)) {
@@ -269,7 +266,7 @@ export class WalletConnection {
       preparingConnection: false,
     });
     try {
-      const setup = await provider.beginConnect(this.playerId);
+      const setup = await provider.beginConnect(storageRepository.getPlayerId());
       if (attempt !== this.connectionAttempt) return;
       if (needsWalletPairing(setup) || needsConnectionSetupPrompt(setup)) {
         this.presentSetup(setup);
