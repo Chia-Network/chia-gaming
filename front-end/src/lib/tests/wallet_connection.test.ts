@@ -7,7 +7,8 @@ import { cloudBlockchainInfo } from '../wallet/CloudBlockchainInterface';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { sageBlockchainInfo } from '../wallet/SageBlockchainInterface';
 import { WalletConnection } from '../wallet/WalletConnection';
-import type { ConnectionSetup } from '../../types/ChiaGaming';
+import type { ConnectionSetup, WalletSubmitOutcome } from '../../types/ChiaGaming';
+import type { PollingGameSession } from '../wallet/BlockchainPoller';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -317,6 +318,107 @@ it.each(['cancel', 'disconnect'] as const)(
       expect(emit).not.toHaveBeenCalled();
     } finally {
       wallet.stopLocalActivity();
+    }
+  },
+);
+
+it('releases an old pending submission when its wallet connection is retired', async () => {
+  const pendingSpend = deferred<WalletSubmitOutcome>();
+  const listeners = new Set<(connected: boolean) => void>();
+  let connected = true;
+  jest.spyOn(fakeBlockchainInfo, 'beginConnect').mockResolvedValue({
+    qrUri: '',
+    skipQr: true,
+    finalize: jest.fn(),
+  });
+  jest.spyOn(fakeBlockchainInfo, 'isConnected').mockImplementation(() => connected);
+  jest.spyOn(fakeBlockchainInfo, 'getHeightInfo').mockResolvedValue(100n);
+  jest.spyOn(fakeBlockchainInfo, 'getBalance').mockResolvedValue(100n);
+  jest.spyOn(fakeBlockchainInfo, 'onConnectionChange').mockImplementation((listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  });
+  jest.spyOn(fakeBlockchainInfo, 'disconnect').mockImplementation(async () => {
+    connected = false;
+    for (const listener of listeners) listener(false);
+  });
+  const spend = jest.spyOn(fakeBlockchainInfo, 'spend').mockReturnValue(pendingSpend.promise);
+  const wallet = new WalletConnection(jest.fn());
+  let outcome: WalletSubmitOutcome | undefined;
+  try {
+    await wallet.resume('simulator');
+    const submission = wallet.sessionAccess()!.rpc.spend('bundle', {}, '11'.repeat(32));
+    void submission.then((result) => {
+      outcome = result;
+    });
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    expect(spend).toHaveBeenCalledTimes(1);
+
+    await wallet.disconnect();
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    expect(outcome).toMatchObject({ status: 'unavailable' });
+
+    pendingSpend.resolve({ status: 'acknowledged' });
+    await submission;
+    expect(outcome).toMatchObject({ status: 'unavailable' });
+  } finally {
+    pendingSpend.resolve({ status: 'acknowledged' });
+    wallet.stopLocalActivity();
+  }
+});
+
+it.each([false, true])(
+  'registers all watched coins with the replacement wallet, old registration pending=%s',
+  async (pending) => {
+    jest.useFakeTimers();
+    const oldRegistration = deferred<void>();
+    const registrations = [jest.fn(), jest.fn()];
+    registrations[0].mockImplementation(() =>
+      pending ? oldRegistration.promise : Promise.resolve(),
+    );
+    registrations[1].mockResolvedValue(undefined);
+    for (const [index, provider] of [fakeBlockchainInfo, cloudBlockchainInfo].entries()) {
+      jest.spyOn(provider, 'beginConnect').mockResolvedValue({
+        qrUri: '',
+        skipQr: true,
+        finalize: jest.fn(),
+      });
+      jest.spyOn(provider, 'isConnected').mockReturnValue(true);
+      jest.spyOn(provider, 'getHeightInfo').mockResolvedValue(100n);
+      jest.spyOn(provider, 'getBalance').mockResolvedValue(100n);
+      jest.spyOn(provider, 'getCoinRecordsByNames').mockResolvedValue([]);
+      jest.spyOn(provider, 'getWalletOfferProvider').mockReturnValue(null);
+      jest.spyOn(provider, 'registerCoins').mockImplementation(registrations[index]);
+    }
+    const session: PollingGameSession = {
+      snapshotWatchedCoins: () => [{ coin_name: 'aa', coin_string: 'coin-a' }],
+      reportNewBlock: jest.fn(),
+      reportCoinStates: jest.fn(),
+      reportChainSnapshotReady: jest.fn(),
+    };
+    let attached: ReturnType<WalletConnection['sessionAccess']> = null;
+    const wallet = new WalletConnection((event) => {
+      if (event.type === 'detaching') attached?.detachGameSession(session);
+      if (event.type === 'connected') {
+        attached = wallet.sessionAccess();
+        attached!.attachGameSession(session);
+      }
+    });
+    try {
+      await wallet.resume('simulator');
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(registrations[0]).toHaveBeenCalledWith(['aa']);
+      const oldPoller = attached;
+      await wallet.connect('cloud');
+      expect(attached).not.toBe(oldPoller);
+      oldRegistration.resolve();
+      await jest.advanceTimersByTimeAsync(1000);
+      expect(registrations[1]).toHaveBeenCalledWith(['aa']);
+      expect(session.reportChainSnapshotReady).toHaveBeenCalledWith(100n);
+    } finally {
+      oldRegistration.resolve();
+      wallet.stopLocalActivity();
+      jest.useRealTimers();
     }
   },
 );

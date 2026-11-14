@@ -62,7 +62,10 @@ clears `sessionAccess` before announcing detachment, so reentrant application
 synchronization cannot select the retiring wallet. `updateCoinInterest` applies a complete Rust
 watch/unwatch batch or refreshes the authoritative watch snapshot. A terminal
 session can pause chain polling without stopping wallet balance monitoring or
-disconnecting the provider. There is no second global poller.
+disconnecting the provider. Retiring a wallet attachment also releases outstanding
+RPC waits and invalidates its coin-registration cache, so the old connection cannot
+hold up submissions through a replacement wallet. Late offer-creation responses
+retain their reservation-cleanup ownership. There is no second global poller.
 Connect/finalize return their outcome; Application decides when to select the
 hub tab, so wallet events contain no tab-selection policy. WalletConnect normalization and silent
 recovery remain TypeScript responsibilities. Existing terminal polling pause and
@@ -1650,11 +1653,20 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   system browser once per signature request per run, and polling alone observes
   the outcome. Deployed
   WalletConnect is best-effort throughout because it lacks end-to-end create
-  idempotency and response-loss reconciliation. For either pre-ID Cloud
+  idempotency and response-loss reconciliation. A local connection failure before
+  the SDK request starts, or a creation discarded from the poller's queue before
+  invoking its provider, carries `mutation: 'not-started'`: it remains retryable
+  without recording an orphan reservation. Once dispatched, transport failure
+  remains uncertain even if the wallet disconnects before replying. For either pre-ID Cloud
   uncertainty or WalletConnect uncertainty, `WalletProviderRegistry` readiness
   epochs permit one new attempt per later reconnect, including after reload.
   Active fee replacements additionally require a live Rust submission request;
-  wallet readiness alone cannot create a fee offer. There is no timer or
+  wallet readiness alone cannot create a fee offer. A fresh fee request may use
+  either the reconnected wallet or a different connected wallet. Unfinished fee
+  requests from a disconnected provider do not hold up that replacement; their
+  late results remain owned by the original provider for reservation cleanup.
+  Already attached fee material remains part of its exact transaction replay.
+  There is no timer or
   immediate retry loop. A lost successful response may orphan an offer or
   signature request, so the UI and
   diagnostics retain an explicit orphan-risk warning even if a later attempt is
@@ -1859,8 +1871,10 @@ host-side coordinator for chain observations. It separates three concerns:
    Coin registration is safe to repeat: the wallet ignores duplicate coin IDs.
    Bounding it prevents a lost registration response from blocking channel
    discovery.
-   Reservation mutations such as offer creation
-   retain their SDK completion lifetime. The optional peer-count fallback uses
+   Funding offer creation retains its SDK completion lifetime and queue position.
+   Fee creation and fee signing release their queue position when the connection
+   changes, while preserving the original response for reservation cleanup. They
+   do not time out a live approval. The optional peer-count fallback uses
    this active-query deadline, excluding time spent queued behind wallet work.
 
 Relay replacement has its own 30-second deadline. A stuck SDK close or open

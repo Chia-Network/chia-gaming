@@ -123,6 +123,18 @@ export class FeeAttachmentRuntime {
     if (!provider) {
       return { kind: 'unavailable', reason: 'Reconnect the original wallet account to attach fee' };
     }
+    if (consumerDead()) return { kind: 'unavailable', reason: 'Fee consumer retired' };
+    // Fresh Rust fee demand can use the connected wallet. Old wallet requests
+    // keep their own cleanup identity and never become this request's owner.
+    for (const entry of this.entries()) {
+      if (
+        entry.submissionId === submissionId &&
+        providerScopeKey(entry.owner.providerScope) !== providerScopeKey(owner.providerScope) &&
+        !isRetiringFeeAttachment(entry)
+      ) {
+        this.cancel(entry.owner, submissionId, 'fee-wallet-replaced');
+      }
+    }
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (current?.stage === 'best-effort-uncertain') {
       if (current.disposition === 'cancel-on-create') {
@@ -160,6 +172,10 @@ export class FeeAttachmentRuntime {
     this.notifySubmissionChange();
     const current = feeAttachmentForSubmission(this.entries(), owner, submissionId);
     if (!current) return;
+    this.cancelEntry(current);
+  }
+
+  private cancelEntry(current: FeeAttachment): void {
     if (current.stage === 'creating' || current.stage === 'best-effort-uncertain') {
       const retiring = { ...current, disposition: 'cancel-on-create' } as const;
       this.replace(current, retiring);
@@ -176,6 +192,14 @@ export class FeeAttachmentRuntime {
 
   retire(owner: FeeAttachmentOwner, submissionId: string): void {
     this.cancel(owner, submissionId, 'fee-submission-retired');
+  }
+
+  retireSubmission(submissionId: string): void {
+    if (this.authorityRetired) return;
+    this.notifySubmissionChange();
+    for (const entry of this.entries()) {
+      if (entry.submissionId === submissionId) this.cancelEntry(entry);
+    }
   }
 
   async awaitIdle(): Promise<void> {
@@ -267,10 +291,20 @@ export class FeeAttachmentRuntime {
         )
           return null;
       }
-      if (id === undefined) return provider.beginCreation(operation, request);
-      if (!isRecoverableProvider(provider))
-        throw new Error('Provider cannot reconcile persisted creation');
-      return provider.reconcileCreation(operation, request, id, reconciliation);
+      const attemptProvider = provider;
+      return this.awaitFeeDelivery(
+        attemptProvider,
+        owner,
+        submissionId,
+        request,
+        generation,
+        () => {
+          if (id === undefined) return attemptProvider.beginCreation(operation, request);
+          if (!isRecoverableProvider(attemptProvider))
+            throw new Error('Provider cannot reconcile persisted creation');
+          return attemptProvider.reconcileCreation(operation, request, id, reconciliation);
+        },
+      );
     };
     const notInvoked = (): WalletOfferCompletion => {
       const result = {
@@ -434,6 +468,88 @@ export class FeeAttachmentRuntime {
     return outcome;
   }
 
+  private awaitFeeDelivery(
+    provider: WalletOfferProvider,
+    owner: FeeAttachmentOwner,
+    submissionId: string,
+    request: FeeAttachmentRequest,
+    generation: number,
+    run: () => Promise<WalletOfferBeginOutcome>,
+  ): Promise<WalletOfferBeginOutcome> {
+    return new Promise((resolve, reject) => {
+      let interrupted = false;
+      // A disconnected delivery outlives the runtime's consumer flights and
+      // may even outlive detach(). Keep its reset fence until the wallet replies.
+      let hardReset = false;
+      const stopReset = storageRepository.onLifecycle((_generation, event) => {
+        if (event === 'hard-reset') hardReset = true;
+      });
+      const unsubscribe = this.providers.subscribe(() => {
+        if (this.providers.provider(owner.providerScope) === provider) return;
+        interrupted = true;
+        unsubscribe();
+        resolve({
+          kind: 'unavailable',
+          reason: 'Fee wallet disconnected before its response arrived',
+        });
+      });
+      let completion: Promise<WalletOfferBeginOutcome>;
+      try {
+        completion = run();
+      } catch (error) {
+        unsubscribe();
+        stopReset();
+        reject(error);
+        return;
+      }
+      void completion.then(
+        (result) => {
+          unsubscribe();
+          stopReset();
+          if (!interrupted) {
+            resolve(result);
+            return;
+          }
+          if (hardReset) return;
+          // This result belongs solely to the disconnected attempt. Never pass
+          // it through the current owner/submission lookup used by live delivery.
+          let cleanup: FeeAttachment;
+          if (result.kind === 'created-reserved') {
+            if (identifiedFeeAttachment(storageRepository.feeAttachments(), result.tradeId)) return;
+            cleanup = {
+              owner,
+              submissionId,
+              stage: 'cancel-required',
+              providerReservationId: result.tradeId,
+              reason: 'disconnected-fee-created',
+            };
+          } else if (result.kind === 'pending') {
+            cleanup = {
+              owner,
+              submissionId,
+              stage: 'creating',
+              disposition: 'cancel-on-create',
+              request,
+              recoveryId: result.recoveryId,
+              reason: 'disconnected-fee-pending',
+            };
+          } else return;
+          if (this.canOwnCleanup(generation)) {
+            this.replace(null, cleanup);
+            if (cleanup.stage === 'creating') this.recover(cleanup);
+            else void this.scheduleCancellation(cleanup.providerReservationId);
+          } else cancelRetiredWalletReservation(provider, cleanup);
+        },
+        (error) => {
+          unsubscribe();
+          stopReset();
+          if (!interrupted) reject(error);
+          else log(`[fee-attachment] disconnected fee request failed: ${String(error)}`);
+        },
+      );
+    });
+  }
+
   /**
    * The one dead-consumer transition. A terminal cancellation result retires an identified offer;
    * interrupted cancellation retains its record for recovery.
@@ -443,12 +559,11 @@ export class FeeAttachmentRuntime {
     submissionId: string,
     outcome: WalletOfferBeginOutcome,
     mode: WalletOfferReconciliationOptions['mode'],
+    cleanupEntry?: FeeAttachment,
   ): void {
-    const latest = feeAttachmentForSubmission(
-      storageRepository.feeAttachments(),
-      owner,
-      submissionId,
-    );
+    const latest =
+      cleanupEntry ??
+      feeAttachmentForSubmission(storageRepository.feeAttachments(), owner, submissionId);
     const unidentified = latest?.stage === 'creating' || latest?.stage === 'best-effort-uncertain';
     const tradeId =
       outcome.kind === 'created-reserved'
@@ -542,11 +657,9 @@ export class FeeAttachmentRuntime {
     const delivery = this.flights.get(`create:${entry.submissionId}`)?.promise;
     let consumedEpoch = epoch;
     const currentEntry = () => {
-      const current = feeAttachmentForSubmission(
-        storageRepository.feeAttachments(),
-        entry.owner,
-        entry.submissionId,
-      );
+      const current = storageRepository
+        .feeAttachments()
+        .find((candidate) => feeAttachmentEntryKey(candidate) === feeAttachmentEntryKey(entry));
       return current?.stage === 'creating' &&
         current.disposition === 'cancel-on-create' &&
         current.recoveryId === entry.recoveryId
@@ -554,7 +667,7 @@ export class FeeAttachmentRuntime {
         : null;
     };
     void this.flight(
-      `recover:${entry.submissionId}`,
+      `recover:${feeAttachmentEntryKey(entry)}`,
       async () => {
         // Delivery reports its own result. Observation starts only after it settles
         // and the current owner/provider have survived the persistence barrier.
@@ -581,7 +694,13 @@ export class FeeAttachmentRuntime {
           }
           return;
         }
-        this.settleDeadCreation(current.owner, current.submissionId, outcome, 'observe-only');
+        this.settleDeadCreation(
+          current.owner,
+          current.submissionId,
+          outcome,
+          'observe-only',
+          current,
+        );
       },
       () => {
         const current = currentEntry();

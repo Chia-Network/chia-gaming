@@ -357,7 +357,10 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
 
     let signature: string;
     try {
-      signature = await sageRpc.signCoinSpends(unsigned.coin_spends.map(toSageCoinSpend));
+      const spends = unsigned.coin_spends.map(toSageCoinSpend);
+      signature = await (request.kind === 'fee'
+        ? sageRpc.signCoinSpends(spends, { releaseQueueOnContextChange: true })
+        : sageRpc.signCoinSpends(spends));
     } catch (error) {
       this.ledger.release(reservationId);
       return this.walletCallFailure('sign spend', error);

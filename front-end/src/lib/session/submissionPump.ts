@@ -12,7 +12,6 @@ import { isPastDeadlineRejection } from '../../util/walletSubmit';
 import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
 import type { ProviderOwner } from './providerKeys';
 import { SessionRuntimeRetiredError } from './sessionMachineTypes';
-import { storageRepository } from './storageRepository';
 
 type SubmissionOutcome = 'acknowledged' | 'unavailable' | 'rejected' | 'local-failure' | 'skipped';
 
@@ -133,9 +132,7 @@ export class SubmissionPump {
       entry.retired = true;
       if (entry.state.kind !== 'launched') this.entries.delete(id);
     }
-    const owner = this.walletOwnerForSubmission(id);
-    if (!owner) return;
-    this.feeAttachments.retire(owner, id);
+    this.feeAttachments.retireSubmission(id);
   }
 
   retireAll(): void {
@@ -272,21 +269,6 @@ export class SubmissionPump {
     this.entries.delete(completed.id);
   }
 
-  private walletOwnerForSubmission(submissionId: string): ProviderOwner | null {
-    const connected = this.ports.getWalletOwner();
-    if (!connected) return null;
-    return (
-      storageRepository
-        .feeAttachments()
-        .find(
-          (entry) =>
-            entry.submissionId === submissionId &&
-            entry.owner.installationPlayerId === connected.installationPlayerId &&
-            entry.owner.peerSessionId === connected.peerSessionId,
-        )?.owner ?? connected
-    );
-  }
-
   private async execute(submission: TransactionSubmission): Promise<SubmissionCompletion> {
     if (this.isInactive(submission)) return this.completion('skipped', false);
     const blockchain = this.ports.getBlockchain();
@@ -305,7 +287,7 @@ export class SubmissionPump {
         throw new Error('Submission execution requires a reward puzzle hash');
       }
       if (submission.fee_request) {
-        const owner = this.walletOwnerForSubmission(submission.id);
+        const owner = this.ports.getWalletOwner();
         if (!owner) {
           walletFeeSource = {
             kind: 'failure',
