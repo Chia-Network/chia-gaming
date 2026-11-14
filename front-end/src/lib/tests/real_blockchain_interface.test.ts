@@ -904,6 +904,71 @@ describe('RealBlockchainInterface', () => {
     const requestedNames = () =>
       mockGetCoinRecordsByNames.mock.calls.map(([request]) => request.names);
 
+    it('uses off-chain cancellation only after the known-coin batch capability probe succeeds', async () => {
+      const present = (await coinRecordToName(record))!;
+      const blockchain = new RealBlockchainInterface();
+      mockCancelOffer.mockResolvedValue({ success: true });
+      let finishProbe!: (response: unknown) => void;
+      let probeStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        probeStarted = resolve;
+      });
+      mockGetCoinRecordsByNames
+        .mockResolvedValueOnce({ success: true, coinRecords: [record] })
+        .mockImplementationOnce(() => {
+          probeStarted();
+          return new Promise((resolve) => {
+            finishProbe = resolve;
+          });
+        });
+      const pending = blockchain.getCoinRecordsByNames([present]);
+      await started;
+      await blockchain.beginWalletOfferCancellation('pending-probe');
+      expect(mockCancelOffer).toHaveBeenLastCalledWith({
+        tradeId: 'pending-probe',
+        secure: true,
+        fee: 0n,
+      });
+      finishProbe({ success: true, coinRecords: [record] });
+      await pending;
+      mockGetCoinRecordsByNames.mockResolvedValue({ success: true, coinRecords: [] });
+      await blockchain.getCoinRecordsByNames([absent, otherAbsent]);
+      expect(mockGetCoinRecordsByNames).toHaveBeenLastCalledWith(
+        expect.objectContaining({ names: [absent, otherAbsent], allowMissing: true }),
+      );
+      await blockchain.beginWalletOfferCancellation('confirmed-probe');
+      expect(mockCancelOffer).toHaveBeenLastCalledWith({
+        tradeId: 'confirmed-probe',
+        secure: false,
+        fee: 0n,
+      });
+    });
+
+    it.each(['rejected', 'empty', 'error response'])(
+      'keeps legacy cancellation after a %s capability probe',
+      async (result) => {
+        const present = (await coinRecordToName(record))!;
+        const blockchain = new RealBlockchainInterface();
+        mockCancelOffer.mockResolvedValue({ success: true });
+        mockGetCoinRecordsByNames.mockResolvedValueOnce({ success: true, coinRecords: [record] });
+        if (result === 'rejected')
+          mockGetCoinRecordsByNames.mockRejectedValueOnce(new Error('unsupported'));
+        else
+          mockGetCoinRecordsByNames.mockResolvedValueOnce(
+            result === 'empty'
+              ? { success: true, coinRecords: [] }
+              : { success: false, error: 'unsupported', coinRecords: [record] },
+          );
+        await blockchain.getCoinRecordsByNames([present]);
+        await blockchain.beginWalletOfferCancellation('legacy-probe');
+        expect(mockCancelOffer).toHaveBeenCalledWith({
+          tradeId: 'legacy-probe',
+          secure: true,
+          fee: 0n,
+        });
+      },
+    );
+
     it('probes a known existing coin once and stays legacy when the released GUI rejects the flag', async () => {
       const present = (await coinRecordToName(record))!;
       mockGetCoinRecordsByNames.mockImplementation(async (request) => {
@@ -1113,11 +1178,25 @@ describe('RealBlockchainInterface', () => {
         await blockchain.getCoinRecordsByNames([absent, otherAbsent]);
         expect(requestedNames()).toEqual([[present], [present], [absent, otherAbsent]]);
 
+        mockCancelOffer.mockResolvedValue({ success: true });
+        await blockchain.beginWalletOfferCancellation('before-change');
+        expect(mockCancelOffer).toHaveBeenLastCalledWith({
+          tradeId: 'before-change',
+          secure: false,
+          fee: 0n,
+        });
+
         if (change === 'session') mockWalletSession = { topic: 'wallet-2' };
         if (change === 'account') mockWalletFingerprint = '654321';
         if (change === 'chain') mockWalletChainId = 'chia:mainnet';
         if (change === 'relay epoch') mockWalletRequestEpoch++;
         if (change === 'disconnect') await blockchain.disconnect();
+        await blockchain.beginWalletOfferCancellation('after-change');
+        expect(mockCancelOffer).toHaveBeenLastCalledWith({
+          tradeId: 'after-change',
+          secure: true,
+          fee: 0n,
+        });
         mockGetCoinRecordsByNames.mockClear();
         await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).resolves.toEqual([]);
         await expect(blockchain.getCoinRecordsByNames([present])).resolves.toEqual([record]);
@@ -1214,6 +1293,13 @@ describe('RealBlockchainInterface', () => {
       resolveProbe({ success: true, coinRecords: [record] });
       await expect(pending).resolves.toEqual([record]);
       await expect(blockchain.getCoinRecordsByNames([present, absent])).resolves.toEqual([record]);
+      mockCancelOffer.mockResolvedValue({ success: true });
+      await blockchain.beginWalletOfferCancellation('replacement-rejected-probe');
+      expect(mockCancelOffer).toHaveBeenCalledWith({
+        tradeId: 'replacement-rejected-probe',
+        secure: true,
+        fee: 0n,
+      });
       expect(requestedNames()).toEqual([
         [present],
         [present],
@@ -1391,7 +1477,7 @@ describe('RealBlockchainInterface', () => {
     );
   });
 
-  it('cancels rejected persisted offers off-chain', async () => {
+  it('uses legacy on-chain cancellation before wallet batch support is known', async () => {
     const blockchain = new RealBlockchainInterface();
     mockCancelOffer.mockResolvedValue({ success: true });
 
@@ -1401,7 +1487,7 @@ describe('RealBlockchainInterface', () => {
 
     expect(mockCancelOffer).toHaveBeenCalledWith({
       tradeId: 'trade-id',
-      secure: false,
+      secure: true,
       fee: 0n,
     });
   });
@@ -1463,7 +1549,7 @@ describe('RealBlockchainInterface', () => {
     expect(storageRepository.feeAttachments()).toEqual([]);
     expect(mockCancelOffer).toHaveBeenCalledWith({
       tradeId: 'trade-already-spent',
-      secure: false,
+      secure: true,
       fee: 0n,
     });
     runtime.detach();

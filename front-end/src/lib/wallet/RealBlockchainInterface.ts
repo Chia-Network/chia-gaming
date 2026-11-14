@@ -816,7 +816,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   async beginWalletOfferCancellation(tradeId: string): Promise<WalletOfferCancellationOutcome> {
     let response: Awaited<ReturnType<typeof rpc.cancelOffer>>;
     try {
-      response = await rpc.cancelOffer({ tradeId, secure: false, fee: 0n });
+      // Off-chain cancellation and allowMissing coin batching shipped together.
+      // Keep the legacy on-chain request until this connection proves support.
+      response = await rpc.cancelOffer({ tradeId, secure: !this.supportsAllowMissing(), fee: 0n });
     } catch (error) {
       const detail = boundedCancellationError(error);
       if (isStructurallyTerminalCancellation(error, tradeId)) {
@@ -835,15 +837,22 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       : { status: 'rejected', detail };
   }
 
+  private coinRecordsQueryScope(): string {
+    return `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
+  }
+
+  private supportsAllowMissing(): boolean {
+    return (
+      this.coinRecordsQueryCapability?.scope === this.coinRecordsQueryScope() &&
+      this.coinRecordsQueryCapability.supportsAllowMissing
+    );
+  }
+
   async getCoinRecordsByNames(names: string[]): Promise<CoinRecord[]> {
     const uniqueNames = [...new Set(names)];
     if (uniqueNames.length === 0) return [];
-    const getScope = () =>
-      `${walletConnectState.getSession()?.topic}:${walletConnectState.getAddress()}:${walletConnectState.getChainId?.() ?? getChainId()}:${walletConnectState.getRequestEpoch()}`;
-    const scope = getScope();
-    const supportsAllowMissing =
-      this.coinRecordsQueryCapability?.scope === scope &&
-      this.coinRecordsQueryCapability.supportsAllowMissing;
+    const scope = this.coinRecordsQueryScope();
+    const supportsAllowMissing = this.supportsAllowMissing();
     // Released GUIs reject allowMissing itself. Begin with their original
     // singleton request until a probe on a known existing coin accepts the flag.
     const queries = supportsAllowMissing ? [uniqueNames] : uniqueNames.map((name) => [name]);
@@ -885,7 +894,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         records.push(...r);
         if (
           r.length > 0 &&
-          getScope() === scope &&
+          this.coinRecordsQueryScope() === scope &&
           this.coinRecordsQueryCapability?.scope !== scope
         ) {
           // Missing coins and rejected flags produce the same opaque error.
@@ -896,7 +905,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           try {
             const probe = await query(true);
             if (
-              getScope() === scope &&
+              this.coinRecordsQueryScope() === scope &&
               probe?.success !== false &&
               !(probe as any)?.error &&
               Array.isArray(probe?.coinRecords) &&
