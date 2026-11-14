@@ -17,8 +17,8 @@ pub struct OnChainGameState {
     /// The mover_share the opponent claimed in their illegal move. If the slash
     /// times out, this is the amount we actually end up with.
     pub cheating_move_mover_share: Option<Amount>,
-    /// True once the on-chain timeout-claim path is armed for this game coin
-    /// (eager register or explicit AcceptSettlement).
+    /// Explicit AcceptSettlement intent, including acceptance carried on-chain.
+    /// Automatic claims on the opponent's turn do not set this flag.
     pub timeout_claim_armed: bool,
     pub game_timeout: Timeout,
     /// True when the referee's game handler is None (no further moves possible).

@@ -6862,16 +6862,31 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         // Alice makes a move with mover_share = 200 (full pot to Bob).
         // The potato comes back (move is acknowledged).  Go on-chain.
         // After unroll it's Bob's turn with mover_share = 200 — Alice as
-        // waiter gets 0.  Bob has no incentive to move (he gets everything
-        // on timeout).  Alice gets immediate OpponentTimedOut(0) because
-        // it's the opponent's turn and our share is zero.
+        // waiter gets 0 and exits with Lost. Bob must still choose whether
+        // to move or accept, even though timeout would pay him the full pot.
         let moves = [DebugGameTestMove::new(200, 0)];
         let mut sim_setup = setup_debug_test(&mut allocator, &mut rng, &moves).expect("ok");
 
         // Let the move be acknowledged (no nerf), then go on-chain.
         sim_setup.game_actions.push(SimScriptAction::GoOnChain(0));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(120, 1));
-        sim_setup.game_actions.push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(120, 1));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::AcceptSettlement(
+                1,
+                ScriptGameRef::accepted(1, 0),
+            ));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 1));
+        sim_setup
+            .game_actions
+            .push(SimScriptAction::WaitBlocks(5, 0));
 
         let outcome = run_game_container_with_action_list_with_success_predicate(
             &mut allocator,
@@ -6891,12 +6906,42 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
             p0_notifs.iter().any(|n| matches!(
                 n,
                 GameNotification::GameSettled {
+                    outcome: SettlementOutcome::Lost,
                     our_share,
                     coin_id: None,
                     ..
                 } if *our_share == Amount::default()
             )),
-            "Alice should get OpponentTimedOut with zero reward (opponent's turn, dead game), got: {p0_notifs:?}"
+            "Alice should exit with zero reward on the opponent's turn, got: {p0_notifs:?}"
+        );
+        let p1_notifs = &outcome.local_uis[1].notifications;
+        let acceptance = p1_notifs
+            .iter()
+            .position(|notification| {
+                matches!(
+                    notification,
+                    GameNotification::LocalActionApplied {
+                        id: GameID(0),
+                        action: crate::session_phases::effects::LocalActionKind::AcceptSettlement,
+                    }
+                )
+            })
+            .expect("Bob explicitly accepts after waiting past the timeout");
+        assert!(
+            !p1_notifs[..acceptance].iter().any(|notification| matches!(
+                notification,
+                GameNotification::GameSettled { id: GameID(0), .. }
+            )),
+            "a full refund must not automatically settle Bob's unfinished turn"
+        );
+        assert!(
+            p1_notifs[acceptance..].iter().any(|notification| matches!(
+                notification,
+                GameNotification::GameSettled {
+                    id: GameID(0), outcome: SettlementOutcome::WeAccepted, our_share, ..
+                } if *our_share == Amount::new(200)
+            )),
+            "Bob's explicit acceptance must settle the full refund"
         );
     }));
 

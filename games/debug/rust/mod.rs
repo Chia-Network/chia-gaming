@@ -945,7 +945,7 @@ fn aggregate_real_referee_spend_with_fee(
 }
 
 #[cfg(test)]
-fn make_real_debug_referees(
+pub(crate) fn make_real_debug_referees(
     allocator: &mut AllocEncoder,
 ) -> ([BareDebugGameHandler; 2], [Referee; 2], PuzzleHash) {
     let mut rng = ChaCha8Rng::from_seed([11; 32]);
