@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { activeSave } from './session_save_envelope.fixtures';
-import type { WalletOfferProvider } from '../../types/ChiaGaming';
+import { BlockchainPoller } from '../wallet/BlockchainPoller';
+import type { InternalBlockchainInterface, WalletOfferProvider } from '../../types/ChiaGaming';
 import { decodeFeeAttachments } from '../session/feeAttachmentValidation';
 import { FeeAttachmentRuntime } from '../session/feeAttachmentRuntime';
 import type { FeeAttachment, FeeAttachmentOwner } from '../session/feeAttachmentStore';
@@ -348,6 +349,298 @@ describe('FeeAttachmentRuntime lifecycle', () => {
       runtime.detach();
     }
   });
+
+  it('removes only undispatched uncertainty when its certificate arrives after disconnect', async () => {
+    let finish!: (result: any) => void;
+    const provider: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      ),
+      cancel: jest.fn(),
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(provider);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    try {
+      const pending = runtime.reserve(owner, 'not-started-late', request, () => false);
+      await waitFor(() => jest.mocked(provider.beginCreation).mock.calls.length === 1);
+      providers.detach(provider);
+      await pending;
+      expect(storageRepository.feeAttachments()).toEqual([
+        expect.objectContaining({ stage: 'best-effort-uncertain' }),
+      ]);
+      finish({ kind: 'unavailable', mutation: 'not-started', reason: 'Queued request discarded' });
+      await waitFor(() => storageRepository.feeAttachments().length === 0);
+      expect(provider.cancel).not.toHaveBeenCalled();
+    } finally {
+      runtime.detach();
+    }
+  });
+
+  it('clears provisional uncertainty for a real poller queue discarded before wallet invocation', async () => {
+    let unblock!: (value: null) => void;
+    const source: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(),
+      cancel: jest.fn(),
+    };
+    const selectCoins = jest.fn(
+      () =>
+        new Promise<null>((resolve) => {
+          unblock = resolve;
+        }),
+    );
+    const poller = new BlockchainPoller(
+      {
+        isConnected: () => true,
+        requestGapMs: 0,
+        selectCoins,
+        getWalletOfferProvider: () => source,
+      } as unknown as InternalBlockchainInterface,
+      1000,
+    );
+    const wrapper = poller.rpc.getWalletOfferProvider()!;
+    const queued = jest.spyOn(wrapper, 'beginCreation');
+    const providers = new WalletProviderRegistry();
+    providers.attach(wrapper);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    const blocking = poller.rpc.selectCoins('block', 1n).catch(() => null);
+    try {
+      await waitFor(() => selectCoins.mock.calls.length === 1);
+      const pending = runtime.reserve(owner, 'queued-certificate', request, () => false);
+      await waitFor(() => queued.mock.calls.length === 1);
+      providers.detach(wrapper);
+      poller.retire();
+      await pending;
+      await runtime.awaitIdle();
+      await waitFor(() => storageRepository.feeAttachments().length === 0);
+      expect(source.beginCreation).not.toHaveBeenCalled();
+    } finally {
+      unblock?.(null);
+      await blocking;
+      runtime.detach();
+      poller.retire();
+    }
+  });
+
+  it.each([
+    'before-record',
+    'new-pending',
+    'new-completed',
+    'new-lost',
+    'other-wallet',
+    'prior-risk',
+    'prior-risk-rejected',
+  ] as const)('applies a late not-started certificate only to its own risk: %s', async (timing) => {
+    let certify!: (value: any) => void;
+    const a: WalletOfferProvider = {
+      capability: 'best-effort',
+      scope: owner.providerScope,
+      beginCreation: jest.fn(
+        () =>
+          new Promise((resolve) => {
+            certify = resolve;
+          }),
+      ),
+      cancel: jest.fn(),
+    };
+    const providers = new WalletProviderRegistry();
+    providers.attach(a);
+    if (timing.startsWith('prior-risk'))
+      install([
+        {
+          owner,
+          submissionId: 'proof',
+          stage: 'best-effort-uncertain',
+          disposition: 'active',
+          request,
+          lastAttemptEpoch: 0n,
+          reason: 'older response lost',
+          orphanRisk: 'pre-id-response-lost',
+        },
+      ]);
+    const runtime = new FeeAttachmentRuntime(ports(), providers);
+    try {
+      const first = runtime.reserve(owner, 'proof', request, () => false);
+      await waitFor(() => jest.mocked(a.beginCreation).mock.calls.length === 1);
+      providers.detach(a);
+      const certificate = {
+        kind: 'unavailable',
+        mutation: 'not-started',
+        reason: 'never dispatched',
+      };
+      if (timing === 'before-record') {
+        certify(certificate);
+        await first;
+        await runtime.awaitIdle();
+        await waitFor(() => storageRepository.feeAttachments().length === 0);
+        return;
+      }
+      await first;
+      if (timing === 'prior-risk') {
+        certify(certificate);
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+        expect(storageRepository.feeAttachments()).toEqual([
+          expect.objectContaining({
+            stage: 'best-effort-uncertain',
+            orphanRisk: 'pre-id-response-lost',
+          }),
+        ]);
+        return;
+      }
+      const nextOwner: FeeAttachmentOwner =
+        timing === 'other-wallet'
+          ? { ...owner, providerScope: { provider: 'cloud', walletId: 'next' } }
+          : owner;
+      let finish!: (value: any) => void;
+      const next: WalletOfferProvider = {
+        capability: 'best-effort',
+        scope: nextOwner.providerScope,
+        beginCreation: jest.fn(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            }),
+        ),
+        cancel: jest.fn(),
+      };
+      providers.attach(next);
+      const second = runtime.reserve(nextOwner, 'proof', request, () => false);
+      await waitFor(() => jest.mocked(next.beginCreation).mock.calls.length === 1);
+      const completion =
+        timing === 'prior-risk-rejected'
+          ? { kind: 'failure', reason: 'User rejected the replacement' }
+          : timing === 'new-lost'
+            ? { kind: 'unavailable', reason: 'new response actually lost' }
+            : {
+                kind: 'created-reserved',
+                material: { kind: 'offer', offer: 'offer-next' },
+                tradeId: 'proven-next',
+              };
+      if (timing === 'new-completed' || timing === 'new-lost') {
+        finish(completion);
+        await second;
+      }
+      certify(certificate);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      if (timing !== 'new-completed' && timing !== 'new-lost') {
+        finish(completion);
+        await second;
+      }
+      const entries = storageRepository.feeAttachments();
+      if (timing === 'new-lost' || timing === 'prior-risk-rejected')
+        expect(entries).toEqual([
+          expect.objectContaining({
+            stage: 'best-effort-uncertain',
+            orphanRisk: 'pre-id-response-lost',
+          }),
+        ]);
+      else {
+        expect(entries).toEqual([
+          expect.objectContaining({ providerReservationId: 'proven-next', stage: 'reserved' }),
+        ]);
+        expect(entries[0]).not.toHaveProperty('orphanRisk');
+      }
+    } finally {
+      runtime.detach();
+    }
+  });
+
+  it.each(['reserved', 'failure', 'retired'] as const)(
+    'services fresh fee demand after A to B(%s) to A without losing cleanup evidence',
+    async (bResult) => {
+      const providers = new WalletProviderRegistry();
+      const a: WalletOfferProvider = {
+        capability: 'best-effort',
+        scope: owner.providerScope,
+        beginCreation: jest
+          .fn()
+          .mockResolvedValueOnce({ kind: 'unavailable', reason: 'Response lost' })
+          .mockResolvedValue({
+            kind: 'created-reserved',
+            material: { kind: 'offer', offer: 'offer-a-new' },
+            tradeId: 'a-new',
+          }),
+        cancel: jest.fn().mockResolvedValue({ status: 'unavailable', detail: 'wallet offline' }),
+      };
+      const bOwner: FeeAttachmentOwner = {
+        ...owner,
+        providerScope: { provider: 'cloud', walletId: 'B' },
+      };
+      const b: WalletOfferProvider = {
+        capability: 'best-effort',
+        scope: bOwner.providerScope,
+        beginCreation: jest.fn().mockResolvedValue(
+          bResult === 'failure'
+            ? { kind: 'failure', reason: 'B rejected fee' }
+            : {
+                kind: 'created-reserved',
+                material: { kind: 'offer', offer: 'offer-b' },
+                tradeId: 'b-trade',
+              },
+        ),
+        cancel: jest.fn().mockResolvedValue({ status: 'unavailable', detail: 'wallet offline' }),
+      };
+      providers.attach(a);
+      const runtime = new FeeAttachmentRuntime(ports(), providers);
+      try {
+        await runtime.reserve(owner, 'return-to-a', request, () => false);
+        providers.detach(a);
+        providers.attach(b);
+        await runtime.reserve(bOwner, 'return-to-a', request, () => false);
+        if (bResult === 'retired') runtime.retireSubmission('return-to-a');
+        providers.detach(b);
+        providers.attach(a);
+        if (bResult === 'retired') {
+          await expect(
+            runtime.reserve(owner, 'return-to-a', request, () => false),
+          ).resolves.toMatchObject({ kind: 'unavailable' });
+          expect(a.beginCreation).toHaveBeenCalledTimes(1);
+          return;
+        }
+        await expect(
+          runtime.reserve(owner, 'return-to-a', request, () => false),
+        ).resolves.toMatchObject({ kind: 'created-reserved', tradeId: 'a-new' });
+        expect(a.beginCreation).toHaveBeenCalledTimes(2);
+        expect(storageRepository.feeAttachments()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              owner,
+              stage: 'best-effort-uncertain',
+              disposition: 'cancel-on-create',
+              orphanRisk: 'pre-id-response-lost',
+            }),
+            ...(bResult === 'reserved'
+              ? [
+                  expect.objectContaining({
+                    owner: bOwner,
+                    providerReservationId: 'b-trade',
+                    stage: 'cancel-required',
+                  }),
+                ]
+              : []),
+            expect.objectContaining({ owner, providerReservationId: 'a-new', stage: 'reserved' }),
+          ]),
+        );
+        expect(decodeFeeAttachments(storageRepository.feeAttachments())).toEqual(
+          storageRepository.feeAttachments(),
+        );
+        runtime.retire(owner, 'return-to-a');
+        await expect(
+          runtime.reserve(owner, 'return-to-a', request, () => false),
+        ).resolves.toMatchObject({ kind: 'unavailable' });
+        expect(a.beginCreation).toHaveBeenCalledTimes(2);
+      } finally {
+        runtime.detach();
+      }
+    },
+  );
 
   it('waits for live submission demand before replacing restored creation uncertainty', async () => {
     install([

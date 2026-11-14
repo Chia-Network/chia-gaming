@@ -69,6 +69,9 @@ export function feeAttachmentOperationKey(owner: FeeAttachmentOwner, submissionI
   return `${ownerKey.length}:${ownerKey}${submissionId.length}:${submissionId}`;
 }
 export function feeAttachmentEntryKey(entry: FeeAttachment): string {
+  if (entry.stage === 'best-effort-uncertain' && entry.disposition === 'cancel-on-create') {
+    return `retired-uncertainty:${feeAttachmentOperationKey(entry.owner, entry.submissionId)}`;
+  }
   if (entry.stage === 'creating' && entry.disposition === 'cancel-on-create') {
     return `recovery:${feeAttachmentOperationKey(entry.owner, entry.submissionId)}:${entry.recoveryId}`;
   }
@@ -86,6 +89,17 @@ export function feeAttachmentForSubmission(
     (entry) => feeAttachmentOperationKey(entry.owner, entry.submissionId) === key,
   );
   return matching.find((entry) => !isRetiringFeeAttachment(entry)) ?? matching[0] ?? null;
+}
+export function activeFeeAttachmentForSubmission(
+  entries: readonly FeeAttachment[],
+  owner: FeeAttachmentOwner,
+  submissionId: string,
+): FeeAttachment | null {
+  return feeAttachmentForSubmission(
+    entries.filter((entry) => !isRetiringFeeAttachment(entry)),
+    owner,
+    submissionId,
+  );
 }
 export function identifiedFeeAttachment(
   entries: readonly FeeAttachment[],
