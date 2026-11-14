@@ -1845,7 +1845,14 @@ host-side coordinator for chain observations. It separates three concerns:
    `RealBlockchainInterface` perform the backend-specific RPCs. WalletConnect
    still handles fingerprint injection, relayer readiness, and remote-wallet
    registration shape, but it does not own polling interest or coin lifecycle
-   semantics. WalletConnect can garble or lose responses when more than one
+   semantics. The reference wallet starts with individual coin queries and probes
+   `allowMissing: true` on a known existing coin. A successful probe enables both
+   batched queries and off-chain offer cancellation (`secure: false`), which shipped
+   together. Until then, cancellation uses the legacy on-chain request
+   (`secure: true`); both requests retain the existing zero fee. This capability
+   is scoped to the session, account, chain, and relay epoch, so a replacement
+   connection must prove support again.
+   WalletConnect can garble or lose responses when more than one
    request is pending. Only one request may be outstanding per connection;
    serialization is a correctness requirement, not merely rate limiting.
    Its transport has one consumer for separate mutation and read
