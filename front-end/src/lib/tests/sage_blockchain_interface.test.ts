@@ -274,6 +274,9 @@ describe('SageBlockchainInterface', () => {
 
     const first = provider.beginCreation(operation, feeRequest);
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(sageRpc.signCoinSpends).toHaveBeenCalledWith(expect.any(Array), {
+      releaseQueueOnContextChange: true,
+    });
     mockBuildWalletSpend.mockImplementationOnce(() => {
       throw new Error('no coins');
     });

@@ -1248,6 +1248,85 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it('releases a disconnected fee creation lane while preserving its late reservation result', async () => {
+    jest.useFakeTimers();
+    let connected = true;
+    let connectionChange: ((connected: boolean) => void) | undefined;
+    const oldCreation = deferred<{
+      kind: 'created-reserved';
+      material: { kind: 'offer'; offer: string };
+      tradeId: string;
+    }>();
+    const beginCreation = jest
+      .fn()
+      .mockReturnValueOnce(oldCreation.promise)
+      .mockResolvedValue({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer-new' },
+        tradeId: 'trade-new',
+      });
+    const rpc = makeRpc([100n]);
+    rpc.isConnected = () => connected;
+    rpc.onConnectionChange = (listener) => {
+      connectionChange = listener;
+      return () => {
+        connectionChange = undefined;
+      };
+    };
+    rpc.getWalletOfferProvider = () => ({
+      capability: 'best-effort',
+      scope: fundingOperation.owner.providerScope,
+      beginCreation,
+      cancel: jest.fn(),
+    });
+    const poller = new BlockchainPoller(rpc, 1000);
+    ensureConnectionListener(poller);
+    const provider = poller.rpc.getWalletOfferProvider()!;
+    const request = {
+      kind: 'fee' as const,
+      uniqueId: 'player',
+      fee: 10n,
+      concurrentSpendCoinId: 'ab'.repeat(32),
+    };
+    const operation = {
+      owner: fundingOperation.owner,
+      purpose: { kind: 'fee' as const, operationId: 'fee' },
+    };
+    let oldSettled = false;
+    try {
+      const old = provider.beginCreation(operation, request).then((result) => {
+        oldSettled = true;
+        return result;
+      });
+      await advanceLane(0);
+      expect(beginCreation).toHaveBeenCalledTimes(1);
+      connected = false;
+      connectionChange?.(false);
+      connected = true;
+      connectionChange?.(true);
+      const retry = provider.beginCreation(operation, request);
+      await advanceLane(0);
+      expect(beginCreation).toHaveBeenCalledTimes(2);
+      await expect(retry).resolves.toMatchObject({ tradeId: 'trade-new' });
+      expect(oldSettled).toBe(false);
+      oldCreation.resolve({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer-old' },
+        tradeId: 'trade-old',
+      });
+      await expect(old).resolves.toMatchObject({ tradeId: 'trade-old' });
+    } finally {
+      oldCreation.resolve({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer-old' },
+        tradeId: 'trade-old',
+      });
+      await advanceLane(0);
+      poller.retire();
+      jest.useRealTimers();
+    }
+  });
+
   it('returns a stale successful wallet offer to durable lifecycle ownership', async () => {
     const fundingRuntime = new ChannelFundingRuntime();
     let connected = true;
@@ -1596,6 +1675,36 @@ describe('BlockchainPoller', () => {
     jest.useRealTimers();
   });
 
+  it.each([false, true])('preserves creation provenance when connected=%s', async (connected) => {
+    const failure = new Error('wallet response lost');
+    const beginCreation = jest.fn().mockRejectedValue(failure);
+    const poller = new BlockchainPoller(
+      {
+        isConnected: () => connected,
+        getWalletOfferProvider: () => ({
+          capability: 'best-effort',
+          scope: fundingOperation.owner.providerScope,
+          beginCreation,
+          cancel: jest.fn(),
+        }),
+      } as unknown as InternalBlockchainInterface,
+      1000,
+    );
+    const creation = poller.rpc
+      .getWalletOfferProvider()!
+      .beginCreation(fundingOperation, walletRequest);
+    if (connected) {
+      await expect(creation).rejects.toBe(failure);
+      expect(beginCreation).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(creation).resolves.toMatchObject({
+        kind: 'unavailable',
+        mutation: 'not-started',
+      });
+      expect(beginCreation).not.toHaveBeenCalled();
+    }
+  });
+
   it('rejects queued wallet RPCs when the wallet disconnects', async () => {
     jest.useFakeTimers();
     let connected = true;
@@ -1646,9 +1755,11 @@ describe('BlockchainPoller', () => {
       status: 'unavailable',
       detail: 'RPC request discarded during disconnect: spend',
     });
-    await expect(feeRequest).rejects.toThrow(
-      'RPC request discarded during disconnect: beginWalletOffer',
-    );
+    await expect(feeRequest).resolves.toEqual({
+      kind: 'unavailable',
+      mutation: 'not-started',
+      reason: 'RPC request discarded during disconnect: beginWalletOffer',
+    });
     expect(selectCoins).toHaveBeenCalledTimes(1);
     expect(beginWalletOffer).not.toHaveBeenCalled();
 

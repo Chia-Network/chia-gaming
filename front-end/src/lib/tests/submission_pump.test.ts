@@ -1,6 +1,6 @@
 import { observeWasmEvents } from './session_execution.harness';
 import { expectConsoleError } from '../../../scripts/testSetup';
-import type { InternalBlockchainInterface } from '../../types/ChiaGaming';
+import type { InternalBlockchainInterface, WalletSubmitOutcome } from '../../types/ChiaGaming';
 import { SessionController } from '../session/SessionController';
 import { storageRepository } from '../session/storageRepository';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
@@ -21,6 +21,53 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe('submission pump delivery and lifecycle', () => {
+  it('retries the exact transaction through a replacement wallet while the old call stays pending', async () => {
+    let resolveOldSpend!: (outcome: WalletSubmitOutcome) => void;
+    const oldSpend = jest.fn(
+      () =>
+        new Promise<WalletSubmitOutcome>((resolve) => {
+          resolveOldSpend = resolve;
+        }),
+    );
+    const { blockchain, controller, cradle, submit } = setup(oldSpend);
+    const newSpend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
+    const replacement = new BlockchainPoller({ ...mockRpc, spend: newSpend }, 60_000);
+    const lease = new ControlledRuntime();
+    const first = submission('wallet-replacement');
+    const replay = nextAttempt(first, 'wallet-replacement-attempt-2');
+    try {
+      commitRuntime(controller, lease);
+      submit(first);
+      await lease.launch('submission:wallet-replacement');
+      await waitFor(() => oldSpend.mock.calls.length === 1);
+      expect(oldSpend).toHaveBeenCalledTimes(1);
+
+      controller.setWallet(null);
+      blockchain.retire();
+      controller.setWallet(replacement);
+      await controller.flushTransactionSubmissions();
+      expect(cradle.submission_attempt_unavailable).toHaveBeenCalledWith(first.attempt_token);
+
+      cradle.drain_submissions.mockReturnValueOnce(submissionDrain([replay]));
+      await controller.reportChainSnapshotReady(100n);
+      await lease.launch('submission:wallet-replacement');
+      await controller.flushTransactionSubmissions();
+      expect(newSpend).toHaveBeenCalledTimes(1);
+      expect(newSpend.mock.calls[0]).toEqual(oldSpend.mock.calls[0]);
+      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
+      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledWith(replay.attempt_token);
+
+      resolveOldSpend({ status: 'acknowledged' });
+      await controller.flushTransactionSubmissions();
+      expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(1);
+      expect(newSpend).toHaveBeenCalledTimes(1);
+    } finally {
+      resolveOldSpend?.({ status: 'acknowledged' });
+      controller.cleanup();
+      replacement.retire();
+    }
+  });
+
   it('requests one fee per distinct transaction when submissions and readiness are repeated', async () => {
     const beginCreation = jest.fn().mockImplementation((operation) => ({
       kind: 'created-reserved',
@@ -106,7 +153,7 @@ describe('submission pump delivery and lifecycle', () => {
     }
   });
 
-  it('does not recreate an unresolved fee reservation through a different wallet', async () => {
+  it('uses a replacement wallet for fresh fee demand while retiring the old unresolved request', async () => {
     const { blockchain, controller, submit } = setup(
       jest.fn().mockResolvedValue({ status: 'acknowledged' }),
     );
@@ -137,7 +184,11 @@ describe('submission pump delivery and lifecycle', () => {
     });
     controller.setWallet(null);
     blockchain.detachProvider();
-    const beginCreation = jest.fn();
+    const beginCreation = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer-new' },
+      tradeId: 'new-trade',
+    });
     const cancel = jest.fn();
     const replacement = new BlockchainPoller(
       {
@@ -163,11 +214,19 @@ describe('submission pump delivery and lifecycle', () => {
       });
       await lease.launch('submission:pending-fee');
       await controller.flushPendingWork();
-      expect(beginCreation).not.toHaveBeenCalled();
+      expect(beginCreation).toHaveBeenCalledTimes(1);
       expect(cancel).not.toHaveBeenCalled();
-      expect(storageRepository.feeAttachments()).toEqual([
-        expect.objectContaining({ owner, recoveryId: 'original-recovery', stage: 'creating' }),
-      ]);
+      expect(storageRepository.feeAttachments()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            owner,
+            recoveryId: 'original-recovery',
+            stage: 'creating',
+            disposition: 'cancel-on-create',
+          }),
+          expect.objectContaining({ providerReservationId: 'new-trade' }),
+        ]),
+      );
     } finally {
       controller.cleanup();
       replacement.detachProvider();
