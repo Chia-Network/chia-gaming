@@ -2207,12 +2207,14 @@ export function createApplication() {
   let stopHubLifecycle: (() => void) | undefined;
   let bootKind: string | undefined;
   function updateRecovery() {
-    // The saved hub is only loaded once automatic resume claims storage, so
-    // restart the hub lifecycle when it becomes known during that state.
+    // Ready and automatic resume share one hub lifecycle, so revealing the
+    // restored session keeps its connection. The saved hub is only loaded once
+    // automatic resume claims storage, so start the lifecycle when it is known.
+    const kind = recovery.view.state.kind;
     const nextBootKind =
-      recovery.view.state.kind === 'autoResuming'
-        ? `autoResuming:${storageRepository.query('hubUrl') ?? ''}`
-        : recovery.view.state.kind;
+      kind === 'ready' || (kind === 'autoResuming' && storageRepository.query('hubUrl'))
+        ? 'hub-active'
+        : kind;
     if (bootKind !== nextBootKind) {
       bootKind = nextBootKind;
       stopHubLifecycle?.();

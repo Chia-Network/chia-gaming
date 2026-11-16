@@ -24,7 +24,7 @@ import {
 } from './session_save_envelope.fixtures';
 
 import { expectConsoleError } from '../../../scripts/testSetup';
-import type { HubConnection } from '../../services/HubConnection';
+import { HubConnection } from '../../services/HubConnection';
 import { PeerSession, decodeReliableFrame, encodePeerAppMessage } from '../../services/PeerSession';
 import {
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -338,6 +338,55 @@ describe('Shell production restore composition', () => {
       bootState: { kind: 'ready' },
       restoreStatus: 'restored',
     });
+  });
+
+  it('keeps the hub connection opened during auto-resume once the session is revealed', async () => {
+    const hubConnection = jest.mocked(HubConnection);
+    hubConnection.mockClear();
+    mockHub = null;
+    requestTrust.mockResolvedValue('trusted');
+    const model = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+      restore: { status: 'restoring', error: null },
+    });
+    const session = stubApplicationSession(model);
+    jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+    await storageRepository.claimApplicationState();
+    const save = activeSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    for (
+      let attempt = 0;
+      attempt < 30 && (!application.snapshot().sessionConfig || !mockHub);
+      attempt++
+    ) {
+      await flushEffects();
+    }
+    expect(application.snapshot().bootState).toEqual({ kind: 'autoResuming' });
+    expect(hubConnection).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      session.publish({ ...model, restore: { status: 'restored', error: null } });
+    });
+    // Any later publication must not restart the hub lifecycle.
+    await act(async () => {
+      await application.dispatch({ type: 'theme', theme: 'dark' });
+    });
+    for (let n = 0; n < 5; n++) await flushEffects();
+
+    expect(application.snapshot().bootState).toEqual({ kind: 'ready' });
+    expect(hubConnection).toHaveBeenCalledTimes(1);
+    expect(hubConnection.mock.results[0].value.disconnect).not.toHaveBeenCalled();
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
