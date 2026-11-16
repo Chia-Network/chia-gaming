@@ -1,3 +1,4 @@
+import { log } from '../../services/log';
 import { mockWasmConnection } from './message_protocol.harness';
 import 'fake-indexeddb/auto';
 import { createApplication } from '../application/Application';
@@ -203,6 +204,50 @@ describe('Shell production restore composition', () => {
     Reflect.deleteProperty(globalThis, 'navigator');
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+  });
+
+  it('routes lazy CLVM diagnostics to a controller created after the application starts', async () => {
+    requestTrust.mockResolvedValue('trusted');
+    // Install a controller stub at the production creation boundary.
+    const session = stubApplicationSession(
+      createSessionModel({
+        channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+        restore: { status: 'restored', error: null },
+      }),
+    );
+    const record = jest.fn(() => true);
+    session.controller.recordClvmDiagnostic = record;
+    jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+    await storageRepository.claimApplicationState();
+    await storageRepository.write(
+      storageRepository.patchApplicationState(() =>
+        activeSave({
+          blockchainType: 'walletconnect',
+          hubUrl: 'https://hub.example.test',
+          sessionPeerId: 'p_' + '22'.repeat(16),
+          gameSessionId: '33'.repeat(16),
+        }),
+      ),
+    );
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'You have previously saved state.');
+    expect(sessionHost.createSessionController).not.toHaveBeenCalled();
+    await act(async () => {
+      await application.dispatch({ type: 'resume' });
+    });
+    for (let n = 0; n < 10; n++) await flushEffects();
+    expect(sessionHost.createSessionController).toHaveBeenCalled();
+    await act(async () => log('[clvm-diagnostic token=late-controller] stack'));
+    expect(record).toHaveBeenCalledWith(
+      expect.stringContaining('[clvm-diagnostic token=late-controller]'),
+    );
   });
 
   it('remembers an automatically connected hub after disconnect', async () => {

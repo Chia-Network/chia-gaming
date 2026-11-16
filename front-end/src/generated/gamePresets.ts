@@ -11,3 +11,6 @@ export const GAME_PRESET_FILES = [
   'games/krunk/clsp/factory_prepared.clvm.bin',
 ] as const;
 export const PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES];
+export const DEBUG_PRESET_FILES = [...CORE_PRESET_FILES, ...GAME_PRESET_FILES].map((file) =>
+  file.replace(/\.clvm\.bin$/, '.debug.clvm.bin'),
+);

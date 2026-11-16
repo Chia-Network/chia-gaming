@@ -325,6 +325,7 @@ export type GameSessionEvent =
   | { OutboundMessage: Uint8Array }
   | { Notification: WasmNotification }
   | { Log: string }
+  | { ClvmDiagnostic: string }
   | { CoinSolutionRequest: string }
   | { ReceiveError: string }
   | { NeedCoinSpend: NeedCoinSpendRequest }
@@ -435,4 +436,8 @@ export interface GameSessionApi {
   relinquish_submission_attempt(attemptToken: string): SubmissionAttemptStatus;
   chain_snapshot_ready(): void;
   request_fee_upgrades(): void;
+}
+
+export interface ClvmDiagnosticError extends Error {
+  clvmDiagnosticToken?: string;
 }

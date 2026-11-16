@@ -291,7 +291,12 @@ export function reduceKrunkFeatureState(
 function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate): KrunkHandState {
   const game = krunkGameStateFromHand(current, event.memberIndex);
   let next: KrunkGameState;
-  if (event.type === 'hand-ended') {
+  if (event.type === 'move-rejected') {
+    next =
+      game.role === 'bob' && game.handler === KrunkHandler.BobGuess && game.queuedGuesses.length > 0
+        ? { ...game, queuedGuesses: game.queuedGuesses.slice(1) }
+        : game;
+  } else if (event.type === 'hand-ended') {
     next = reduceKrunkFeatureState(game, { type: 'settled', outcome: event.outcome });
   } else if (event.type === 'move-readable') {
     next = reduceKrunkFeatureState(game, {
@@ -302,6 +307,7 @@ function reduceKrunkHandState(current: KrunkHandState, event: GameUpdate): Krunk
   } else {
     throw new Error('Krunk does not support handler message readables');
   }
+  if (next === game) return current;
   const members = [...current.members] as [KrunkGameState, KrunkGameState];
   members[event.memberIndex] = next;
   return { ...current, members };
