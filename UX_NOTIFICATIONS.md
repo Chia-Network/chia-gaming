@@ -507,9 +507,12 @@ old five-case Forfeit / Claim / Terminal / Fold / Move-too-late table:
 | Clock expired, no move           | We never chose a move                                    | `timed_out_waiting_for_our_move`                                |
 | Slash / cheat                    | Illegal-move dispute resolved on-chain                   | `slashed_opponent` / `opponent_slashed_us` / `opponent_cheated` |
 
-Auto-accept (terminal game or `our_share == game_amount`) queues
+Auto-accept for a terminal game with a positive share queues
 `AcceptSettlement` and eventually settles as `we_accepted` or `settled_cleanly`
-when the timeout claim confirms. See `ON_CHAIN.md` for mechanism details.
+when the timeout claim confirms. A payout amount alone does not finish the game
+or authorize an automatic claim on our unfinished turn. Explicit acceptance,
+including a Space Poker fold, authorizes that settlement without requiring a
+terminal referee move. See `ON_CHAIN.md` for mechanism details.
 
 ### Other terminal notifications
 
