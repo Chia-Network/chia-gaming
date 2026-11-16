@@ -347,7 +347,7 @@ describe('flat state', () => {
     );
     await storageRepository.checkpointDomainMutations();
 
-    expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
+    expect(storageRepository.hasResumableState()).toBe(true);
     const loaded = await storageRepository.readCurrentState();
     const session = requirePreHandshake(loaded);
     expect(session).not.toHaveProperty('live');

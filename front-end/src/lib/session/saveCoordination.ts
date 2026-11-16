@@ -1,12 +1,10 @@
 import { isElectronDistribution } from '../../util/distribution';
 
 const SESSION_MARKER_KEY = 'appState_savedSession';
-const AUTO_RESUME_ONCE_KEY = 'appState_autoResumeOnce';
 const RESET_KEY = 'appState_hardReset';
 const LEASE_KEY = 'appState_activeTab';
 const TAB_ID_SESSION_KEY = 'appState_tabId';
 
-let autoResumeLatch = false;
 export type StorageAuthorityLossReason = 'takeover' | 'sibling-reset' | 'durable-authority-lost';
 
 export function randomHex(): string {
@@ -103,36 +101,6 @@ export function clearSavedSessionMarker(): void {
   }
 }
 
-export function markAutoResumeOnce(): void {
-  try {
-    sessionStorage.setItem(AUTO_RESUME_ONCE_KEY, '1');
-  } catch {
-    /* ignore */
-  }
-}
-
-export function peekAutoResumeOnce(): boolean {
-  if (autoResumeLatch) return true;
-  try {
-    if (sessionStorage.getItem(AUTO_RESUME_ONCE_KEY) !== null) {
-      autoResumeLatch = true;
-      return true;
-    }
-  } catch {
-    /* ignore */
-  }
-  return false;
-}
-
-export function clearAutoResumeOnce(): void {
-  autoResumeLatch = false;
-  try {
-    sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY);
-  } catch {
-    /* ignore */
-  }
-}
-
 export function isWalletConnectStorageKey(key: string): boolean {
   const lower = key.toLowerCase();
   return (
@@ -184,7 +152,6 @@ export function installStorageCoordination(
 }
 
 export function resetStorageCoordinationForTests(): void {
-  autoResumeLatch = false;
   try {
     localStorage.removeItem(LEASE_KEY);
   } catch {
@@ -192,11 +159,6 @@ export function resetStorageCoordinationForTests(): void {
   }
   try {
     localStorage.removeItem(RESET_KEY);
-  } catch {
-    /* ignore */
-  }
-  try {
-    sessionStorage.removeItem(AUTO_RESUME_ONCE_KEY);
   } catch {
     /* ignore */
   }

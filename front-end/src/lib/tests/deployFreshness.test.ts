@@ -111,11 +111,6 @@ describe('deployFreshness', () => {
       },
       key: (i: number) => [...store.keys()][i] ?? null,
     };
-    Object.defineProperty(globalThis, 'sessionStorage', {
-      configurable: true,
-      writable: true,
-      value: memoryStorage,
-    });
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       writable: true,
@@ -135,7 +130,7 @@ describe('deployFreshness', () => {
       new Promise((resolve) => setTimeout(resolve, 20)),
     ]);
     expect(reload).toHaveBeenCalled();
-    expect(sessionStorage.getItem('appState_autoResumeOnce')).toBe('1');
+    expect(localStorage.getItem('appState_savedSession')).toBe('1');
   });
 
   it('recoverFromMissingDeployAsset throws on non-404 without checking deploy', async () => {

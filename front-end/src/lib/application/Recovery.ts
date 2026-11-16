@@ -1,9 +1,4 @@
-import {
-  clearAutoResumeOnce,
-  isLeaseConflict,
-  markSavedSession,
-  peekAutoResumeOnce,
-} from '../session/saveCoordination';
+import { isLeaseConflict, markSavedSession } from '../session/saveCoordination';
 import type { DurableApplicationState } from '../session/saveEnvelope';
 import {
   reloadAfterSuccessfulHardReset,
@@ -15,15 +10,13 @@ export type BootRecoveryState =
   | { kind: 'loading' }
   | { kind: 'ready' }
   | { kind: 'autoResuming' }
-  | { kind: 'resumeDialog'; loadError: string | null }
+  | { kind: 'loadFailed'; loadError: string }
   | { kind: 'tabConflict'; save: DurableApplicationState | null; midSession: boolean }
   | { kind: 'tabDead' };
 
-export type BootRestoreSource = 'manual' | 'automatic' | 'takeover';
+export type BootRestoreSource = 'automatic' | 'takeover';
 
 export interface BootRecoveryBoundaryDependencies {
-  /** Restore a loadable save without the Resume / Start over dialog. */
-  autoResume: boolean;
   onSessionId: (sessionId: string) => void;
   onRestore: (
     save: DurableApplicationState,
@@ -44,20 +37,19 @@ function errorMessage(error: unknown): string {
 
 function unavailableSavedSession(): BootRecoveryState {
   return {
-    kind: 'resumeDialog',
+    kind: 'loadFailed',
     loadError: 'The saved session is unsupported or could not be loaded.',
   };
 }
 
 export interface RecoveryView {
   state: BootRecoveryState;
-  resuming: boolean;
   startingOver: boolean;
 }
 
 /** Application recovery and durable authority, independent of view attachment. */
 export class Recovery {
-  view: RecoveryView = { state: { kind: 'loading' }, resuming: false, startingOver: false };
+  view: RecoveryView = { state: { kind: 'loading' }, startingOver: false };
   private claimedRecovery: DurableApplicationState | null = null;
   private generation = 0;
   private autoResumeStarted = false;
@@ -80,10 +72,6 @@ export class Recovery {
       void this.resume();
     }
   };
-  private setResuming = (resuming: boolean) => {
-    this.view = { ...this.view, resuming };
-    this.publish(this.view);
-  };
   private setStartingOver = (startingOver: boolean) => {
     this.view = { ...this.view, startingOver };
     this.publish(this.view);
@@ -98,7 +86,7 @@ export class Recovery {
       if (!pendingWipe.success) {
         markSavedSession();
         this.setState({
-          kind: 'resumeDialog',
+          kind: 'loadFailed',
           loadError:
             'A pending hard reset is still blocked. Close other app tabs and wallet connections, then retry.',
         });
@@ -108,22 +96,17 @@ export class Recovery {
       const inspection = await storageRepository.inspect();
       if (cancelled || !this.recoveryIsCurrent(generation)) return;
       if (inspection.applicationStateError) {
-        clearAutoResumeOnce();
         markSavedSession();
         this.setState({
-          kind: 'resumeDialog',
+          kind: 'loadFailed',
           loadError: errorMessage(inspection.applicationStateError),
         });
         return;
       }
       const inspected = inspection.applicationState;
-      if (inspected && storageRepository.shouldOfferResumeOrStartOver(inspected)) {
+      if (inspected && storageRepository.hasResumableState(inspected)) {
         markSavedSession();
-        this.setState(
-          this.dependencies.autoResume || peekAutoResumeOnce()
-            ? { kind: 'autoResuming' }
-            : { kind: 'resumeDialog', loadError: null },
-        );
+        this.setState({ kind: 'autoResuming' });
         return;
       }
       if (isLeaseConflict()) {
@@ -134,14 +117,10 @@ export class Recovery {
       try {
         const save = await storageRepository.claimApplicationState();
         if (cancelled || !this.recoveryIsCurrent(generation)) return;
-        if (storageRepository.shouldOfferResumeOrStartOver(save)) {
+        if (storageRepository.hasResumableState(save)) {
           this.claimedRecovery = save;
           markSavedSession();
-          this.setState(
-            this.dependencies.autoResume || peekAutoResumeOnce()
-              ? { kind: 'autoResuming' }
-              : { kind: 'resumeDialog', loadError: null },
-          );
+          this.setState({ kind: 'autoResuming' });
           return;
         }
         const sessionId = await storageRepository.ensureHubIdentity();
@@ -152,9 +131,8 @@ export class Recovery {
         if (!cancelled && this.recoveryIsCurrent(generation)) this.setState({ kind: 'ready' });
       } catch (error) {
         if (cancelled || !this.recoveryIsCurrent(generation)) return;
-        clearAutoResumeOnce();
         markSavedSession();
-        this.setState({ kind: 'resumeDialog', loadError: errorMessage(error) });
+        this.setState({ kind: 'loadFailed', loadError: errorMessage(error) });
       }
     })();
     return () => {
@@ -177,7 +155,6 @@ export class Recovery {
           midSession: current.kind === 'ready',
         };
       });
-      this.setResuming(false);
     };
     return storageRepository.onAuthorityLost(authorityLost);
   }
@@ -192,25 +169,16 @@ export class Recovery {
     if (!this.recoveryIsCurrent(generation)) return;
     const presentation = await this.dependencies.onRestore(save, source);
     if (!this.recoveryIsCurrent(generation)) return;
-    clearAutoResumeOnce();
     if (!presentation || !presentation.deferReady) this.setState({ kind: 'ready' });
   };
 
-  resume = async () => {
-    const current = this.view.state;
-    if (
-      (current.kind !== 'resumeDialog' && current.kind !== 'autoResuming') ||
-      (current.kind === 'resumeDialog' && current.loadError !== null)
-    ) {
-      return;
-    }
-    const source: BootRestoreSource = current.kind === 'autoResuming' ? 'automatic' : 'manual';
+  private resume = async () => {
+    if (this.view.state.kind !== 'autoResuming') return;
     const generation = this.nextRecoveryGeneration();
-    this.setResuming(true);
     try {
       const alreadyClaimed = this.claimedRecovery;
       if (alreadyClaimed) {
-        await this.restoreClaimed(alreadyClaimed, source, generation);
+        await this.restoreClaimed(alreadyClaimed, 'automatic', generation);
         if (this.recoveryIsCurrent(generation)) this.claimedRecovery = null;
         return;
       }
@@ -219,37 +187,31 @@ export class Recovery {
       if (inspection.applicationStateError) throw inspection.applicationStateError;
       const inspected = inspection.applicationState;
       if (!inspected) {
-        clearAutoResumeOnce();
         markSavedSession();
         this.setState(unavailableSavedSession());
         return;
       }
       if (isLeaseConflict()) {
-        clearAutoResumeOnce();
         this.setState({ kind: 'tabConflict', save: inspected, midSession: false });
         return;
       }
       const claimed = await storageRepository.claimApplicationState();
       if (!this.recoveryIsCurrent(generation)) return;
-      if (!storageRepository.shouldOfferResumeOrStartOver(claimed)) {
+      if (!storageRepository.hasResumableState(claimed)) {
         const sessionId = await storageRepository.ensureHubIdentity();
         if (!this.recoveryIsCurrent(generation)) return;
         this.dependencies.onSessionId(sessionId);
         if (!this.recoveryIsCurrent(generation)) return;
         await this.dependencies.onFreshClaim(claimed, 'boot');
         if (!this.recoveryIsCurrent(generation)) return;
-        clearAutoResumeOnce();
         this.setState({ kind: 'ready' });
         return;
       }
-      await this.restoreClaimed(claimed, source, generation);
+      await this.restoreClaimed(claimed, 'automatic', generation);
     } catch (error) {
       if (!this.recoveryIsCurrent(generation)) return;
-      clearAutoResumeOnce();
       markSavedSession();
-      this.setState({ kind: 'resumeDialog', loadError: errorMessage(error) });
-    } finally {
-      if (this.recoveryIsCurrent(generation)) this.setResuming(false);
+      this.setState({ kind: 'loadFailed', loadError: errorMessage(error) });
     }
   };
 
@@ -257,7 +219,6 @@ export class Recovery {
     if (this.view.state.kind !== 'tabConflict') return;
     this.claimedRecovery = null;
     const generation = this.nextRecoveryGeneration();
-    this.setResuming(true);
     try {
       const claimed = await storageRepository.claimApplicationState();
       if (!this.recoveryIsCurrent(generation)) return;
@@ -265,7 +226,7 @@ export class Recovery {
       if (!this.recoveryIsCurrent(generation)) return;
       this.dependencies.onSessionId(sessionId);
       if (!this.recoveryIsCurrent(generation)) return;
-      if (storageRepository.shouldOfferResumeOrStartOver(claimed)) {
+      if (storageRepository.hasResumableState(claimed)) {
         const presentation = await this.dependencies.onRestore(claimed, 'takeover');
         if (!this.recoveryIsCurrent(generation)) return;
         if (presentation?.deferReady) return;
@@ -276,11 +237,8 @@ export class Recovery {
       this.setState({ kind: 'ready' });
     } catch (error) {
       if (!this.recoveryIsCurrent(generation)) return;
-      clearAutoResumeOnce();
       markSavedSession();
-      this.setState({ kind: 'resumeDialog', loadError: errorMessage(error) });
-    } finally {
-      if (this.recoveryIsCurrent(generation)) this.setResuming(false);
+      this.setState({ kind: 'loadFailed', loadError: errorMessage(error) });
     }
   };
 
@@ -299,7 +257,7 @@ export class Recovery {
         }
         markSavedSession();
         this.setState({
-          kind: 'resumeDialog',
+          kind: 'loadFailed',
           loadError: blocked
             ? 'Hard reset is blocked. Close other app tabs and wallet connections, then retry.'
             : 'Hard reset could not delete all local databases. Close other app tabs and wallet connections, then retry.',
@@ -314,7 +272,7 @@ export class Recovery {
       console.error('[BootRecoveryBoundary] hard reset failed:', error);
       markSavedSession();
       this.setState({
-        kind: 'resumeDialog',
+        kind: 'loadFailed',
         loadError:
           'Hard reset failed. Close other app tabs and wallet connections, then retry hard reset.',
       });
