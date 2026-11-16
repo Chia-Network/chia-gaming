@@ -64,6 +64,12 @@ async function waitForRender(renderer: ReactTestRenderer, text: string): Promise
   throw new Error(`Timed out waiting for rendered text: ${text}`);
 }
 
+async function waitForCall(mock: jest.Mock): Promise<void> {
+  for (let attempt = 0; attempt < 20 && mock.mock.calls.length === 0; attempt++) {
+    await flushEffects();
+  }
+}
+
 function holdNextClaim(): { entered: Promise<void>; release: () => void } {
   let release!: () => void;
   let claimed!: () => void;
@@ -114,14 +120,11 @@ function ShellBootHarness(props: {
   if (boundary.state.kind === 'loading') {
     return createElement('p', null, 'Loading Chia Gaming…');
   }
-  if (boundary.state.kind === 'resumeDialog') {
+  if (boundary.state.kind === 'loadFailed') {
     return createElement(
       'section',
       null,
-      createElement('p', null, boundary.state.loadError ?? 'You have previously saved state.'),
-      boundary.state.loadError === null
-        ? createElement('button', { onClick: boundary.resume }, 'Resume Session')
-        : null,
+      createElement('p', null, boundary.state.loadError),
       createElement('button', { onClick: boundary.retryHardReset }, 'Retry Hard Reset'),
     );
   }
@@ -175,7 +178,6 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     const originalIndexedDb = indexedDB;
     localStorage.setItem('appState_pendingWipe', '1');
     localStorage.setItem('appState_savedSession', '1');
-    sessionStorage.setItem('appState_autoResumeOnce', '1');
     const deletes: Array<{ onsuccess?: () => void }> = [];
     Object.defineProperty(globalThis, 'indexedDB', {
       configurable: true,
@@ -280,6 +282,47 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     claim.mockRestore();
   });
 
+  it('reloads to finish a retried hard reset that is only blocked', async () => {
+    const originalIndexedDb = indexedDB;
+    localStorage.setItem('appState_pendingWipe', '1');
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: {
+        databases: jest.fn().mockResolvedValue([{ name: SESSION_DB_NAME }]),
+        deleteDatabase: jest.fn(() => {
+          const request: { onblocked?: () => void } = {};
+          setTimeout(() => request.onblocked?.(), 0);
+          return request;
+        }),
+      },
+    });
+    const reload = jest.fn();
+
+    act(() => {
+      renderer = create(
+        createElement(ShellBootHarness, {
+          externalHub: new Promise<void>(() => {}),
+          externalWallet: new Promise<void>(() => {}),
+          reload,
+        }),
+      );
+    });
+    await waitForRender(renderer!, 'pending hard reset is still blocked');
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
+    });
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem('appState_pendingWipe')).toBe('1');
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      value: originalIndexedDb,
+    });
+    warn.mockRestore();
+  });
+
   it('shows local loading then restores while hub and wallet remain unresolved', async () => {
     await storageRepository.claimApplicationState();
     const save = liveSave({
@@ -307,21 +350,16 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       expect.objectContaining({ children: ['Loading Chia Gaming…'] }),
     );
 
-    await waitForRender(renderer!, 'You have previously saved state.');
-
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-    });
+    await waitForRender(renderer!, 'restored-automatic');
 
     expect(renderer!.root.findByType('main').children).toBeDefined();
-    expect(renderer!.root.findByProps({ children: 'restored-manual' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Hub reconnecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Wallet reconnecting' })).toBeDefined();
     expect(renderer!.root.findByProps({ children: 'Wallet action' }).props.disabled).toBe(true);
     expect(renderer!.root.findByProps({ children: 'Hub action' }).props.disabled).toBe(true);
   });
 
-  it('offers and restores a durable live session without localStorage hints', async () => {
+  it('automatically restores a durable live session without localStorage hints', async () => {
     await storageRepository.claimApplicationState();
     const save = liveSave({
       pairingToken: 'markerless-restore-pair',
@@ -346,11 +384,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       );
     });
 
-    await waitForRender(renderer!, 'You have previously saved state.');
-    expect(claim).not.toHaveBeenCalled();
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-    });
+    await waitForCall(onRestore);
 
     expect(claim).toHaveBeenCalledTimes(1);
     expect(onRestore).toHaveBeenCalledWith(
@@ -360,7 +394,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
           pairing: expect.objectContaining({ token: 'markerless-restore-pair' }),
         }),
       }),
-      'manual',
+      'automatic',
     );
     claim.mockRestore();
   });
@@ -393,14 +427,9 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       );
     });
 
-    await waitForRender(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-    });
     await waitForRender(renderer!, 'Unsupported saved game format');
 
     expect(onRestore).toHaveBeenCalledTimes(1);
-    expect(renderer!.root.findAllByProps({ children: 'Resume Session' })).toHaveLength(0);
     expect(renderer!.root.findByProps({ children: 'Retry Hard Reset' })).toBeDefined();
     expect(await readApplicationState()).toEqual(save);
     expect(storageRepository.loadState()).toEqual(save);
@@ -541,22 +570,16 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         );
       });
 
-      await waitForRender(renderer!, 'You have previously saved state.');
+      await waitForCall(onRestore);
+
       expect(inspect).toHaveBeenCalledTimes(1);
-      expect(claim).toHaveBeenCalledTimes(1);
-      expect(onFreshClaim).not.toHaveBeenCalled();
-
-      await act(async () => {
-        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-      });
-
       expect(claim).toHaveBeenCalledTimes(1);
       expect(onFreshClaim).not.toHaveBeenCalled();
       expect(onRestore).toHaveBeenCalledWith(
         expect.objectContaining({
           session: expect.objectContaining({ phase: racingSave.session?.phase }),
         }),
-        'manual',
+        'automatic',
       );
       inspect.mockRestore();
       claim.mockRestore();
@@ -601,10 +624,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
       );
     });
 
-    await waitForRender(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-    });
+    await waitForCall(onFreshClaim);
     await waitForRender(renderer!, 'Fresh dashboard');
 
     expect(inspect).toHaveBeenCalledTimes(2);
@@ -815,11 +835,15 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 
       const waiting = await createTab('waiting-sibling');
       stopWaiting = waiting.recovery.start();
-      for (let turn = 0; turn < 30 && waiting.recovery.view.state.kind === 'loading'; turn++) {
+      for (
+        let turn = 0;
+        turn < 30 &&
+        (waiting.recovery.view.state.kind === 'loading' ||
+          waiting.recovery.view.state.kind === 'autoResuming');
+        turn++
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 0));
       }
-      expect(waiting.recovery.view.state.kind).toBe('resumeDialog');
-      await waiting.recovery.resume();
       expect(waiting.recovery.view.state).toMatchObject({ kind: 'tabConflict', save: oldSave });
       expect(waiting.repository.hasAuthority()).toBe(false);
 
@@ -954,6 +978,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     const onSessionId = jest.fn();
     const onFreshClaim = jest.fn();
     const onRestore = jest.fn();
+    const claim = holdNextClaim();
     act(() => {
       renderer = create(
         createElement(ShellBootHarness, {
@@ -966,19 +991,12 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         }),
       );
     });
-    await waitForRender(renderer!, 'You have previously saved state.');
-
-    const claim = holdNextClaim();
-    let resume!: Promise<void>;
     await act(async () => {
-      resume = renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       await claim.entered;
     });
     act(() => storageRepository.loseAuthority('takeover'));
     claim.release();
-    await act(async () => {
-      await resume;
-    });
+    await flushEffects();
 
     expect(renderer!.root.findByProps({ children: 'Tab conflict' })).toBeDefined();
     expect(onSessionId).not.toHaveBeenCalled();
@@ -1024,20 +1042,14 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
         }),
       );
     });
-    await waitForRender(renderer!, 'You have previously saved state.');
-
-    let resume!: Promise<void>;
     await act(async () => {
-      resume = renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       await restoreEntered;
     });
     act(() => storageRepository.loseAuthority('takeover'));
     expect(renderer!.root.findByProps({ children: 'Tab conflict' })).toBeDefined();
 
     releaseRestore();
-    await act(async () => {
-      await resume;
-    });
+    await flushEffects();
 
     expect(renderer!.root.findByProps({ children: 'Tab conflict' })).toBeDefined();
     expect(onRestore).toHaveBeenCalledTimes(1);
@@ -1049,7 +1061,6 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
 function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDependencies) {
   const [view, setView] = useState<RecoveryView>({
     state: { kind: 'loading' },
-    resuming: false,
     startingOver: false,
   });
   const owner = useRef<Recovery | null>(null);
@@ -1059,7 +1070,6 @@ function useBootRecoveryBoundary(dependencies: BootRecoveryBoundaryDependencies)
   useEffect(() => recovery.start(), [recovery]);
   return {
     ...view,
-    resume: recovery.resume,
     takeOver: recovery.takeOver,
     closeTab: recovery.closeTab,
     retryHardReset: recovery.retryHardReset,

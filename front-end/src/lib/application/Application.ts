@@ -173,7 +173,6 @@ const ABANDON_DELAY_MS = 120_000n;
 export type ApplicationIntent =
   | {
       type:
-        | 'resume'
         | 'reset'
         | 'takeover'
         | 'close-tab'
@@ -185,6 +184,7 @@ export type ApplicationIntent =
         | 'accept-session'
         | 'decline-session'
         | 'toggle-publish'
+        | 'request-full-reset'
         | 'confirm'
         | 'cancel-confirmation';
     }
@@ -294,6 +294,9 @@ export function createApplication() {
     update('transactionPublishNerfed', nerfed);
   }
   let started = false;
+  // Once a hard reset has torn the session down, nothing is left for the
+  // unload warning to protect, and it would veto the reset's own reload.
+  let hardResetStarted = false;
   const listeners = new Set<(event: ApplicationEvent) => void>();
   let frontend: SessionFrontend | null = null;
   let sessionPresentation: SessionPresentation | null = null;
@@ -333,7 +336,7 @@ export function createApplication() {
         if (
           shouldMountGameSession(
             !!sessions.state.sessionConfig && !!sessions.state.peerConn,
-            state.walletView.connected,
+            walletCanRunSession(),
             !!sessions.state.sessionConfig?.restoring,
             sessionStarted,
           ).startSession
@@ -480,6 +483,17 @@ export function createApplication() {
       },
     });
   };
+  const requestFullReset = () => {
+    update('confirmDialog', {
+      title: 'Reset everything?',
+      body: 'This deletes all data this app has saved in this browser, disconnects your wallet, and reloads. If a session is in progress you will lose the ability to resolve it and may lose the funds in it. This cannot be undone.',
+      confirmLabel: 'Full reset',
+      onConfirm: () => {
+        update('confirmDialog', null);
+        return recovery.retryHardReset();
+      },
+    });
+  };
   let hubWsUp = false;
   let lastHubActivity = 0;
   let pendingHubRemapEscalation: {
@@ -511,7 +525,15 @@ export function createApplication() {
             save.preferences.blockchainType ?? storageRepository.query('blockchainType');
           if (bcType) void handleConnect(bcType, true);
         }
-        return { deferReady: source === 'automatic' && hasLiveSession };
+        // Non-active transports finish locally without session execution to
+        // report readiness. Only wait when performResume established it.
+        return {
+          deferReady:
+            source === 'automatic' &&
+            hasLiveSession &&
+            sessions.state.sessionConfig !== null &&
+            sessions.state.peerConn !== null,
+        };
       },
       onFreshClaim: (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
@@ -535,6 +557,7 @@ export function createApplication() {
         walletOwner.stopLocalActivity();
       },
       beforeHardReset: async () => {
+        hardResetStarted = true;
         detachSessionEvents?.();
         detachSessionEvents = undefined;
         frontend = null;
@@ -2184,8 +2207,16 @@ export function createApplication() {
   let stopHubLifecycle: (() => void) | undefined;
   let bootKind: string | undefined;
   function updateRecovery() {
-    if (bootKind !== recovery.view.state.kind) {
-      bootKind = recovery.view.state.kind;
+    // Ready and automatic resume share one hub lifecycle, so revealing the
+    // restored session keeps its connection. The saved hub is only loaded once
+    // automatic resume claims storage, so start the lifecycle when it is known.
+    const kind = recovery.view.state.kind;
+    const nextBootKind =
+      kind === 'ready' || (kind === 'autoResuming' && storageRepository.query('hubUrl'))
+        ? 'hub-active'
+        : kind;
+    if (bootKind !== nextBootKind) {
+      bootKind = nextBootKind;
       stopHubLifecycle?.();
       stopHubLifecycle = (() => {
         if (recovery.view.state.kind !== 'ready' && recovery.view.state.kind !== 'autoResuming') {
@@ -2233,7 +2264,7 @@ export function createApplication() {
       const blocked = isRestoreBlocked(restoring, sessions.state.restoreStatus);
       const { keepSession } = shouldMountGameSession(
         true,
-        state.walletView.connected,
+        walletCanRunSession(),
         restoring,
         sessionStarted,
       );
@@ -2246,6 +2277,12 @@ export function createApplication() {
     const ready = !!state.hubOrigin && state.walletView.connected && walletOwner.ready();
     update('blockchainReady', ready);
     hubConn?.setBusy(hubPresenceNow());
+  }
+  // Automatic resume lets session execution run while the wallet is still
+  // resuming, when its view can already report connected before the session
+  // has wallet access.
+  function walletCanRunSession(): boolean {
+    return state.walletView.connected && walletOwner.sessionAccess() !== null;
   }
   function syncSessionExecution() {
     if (
@@ -2266,7 +2303,7 @@ export function createApplication() {
     if (params.restoring && sessions.state.restoreStatus === 'failed') return;
     const mount = shouldMountGameSession(
       true,
-      state.walletView.connected,
+      walletCanRunSession(),
       !!params.restoring,
       sessionStarted,
     );
@@ -2456,7 +2493,7 @@ export function createApplication() {
       lastHubUrl: storageRepository.query('lastHubUrl'),
       keepSession: shouldMountGameSession(
         !!sessions.state.sessionConfig && !!sessions.state.peerConn,
-        state.walletView.connected,
+        walletCanRunSession(),
         !!sessions.state.sessionConfig?.restoring,
         sessionStarted,
       ).keepSession,
@@ -2466,7 +2503,6 @@ export function createApplication() {
         recovery.view.state.kind === 'tabConflict'
           ? { kind: 'tabConflict' as const, midSession: recovery.view.state.midSession }
           : recovery.view.state,
-      resuming: recovery.view.resuming,
       startingOver: recovery.view.startingOver,
       networkLocked: sessionLocksNetwork(
         sessions.state.sessionPhase,
@@ -2491,8 +2527,6 @@ export function createApplication() {
   }
   function applyIntent(intent: ApplicationIntent): void | Promise<void> {
     switch (intent.type) {
-      case 'resume':
-        return recovery.resume();
       case 'reset':
         return recovery.retryHardReset();
       case 'takeover':
@@ -2550,6 +2584,8 @@ export function createApplication() {
         return handleDashboardAction(intent.action);
       case 'toggle-publish':
         return toggleTransactionPublishNerf();
+      case 'request-full-reset':
+        return requestFullReset();
       case 'history':
         return appendHistory(intent.line);
       case 'confirm':
@@ -2581,6 +2617,7 @@ export function createApplication() {
         ),
         (() => {
           const onBeforeUnload = (event: BeforeUnloadEvent) => {
+            if (hardResetStarted) return;
             if (!shouldWarnOnSessionUnload(sessions.state.sessionPhase)) return;
             event.preventDefault();
             event.returnValue = '';

@@ -412,10 +412,11 @@ implicit crash rollback; this is not continuous save and does not imply that
 every changing or important value is durable. Network connections (wallet
 backend, hub) treat a reload like a remote drop and reconcile in the background.
 
-The one exception is the **restore / start over dialog**: when a saved game
-session exists, the app asks the user whether to resume or discard it before
-proceeding. This is intentional — silently resuming a stale or unwanted session
-could be worse than asking.
+Saved sessions resume automatically on every host, including a local dev host.
+There is no Resume / Start over prompt. When the save cannot be loaded, the
+**Saved session unavailable** screen offers only **Retry Hard Reset**, which
+deletes the channel keys without graceful cleanup, so it stays behind load or
+restore failures, where it is the only way out.
 
 This is always-on — not a feature the user opts into.
 
@@ -756,8 +757,8 @@ same finalized spend through WalletConnect `pushTransactions` is instead
 idempotent exact-byte replay; it creates no provider-reservation entry and carries
 no orphan-risk provenance.
 Wallet mutation starts only after the aggregate claim is installed. Malformation
-of any nested field rejects the whole root and remains visible on Resume /
-Start Over. A connected provider/account scope that differs from the durable
+of any nested field rejects the whole root and remains visible on the Saved
+session unavailable screen. A connected provider/account scope that differs from the durable
 operation owner is shown as a recovery mismatch rather than touching the wrong wallet.
 Cloud provider handles check their captured wallet ID on every offer operation,
 including operations queued before an account change. A handle for another
@@ -1180,16 +1181,13 @@ followed by one strict aggregate rehydrate:
 ```
 hasSavedSessionMarker()?
                  │
-                 ├─ yes → inspect IndexedDB → show Resume / Start Over
+                 ├─ yes → inspect IndexedDB
                  │       │
-                 │       ├─ Start Over → hardReset(), reload
-                 │       │                (separate "Starting over…" UI state;
-                 │       │                 does not share the Resume spinner)
-                 │       │
-                 │       └─ Resume → claim and read aggregate
+                 │       └─ Resume (automatic) → claim and read aggregate
                  │           │
-                 │           ├─ load failure / unsupported → keep dialog open
-                 │           │   with loadError; re-arm the marker
+                 │           ├─ load failure / unsupported → Saved session
+                 │           │   unavailable with loadError; re-arm the marker
+                 │           │   └─ Retry Hard Reset → hardReset(), reload
                  │           │
                  │           └─ save loaded → is there a lease conflict?
                  │               │
@@ -1264,7 +1262,7 @@ wipes the entire origin-local storage surface.
 
 #### Restore path
 
-When the user chooses to resume a full save, `performResume` fires:
+When a full save is resumed, `performResume` fires:
 
 1. Decode the strict IndexedDB record, hydrate local UI state (game params,
    human history, WASM notification history, and diagnostic log), and restore

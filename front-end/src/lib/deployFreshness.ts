@@ -1,5 +1,5 @@
 import { log } from '../services/log';
-import { markAutoResumeOnce, markSavedSession } from './session/saveCoordination';
+import { markSavedSession } from './session/saveCoordination';
 
 export function normalizeBasePath(path: string): string {
   return path.endsWith('/') ? path : `${path}/`;
@@ -106,11 +106,10 @@ export async function recoverFromMissingDeployAsset(
       window.location.reload();
     });
   if (status === 404 && (await checkStale())) {
-    // Ensure Resume survives the reload even if a concurrent clearSession()
-    // had dropped the marker while starting a fresh session. Auto-resume so
-    // the user is not prompted for a deploy cutover they did not initiate.
+    // Ensure the saved session is resumed after the reload even if a
+    // concurrent clearSession() had dropped the marker while starting a
+    // fresh session.
     markSavedSession();
-    markAutoResumeOnce();
     log(`[deploy] ${label} 404 for ${url}; build-meta basePath changed, reloading`);
     reload();
     return new Promise(() => {});

@@ -365,7 +365,6 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     iframeUrl,
     bootState,
     sessionConfig,
-    resuming,
     startingOver,
     transition,
     dashboardSessionModel,
@@ -588,8 +587,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
       </div>
     );
   }
-  if (bootState.kind === 'resumeDialog') {
-    const loadFailed = bootState.loadError !== null;
+  if (bootState.kind === 'loadFailed') {
     return (
       <div
         style={{
@@ -617,28 +615,17 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
           }}
         >
           <p className="text-canvas-text-contrast font-semibold text-lg">
-            {loadFailed ? 'Saved session unavailable' : 'Previously saved state'}
+            Saved session unavailable
           </p>
           <p className="text-canvas-text text-sm text-center">
-            {loadFailed
-              ? `${bootState.loadError} Use Retry Hard Reset when the blockers are closed.`
-              : 'You have previously saved state. Resume where you left off, or start over?'}
+            {bootState.loadError} Use Retry Hard Reset when the blockers are closed.
           </p>
-          {!loadFailed && (
-            <button
-              onClick={() => dispatch({ type: 'resume' })}
-              disabled={resuming || startingOver}
-              className="w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50"
-            >
-              {resuming ? 'Resuming\u2026' : 'Resume Session'}
-            </button>
-          )}
           <button
             onClick={() => dispatch({ type: 'reset' })}
-            disabled={resuming || startingOver}
+            disabled={startingOver}
             className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
           >
-            {startingOver ? 'Starting over\u2026' : loadFailed ? 'Retry Hard Reset' : 'Start over'}
+            {startingOver ? 'Starting over\u2026' : 'Retry Hard Reset'}
           </button>
         </div>
       </div>
@@ -938,16 +925,25 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             }}
           >
             <WalletRecoveryNotice notice={walletView.recoveryNotice} />
-            {showTransactionPublishControl && (
+            <div className="absolute right-4 top-4 flex items-center gap-2">
+              {showTransactionPublishControl && (
+                <Button
+                  variant={transactionPublishNerfed ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => dispatch({ type: 'toggle-publish' })}
+                >
+                  Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+                </Button>
+              )}
               <Button
-                variant={transactionPublishNerfed ? 'default' : 'outline'}
+                variant="destructive"
                 size="sm"
-                className="absolute right-4 top-4"
-                onClick={() => dispatch({ type: 'toggle-publish' })}
+                disabled={startingOver}
+                onClick={() => dispatch({ type: 'request-full-reset' })}
               >
-                Transaction publishing: {transactionPublishNerfed ? 'nerfed' : 'enabled'}
+                {startingOver ? 'Resetting\u2026' : 'Full reset'}
               </Button>
-            )}
+            </div>
             <ConnectionSetupModal
               open={showConnectionSetupModal && !!connectionSetup}
               title={connectionSetup?.title}

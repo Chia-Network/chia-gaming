@@ -175,7 +175,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
         __chiaHub: { requestTrust },
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
-        location: { reload: jest.fn() },
+        location: { hostname: 'localhost', reload: jest.fn() },
       },
     });
     Object.defineProperty(globalThis, 'document', {
@@ -244,10 +244,6 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       application = createApplication();
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
-    });
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
     });
     for (let attempt = 0; attempt < 30 && (!mockHub || !mockGameProps); attempt++) {
       await flushEffects();
@@ -540,10 +536,6 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       renderer = create(<Shell application={application} />);
       stop = application.start();
     });
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () =>
-      renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick(),
-    );
     await waitForText(renderer!, 'Connected');
     await waitForText(renderer!, 'Accept');
     for (let attempt = 0; attempt < 30 && (!readinessChange || !mockHub); attempt++) {

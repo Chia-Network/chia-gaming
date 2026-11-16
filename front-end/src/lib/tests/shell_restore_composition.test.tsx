@@ -25,7 +25,7 @@ import {
 } from './session_save_envelope.fixtures';
 
 import { expectConsoleError } from '../../../scripts/testSetup';
-import type { HubConnection } from '../../services/HubConnection';
+import { HubConnection } from '../../services/HubConnection';
 import { PeerSession, decodeReliableFrame, encodePeerAppMessage } from '../../services/PeerSession';
 import {
   INITIAL_CHANNEL_STATUS_MODEL,
@@ -98,6 +98,16 @@ async function flushEffects(): Promise<void> {
   });
 }
 
+async function waitForAutoResume(application: ReturnType<typeof createApplication>): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const { bootState, sessionConfig } = application.snapshot();
+    if (bootState.kind === 'ready') return;
+    if (bootState.kind === 'autoResuming' && sessionConfig) return;
+    await flushEffects();
+  }
+  throw new Error('Timed out waiting for automatic resume');
+}
+
 async function waitForText(renderer: ReactTestRenderer, text: string): Promise<void> {
   for (let attempt = 0; attempt < 30; attempt++) {
     const rendered = renderer.root
@@ -156,7 +166,7 @@ describe('Shell production restore composition', () => {
         __chiaHub: { requestTrust },
         addEventListener: jest.fn(),
         removeEventListener: jest.fn(),
-        location: { reload: jest.fn() },
+        location: { hostname: 'localhost', reload: jest.fn() },
       },
     });
     Object.defineProperty(globalThis, 'document', {
@@ -237,11 +247,8 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
     });
-    await waitForText(renderer!, 'You have previously saved state.');
     expect(sessionHost.createSessionController).not.toHaveBeenCalled();
-    await act(async () => {
-      await application.dispatch({ type: 'resume' });
-    });
+    await waitForAutoResume(application);
     for (let n = 0; n < 10; n++) await flushEffects();
     expect(sessionHost.createSessionController).toHaveBeenCalled();
     await act(async () => log('[clvm-diagnostic token=late-controller] stack'));
@@ -265,10 +272,6 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
     });
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await application.dispatch({ type: 'resume' });
-    });
     for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     expect(mockHub).not.toBeNull();
 
@@ -283,6 +286,149 @@ describe('Shell production restore composition', () => {
       renderer!.root.find((node) => node.type === 'input' && node.props.role === 'combobox').props
         .value,
     ).toBe('http://localhost:3003');
+  });
+
+  it.each(
+    (['pre-handshake', 'live'] as const).flatMap((phase) =>
+      (['proposal-received', 'outbound-reject', 'inbound-reject'] as const).map((disposition) => ({
+        phase,
+        disposition,
+      })),
+    ),
+  )('finishes auto-resume for $phase / $disposition', async ({ phase, disposition }) => {
+    await storageRepository.claimApplicationState();
+    const save = (phase === 'live' ? activeSave : baseSave)({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      pairingToken: 'saved-pairing',
+      gameSessionId: '33'.repeat(16),
+      myContribution: '1000',
+      theirContribution: '1000',
+      perGameAmount: '100',
+      iStarted: false,
+      transportDisposition: disposition,
+      sessionPeerId: 'p_' + '22'.repeat(16),
+      opponentAlias: 'Saved peer',
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    for (
+      let attempt = 0;
+      attempt < 30 && application.snapshot().bootState.kind !== 'ready';
+      attempt++
+    ) {
+      await flushEffects();
+    }
+
+    expect(application.snapshot()).toMatchObject({
+      bootState: { kind: 'ready' },
+      restoreStatus: 'restored',
+      sessionConfig: null,
+      sessionFrontend: null,
+    });
+    expect(renderer!.root.findAllByProps({ children: 'Restoring your session…' })).toHaveLength(0);
+    expect(renderer!.root.findByProps({ children: 'Connect to Hub' })).toBeDefined();
+    if (phase === 'pre-handshake' && disposition === 'proposal-received') {
+      expect(renderer!.root.findByProps({ children: 'Saved peer' })).toBeDefined();
+      expect(renderer!.root.findByProps({ children: 'Accept' }).props.disabled).toBe(true);
+      expect(renderer!.root.findByProps({ children: 'Decline' }).props.disabled).toBeFalsy();
+    }
+    expect(sessionHost.createSessionController).not.toHaveBeenCalled();
+    expect(realBlockchainInfo.beginConnect).toHaveBeenCalledTimes(1);
+    expect(unhandledRejections).toEqual([]);
+  });
+
+  it('keeps auto-resume pending while an active live session is restoring', async () => {
+    const model = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+      restore: { status: 'restoring', error: null },
+    });
+    const session = stubApplicationSession(model);
+    jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+    await storageRepository.claimApplicationState();
+    const save = activeSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    for (let attempt = 0; attempt < 30 && !application.snapshot().sessionConfig; attempt++) {
+      await flushEffects();
+    }
+    expect(application.snapshot()).toMatchObject({
+      bootState: { kind: 'autoResuming' },
+      restoreStatus: 'restoring',
+      sessionConfig: { restoring: true },
+    });
+    act(() => {
+      session.publish({ ...model, restore: { status: 'restored', error: null } });
+    });
+    expect(application.snapshot()).toMatchObject({
+      bootState: { kind: 'ready' },
+      restoreStatus: 'restored',
+    });
+  });
+
+  it('keeps the hub connection opened during auto-resume once the session is revealed', async () => {
+    const hubConnection = jest.mocked(HubConnection);
+    hubConnection.mockClear();
+    mockHub = null;
+    requestTrust.mockResolvedValue('trusted');
+    const model = createSessionModel({
+      channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state: 'Handshaking' } },
+      restore: { status: 'restoring', error: null },
+    });
+    const session = stubApplicationSession(model);
+    jest.mocked(sessionHost.createSessionController).mockReturnValue(session.controller);
+    await storageRepository.claimApplicationState();
+    const save = activeSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      sessionPeerId: 'p_' + '22'.repeat(16),
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    for (
+      let attempt = 0;
+      attempt < 30 && (!application.snapshot().sessionConfig || !mockHub);
+      attempt++
+    ) {
+      await flushEffects();
+    }
+    expect(application.snapshot().bootState).toEqual({ kind: 'autoResuming' });
+    expect(hubConnection).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      session.publish({ ...model, restore: { status: 'restored', error: null } });
+    });
+    // Any later publication must not restart the hub lifecycle.
+    await act(async () => {
+      await application.dispatch({ type: 'theme', theme: 'dark' });
+    });
+    for (let n = 0; n < 5; n++) await flushEffects();
+
+    expect(application.snapshot().bootState).toEqual({ kind: 'ready' });
+    expect(hubConnection).toHaveBeenCalledTimes(1);
+    expect(hubConnection.mock.results[0].value.disconnect).not.toHaveBeenCalled();
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
@@ -322,10 +468,6 @@ describe('Shell production restore composition', () => {
     });
     expect(renderer!.root.findByProps({ children: 'Loading Chia Gaming…' })).toBeDefined();
 
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-    });
     await waitForText(renderer!, 'Resolved Clean');
 
     expect(
@@ -363,15 +505,11 @@ describe('Shell production restore composition', () => {
     markSavedSession();
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
+    expectConsoleError('[sessionController] restoreSession error:');
     const application = createApplication();
     act(() => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
-    });
-    await waitForText(renderer!, 'You have previously saved state.');
-    expectConsoleError('[sessionController] restoreSession error:');
-    await act(async () => {
-      await application.dispatch({ type: 'resume' });
     });
     for (let n = 0; n < 10; n++) await flushEffects();
     expect(restore).toHaveBeenCalledTimes(1);
@@ -506,15 +644,12 @@ describe('Shell production restore composition', () => {
       markSavedSession();
       releaseLeaseIfOwner();
       storageRepository._resetForTests();
+      const application = createApplication();
       act(() => {
-        const application = createApplication();
         renderer = create(React.createElement(Shell, { application }));
         stop = application.start();
       });
-      await waitForText(renderer!, 'You have previously saved state.');
-      await act(async () => {
-        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-      });
+      await waitForAutoResume(application);
 
       expect(storageRepository.getPlayerId()).toBe(save.identity.playerId);
       expect(jest.mocked(sessionHost.createSessionController).mock.calls.at(-1)?.[2]).toBe(
@@ -609,10 +744,6 @@ describe('Shell production restore composition', () => {
         renderer = create(React.createElement(Shell, { application }));
         stop = application.start();
       });
-      await waitForText(renderer!, 'You have previously saved state.');
-      await act(async () => {
-        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
-      });
       for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
       await flushEffects();
       expect(mockHub).not.toBeNull();
@@ -666,10 +797,6 @@ describe('Shell production restore composition', () => {
       const application = createApplication();
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
-    });
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
     });
     for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     await flushEffects();
@@ -754,12 +881,6 @@ describe('Shell production restore composition', () => {
     markSavedSession();
     releaseLeaseIfOwner();
     storageRepository._resetForTests();
-    act(() => {
-      const application = createApplication();
-      renderer = create(React.createElement(Shell, { application }));
-      stop = application.start();
-    });
-    await waitForText(renderer!, 'You have previously saved state.');
     let finishPeerLoad!: () => void;
     const peerLoading = new Promise<void>((resolve) => {
       finishPeerLoad = resolve;
@@ -767,8 +888,10 @@ describe('Shell production restore composition', () => {
     const peerLoader = jest
       .spyOn(wasmInit, 'ensurePeerProtocolLoaded')
       .mockReturnValue(peerLoading);
-    await act(async () => {
-      void renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
+    act(() => {
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
     });
     for (let n = 0; n < 30 && !peerLoader.mock.calls.length; n++) await flushEffects();
     expect(peerLoader).toHaveBeenCalled();
@@ -840,10 +963,6 @@ describe('Shell production restore composition', () => {
         const application = createApplication();
         renderer = create(React.createElement(Shell, { application }));
         stop = application.start();
-      });
-      await waitForText(renderer!, 'You have previously saved state.');
-      await act(async () => {
-        await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
       });
       await waitForText(renderer!, 'Resolved Clean');
       for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
@@ -954,10 +1073,7 @@ describe('Shell production restore composition', () => {
         renderer = create(React.createElement(Shell, { application }));
         stop = application.start();
       });
-      await waitForText(renderer!, 'You have previously saved state.');
-      await act(async () => {
-        await application.dispatch({ type: 'resume' });
-      });
+      await waitForAutoResume(application);
       await flushEffects();
       const controller = jest.mocked(sessionHost.createSessionController).mock.results[0].value;
       const session = application.snapshot().sessionPresentation;
@@ -1030,10 +1146,6 @@ describe('Shell production restore composition', () => {
     act(() => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
-    });
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await renderer!.root.findByProps({ children: 'Resume Session' }).props.onClick();
     });
     await waitForText(renderer!, 'Resolved Clean');
     for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
@@ -1154,11 +1266,16 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
     });
-    await waitForText(renderer!, 'You have previously saved state.');
-    await act(async () => {
-      await application.dispatch({ type: 'resume' });
-    });
+    await waitForAutoResume(application);
     await flushEffects();
+    const unloadVetoed = () => {
+      const event = { preventDefault: jest.fn(), returnValue: undefined };
+      for (const [type, listener] of jest.mocked(window.addEventListener).mock.calls) {
+        if (type === 'beforeunload') (listener as (event: unknown) => void)(event);
+      }
+      return event.preventDefault.mock.calls.length > 0;
+    };
+    expect(unloadVetoed()).toBe(true);
     await act(async () => {
       await application.dispatch({ type: 'reset' });
     });
@@ -1166,5 +1283,7 @@ describe('Shell production restore composition', () => {
     expect(controller.cleanup).toHaveBeenCalledTimes(1);
     expect(hardReset).toHaveBeenCalledTimes(1);
     expect(order).toEqual(['controller', 'storage']);
+    // The reset's own reload must not be vetoed by the live-session warning.
+    expect(unloadVetoed()).toBe(false);
   });
 });
