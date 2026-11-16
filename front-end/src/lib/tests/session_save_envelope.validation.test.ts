@@ -381,6 +381,66 @@ describe('DurableApplicationState strict validation', () => {
     expect(decodeDurableApplicationState(state).save).toEqual(state);
   });
 
+  it.each([scope, { provider: 'cloud' as const, walletId: 'replacement' }])(
+    'round-trips a replacement fee alongside its original-wallet cleanup with %j',
+    (providerScope) => {
+      const fees: FeeAttachment[] = [
+        { ...creatingFee, disposition: 'cancel-on-create' },
+        {
+          owner: creatingFee.owner,
+          submissionId: creatingFee.submissionId,
+          stage: 'cancel-required',
+          providerReservationId: 'late-old-fee',
+          reason: 'superseded',
+        },
+        {
+          owner: { ...creatingFee.owner, providerScope },
+          submissionId: creatingFee.submissionId,
+          stage: 'reserved',
+          providerReservationId: 'replacement-fee',
+          reason: '',
+        },
+      ];
+      const state = activeSave({ walletProviderScope: providerScope, feeAttachments: fees });
+      expect(decodeDurableApplicationState(state).save).toEqual(state);
+    },
+  );
+
+  it.each([scope, { provider: 'cloud' as const, walletId: 'replacement' }])(
+    'rejects two live fee owners for the same submission with %j',
+    (providerScope) => {
+      const state = activeSave({
+        walletProviderScope: providerScope,
+        feeAttachments: [
+          creatingFee,
+          {
+            owner: { ...creatingFee.owner, providerScope },
+            submissionId: creatingFee.submissionId,
+            stage: 'reserved',
+            providerReservationId: 'competing-live-fee',
+            reason: '',
+          },
+        ],
+      });
+      expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
+    },
+  );
+
+  it('keeps distinct retired fee requests separate from the current request', () => {
+    const retired = { ...creatingFee, disposition: 'cancel-on-create' as const };
+    const state = activeSave({
+      walletProviderScope: scope,
+      feeAttachments: [
+        retired,
+        { ...retired, recoveryId: 'another-old-request' },
+        { ...creatingFee, recoveryId: 'current-request' },
+      ],
+    });
+    expect(decodeDurableApplicationState(state).save).toEqual(state);
+    state.feeAttachments.push(structuredClone(retired));
+    expect(() => decodeDurableApplicationState(state)).toThrow(/duplicate/);
+  });
+
   it('permits no session with unresolved channel funding operations', () => {
     const state = completeAggregate();
     state.session = null;

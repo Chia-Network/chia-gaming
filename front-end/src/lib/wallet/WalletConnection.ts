@@ -334,9 +334,7 @@ export class WalletConnection {
     if (!poller) return;
     this.poller = null;
     this.emit({ type: 'detaching' });
-    poller.detachProvider();
-    poller.stopBalanceInterest();
-    poller.pauseChainPolling();
+    poller.retire();
   }
 
   stopLocalActivity(): void {

@@ -16,6 +16,7 @@ import { coinRecordToName } from '../../util/coinWatch';
 import {
   rpc,
   WalletConnectResponseError,
+  WalletConnectRequestNotStartedError,
   WalletConnectTransportError,
   WC_INTER_REQUEST_MS,
 } from './WalletConnectRpc';
@@ -563,19 +564,22 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       ? concurrentSpendCoinId
       : `0x${normalizeHexString(concurrentSpendCoinId)}`;
     try {
-      const response = await rpc.createOfferForIds({
-        offer: { '1': -fee },
-        driverDict: {},
-        // Persist the offer so the wallet reserves its selected fee input
-        // until the aggregate transaction spends it; otherwise concurrent
-        // submissions can select the same still-unconfirmed coin.
-        validateOnly: false,
-        allowUnsynced: true,
-        extraConditions: [
-          { opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } },
-          { opcode: 52n, args: { amount: fee } },
-        ],
-      });
+      const response = await rpc.createOfferForIds(
+        {
+          offer: { '1': -fee },
+          driverDict: {},
+          // Persist the offer so the wallet reserves its selected fee input
+          // until the aggregate transaction spends it; otherwise concurrent
+          // submissions can select the same still-unconfirmed coin.
+          validateOnly: false,
+          allowUnsynced: true,
+          extraConditions: [
+            { opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } },
+            { opcode: 52n, args: { amount: fee } },
+          ],
+        },
+        { releaseQueueOnContextChange: true },
+      );
       const offer = (response as any)?.offer;
       const tradeId = walletOfferTradeId(response);
       if (typeof offer !== 'string' || !offer.startsWith('offer')) {
@@ -601,6 +605,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       // insufficient balance.
       const text = collectErrorText(e);
       log(`[wc-blockchain] createFeeSpend failed: ${text}`);
+      if (e instanceof WalletConnectRequestNotStartedError) {
+        return { kind: 'unavailable', mutation: 'not-started', reason: text };
+      }
       if (e instanceof WalletConnectTransportError) {
         return { kind: 'unavailable', reason: text };
       }
@@ -807,6 +814,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
         (parsedError as any)?.data?.structuredError?.message ??
         '';
       const reason = errorMsg || errorText || 'createOfferForIds failed';
+      if (e instanceof WalletConnectRequestNotStartedError) {
+        return { kind: 'unavailable', mutation: 'not-started', reason };
+      }
       return e instanceof WalletConnectTransportError
         ? { kind: 'unavailable', reason }
         : { kind: 'failure', reason };

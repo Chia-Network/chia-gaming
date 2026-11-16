@@ -7,8 +7,7 @@ import type { WalletOfferProvider } from '../../types/ChiaGaming';
 import { storageRepository } from '../session/storageRepository';
 
 jest.mock('../wallet/WalletConnectRpc', () => ({
-  WalletConnectTransportError: class WalletConnectTransportError extends Error {},
-  WalletConnectResponseError: class WalletConnectResponseError extends Error {},
+  ...jest.requireActual('../wallet/WalletConnectRpc'),
   rpc: {
     createOfferForIds: jest.fn(),
     cancelOffer: jest.fn(),
@@ -1602,16 +1601,19 @@ describe('RealBlockchainInterface', () => {
     });
 
     expect(mockSelectCoins).not.toHaveBeenCalled();
-    expect(mockCreateOfferForIds).toHaveBeenCalledWith({
-      offer: { '1': -10n },
-      driverDict: {},
-      validateOnly: false,
-      allowUnsynced: true,
-      extraConditions: [
-        { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
-        { opcode: 52n, args: { amount: 10n } },
-      ],
-    });
+    expect(mockCreateOfferForIds).toHaveBeenCalledWith(
+      {
+        offer: { '1': -10n },
+        driverDict: {},
+        validateOnly: false,
+        allowUnsynced: true,
+        extraConditions: [
+          { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
+          { opcode: 52n, args: { amount: 10n } },
+        ],
+      },
+      { releaseQueueOnContextChange: true },
+    );
   });
 
   it('keeps a persisted fee offer without a trade ID uncertain', async () => {

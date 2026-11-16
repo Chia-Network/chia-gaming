@@ -2,6 +2,7 @@ import type { WalletOfferRequest } from '../../types/ChiaGaming';
 import {
   MAX_FEE_ATTACHMENT_REASON_LENGTH,
   feeAttachmentEntryKey,
+  isRetiringFeeAttachment,
   type FeeAttachment,
 } from './feeAttachmentStore';
 import {
@@ -113,11 +114,14 @@ export function decodeFeeAttachments(value: unknown, label = 'feeAttachments'): 
       entry.owner.peerSessionId,
       entry.submissionId,
     ]);
-    if (entries.has(entryKey) || operations.has(operation)) {
+    // Replacement requests can coexist with cleanup for older wallet attempts,
+    // but only one live fee attachment may serve a submission.
+    const active = !isRetiringFeeAttachment(entry);
+    if (entries.has(entryKey) || (active && operations.has(operation))) {
       throw new Error(`Garbled save: duplicate ${label} entry`);
     }
     entries.add(entryKey);
-    operations.add(operation);
+    if (active) operations.add(operation);
     return entry;
   });
 }

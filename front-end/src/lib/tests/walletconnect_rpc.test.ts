@@ -14,6 +14,7 @@ let mockFingerprint = '123';
 let mockChainId = 'chia:mainnet';
 let mockUseReplacementClient = false;
 let mockEpoch = 0;
+const mockStateListeners = new Set<() => void>();
 const mockRecoverRelay = jest.fn(async (..._args: unknown[]) => {
   mockEpoch++;
 });
@@ -27,6 +28,7 @@ const mockReplacementClient = { ...mockClient };
 jest.mock('../wallet/WalletConnectClient', () => ({
   walletConnectState: {
     getProfile: () => 'chia-wallet',
+    supportsMethod: () => true,
     getClient: () =>
       mockClientAvailable
         ? mockUseReplacementClient
@@ -37,6 +39,12 @@ jest.mock('../wallet/WalletConnectClient', () => ({
     getAddress: () => mockFingerprint,
     getChainId: () => mockChainId,
     getRequestEpoch: () => mockEpoch,
+    getObservable: () => ({
+      subscribe: ({ next }: { next: () => void }) => {
+        mockStateListeners.add(next);
+        return { unsubscribe: () => mockStateListeners.delete(next) };
+      },
+    }),
     recoverRelay: (...args: unknown[]) => mockRecoverRelay(...args),
   },
 }));
@@ -74,6 +82,129 @@ describe('WalletConnect RPC adapter', () => {
     mockRecoverRelay.mockReset().mockImplementation(async () => {
       mockEpoch++;
     });
+  });
+
+  it.each(['client', 'session'] as const)(
+    'marks a fee offer as not started when its %s is absent',
+    async (missing) => {
+      mockClientAvailable = missing !== 'client';
+      mockSessionAvailable = missing !== 'session';
+      const wallet = new RealBlockchainInterface();
+      const result = await wallet.beginWalletOffer(
+        {
+          owner: {
+            installationPlayerId: 'player',
+            peerSessionId: 'session',
+            providerScope: {
+              provider: 'walletconnect',
+              fingerprint: '123',
+              chainId: 'chia:mainnet',
+            },
+          },
+          purpose: { kind: 'fee', operationId: 'fee' },
+        },
+        { kind: 'fee', uniqueId: 'player', fee: 10n, concurrentSpendCoinId: 'cd'.repeat(32) },
+      );
+      expect(requestMock).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
+    },
+  );
+
+  it('keeps a funding request retryable when the session disappears after sync preflight', async () => {
+    jest.useFakeTimers();
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    requestMock.mockImplementationOnce(async () => {
+      mockSessionAvailable = false;
+      return { synced: true, syncing: false };
+    });
+    try {
+      const result = new RealBlockchainInterface().beginWalletOffer(
+        {
+          owner: {
+            installationPlayerId: 'player',
+            peerSessionId: 'session',
+            providerScope: {
+              provider: 'walletconnect',
+              fingerprint: '123',
+              chainId: 'chia:mainnet',
+            },
+          },
+          purpose: { kind: 'funding', operationId: 'funding' },
+        },
+        { kind: 'funding', offer: { '1': -100n } },
+      );
+      await jest.advanceTimersByTimeAsync(100);
+      await expect(result).resolves.toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
+      expect(requestMock).toHaveBeenCalledTimes(1);
+      expect(requestMock.mock.calls[0][0].request.method).toBe(ChiaMethod.GetSyncStatus);
+    } finally {
+      consoleError.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it.each(['context-change', 'transport-loss', 'rejected'] as const)(
+    'preserves fee mutation provenance for %s',
+    async (scenario) => {
+      jest.useFakeTimers();
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+      let finish!: (value: unknown) => void;
+      requestMock.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      try {
+        const first = rpc.getHeightInfo({});
+        await jest.advanceTimersByTimeAsync(100);
+        const offer = new RealBlockchainInterface().beginWalletOffer(
+          {
+            owner: {
+              installationPlayerId: 'player',
+              peerSessionId: 'session',
+              providerScope: {
+                provider: 'walletconnect',
+                fingerprint: '123',
+                chainId: 'chia:mainnet',
+              },
+            },
+            purpose: { kind: 'fee', operationId: 'fee' },
+          },
+          { kind: 'fee', uniqueId: 'player', fee: 10n, concurrentSpendCoinId: 'cd'.repeat(32) },
+        );
+        if (scenario === 'context-change') mockFingerprint = '456';
+        else
+          requestMock.mockRejectedValueOnce(
+            new Error(scenario === 'transport-loss' ? 'network error' : 'User rejected request'),
+          );
+        finish({ height: 7 });
+        await jest.advanceTimersByTimeAsync(200);
+        await first;
+        const result = await offer;
+        if (scenario === 'context-change') {
+          expect(requestMock).toHaveBeenCalledTimes(1);
+          expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
+        } else {
+          expect(requestMock).toHaveBeenCalledTimes(2);
+          expect(result.kind).toBe(scenario === 'transport-loss' ? 'unavailable' : 'failure');
+          expect(result).not.toHaveProperty('mutation');
+        }
+      } finally {
+        finish?.({ height: 7 });
+        await jest.advanceTimersByTimeAsync(100);
+        consoleError.mockRestore();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it('preserves actionable local validation failure before dispatch', async () => {
+    mockFingerprint = 'invalid';
+    await expect(rpc.createOfferForIds({ offer: { '1': -10n } })).rejects.toBeInstanceOf(
+      WalletConnectResponseError,
+    );
+    expect(requestMock).not.toHaveBeenCalled();
   });
 
   it('sends Sage reads with its address account rather than a Chia fingerprint', async () => {
@@ -432,6 +563,96 @@ describe('WalletConnect RPC adapter', () => {
       jest.useRealTimers();
     }
   });
+
+  it.each([
+    ['chia', 'same-wallet'],
+    ['chia', 'different-wallet'],
+    ['sage', 'same-wallet'],
+    ['sage', 'different-wallet'],
+  ] as const)(
+    'releases a disconnected %s fee request lane for %s without losing its late reservation',
+    async (provider, replacement) => {
+      jest.useFakeTimers();
+      let finishOld!: (value: unknown) => void;
+      requestMock
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishOld = resolve;
+            }),
+        )
+        .mockResolvedValueOnce(
+          provider === 'chia'
+            ? { offer: 'offer-new', tradeRecord: { tradeId: 'trade-new' } }
+            : 'new-signature',
+        );
+      const wallet = new RealBlockchainInterface();
+      const createFee = () =>
+        provider === 'sage'
+          ? sageRpc.signCoinSpends([], { releaseQueueOnContextChange: true })
+          : wallet.beginWalletOffer(
+              {
+                owner: {
+                  installationPlayerId: 'player',
+                  peerSessionId: 'session',
+                  providerScope: {
+                    provider: 'walletconnect',
+                    fingerprint: mockFingerprint,
+                    chainId: mockChainId,
+                  },
+                },
+                purpose: { kind: 'fee', operationId: 'fee' },
+              },
+              { kind: 'fee', uniqueId: 'player', fee: 10n, concurrentSpendCoinId: 'cd'.repeat(32) },
+            );
+      let oldCompleted = false;
+      try {
+        const old = createFee().then((result) => {
+          oldCompleted = true;
+          return result;
+        });
+        await jest.advanceTimersByTimeAsync(60000);
+        for (const listener of mockStateListeners) listener();
+        await jest.advanceTimersByTimeAsync(100);
+        expect(requestMock).toHaveBeenCalledTimes(1);
+        expect(mockRecoverRelay).not.toHaveBeenCalled();
+
+        mockSessionAvailable = false;
+        mockEpoch++;
+        for (const listener of mockStateListeners) listener();
+        mockSessionAvailable = true;
+        if (replacement === 'different-wallet') {
+          mockTopic = 'topic-2';
+          mockFingerprint = '456';
+        }
+        const next = createFee();
+        await jest.advanceTimersByTimeAsync(200);
+        expect(requestMock).toHaveBeenCalledTimes(2);
+        await expect(next).resolves.toEqual(
+          provider === 'chia'
+            ? expect.objectContaining({ kind: 'created-reserved', tradeId: 'trade-new' })
+            : 'new-signature',
+        );
+        expect(oldCompleted).toBe(false);
+
+        finishOld(
+          provider === 'chia'
+            ? { offer: 'offer-old', tradeRecord: { tradeId: 'trade-old' } }
+            : 'old-signature',
+        );
+        await expect(old).resolves.toEqual(
+          provider === 'chia'
+            ? expect.objectContaining({ kind: 'created-reserved', tradeId: 'trade-old' })
+            : 'old-signature',
+        );
+        expect(requestMock).toHaveBeenCalledTimes(2);
+      } finally {
+        finishOld?.({ offer: 'offer-old', tradeRecord: { tradeId: 'trade-old' } });
+        await jest.advanceTimersByTimeAsync(200);
+        jest.useRealTimers();
+      }
+    },
+  );
 
   it('replaces the relay after a stalled transaction post and permits replay of the exact transaction', async () => {
     jest.useFakeTimers();

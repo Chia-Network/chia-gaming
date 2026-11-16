@@ -93,6 +93,14 @@ export class WalletConnectTransportError extends Error {
   }
 }
 
+/** The SDK request was never invoked; no wallet mutation can have occurred. */
+export class WalletConnectRequestNotStartedError extends WalletConnectTransportError {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause);
+    this.name = 'WalletConnectRequestNotStartedError';
+  }
+}
+
 export class WalletConnectResponseError extends Error {
   constructor(message: string, cause?: unknown) {
     super(message);
@@ -213,6 +221,18 @@ type PreparedRpc = {
   enqueuedAt: number;
 };
 
+type RpcQueueOptions = { releaseQueueOnContextChange?: boolean };
+
+function isCurrentContext(prepared: PreparedRpc): boolean {
+  return (
+    walletConnectState.getClient() === prepared.client &&
+    walletConnectState.getSession()?.topic === prepared.topic &&
+    walletConnectState.getChainId() === prepared.chainId &&
+    walletConnectState.getRequestEpoch() === prepared.epoch &&
+    walletConnectState.getAddress() === prepared.address
+  );
+}
+
 function isReadOnlyRpc(method: WalletConnectMethod): boolean {
   return (
     method === ChiaMethod.GetWallets ||
@@ -240,25 +260,45 @@ function supportsTimeoutRecovery(method: WalletConnectMethod): boolean {
 class WalletConnectRpcClient {
   private requestQueue = new AsyncJobQueue({ gapMs: WC_INTER_REQUEST_MS });
 
-  request<T, D extends object = object>(method: WalletConnectMethod, data: D): Promise<T> {
+  request<T, D extends object = object>(
+    method: WalletConnectMethod,
+    data: D,
+    options: RpcQueueOptions = {},
+  ): Promise<T> {
     let prepared: PreparedRpc;
     try {
       prepared = this.prepareRpc(method, data);
     } catch (e) {
-      if (e instanceof WalletConnectTransportError) return Promise.reject(e);
+      if (e instanceof WalletConnectTransportError) {
+        return Promise.reject(new WalletConnectRequestNotStartedError(getErrorText(e), e));
+      }
       return Promise.reject(responseError(method, getErrorText(e), e));
     }
     // WalletConnect cannot reliably handle overlapping requests.
     // Keep ownership until the SDK request settles or a retryable request's relay
-    // replacement finishes. Reservation mutations retain their SDK completion lifetime.
+    // replacement finishes. Fee requests can release their queue position when
+    // the connection changes, while retaining the response for reservation cleanup.
     const response = new Promise<T>((resolve, reject) => {
       const job = {
         label: prepared.method,
         run: async () => {
+          let unsubscribe: (() => void) | undefined;
+          const contextChanged = options.releaseQueueOnContextChange
+            ? new Promise<void>((release) => {
+                const check = () => {
+                  if (!isCurrentContext(prepared)) release();
+                };
+                const subscription = walletConnectState.getObservable().subscribe({ next: check });
+                unsubscribe = () => subscription.unsubscribe();
+                check();
+              })
+            : undefined;
           try {
-            resolve(await this.runPreparedRpc<T>(prepared));
-          } catch (error) {
-            reject(error);
+            const completion = this.runPreparedRpc<T>(prepared).then(resolve, reject);
+            if (contextChanged) await Promise.race([completion, contextChanged]);
+            else await completion;
+          } finally {
+            unsubscribe?.();
           }
         },
       };
@@ -320,14 +360,10 @@ class WalletConnectRpcClient {
   private async runPreparedRpc<T>(prepared: PreparedRpc): Promise<T> {
     const { client, topic, chainId } = prepared;
     const assertCurrentContext = () => {
-      if (
-        walletConnectState.getClient() !== client ||
-        walletConnectState.getSession()?.topic !== topic ||
-        walletConnectState.getChainId() !== chainId ||
-        walletConnectState.getRequestEpoch() !== prepared.epoch ||
-        walletConnectState.getAddress() !== prepared.address
-      ) {
-        throw transportError(prepared.method, 'Wallet context changed before request could start');
+      if (!isCurrentContext(prepared)) {
+        throw new WalletConnectRequestNotStartedError(
+          'Wallet context changed before request could start',
+        );
       }
     };
     assertCurrentContext();
@@ -335,7 +371,7 @@ class WalletConnectRpcClient {
     try {
       await waitForRelayerConnected();
     } catch (error) {
-      throw transportError(prepared.method, getErrorText(error), error);
+      throw new WalletConnectRequestNotStartedError(getErrorText(error), error);
     }
     assertCurrentContext();
 
@@ -440,8 +476,9 @@ export const walletConnectRpcClient = new WalletConnectRpcClient();
 async function request<T, D extends object = object>(
   method: WalletConnectMethod,
   data: D,
+  options?: RpcQueueOptions,
 ): Promise<T> {
-  return walletConnectRpcClient.request<T, D>(method, data);
+  return walletConnectRpcClient.request<T, D>(method, data, options);
 }
 
 async function getWallets(data: GetWalletsRequest) {
@@ -464,8 +501,8 @@ async function getHeightInfo(data: GetHeightInfoRequest) {
   return await request<GetHeightInfoResponse>(ChiaMethod.GetHeightInfo, data);
 }
 
-async function createOfferForIds(data: CreateOfferForIdsRequest) {
-  return await request<CreateOfferForIdsResponse>(ChiaMethod.CreateOfferForIds, data);
+async function createOfferForIds(data: CreateOfferForIdsRequest, options?: RpcQueueOptions) {
+  return await request<CreateOfferForIdsResponse>(ChiaMethod.CreateOfferForIds, data, options);
 }
 
 async function cancelOffer(data: { tradeId: string; secure: boolean; fee: bigint }) {
@@ -540,8 +577,8 @@ export const sageRpc = {
       offset,
       limit,
     }),
-  signCoinSpends: (coinSpends: SageCoinSpend[]) =>
-    request<string>(SageMethod.SignCoinSpends, { coinSpends, partialSign: false }),
+  signCoinSpends: (coinSpends: SageCoinSpend[], options?: RpcQueueOptions) =>
+    request<string>(SageMethod.SignCoinSpends, { coinSpends, partialSign: false }, options),
   /** Mempool inclusion status: 1 success, 2 pending, 3 failed (or no peer answered). */
   sendTransaction: (spendBundle: { coin_spends: SageCoinSpend[]; aggregated_signature: string }) =>
     request<{ status: bigint; error: string | null }>(SageMethod.SendTransaction, {

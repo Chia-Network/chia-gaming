@@ -86,7 +86,7 @@ export class BlockchainPoller {
   private connectionUnsubscribe: (() => void) | null = null;
   private connectionActive = true;
   private connectionEpoch = 0;
-  private pendingRpcRejects = new Set<() => void>();
+  private disconnectCallbacks = new Set<() => void>();
   private requestStartGate: AsyncRequestStartGate;
 
   constructor(
@@ -230,11 +230,7 @@ export class BlockchainPoller {
         capability: source.capability,
         scope: source.scope,
         beginCreation: (operation, request) =>
-          this.enqueueMutation(
-            'beginWalletOffer',
-            () => source.beginCreation(operation, request),
-            true,
-          ),
+          this.enqueueWalletCreation(request.kind, () => source.beginCreation(operation, request)),
         reconcileCreation: (operation, request, recoveryId, options) =>
           this.observeWalletRequest(
             'reconcileWalletOffer',
@@ -258,11 +254,7 @@ export class BlockchainPoller {
         capability: 'best-effort',
         scope: source.scope,
         beginCreation: (operation, request) =>
-          this.enqueueMutation(
-            'beginWalletOffer',
-            () => source.beginCreation(operation, request),
-            true,
-          ),
+          this.enqueueWalletCreation(request.kind, () => source.beginCreation(operation, request)),
         cancel: (tradeId) =>
           this.enqueueMutation('beginWalletOfferCancellation', () => source.cancel(tradeId)),
       };
@@ -271,11 +263,7 @@ export class BlockchainPoller {
         capability: 'terminal',
         scope: source.scope,
         beginCreation: (operation, request) =>
-          this.enqueueMutation(
-            'beginWalletOffer',
-            () => source.beginCreation(operation, request),
-            true,
-          ),
+          this.enqueueWalletCreation(request.kind, () => source.beginCreation(operation, request)),
         cancel: (tradeId) =>
           this.enqueueMutation('beginWalletOfferCancellation', () => source.cancel(tradeId)),
       };
@@ -283,11 +271,35 @@ export class BlockchainPoller {
     return this.queuedWalletProvider;
   }
 
+  private async enqueueWalletCreation<T>(kind: 'funding' | 'fee', run: () => Promise<T>) {
+    try {
+      // Preserve dispatched completions across disconnects: poller-generated
+      // unavailability can then only mean the adapter was never invoked.
+      return await this.enqueueRpc(
+        this.mutationLane,
+        'beginWalletOffer',
+        run,
+        true,
+        kind === 'fee',
+      );
+    } catch (error) {
+      if (error instanceof BlockchainRpcUnavailableError) {
+        return {
+          kind: 'unavailable' as const,
+          mutation: 'not-started' as const,
+          reason: error.message,
+        };
+      }
+      throw error;
+    }
+  }
+
   private enqueueRpc<T>(
     lane: AsyncJobQueue | null,
     label: string,
     run: () => Promise<T> | T,
     preserveActiveCompletion = false,
+    releaseQueueOnDisconnect = false,
   ): Promise<T> {
     if (!this.isConnected()) {
       return Promise.reject(new BlockchainRpcUnavailableError(label));
@@ -299,10 +311,10 @@ export class BlockchainPoller {
       const settle = <V>(complete: (value: V) => void, value: V) => {
         if (settled) return;
         settled = true;
-        this.pendingRpcRejects.delete(rejectForDisconnect);
+        this.disconnectCallbacks.delete(rejectForDisconnect);
         complete(value);
       };
-      if (!preserveActiveCompletion) this.pendingRpcRejects.add(rejectForDisconnect);
+      if (!preserveActiveCompletion) this.disconnectCallbacks.add(rejectForDisconnect);
       const job: AsyncQueueJob = {
         label,
         run: async () => {
@@ -327,6 +339,23 @@ export class BlockchainPoller {
         },
         onDiscard: rejectForDisconnect,
       };
+      if (releaseQueueOnDisconnect) {
+        const complete = job.run;
+        job.run = async () => {
+          let release!: () => void;
+          const disconnected = new Promise<void>((resolve) => {
+            release = resolve;
+            this.disconnectCallbacks.add(release);
+          });
+          try {
+            // The fee consumer may retry after reconnect. Its old result still
+            // belongs to the original reservation owner when it eventually arrives.
+            await Promise.race([complete(), disconnected]);
+          } finally {
+            this.disconnectCallbacks.delete(release);
+          }
+        };
+      }
       if (lane) lane.enqueue(job);
       else void job.run();
     });
@@ -366,6 +395,15 @@ export class BlockchainPoller {
     if (!this.attachedWalletProvider) return;
     this.channelFundingRuntime.detachProvider(this.attachedWalletProvider);
     this.attachedWalletProvider = null;
+  }
+
+  /** End this wallet attachment, including RPCs waiting on its old connection. */
+  retire(): void {
+    this.detachProvider();
+    this.stopBalanceInterest();
+    this.pauseChainPolling();
+    this.connectionActive = false;
+    this.pausePollingForDisconnect();
   }
 
   onSessionReadiness(
@@ -487,7 +525,7 @@ export class BlockchainPoller {
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();
     this.balancePollingScheduler.stop();
-    for (const reject of [...this.pendingRpcRejects]) reject();
+    for (const disconnected of [...this.disconnectCallbacks]) disconnected();
     this.readLane.abandonActive();
     this.mutationLane.clearQueued();
     // Remote wallet coin registrations are lost with the connection. Clear the
