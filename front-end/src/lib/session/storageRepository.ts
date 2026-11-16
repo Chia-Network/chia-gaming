@@ -337,7 +337,7 @@ class StorageRepository {
 
   private root = newApplicationState();
 
-  shouldOfferResumeOrStartOver(state: DurableApplicationState = this.root): boolean {
+  hasResumableState(state: DurableApplicationState = this.root): boolean {
     return (
       !!(state.preferences.blockchainType || state.preferences.hubUrl) ||
       hasWalletConnectStorage() ||
@@ -471,7 +471,7 @@ class StorageRepository {
         if (error instanceof StorageAuthorityLostError) throw error;
       }
     }
-    if (this.shouldOfferResumeOrStartOver(this.root)) markSavedSession();
+    if (this.hasResumableState(this.root)) markSavedSession();
     else clearSavedSessionMarker();
     this.notifyLifecycle('claim');
     return structuredClone(this.root);
@@ -617,14 +617,14 @@ class StorageRepository {
     if (!this.hasAuthority()) {
       const { applicationState, applicationStateError } = await this.inspect();
       if (applicationStateError) throw applicationStateError;
-      if (applicationState && this.shouldOfferResumeOrStartOver(applicationState)) {
+      if (applicationState && this.hasResumableState(applicationState)) {
         markSavedSession();
         return structuredClone(applicationState);
       }
       clearSavedSessionMarker();
       return null;
     }
-    if (this.shouldOfferResumeOrStartOver(this.root)) {
+    if (this.hasResumableState(this.root)) {
       markSavedSession();
       return structuredClone(this.root);
     }

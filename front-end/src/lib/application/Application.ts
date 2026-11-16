@@ -15,7 +15,7 @@ import {
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import { isElectronDistribution, isLocalDevHost } from '../../util/distribution';
+import { isElectronDistribution } from '../../util/distribution';
 import { hubTrustError, requestHubTrust } from '../../util/hubTrust';
 import {
   acceptedHandNeedsGameTabAttention,
@@ -173,7 +173,6 @@ const ABANDON_DELAY_MS = 120_000n;
 export type ApplicationIntent =
   | {
       type:
-        | 'resume'
         | 'reset'
         | 'takeover'
         | 'close-tab'
@@ -337,7 +336,7 @@ export function createApplication() {
         if (
           shouldMountGameSession(
             !!sessions.state.sessionConfig && !!sessions.state.peerConn,
-            state.walletView.connected,
+            walletCanRunSession(),
             !!sessions.state.sessionConfig?.restoring,
             sessionStarted,
           ).startSession
@@ -503,8 +502,6 @@ export function createApplication() {
   } | null = null;
   const recovery = new Recovery(
     {
-      // Local dev keeps the Resume / Start over choice; everyone else resumes.
-      autoResume: !isLocalDevHost(),
       onSessionId: (value) => update('sessionId', value),
       onRestore: async (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
@@ -2210,8 +2207,14 @@ export function createApplication() {
   let stopHubLifecycle: (() => void) | undefined;
   let bootKind: string | undefined;
   function updateRecovery() {
-    if (bootKind !== recovery.view.state.kind) {
-      bootKind = recovery.view.state.kind;
+    // The saved hub is only loaded once automatic resume claims storage, so
+    // restart the hub lifecycle when it becomes known during that state.
+    const nextBootKind =
+      recovery.view.state.kind === 'autoResuming'
+        ? `autoResuming:${storageRepository.query('hubUrl') ?? ''}`
+        : recovery.view.state.kind;
+    if (bootKind !== nextBootKind) {
+      bootKind = nextBootKind;
       stopHubLifecycle?.();
       stopHubLifecycle = (() => {
         if (recovery.view.state.kind !== 'ready' && recovery.view.state.kind !== 'autoResuming') {
@@ -2259,7 +2262,7 @@ export function createApplication() {
       const blocked = isRestoreBlocked(restoring, sessions.state.restoreStatus);
       const { keepSession } = shouldMountGameSession(
         true,
-        state.walletView.connected,
+        walletCanRunSession(),
         restoring,
         sessionStarted,
       );
@@ -2272,6 +2275,12 @@ export function createApplication() {
     const ready = !!state.hubOrigin && state.walletView.connected && walletOwner.ready();
     update('blockchainReady', ready);
     hubConn?.setBusy(hubPresenceNow());
+  }
+  // Automatic resume lets session execution run while the wallet is still
+  // resuming, when its view can already report connected before the session
+  // has wallet access.
+  function walletCanRunSession(): boolean {
+    return state.walletView.connected && walletOwner.sessionAccess() !== null;
   }
   function syncSessionExecution() {
     if (
@@ -2292,7 +2301,7 @@ export function createApplication() {
     if (params.restoring && sessions.state.restoreStatus === 'failed') return;
     const mount = shouldMountGameSession(
       true,
-      state.walletView.connected,
+      walletCanRunSession(),
       !!params.restoring,
       sessionStarted,
     );
@@ -2482,7 +2491,7 @@ export function createApplication() {
       lastHubUrl: storageRepository.query('lastHubUrl'),
       keepSession: shouldMountGameSession(
         !!sessions.state.sessionConfig && !!sessions.state.peerConn,
-        state.walletView.connected,
+        walletCanRunSession(),
         !!sessions.state.sessionConfig?.restoring,
         sessionStarted,
       ).keepSession,
@@ -2492,7 +2501,6 @@ export function createApplication() {
         recovery.view.state.kind === 'tabConflict'
           ? { kind: 'tabConflict' as const, midSession: recovery.view.state.midSession }
           : recovery.view.state,
-      resuming: recovery.view.resuming,
       startingOver: recovery.view.startingOver,
       networkLocked: sessionLocksNetwork(
         sessions.state.sessionPhase,
@@ -2517,8 +2525,6 @@ export function createApplication() {
   }
   function applyIntent(intent: ApplicationIntent): void | Promise<void> {
     switch (intent.type) {
-      case 'resume':
-        return recovery.resume();
       case 'reset':
         return recovery.retryHardReset();
       case 'takeover':

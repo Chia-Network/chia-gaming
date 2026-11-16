@@ -8,12 +8,9 @@ import {
   StorageAuthorityLostError,
 } from '../session/indexedDb';
 import {
-  clearAutoResumeOnce,
   clearSavedSessionMarker,
   hasSavedSessionMarker,
-  markAutoResumeOnce,
   markSavedSession,
-  peekAutoResumeOnce,
 } from '../session/saveCoordination';
 import type { DurableApplicationState } from '../session/saveEnvelope';
 import { freshSessionState } from '../session/sessionStateTransitions';
@@ -177,7 +174,7 @@ describe('session persistence: recovery', () => {
     await storageRepository.checkpointDomainMutations();
     clearSavedSessionMarker();
 
-    expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
+    expect(storageRepository.hasResumableState()).toBe(true);
     expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { blockchainType: 'walletconnect' },
     });
@@ -189,34 +186,15 @@ describe('session persistence: recovery', () => {
     await storageRepository.checkpointDomainMutations();
     clearSavedSessionMarker();
 
-    expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(true);
+    expect(storageRepository.hasResumableState()).toBe(true);
     expect(await storageRepository.readCurrentState()).toMatchObject({
       preferences: { hubUrl: 'http://localhost:3003' },
     });
     expect(hasSavedSessionMarker()).toBe(true);
   });
 
-  it('shouldOfferResumeOrStartOver is false on a clean slate', () => {
-    expect(storageRepository.shouldOfferResumeOrStartOver()).toBe(false);
-  });
-
-  it('auto-resume once flag is one-shot in sessionStorage', () => {
-    expect(peekAutoResumeOnce()).toBe(false);
-    markAutoResumeOnce();
-    expect(peekAutoResumeOnce()).toBe(true);
-    // Second peek still true (latched) until cleared.
-    expect(peekAutoResumeOnce()).toBe(true);
-    clearAutoResumeOnce();
-    expect(peekAutoResumeOnce()).toBe(false);
-  });
-
-  it('auto-resume latch survives clearing sessionStorage until clearAutoResumeOnce', () => {
-    markAutoResumeOnce();
-    expect(peekAutoResumeOnce()).toBe(true);
-    sessionStorage.removeItem('appState_autoResumeOnce');
-    expect(peekAutoResumeOnce()).toBe(true);
-    clearAutoResumeOnce();
-    expect(peekAutoResumeOnce()).toBe(false);
+  it('hasResumableState is false on a clean slate', () => {
+    expect(storageRepository.hasResumableState()).toBe(false);
   });
 
   it('does not let preference-only patches clobber a durable cradle before hydrate', async () => {
