@@ -2607,7 +2607,12 @@ export function createApplication() {
           deferStateUpdate(() => {
             const next = appendDiagnosticEntry(state.logLines, line);
             update('logLines', next);
-            storageRepository.updateCommon({ history: { diagnosticLog: next } });
+            if (
+              !line.includes('[clvm-diagnostic token=') ||
+              !sessionController?.recordClvmDiagnostic(line)
+            ) {
+              storageRepository.updateCommon({ history: { diagnosticLog: next } });
+            }
           }),
         ),
         (() => {

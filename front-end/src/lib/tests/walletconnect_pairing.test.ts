@@ -157,6 +157,59 @@ describe('WalletConnect pairing teardown', () => {
     expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'abc123def' });
   });
 
+  async function startPairing(): Promise<void> {
+    await walletConnectState.init();
+    mockClient.connect.mockResolvedValue({
+      uri: 'wc:abc123def@2?relay-protocol=irn&symKey=deadbeef',
+      approval: async () => ({}),
+    });
+    await walletConnectState.startConnect();
+  }
+
+  it.each([
+    [{ code: 5100, message: 'Unsupported chains.' }],
+    [{ code: 5001, message: 'User rejected chains.' }],
+    [{ code: 4001, message: 'Wallet is on a different network' }],
+  ])('reports a wallet on the wrong network when it rejects with %j', async (rejection) => {
+    await startPairing();
+    expectConsoleError('connect() approval FAILED or rejected');
+    await expect(
+      walletConnectState.connect(async () => {
+        throw rejection;
+      }),
+    ).rejects.toThrow('Wallet is not currently configured for mainnet.');
+  });
+
+  it.each([[{ code: 5000, message: 'User rejected.' }], [{}], ['declined'], [undefined]])(
+    'reports a readable error when the wallet rejects with %j',
+    async (rejection) => {
+      await startPairing();
+      expectConsoleError('connect() approval FAILED or rejected');
+      await expect(
+        walletConnectState.connect(async () => {
+          throw rejection;
+        }),
+      ).rejects.toThrow('The wallet rejected the connection. Check that it is set to mainnet.');
+    },
+  );
+
+  it('reports the wrong network when the wallet approves only another network', async () => {
+    await startPairing();
+    expectConsoleError('connect() approval FAILED or rejected');
+    await expect(
+      walletConnectState.connect(
+        async () =>
+          ({
+            topic: 'session-topic',
+            pairingTopic: 'pairing-topic',
+            namespaces: {
+              chia: { accounts: ['chia:testnet:123'], chains: ['chia:testnet'], methods: [] },
+            },
+          }) as unknown as SessionTypes.Struct,
+      ),
+    ).rejects.toThrow('Wallet is not currently configured for mainnet.');
+  });
+
   it('cancels the abandoned pairing when Link Wallet is retried after a rejection', async () => {
     await walletConnectState.init();
     mockClient.connect.mockResolvedValue({

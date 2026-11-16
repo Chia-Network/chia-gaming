@@ -149,10 +149,12 @@ notification directly.
 **Eager submission.** When a game coin is registered with the wallet (via
 `register_initial_game_coins`), the handler pre-builds the timeout claim with
 `build_timeout_claim` and attaches it to the `Effect::RegisterCoin`'s
-`spend: Option<SpendBundle>`. `build_timeout_claim` returns the bundle **only
-when the timeout transaction pays us** (the spend creates a coin to our reward
-puzzle hash); otherwise it returns `None` and nothing is submitted on our
-behalf. The `TransactionManager` then becomes the **sole submitter**: it tracks
+`spend: Option<SpendBundle>`. Automatic claims require the opponent's turn, a
+finished game, or an explicit `AcceptSettlement`. A positive refund, including
+the full game amount, does not authorize timing out our unfinished turn.
+A pending move replay also cannot authorize a claim against its predecessor.
+The spend must additionally pay our reward puzzle hash; otherwise no claim is
+registered. The `TransactionManager` then becomes the **sole submitter**: it tracks
 each coin's reorg-aware birthday and submits the stored claim once the coin
 reaches `birthday + game_timeout`, resubmitting across reorgs (see
 [Eager Timeout Submission](INTERNALS.md#eager-timeout-submission-and-confirmation-driven-notifications)).
@@ -460,9 +462,8 @@ emits `GameSettled { our_share: 0, outcome: … }` (a forfeit outcome from the
 [Game Outcome Notifications](UX_NOTIFICATIONS.md#game-outcome-notifications-terminal)) and removes the
 game from tracking.
 
-Conversely, when our share is the full game amount or the game is terminal with
-a positive share, there is no reason to make another move — the best possible
-outcome is already available via timeout.  In these cases the system
+When the game is terminal with a positive share, no further move is possible.
+In these cases the system
 auto-accepts: it queues an `AcceptSettlement` action and marks the game as
 `game_finished = true`, triggering a clean end.
 
@@ -471,9 +472,8 @@ auto-accepts: it queues an `AcceptSettlement` action and marks the game as
 1. **No rational incentive (zero reward).**  When our share is zero the
   opponent has nothing to gain by playing (they already have everything) and
    we have nothing to claim.  Waiting for a timeout is pure overhead.
-2. **Optimal outcome already reached (auto-accept).**  When we get 100% on
-  timeout or the game is over and we get a positive share, making a move can
-   only decrease our share or cost fees for no benefit.
+2. **Game completed (auto-accept).** A terminal game with a positive share can
+   settle without asking for a move that the game no longer permits.
 3. **Avoids unnecessary transactions.**  Submitting a redo move or timeout
   claim that yields zero reward wastes block space and fees.
 4. **Clean terminal signal.**  The UX immediately learns the game settled,
@@ -484,12 +484,12 @@ auto-accepts: it queues an `AcceptSettlement` action and marks the game as
 `should_auto_settle(game_id, is_my_turn)` returns true when:
 
 - `is_my_turn` is true, AND
-- `our_share == game_amount` (claim — we get 100%), OR
 - `is_game_over() && our_share > 0` (terminal clean end — game is finished
   and we get a positive share).
 
-When both conditions are true (game is over AND our share is the full
-amount), the result is the same: auto-accept fires.
+The payout alone does not declare the game finished. Early Space Poker folds
+are explicit `AcceptSettlement` actions, even though the referee still permits
+another move.
 
 Auto-accept detection runs at two sites in `handle_game_coin_spent`:
 
@@ -499,11 +499,10 @@ Auto-accept detection runs at two sites in `handle_game_coin_spent`:
 2. **`Moved` path** — opponent made a move that advances the game.  Same
   auto-accept check as the Expected path.
 
-`build_timeout_claim` is self-gating: it returns `None` when the timeout
-transaction would not pay us (our reward puzzle hash is absent from the
-spend's output conditions).  This means timeout claims are only registered
-for coins where the timeout actually benefits us — no explicit skip logic is
-needed for our-turn coins where the timeout favors the opponent.
+`build_timeout_claim` checks the tracked coin's turn, completion and explicit
+acceptance before constructing a spend. It returns `None` for our unfinished,
+unaccepted turn and for a pending move's predecessor. A permitted claim still
+requires a positive payment to our reward puzzle hash.
 
 ### Zero-Reward Trigger Points
 
@@ -529,9 +528,8 @@ The zero-reward early-out fires at five distinct points.
   acknowledged (no redo needed).  It's the opponent's turn and
    `mover_share == coin_amount`, meaning the opponent gets everything on
    timeout and has no incentive to move.  `GameSettled { outcome: lost, our_share: 0 }`
-   fires.  This only applies when it's the opponent's turn — when it's our turn
-   and `mover_share == coin_amount`, *we* get everything and auto-accept fires
-   instead (see above).
+   fires. This only applies when it's the opponent's turn. On our unfinished
+   turn, the full share does not replace our choice of a move or settlement.
 
 **During on-chain play** (action requested by UX):
 
@@ -557,7 +555,7 @@ The `AcceptSettlement` handler covers three cases:
   `GameSettled { outcome: forfeited_we_accepted, our_share: 0 }` is emitted.
   No timeout claim is built.
 2. **Nonzero share (voluntary accept or auto-accept):** The handler builds a
-  **timeout claim** via `build_timeout_claim` and registers it with the wallet
+  **timeout claim** via `build_timeout_spend` and registers it with the wallet
   (via `RegisterCoin`) for submission at maturity.  When the claim confirms,
   `GameSettled` arrives with `we_accepted` or `settled_cleanly`.
 3. **Not our turn:** The handler marks `timeout_claim_armed = true` (the
@@ -942,28 +940,29 @@ the timelock matures. `our_turn` records whose move the on-chain state is
 waiting on, and the handler combines it with what the *observed spend* created
 to decide the terminal status:
 
-- **Spend pays our reward puzzle hash** → our claim confirmed:
-`GameSettled` with outcomes such as `we_accepted`, `settled_cleanly`, or
-`slashed_opponent`.
-- **Spend pays the opponent's reward puzzle hash** → the opponent acted first:
-a normal move advances the game, a timeout claim against our pending move
-yields `opponent_timed_out` or `attempt_to_move_failed`, and a timeout claim
-while we were attempting to slash yields `opponent_cheated`.
+- **Timeout of an unfinished game** → the original coin's `our_turn` determines
+who missed their turn: `timed_out_waiting_for_our_move` for us or
+`opponent_timed_out` for the opponent. If our move was pending when the timeout
+landed, the result is `attempt_to_move_failed`.
+- **Timeout of an already-terminal game** → `settled_cleanly`.
+- **Explicit settlement or slash** → the accepted-state and pending-slash
+bookkeeping determine the corresponding outcome, such as `we_accepted`,
+`slashed_opponent`, or `opponent_cheated`.
 
-`our_turn` is a key input, but not the only one: the accepted-state and the
-pending-slash / pending-move bookkeeping on `OnChainGameState` also steer the
-branch. In particular, an opponent's timeout claim against our pending `OurMove`
-coin can yield `attempt_to_move_failed` (rather than being misread as a win
-against a stale, optimistically-advanced referee state).
+A timeout can pay both players, including returning unused stake to the player
+who timed out. Payout recipients and condition order determine neither turn
+ownership nor timeout attribution. The pending-move handler preserves the
+original coin's turn and reads our actual refund independently of the outcome.
 
 Both players maintain independent `game_map`s, and both should have
 complementary `our_turn` values for the same game coin.
 
 ### Timeout-Claim-Armed On-Chain Coins
 
-`timeout_claim_armed: true` means this side has already armed the on-chain
-timeout-claim path for the game coin (eager register or explicit
-`AcceptSettlement`).  It does not mean the observed on-chain coin is already
+`timeout_claim_armed: true` records this side's `AcceptSettlement` intent,
+including an off-chain acceptance carried into the on-chain phase. Ordinary
+automatic claims on the opponent's turn do not set this flag. It does not mean
+the observed on-chain coin is already
 terminal.  The real chain coin might still represent the version captured by
 the unroll, which can be one step behind the local potato state, so an armed
 coin may still advance to another game coin before timeout finality.

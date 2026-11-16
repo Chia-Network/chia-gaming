@@ -18,6 +18,38 @@ import { AsyncJobQueue } from '../AsyncScheduler';
 const WC_RELAY_LIFECYCLE_TIMEOUT_MS = 30000;
 const WC_SESSION_AUTHORITY_KEY = 'appState_wcSessionAuthority';
 
+// WalletConnect's standard "user rejected chains" and "unsupported chains".
+const WC_CHAIN_REJECTION_CODES = [5001, 5100];
+
+/** `chia:testnet` -> `testnet`. */
+function networkName(): string {
+  return getChainId().split(':')[1] ?? getChainId();
+}
+
+function wrongNetworkError(): Error {
+  return new Error(`Wallet is not currently configured for ${networkName()}.`);
+}
+
+/**
+ * A wallet declines a proposal with a plain `{ code, message }` object, which
+ * has no useful string form. Thrown errors pass through unchanged.
+ */
+function approvalFailure(err: unknown): unknown {
+  if (err instanceof Error) return err;
+  const { code, message } = (typeof err === 'object' && err !== null ? err : {}) as {
+    code?: unknown;
+    message?: unknown;
+  };
+  const text = typeof message === 'string' ? message : typeof err === 'string' ? err : '';
+  if (
+    (typeof code === 'number' && WC_CHAIN_REJECTION_CODES.includes(code)) ||
+    /chain|network/i.test(text)
+  ) {
+    return wrongNetworkError();
+  }
+  return new Error(`The wallet rejected the connection. Check that it is set to ${networkName()}.`);
+}
+
 export interface StartConnectResult {
   approval: () => Promise<SessionTypes.Struct>;
   uri: string;
@@ -261,6 +293,11 @@ class WalletState {
   private onSessionConnected(session: SessionTypes.Struct) {
     const account = this.chiaAccountFor(session);
     if (!account) {
+      // Approved, but only with accounts on another Chia network.
+      const accounts = session.namespaces.chia?.accounts ?? [];
+      if (accounts.length > 0 && !accounts.some((a) => a.startsWith(`${getChainId()}:`))) {
+        throw wrongNetworkError();
+      }
       throw new Error('WalletConnect session does not grant the required Chia namespace');
     }
     const accountParts = account.split(':');
@@ -612,7 +649,7 @@ class WalletState {
           connected: false,
         });
       }
-      throw err;
+      throw approvalFailure(err);
     }
   }
 }
