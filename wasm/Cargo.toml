@@ -35,6 +35,8 @@ chia-puzzles = "=0.20.3"
 chia-traits = "=0.54.0"
 flate2 = { version = "=1.1.11", default-features = false, features = ["zlib-rs"] }
 getrandom = { version = "=0.4.3", features = ["wasm_js"] }
+# clvmr still uses rand 0.9/getrandom 0.3, which also needs the JS entropy backend.
+getrandom_03 = { package = "getrandom", version = "=0.3.4", features = ["wasm_js"] }
 js-sys = "=0.3.81"
 wasm-bindgen-futures = "=0.4.54"
 wasm-bindgen = { version = "=0.2.104", features = ["serde-serialize"] }

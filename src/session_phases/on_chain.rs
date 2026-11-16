@@ -316,20 +316,12 @@ impl OnChainPhase {
     }
 
     /// Should we auto-accept this game on our turn?
-    /// True when: mover_share == game_amount (claim — we get 100%)
-    ///        or: game_over && mover_share > 0 (terminal clean end).
-    /// When both are true simultaneously, this still returns true (treated as terminal).
+    /// Only a completed game can settle without a local acceptance decision.
     fn should_auto_settle(&self, game_id: &GameID, is_my_turn: bool) -> Result<bool, Error> {
-        if !is_my_turn {
+        if !is_my_turn || !self.is_game_over(game_id)? {
             return Ok(false);
         }
-        let our_share = self.get_game_our_current_share(game_id)?;
-        let game_amt = self.get_game_amount(game_id)?;
-        if our_share == game_amt {
-            return Ok(true);
-        }
-        let game_over = self.is_game_over(game_id)?;
-        Ok(game_over && our_share > Amount::default())
+        Ok(self.get_game_our_current_share(game_id)? > Amount::default())
     }
 
     pub fn get_game_amount(&self, game_id: &GameID) -> Result<Amount, Error> {
@@ -559,15 +551,30 @@ impl OnChainPhase {
         ));
     }
 
-    /// Build the eager timeout claim for `coin` in game `game_id`, without
-    /// mutating handler state.  Returns `Some(bundle)` only when the timeout
-    /// transaction pays us a positive reward (i.e. we are the party entitled to
-    /// claim on this coin's timeout); otherwise `None`, so the manager submits
-    /// nothing.  The transaction manager holds the returned bundle and submits
-    /// it once the coin reaches its relative timeout age (resubmitting across
-    /// reorgs).  This replaces the lazy build that previously happened when the
-    /// coin's timeout was reached.
+    /// Authorize an automatic timeout from the tracked coin's turn and local
+    /// settlement intent. A refund alone must not time out our unfinished turn.
     pub fn build_timeout_claim(
+        &mut self,
+        env: &mut ChannelEnv<'_>,
+        game_id: &GameID,
+        coin: &CoinString,
+    ) -> Result<Option<SpendBundle>, Error> {
+        let state = self.game_map.get(coin).ok_or_else(|| {
+            Error::StrErr("build_timeout_claim: missing tracked game coin".to_string())
+        })?;
+        // A replay may have a terminal post-move referee, but its current coin
+        // still belongs to the move awaiting confirmation.
+        if self.pending_moves.contains_key(coin)
+            || (state.our_turn && !state.game_finished && !state.timeout_claim_armed)
+        {
+            return Ok(None);
+        }
+        self.build_timeout_spend(env, game_id, coin)
+    }
+
+    /// Construct a permitted timeout spend when it pays us. Explicit
+    /// AcceptSettlement calls this directly; automatic claims check policy above.
+    fn build_timeout_spend(
         &mut self,
         env: &mut ChannelEnv<'_>,
         game_id: &GameID,
@@ -838,32 +845,40 @@ impl OnChainPhase {
                     return Ok(effects);
                 }
 
-                if create_ph == self.their_reward_puzzle_hash {
-                    // Our pending move never landed and the opponent claimed the
-                    // timeout against this coin (the spend pays their reward
-                    // puzzle hash).  When the game was already terminal this is a
-                    // clean end; otherwise it is a genuine "move too late".
+                if matches!(
+                    ParsedRefereeSolution::parse(env.allocator, solution)?,
+                    ParsedRefereeSolution::Timeout
+                ) {
+                    // A timeout can refund unused stake to us first. Neither
+                    // payout order nor receiving a refund changes whose move
+                    // failed to land against the original coin.
                     let game_id = old_def.game_id;
                     let outcome = if old_def.game_finished {
                         SettlementOutcome::SettledCleanly
                     } else {
                         SettlementOutcome::AttemptToMoveFailed
                     };
+                    let reward_coin = conditions.iter().find_map(|condition| match condition {
+                        CoinCondition::CreateCoin(ph, amount)
+                            if *ph == self.reward_puzzle_hash && *amount > Amount::default() =>
+                        {
+                            Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amount))
+                        }
+                        _ => None,
+                    });
+                    let our_share = reward_coin
+                        .as_ref()
+                        .and_then(CoinString::amount)
+                        .unwrap_or_default();
                     effects.push(self.emit_terminal(
                         &game_id,
-                        GameNotification::game_settled(game_id, outcome, Amount::default(), None),
+                        GameNotification::game_settled(game_id, outcome, our_share, reward_coin),
                     ));
                     effects.extend(self.process_queued_action(env)?);
                     return Ok(effects);
                 }
 
-                self.game_map.insert(
-                    coin_id.clone(),
-                    OnChainGameState {
-                        our_turn: false,
-                        ..old_def
-                    },
-                );
+                self.game_map.insert(coin_id.clone(), old_def);
             }
         }
 
@@ -1762,7 +1777,7 @@ impl OnChainPhase {
                         ))
                     })?;
                 let mut effects = Vec::new();
-                let claim = self.build_timeout_claim(env, &game_id, &current_coin)?;
+                let claim = self.build_timeout_spend(env, &game_id, &current_coin)?;
                 if let Some(claim) = claim {
                     effects.push(Effect::RegisterCoin {
                         coin: current_coin.clone(),
@@ -2178,6 +2193,294 @@ mod tests {
             game_timeout: Timeout::new(1),
             game_finished: false,
         }
+    }
+
+    fn phase_with_referee(referee: Rc<Referee>, coin: &CoinString) -> OnChainPhase {
+        use rand::{RngExt, SeedableRng};
+        let mut rng = rand_chacha::ChaCha8Rng::from_seed([0x73; 32]);
+        let referee_ph = coin.to_parts().unwrap().1;
+        let fixed = match referee.as_ref() {
+            Referee::MyTurn(turn) => turn.fixed.clone(),
+            Referee::TheirTurn(turn) => turn.fixed.clone(),
+        };
+        OnChainPhase::new(OnChainPhaseArgs {
+            have_potato: PotatoState::Present,
+            channel_timeout: Timeout::new(5),
+            game_action_queue: VecDeque::new(),
+            game_map: HashMap::from([(
+                coin.clone(),
+                OnChainGameState {
+                    puzzle_hash: referee_ph.clone(),
+                    our_turn: referee.is_my_turn(),
+                    ..game_state(GameID(7))
+                },
+            )]),
+            pending_moves: HashMap::new(),
+            private_keys: rng.random(),
+            reward_puzzle_hash: fixed.reward_puzzle_hash.clone(),
+            their_reward_puzzle_hash: fixed.their_reward_puzzle_hash.clone(),
+            my_out_of_game_balance: Amount::default(),
+            their_out_of_game_balance: Amount::default(),
+            my_allocated_balance: Amount::new(50),
+            their_allocated_balance: Amount::new(50),
+            live_games: vec![LiveGame::new(
+                GameID(7),
+                referee_ph,
+                referee,
+                Amount::new(50),
+                Amount::new(50),
+            )],
+            pending_settlements: Vec::new(),
+            unroll_advance_timeout: Timeout::new(5),
+            is_initial_potato: true,
+            state_number: 0,
+            was_stale: false,
+            resolved_clean: false,
+            terminal_reward_coin: None,
+            game_payout_coins: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn pending_move_timeout_preserves_attribution_and_split_refund() {
+        use crate::common::types::ToQuotedProgram;
+        use clvm_traits::ToClvm;
+
+        for finished in [false, true] {
+            for refund in [0, 40, 100] {
+                for our_payout_first in [false, true] {
+                    let mut allocator = crate::common::types::AllocEncoder::new();
+                    let (_, referees, referee_ph) =
+                        crate::games::debug::make_real_debug_referees(&mut allocator);
+                    let referee = Rc::new(referees[0].clone());
+                    let reward_ph = PuzzleHash::from_bytes([0x71; 32]);
+                    let their_reward_ph = PuzzleHash::from_bytes([0x72; 32]);
+                    let coin = CoinString::from_parts(
+                        &CoinString::default().to_coin_id(),
+                        &referee_ph,
+                        &Amount::new(100),
+                    );
+                    let mut phase = phase_with_referee(referee.clone(), &coin);
+                    phase.reward_puzzle_hash = reward_ph.clone();
+                    phase.their_reward_puzzle_hash = their_reward_ph.clone();
+                    let state = phase.game_map.get_mut(&coin).unwrap();
+                    state.our_turn = true;
+                    state.game_finished = finished;
+                    phase.pending_moves.insert(
+                        coin.clone(),
+                        PendingMoveSavedState {
+                            expected_ph: PuzzleHash::from_bytes([0x74; 32]),
+                            game_id: GameID(7),
+                            kind: PendingMoveKind::OurMove {
+                                post_move_referee: referee,
+                                post_move_last_ph: referee_ph,
+                            },
+                        },
+                    );
+                    let mut payouts = Vec::new();
+                    if refund > 0 {
+                        payouts.push((51u8, (reward_ph.clone(), (Amount::new(refund), ()))));
+                    }
+                    if refund < 100 {
+                        payouts.push((
+                            51u8,
+                            (their_reward_ph.clone(), (Amount::new(100 - refund), ())),
+                        ));
+                    }
+                    if !our_payout_first {
+                        payouts.reverse();
+                    }
+                    let conditions = payouts.to_clvm(&mut allocator).unwrap();
+                    let puzzle = conditions.to_quoted_program(&mut allocator).unwrap();
+                    let solution_node = (reward_ph.clone(), their_reward_ph)
+                        .to_clvm(&mut allocator)
+                        .unwrap();
+                    let solution = Program::from_nodeptr(&mut allocator, solution_node).unwrap();
+                    let mut env = ChannelEnv::new(&mut allocator).unwrap();
+                    let effects = phase
+                        .handle_game_coin_spent(&mut env, &coin, &puzzle, &solution)
+                        .unwrap();
+                    let expected_outcome = if finished {
+                        SettlementOutcome::SettledCleanly
+                    } else {
+                        SettlementOutcome::AttemptToMoveFailed
+                    };
+                    let expected_coin = (refund > 0).then(|| {
+                        CoinString::from_parts(&coin.to_coin_id(), &reward_ph, &Amount::new(refund))
+                    });
+                    assert!(effects.iter().any(|effect| matches!(effect,
+                        Effect::Notify(GameNotification::GameSettled { id: GameID(7), outcome, our_share, coin_id })
+                        if *outcome == expected_outcome && *our_share == Amount::new(refund) && *coin_id == expected_coin
+                    )), "finished={finished} refund={refund} our_payout_first={our_payout_first}: {effects:?}");
+                    assert!(phase.game_map.is_empty());
+                    assert!(phase.pending_moves.is_empty());
+                    assert_eq!(
+                        phase.game_payout_coins,
+                        expected_coin
+                            .into_iter()
+                            .map(|coin| (GameID(7), coin))
+                            .collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+
+    fn my_turn_referee_with_share(
+        allocator: &mut crate::common::types::AllocEncoder,
+        share: Amount,
+    ) -> Rc<Referee> {
+        use crate::referee::my_turn::MyTurnRefereeGameState;
+        let (_, mut referees, _) = crate::games::debug::make_real_debug_referees(allocator);
+        let Referee::MyTurn(ref mut turn) = referees[0] else {
+            panic!("our turn");
+        };
+        let MyTurnRefereeGameState::Initial {
+            initial_puzzle_args,
+            ..
+        } = Rc::make_mut(&mut Rc::make_mut(turn).state)
+        else {
+            panic!("initial state");
+        };
+        Rc::make_mut(initial_puzzle_args)
+            .game_move
+            .basic
+            .mover_share = share;
+        Rc::new(referees[0].clone())
+    }
+
+    #[test]
+    fn automatic_timeout_does_not_claim_our_unfinished_turn() {
+        for our_turn in [false, true] {
+            for finished in [false, true] {
+                let mut allocator = crate::common::types::AllocEncoder::new();
+                let referee = if our_turn {
+                    my_turn_referee_with_share(&mut allocator, Amount::new(100))
+                } else {
+                    let (_, referees, _) =
+                        crate::games::debug::make_real_debug_referees(&mut allocator);
+                    Rc::new(referees[1].clone())
+                };
+                let puzzle_hash = referee
+                    .on_chain_referee_puzzle_hash(&mut allocator)
+                    .unwrap();
+                let coin = CoinString::from_parts(
+                    &CoinString::default().to_coin_id(),
+                    &puzzle_hash,
+                    &referee.get_amount(),
+                );
+                let mut phase = phase_with_referee(referee, &coin);
+                let state = phase.game_map.get_mut(&coin).unwrap();
+                state.our_turn = our_turn;
+                state.game_finished = finished;
+                let encoded = bencodex::to_vec(&phase).unwrap();
+                let mut restored: OnChainPhase = bencodex::from_slice(&encoded).unwrap();
+                let mut env = ChannelEnv::new(&mut allocator).unwrap();
+                for owner in [&mut phase, &mut restored] {
+                    let effects = owner.register_initial_game_coins(&mut env).unwrap();
+                    assert!(
+                        matches!(effects.as_slice(), [Effect::RegisterCoin { spend, .. }]
+                        if spend.is_some() == (!our_turn || finished)),
+                        "our_turn={our_turn}, finished={finished}: {effects:?}"
+                    );
+                    assert!(
+                        !owner.game_map[&coin].timeout_claim_armed,
+                        "automatic opponent claims must not become explicit settlement acceptance"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn explicit_fold_arms_own_unfinished_refund_and_survives_reload() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let referee = my_turn_referee_with_share(&mut allocator, Amount::new(100));
+        let puzzle_hash = referee
+            .on_chain_referee_puzzle_hash(&mut allocator)
+            .unwrap();
+        let coin = CoinString::from_parts(
+            &CoinString::default().to_coin_id(),
+            &puzzle_hash,
+            &referee.get_amount(),
+        );
+        let mut phase = phase_with_referee(referee, &coin);
+        phase.game_map.get_mut(&coin).unwrap().our_turn = true;
+        assert!(!phase.is_game_over(&GameID(7)).unwrap());
+        assert!(phase.get_game_our_current_share(&GameID(7)).unwrap() > Amount::default());
+        let mut env = ChannelEnv::new(&mut allocator).unwrap();
+        let effects = phase.accept_settlement(&mut env, &GameID(7)).unwrap();
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::RegisterCoin {
+                spend: Some(_),
+                semantic: Some(TimeoutClaimSemantic::GameFinishTimeout { id: GameID(7) }),
+                ..
+            }
+        )));
+        assert!(phase.game_map[&coin].timeout_claim_armed);
+        assert!(!phase.game_map[&coin].game_finished);
+        let encoded = bencodex::to_vec(&phase).unwrap();
+        let mut restored: OnChainPhase = bencodex::from_slice(&encoded).unwrap();
+        let effects = restored.register_initial_game_coins(&mut env).unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::RegisterCoin { spend: Some(_), .. }]
+        ));
+    }
+
+    #[test]
+    fn full_share_without_game_completion_does_not_auto_accept() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let referee = my_turn_referee_with_share(&mut allocator, Amount::new(200));
+        let amount = referee.get_amount();
+        let puzzle_hash = referee
+            .on_chain_referee_puzzle_hash(&mut allocator)
+            .unwrap();
+        let coin =
+            CoinString::from_parts(&CoinString::default().to_coin_id(), &puzzle_hash, &amount);
+        let phase = phase_with_referee(referee, &coin);
+        assert_eq!(
+            phase.get_game_our_current_share(&GameID(7)).unwrap(),
+            amount
+        );
+        assert!(!phase.is_game_over(&GameID(7)).unwrap());
+        assert!(!phase.should_auto_settle(&GameID(7), true).unwrap());
+    }
+
+    #[test]
+    fn terminal_move_replay_does_not_timeout_its_own_predecessor() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let referee = my_turn_referee_with_share(&mut allocator, Amount::new(100));
+        let puzzle_hash = referee
+            .on_chain_referee_puzzle_hash(&mut allocator)
+            .unwrap();
+        let coin = CoinString::from_parts(
+            &CoinString::default().to_coin_id(),
+            &puzzle_hash,
+            &referee.get_amount(),
+        );
+        let mut phase = phase_with_referee(referee.clone(), &coin);
+        let state = phase.game_map.get_mut(&coin).unwrap();
+        state.our_turn = true;
+        state.game_finished = true;
+        phase.pending_moves.insert(
+            coin.clone(),
+            PendingMoveSavedState {
+                game_id: GameID(7),
+                expected_ph: PuzzleHash::default(),
+                kind: PendingMoveKind::OurMove {
+                    post_move_referee: referee,
+                    post_move_last_ph: PuzzleHash::default(),
+                },
+            },
+        );
+        let mut env = ChannelEnv::new(&mut allocator).unwrap();
+        let effects = phase.register_initial_game_coins(&mut env).unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::RegisterCoin { spend: None, .. }]
+        ));
     }
 
     #[test]

@@ -716,6 +716,161 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     expect(onRestore).toHaveBeenCalledTimes(1);
   });
 
+  it('purges with a waiting sibling and takes over the new state written after the owner reloads', async () => {
+    const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const sharedStorage = localStorage;
+    const intervals: ReturnType<typeof setInterval>[] = [];
+    const realSetInterval = setInterval;
+    const intervalSpy = jest.spyOn(globalThis, 'setInterval').mockImplementation((handler, ms) => {
+      const timer = realSetInterval(handler, ms);
+      intervals.push(timer);
+      return timer;
+    });
+    type Tab = {
+      repository: typeof storageRepository;
+      recovery: Recovery;
+      session: Storage;
+      listeners: Array<(event: StorageEvent) => void>;
+      restored: jest.Mock;
+      lostAuthority: jest.Mock;
+      reload: jest.Mock;
+    };
+    const tabs = new Set<Tab>();
+    let active: Tab | undefined;
+    const events: Array<{ recipients: Tab[]; event: StorageEvent }> = [];
+    const setItem = sharedStorage.setItem.bind(sharedStorage);
+    const storageWrite = jest.spyOn(sharedStorage, 'setItem').mockImplementation((key, value) => {
+      const oldValue = sharedStorage.getItem(key);
+      setItem(key, value);
+      if (oldValue !== String(value)) {
+        events.push({
+          recipients: [...tabs].filter((tab) => tab !== active),
+          event: { key, oldValue, newValue: String(value) } as StorageEvent,
+        });
+      }
+    });
+    const activate = (tab: Tab) => {
+      active = tab;
+      Object.defineProperty(globalThis, 'sessionStorage', {
+        configurable: true,
+        value: tab.session,
+      });
+    };
+    const deliverEvents = () => {
+      for (const { recipients, event } of events.splice(0)) {
+        for (const tab of recipients) {
+          if (tabs.has(tab)) for (const listener of tab.listeners) listener(event);
+        }
+      }
+    };
+    const createTab = async (id: string): Promise<Tab> => {
+      const session = storage();
+      session.setItem('appState_tabId', id);
+      Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: session });
+      const listeners: Tab['listeners'] = [];
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: {
+          addEventListener: (type: string, listener: (event: StorageEvent) => void) => {
+            if (type === 'storage') listeners.push(listener);
+          },
+        },
+      });
+      let repository!: typeof storageRepository;
+      let RecoveryClass!: typeof Recovery;
+      await jest.isolateModulesAsync(async () => {
+        repository = (await import('../session/storageRepository')).storageRepository;
+        RecoveryClass = (await import('../application/Recovery')).Recovery;
+      });
+      const restored = jest.fn();
+      const lostAuthority = jest.fn();
+      const reload = jest.fn();
+      const recovery = new RecoveryClass(
+        {
+          onSessionId: jest.fn(),
+          onRestore: restored,
+          onFreshClaim: jest.fn(),
+          onAuthorityLost: lostAuthority,
+          beforeHardReset: jest.fn(),
+          reload,
+        },
+        jest.fn(),
+      );
+      const tab = { repository, recovery, session, listeners, restored, lostAuthority, reload };
+      tabs.add(tab);
+      activate(tab);
+      return tab;
+    };
+    let stopWaiting: (() => void) | undefined;
+    try {
+      const owner = await createTab('owner-before-purge');
+      await owner.repository.claimApplicationState();
+      const oldSave = liveSave({
+        playerId: 'before-purge',
+        alias: 'Old alias',
+        pairingToken: 'old-pair',
+        serializedGameSession: new Uint8Array([1, 2, 3]),
+      });
+      await owner.repository.write(owner.repository.patchApplicationState(() => oldSave));
+
+      const waiting = await createTab('waiting-sibling');
+      stopWaiting = waiting.recovery.start();
+      for (let turn = 0; turn < 30 && waiting.recovery.view.state.kind === 'loading'; turn++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      expect(waiting.recovery.view.state.kind).toBe('resumeDialog');
+      await waiting.recovery.resume();
+      expect(waiting.recovery.view.state).toMatchObject({ kind: 'tabConflict', save: oldSave });
+      expect(waiting.repository.hasAuthority()).toBe(false);
+
+      activate(owner);
+      await owner.recovery.retryHardReset();
+      expect(owner.reload).toHaveBeenCalledTimes(1);
+      expect(localStorage.getItem('appState_pendingWipe')).toBeNull();
+      expect(await readApplicationState()).toBeNull();
+      deliverEvents();
+      expect(waiting.lostAuthority).toHaveBeenCalledTimes(1);
+      expect(waiting.recovery.view.state.kind).toBe('tabConflict');
+      expect(waiting.repository.loadState().session).toBeNull();
+
+      tabs.delete(owner);
+      const continued = await createTab('owner-after-reload');
+      await continued.repository.claimApplicationState();
+      const newSave = liveSave({
+        playerId: 'after-purge',
+        sessionId: 'post-purge-hub',
+        alias: 'New alias',
+        pairingToken: 'new-pair',
+        serializedGameSession: new Uint8Array([9, 8, 7]),
+      });
+      await continued.repository.write(continued.repository.patchApplicationState(() => newSave));
+      await continued.repository.updatePreference({ key: 'alias', value: 'Latest alias' });
+      await continued.repository.checkpointDomainMutations();
+      const latest = continued.repository.loadState();
+      deliverEvents();
+
+      activate(waiting);
+      await waiting.recovery.takeOver();
+      expect(waiting.recovery.view.state.kind).toBe('ready');
+      expect(waiting.restored).toHaveBeenCalledTimes(1);
+      expect(waiting.restored).toHaveBeenCalledWith(latest, 'takeover');
+      expect(waiting.repository.loadState()).toEqual(latest);
+      expect(await readApplicationState()).toEqual(latest);
+      await expect(continued.repository.write(newSave)).rejects.toMatchObject({
+        code: 'STORAGE_AUTHORITY_LOST',
+      });
+      expect(await readApplicationState()).toEqual(latest);
+    } finally {
+      stopWaiting?.();
+      storageWrite.mockRestore();
+      for (const timer of intervals) clearInterval(timer);
+      intervalSpy.mockRestore();
+      for (const tab of tabs) tab.repository._resetForTests();
+      if (originalWindow) Object.defineProperty(globalThis, 'window', originalWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
+
   it('suppresses fresh-claim callbacks when authority is lost before snapshot delivery', async () => {
     const claim = holdNextClaim();
     const onSessionId = jest.fn();

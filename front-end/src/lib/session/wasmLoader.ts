@@ -1,5 +1,6 @@
 import { Observable, Subject } from 'rxjs';
-import { PRESET_FILES } from '../../generated/gamePresets';
+import { log } from '../../services/log';
+import { DEBUG_PRESET_FILES, PRESET_FILES } from '../../generated/gamePresets';
 import {
   installPeerProtocol,
   isPeerProtocolInstalled,
@@ -13,7 +14,7 @@ let chia_gaming_init: WasmInitFn | undefined = undefined;
 let cg: WasmConnection | undefined = undefined;
 let logInitialized = false;
 
-export { PRESET_FILES };
+export { DEBUG_PRESET_FILES, PRESET_FILES };
 
 const WASM_URL = 'chia_gaming_wasm_bg.wasm';
 
@@ -28,6 +29,118 @@ export async function fetchDeployPreset(fetchUrl: string): Promise<Uint8Array> {
 
 let loadPromise: Promise<WasmConnection> | null = null;
 let moduleLoadPromise: Promise<WasmConnection> | null = null;
+
+let presetFetcher: typeof fetchDeployPreset = fetchDeployPreset;
+let debugMetadataPromise: Promise<void> | null = null;
+const cachedDebugMetadataFiles = new Set<string>();
+let diagnosticConnections = new WeakMap<object, object>();
+const pendingDiagnosticTokens = new Set<string>();
+const diagnosticTasks = new Set<Promise<void>>();
+const MAX_PENDING_DIAGNOSTICS = 16;
+
+function diagnosticToken(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const token = (error as { clvmDiagnosticToken?: unknown }).clvmDiagnosticToken;
+  return typeof token === 'string' ? token : null;
+}
+
+function loadDebugMetadata(wasm: WasmConnection): Promise<void> {
+  if (!debugMetadataPromise) {
+    debugMetadataPromise = Promise.all(
+      DEBUG_PRESET_FILES.map(async (name) => ({
+        name,
+        content: await presetFetcher(name),
+      })),
+    )
+      .then((sidecars) => {
+        for (const { name, content } of sidecars) {
+          if (cachedDebugMetadataFiles.has(name)) continue;
+          wasm.cache_debug_metadata(name, content);
+          cachedDebugMetadataFiles.add(name);
+        }
+      })
+      .catch((error) => {
+        debugMetadataPromise = null;
+        throw error;
+      });
+  }
+  return debugMetadataPromise;
+}
+
+export function scheduleClvmDiagnostic(wasm: WasmConnection, token: string): void {
+  if (
+    pendingDiagnosticTokens.has(token) ||
+    pendingDiagnosticTokens.size >= MAX_PENDING_DIAGNOSTICS
+  ) {
+    return;
+  }
+  pendingDiagnosticTokens.add(token);
+  const task = loadDebugMetadata(wasm)
+    .then(() => {
+      log(`[clvm-diagnostic token=${token}]\n${wasm.diagnose_clvm(token)}`);
+    })
+    .catch((diagnosticError) => {
+      const message =
+        diagnosticError instanceof Error ? diagnosticError.message : String(diagnosticError);
+      log(`[clvm-diagnostic token=${token}] diagnostic failed: ${message}`);
+    })
+    .finally(() => {
+      pendingDiagnosticTokens.delete(token);
+      diagnosticTasks.delete(task);
+    });
+  diagnosticTasks.add(task);
+}
+
+function scheduleDiagnostic(wasm: WasmConnection, error: unknown): void {
+  const token = diagnosticToken(error);
+  if (error && typeof error === 'object') {
+    const output = (
+      error as {
+        clvmRuntimeOutput?: { prints: string[]; diagnosticTokens: string[] };
+      }
+    ).clvmRuntimeOutput;
+    if (output) {
+      for (const line of output.prints) log(line);
+      for (const token of output.diagnosticTokens) scheduleClvmDiagnostic(wasm, token);
+      if (token !== null && output.diagnosticTokens.includes(token)) return;
+    }
+  }
+  if (token !== null) scheduleClvmDiagnostic(wasm, token);
+}
+
+function diagnosticAwareObject<T extends object>(target: T, wasm: WasmConnection): T {
+  const existing = diagnosticConnections.get(target);
+  if (existing) return existing as T;
+  const wrapped = new Proxy(target, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (
+        typeof value !== 'function' ||
+        property === 'cache_debug_metadata' ||
+        property === 'diagnose_clvm'
+      )
+        return value;
+      return (...args: unknown[]) => {
+        try {
+          const result = Reflect.apply(value, target, args);
+          if (property === 'create_peer_protocol' && result && typeof result === 'object')
+            return diagnosticAwareObject(result, wasm);
+          if (result instanceof Promise)
+            return result.catch((error: unknown) => {
+              scheduleDiagnostic(wasm, error);
+              throw error;
+            });
+          return result;
+        } catch (error) {
+          scheduleDiagnostic(wasm, error);
+          throw error;
+        }
+      };
+    },
+  });
+  diagnosticConnections.set(target, wrapped);
+  return wrapped;
+}
 
 type WasmLoaderTarget = {
   loadWasm?: (init: WasmInitFn, wasmConn: WasmConnection) => void;
@@ -80,7 +193,7 @@ function ensureWasmModuleLoaded(): Promise<WasmConnection> {
       try {
         await waitForInitArgs();
         const initFn = chia_gaming_init!;
-        const wasmConn = cg!;
+        const wasmConn = diagnosticAwareObject(cg!, cg!);
         await initFn({ module_or_path: WASM_URL });
         if (!logInitialized) {
           logInitialized = true;
@@ -131,6 +244,7 @@ export function startWasmBootstrap(): void {
  */
 export function ensureWasmLoaded(fetchPreset = fetchDeployPreset): Promise<WasmConnection> {
   if (!loadPromise) {
+    presetFetcher = fetchPreset;
     loadPromise = (async () => {
       try {
         await waitForInitArgs();
@@ -147,10 +261,20 @@ export function ensureWasmLoaded(fetchPreset = fetchDeployPreset): Promise<WasmC
 /** Test helper: clear module load state between cases. */
 export function _resetWasmLoadForTests(): void {
   resetPeerProtocolForTests();
+  presetFetcher = fetchDeployPreset;
+  debugMetadataPromise = null;
+  cachedDebugMetadataFiles.clear();
+  pendingDiagnosticTokens.clear();
+  diagnosticTasks.clear();
+  diagnosticConnections = new WeakMap<object, object>();
   loadPromise = null;
   moduleLoadPromise = null;
   logInitialized = false;
   chia_gaming_init = undefined;
   cg = undefined;
   _resetGameIdentityWarmupForTests();
+}
+
+export async function _drainClvmDiagnosticsForTests(): Promise<void> {
+  await Promise.all([...diagnosticTasks]);
 }
