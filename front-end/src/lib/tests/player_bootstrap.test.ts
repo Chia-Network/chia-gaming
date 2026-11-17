@@ -18,9 +18,13 @@ describe.each(entries)('static %s bootstrap', (kind, entry) => {
       ['/chia-gaming/index.html', '/chia-gaming/'],
       ['/chia-gaming/oauth/callback/?code=abc&state=xyz', '/chia-gaming/'],
       ['/oauth/callback?code=abc&state=xyz', '/'],
+      // A leading double slash must stay a path, never become another host.
+      ['//evil.example/', '//evil.example/'],
+      ['//evil.example/chia-gaming/index.html', '//evil.example/chia-gaming/'],
+      ['//evil.example/oauth/callback/?code=abc&state=xyz', '//evil.example/'],
     ].filter(([path]) => kind === 'player' || !path.includes('/oauth/')),
   )('loads assets from the installation root at %s', async (path, root) => {
-    const location = new URL(path, 'https://example.org');
+    const location = new URL('https://example.org' + path);
     const nodes: Record<string, string>[] = [];
     const rootElement = { textContent: '' };
     const window = { location, top: null as unknown };
