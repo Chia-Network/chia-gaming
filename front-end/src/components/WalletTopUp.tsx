@@ -58,7 +58,8 @@ function openBuyPopup(url: string): Window | null {
   );
 }
 
-type BuyState = 'idle' | 'in-browser' | 'placed' | 'popup-blocked' | 'browser-failed';
+type BuyState =
+  'idle' | 'in-browser' | 'placed' | 'needs-verification' | 'popup-blocked' | 'browser-failed';
 
 export type WalletTopUpProps = {
   options: WalletTopUpOptions | null;
@@ -86,7 +87,11 @@ export function WalletTopUp(props: WalletTopUpProps) {
       // Only the window buying for this wallet speaks for it.
       const popup = buyPopups.get(buyUrl) ?? null;
       if (isBuyOrderSubmitted(event, buyOrigin, popup)) {
-        setBuyResult({ state: 'placed', url: buyUrl });
+        // A microdeposit order pays nothing until the bank account is verified
+        // in Cloud Wallet. Older purchase pages do not send the flag.
+        const needsVerification =
+          (event.data as { requiresVerification?: unknown }).requiresVerification === true;
+        setBuyResult({ state: needsVerification ? 'needs-verification' : 'placed', url: buyUrl });
       }
     };
     window.addEventListener('message', onMessage);
@@ -184,6 +189,12 @@ export function WalletTopUp(props: WalletTopUpProps) {
       {buyState === 'placed' && (
         <p className="text-sm text-canvas-text-contrast">
           Purchase placed. Your balance updates when the {currency.xch} becomes available.
+        </p>
+      )}
+      {buyState === 'needs-verification' && (
+        <p className="text-sm text-canvas-text-contrast">
+          Purchase started. A microdeposit reaches your bank account in 1-2 business days. Enter its
+          code in Cloud Wallet to complete the purchase.
         </p>
       )}
       {buyState === 'in-browser' && (
