@@ -1748,7 +1748,7 @@ describe('RealBlockchainInterface', () => {
     [
       'the wallet does not hold enough',
       { confirmedWalletBalance: 40n, spendableBalance: 40n, maxSendAmount: 40n },
-      /^Not enough funds in the wallet: 100 mojos needed, 40 available\. Wallet response: .*Can't select amount higher than our spendable balance\.$/,
+      /^Not enough funds in the wallet: 100 mojos needed, 40 available\.$/,
     ],
     [
       'funds are pending or reserved by an offer',

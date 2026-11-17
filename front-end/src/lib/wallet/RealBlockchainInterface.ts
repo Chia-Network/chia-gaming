@@ -261,15 +261,13 @@ async function describeOfferShortfall(needed: bigint): Promise<string | null> {
 
 /**
  * Reason shown to the user when the wallet refused to create an offer. A
- * balance diagnosis keeps the wallet's own answer, since a low balance may not
- * be what the wallet objected to.
+ * balance diagnosis replaces the wallet's own answer, which callers have
+ * already logged and which is often no more than "Internal error".
  */
 async function offerFailureReason(err: unknown, needed: bigint, detail: string): Promise<string> {
   const rejection = walletUserRejection(err);
   if (rejection) return rejection;
-  const walletAnswer = walletRpcMessage(err) ?? detail;
-  const shortfall = await describeOfferShortfall(needed);
-  return shortfall ? `${shortfall} Wallet response: ${walletAnswer}` : walletAnswer;
+  return (await describeOfferShortfall(needed)) ?? walletRpcMessage(err) ?? detail;
 }
 
 function boundedCancellationError(value: unknown): string {
