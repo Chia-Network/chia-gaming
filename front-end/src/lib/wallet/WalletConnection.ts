@@ -20,6 +20,7 @@ import { cloudBlockchainInfo } from './CloudBlockchainInterface';
 import { fakeBlockchainInfo } from './FakeBlockchainInterface';
 import { realBlockchainInfo } from './RealBlockchainInterface';
 import { sageBlockchainInfo } from './SageBlockchainInterface';
+import { WalletConnectProposalExpiredError } from './WalletConnectClient';
 import type { SessionWallet } from './sessionWallet';
 
 export interface WalletView {
@@ -34,6 +35,7 @@ export interface WalletView {
   setup: Omit<ConnectionSetup, 'finalize'> | null;
   showSetup: boolean;
   error: string | null;
+  expiredQrWallet?: 'walletconnect' | 'sage';
   balance: bigint | undefined;
 }
 export type WalletEvent =
@@ -192,7 +194,7 @@ export class WalletConnection {
     const { provider, interval } = providerFor(type);
     try {
       this.select(type);
-      this.update({ connecting: true, preparingConnection: true });
+      this.update({ connecting: true, preparingConnection: true, expiredQrWallet: undefined });
       const setup = await provider.beginConnect(storageRepository.getPlayerId(), fresh);
       if (attempt !== this.connectionAttempt) return false;
       this.update({ preparingConnection: false });
@@ -219,9 +221,15 @@ export class WalletConnection {
       return true;
     } catch (error) {
       if (attempt !== this.connectionAttempt) return false;
-      console.error(`[wallet] ${type} connect failed`, error);
+      const expiredQrWallet =
+        error instanceof WalletConnectProposalExpiredError &&
+        (type === 'walletconnect' || type === 'sage')
+          ? type
+          : undefined;
+      if (!expiredQrWallet) console.error(`[wallet] ${type} connect failed`, error);
       this.update({
-        error: error instanceof Error ? error.message : String(error),
+        error: expiredQrWallet ? null : error instanceof Error ? error.message : String(error),
+        expiredQrWallet,
         preparingConnection: false,
       });
       if (silent) {
@@ -306,6 +314,7 @@ export class WalletConnection {
     this.presentSetup(null);
     this.update({
       walletType: undefined,
+      expiredQrWallet: undefined,
       connecting: false,
       preparingConnection: false,
       connected: false,
@@ -325,6 +334,7 @@ export class WalletConnection {
     this.presentSetup(null);
     this.update({
       walletType: undefined,
+      expiredQrWallet: undefined,
       connected: false,
       connecting: false,
       preparingConnection: false,

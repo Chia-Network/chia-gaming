@@ -30,17 +30,25 @@ function wrongNetworkError(): Error {
   return new Error(`Wallet is not currently configured for ${networkName()}.`);
 }
 
+export class WalletConnectProposalExpiredError extends Error {
+  constructor() {
+    super('QR code expired');
+    this.name = 'WalletConnectProposalExpiredError';
+  }
+}
+
 /**
  * A wallet declines a proposal with a plain `{ code, message }` object, which
  * has no useful string form. Thrown errors pass through unchanged.
  */
 function approvalFailure(err: unknown): unknown {
-  if (err instanceof Error) return err;
   const { code, message } = (typeof err === 'object' && err !== null ? err : {}) as {
     code?: unknown;
     message?: unknown;
   };
   const text = typeof message === 'string' ? message : typeof err === 'string' ? err : '';
+  if (text === 'Proposal expired') return new WalletConnectProposalExpiredError();
+  if (err instanceof Error) return err;
   if (
     (typeof code === 'number' && WC_CHAIN_REJECTION_CODES.includes(code)) ||
     /chain|network/i.test(text)

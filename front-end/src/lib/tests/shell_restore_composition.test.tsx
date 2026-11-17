@@ -15,6 +15,7 @@ import { _resetPendingWalletConnectWipeForTests } from '../session/saveHardReset
 import * as sessionHost from '../session/sessionHost';
 import { storageRepository } from '../session/storageRepository';
 import * as wasmInit from '../session/wasmLoader';
+import { WalletConnectProposalExpiredError } from '../wallet/WalletConnectClient';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
 import {
@@ -553,6 +554,49 @@ describe('Shell production restore composition', () => {
       }),
     ).toHaveLength(0);
     expect(renderer!.root.findByProps({ children: 'Cancel' })).toBeDefined();
+  });
+
+  it('replaces an expired QR with a refresh action that starts a fresh pairing', async () => {
+    let expire!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, reject) => {
+      expire = reject;
+    });
+    const begin = jest
+      .mocked(realBlockchainInfo.beginConnect)
+      .mockResolvedValueOnce({ qrUri: 'wc:old', finalize: () => pending })
+      .mockResolvedValueOnce({ qrUri: 'wc:new', finalize: () => new Promise(() => {}) });
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Link Wallet');
+    let connecting!: Promise<void>;
+    await act(async () => {
+      connecting = application.dispatch({
+        type: 'wallet-connect',
+        wallet: 'walletconnect',
+        fresh: true,
+      });
+    });
+    await waitForText(renderer!, 'Connecting wallet…');
+    await act(async () => {
+      expire(new WalletConnectProposalExpiredError());
+      await connecting;
+    });
+    await waitForText(renderer!, 'QR code expired');
+    expect(renderer!.root.findAllByProps({ value: 'wc:old' })).toHaveLength(0);
+    await act(async () => {
+      renderer!.root.findByProps({ children: 'Generate new QR code' }).props.onClick();
+    });
+    await waitForText(renderer!, 'Connecting wallet…');
+    expect(begin.mock.calls.at(-1)?.[1]).toBe(true);
+    expect(renderer!.root.findByProps({ value: 'wc:new' }).type).toBe('textarea');
+    expect(renderer!.root.findAllByProps({ children: 'QR code expired' })).toHaveLength(0);
+    await act(async () => {
+      await application.dispatch({ type: 'wallet-cancel' });
+    });
+    await waitForText(renderer!, 'Link Wallet');
   });
 
   it('keeps wallet setup visibly pending after pairing until approvals finish', async () => {

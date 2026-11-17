@@ -1044,6 +1044,29 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                 </div>
                 <Button onClick={() => dispatch({ type: 'wallet-disconnect' })}>Disconnect</Button>
               </div>
+            ) : walletView.expiredQrWallet ? (
+              <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+                <p className="text-lg font-semibold text-canvas-text-contrast" role="status">
+                  QR code expired
+                </p>
+                <p className="text-sm text-canvas-text text-center">
+                  This connection request timed out. Generate a new QR code to connect your wallet.
+                </p>
+                <Button
+                  onClick={() =>
+                    dispatch({
+                      type: 'wallet-connect',
+                      wallet: walletView.expiredQrWallet!,
+                      fresh: true,
+                    })
+                  }
+                >
+                  Generate new QR code
+                </Button>
+                <Button variant="outline" onClick={() => dispatch({ type: 'wallet-cancel' })}>
+                  Cancel
+                </Button>
+              </div>
             ) : connectionSetup && !connectionSetup.skipQr ? (
               <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
                 <p className="text-lg font-semibold text-canvas-text-contrast" role="status">

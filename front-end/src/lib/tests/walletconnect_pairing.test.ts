@@ -57,7 +57,10 @@ jest.mock('../../util/walletConnectMetadata', () => ({
 }));
 
 import { expectConsoleError } from '../../../scripts/testSetup';
-import { walletConnectState } from '../wallet/WalletConnectClient';
+import {
+  walletConnectState,
+  WalletConnectProposalExpiredError,
+} from '../wallet/WalletConnectClient';
 import type { SessionTypes } from '@walletconnect/types';
 import { ChiaMethod } from '../../constants/wallet-connect';
 import { BlockchainPoller } from '../wallet/BlockchainPoller';
@@ -261,6 +264,25 @@ describe('WalletConnect pairing teardown', () => {
     expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'ccc333' });
   });
 
+  it.each([new Error('Proposal expired'), { code: 0, message: 'Proposal expired' }])(
+    'reports expired QR codes distinctly and cleans up their pairing',
+    async (failure) => {
+      await walletConnectState.init();
+      mockClient.connect.mockResolvedValue({
+        uri: 'wc:eee555@2?relay-protocol=irn&symKey=deadbeef',
+        approval: async () => {
+          throw failure;
+        },
+      });
+      const setup = await walletConnectState.startConnect();
+      expectConsoleError('connect() approval FAILED or rejected');
+      await expect(walletConnectState.connect(setup.approval)).rejects.toThrow(
+        WalletConnectProposalExpiredError,
+      );
+      expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'eee555' });
+    },
+  );
+
   it('leaves a retry alone when a superseded approval rejects late', async () => {
     await walletConnectState.init();
     mockClient.connect.mockResolvedValue({
@@ -293,7 +315,7 @@ describe('WalletConnect pairing teardown', () => {
 
     // Only now does the abandoned proposal expire, with the retry waiting.
     rejectFirst(new Error('Proposal expired'));
-    await expect(firstAttempt).rejects.toThrow('Proposal expired');
+    await expect(firstAttempt).rejects.toThrow(WalletConnectProposalExpiredError);
     subscription.unsubscribe();
 
     expect(mockClient.core.pairing.disconnect).toHaveBeenCalledWith({ topic: 'eee555' });
