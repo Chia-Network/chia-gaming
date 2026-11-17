@@ -474,6 +474,12 @@ export interface InternalBlockchainInterface {
   getAddress(): Promise<BlockchainInboundAddressResult>;
   /** Wallet funds available to fund a channel now. */
   getBalance(): Promise<bigint>;
+  /**
+   * Why the wallet cannot spend `amount` in one transaction right now, or null
+   * when it can or the wallet gives no answer. Absent on wallets that expose
+   * only a total balance.
+   */
+  spendShortfall?(amount: bigint): Promise<string | null>;
   /** Absent for backends that offer no top-up path. */
   getTopUpOptions?(): WalletTopUpOptions;
   getPuzzleAndSolution(coin: string): Promise<string[] | null>;

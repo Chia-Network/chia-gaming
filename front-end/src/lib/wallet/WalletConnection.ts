@@ -124,6 +124,10 @@ export class WalletConnection {
   ready(): boolean {
     return this.poller?.rpc.isReadyForPlay() ?? false;
   }
+  /** Why the wallet cannot spend `amount` right now, or null when it can or cannot tell. */
+  async spendShortfall(amount: bigint): Promise<string | null> {
+    return (await this.provider?.spendShortfall?.(amount)) ?? null;
+  }
 
   private update(change: Partial<WalletView>): void {
     this.view = { ...this.view, ...change };

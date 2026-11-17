@@ -1748,7 +1748,7 @@ describe('RealBlockchainInterface', () => {
     [
       'the wallet does not hold enough',
       { confirmedWalletBalance: 40n, spendableBalance: 40n, maxSendAmount: 40n },
-      /^Not enough funds in the wallet: 100 mojos needed, 40 available\.$/,
+      /^Not enough funds in the wallet: 100 mojos needed, 40 available\. Wallet response: .*Can't select amount higher than our spendable balance\.$/,
     ],
     [
       'funds are pending or reserved by an offer',
@@ -1846,6 +1846,48 @@ describe('RealBlockchainInterface', () => {
       kind: 'failure',
       reason: 'Wallet is not connected to any synced peers.',
     });
+  });
+
+  it('decodes the wallet error payload instead of showing its encoded form', async () => {
+    const blockchain = new RealBlockchainInterface();
+    expectConsoleError(/createOfferForIds error/);
+    const encoded = `[wc:-32000|${btoa('{"error":"Coin ID abc not found"}')}] request failed`;
+    const daemonFailure = new WalletConnectResponseError(
+      `WalletConnect RPC chia_createOfferForIds failed: ${encoded} (code=-32000)`,
+    );
+    (daemonFailure as Error & { cause?: unknown }).cause = { code: -32000, message: encoded };
+    mockCreateOfferForIds.mockRejectedValue(daemonFailure);
+    mockGetWalletBalance.mockResolvedValue({
+      confirmedWalletBalance: 500n,
+      spendableBalance: 500n,
+      maxSendAmount: 500n,
+    });
+
+    await expect(
+      blockchain.beginWalletOffer(offerOperation, {
+        kind: 'funding',
+        uniqueId: 'test',
+        offer: { '1': -100n },
+      }),
+    ).resolves.toEqual({
+      kind: 'failure',
+      reason: expect.stringContaining('Coin ID abc not found'),
+    });
+  });
+
+  it('answers whether the wallet can fund an amount before any offer is made', async () => {
+    const blockchain = new RealBlockchainInterface();
+    mockGetWalletBalance.mockResolvedValue({
+      confirmedWalletBalance: 500n,
+      spendableBalance: 60n,
+      maxSendAmount: 60n,
+    });
+
+    await expect(blockchain.spendShortfall(60n)).resolves.toBeNull();
+    await expect(blockchain.spendShortfall(100n)).resolves.toMatch(
+      /^Wallet funds are held by a pending transaction or an open offer: 100 mojos needed, 60 spendable right now\./,
+    );
+    expect(mockCreateOfferForIds).not.toHaveBeenCalled();
   });
 
   it('reports a wallet-side rejection without reading the balance', async () => {

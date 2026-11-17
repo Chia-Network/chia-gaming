@@ -182,7 +182,7 @@ function collectErrorText(err: unknown): string {
   // Chia GUI IPC may encode the daemon error as [wc:<code>|<base64-json>] ....
   // Decode that payload when present so "Coin ID ... not found" is visible here.
   for (const part of [...parts]) {
-    const match = part.match(/\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/);
+    const match = part.match(WC_ENCODED_ERROR);
     if (!match || typeof atob !== 'function') continue;
     try {
       parts.push(atob(match[1]));
@@ -204,6 +204,7 @@ function collectErrorText(err: unknown): string {
 }
 
 const WC_USER_REJECTED = 5000;
+const WC_ENCODED_ERROR = /\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/;
 
 /** The JSON-RPC error object the wallet answered with, when there is one. */
 function walletRpcError(err: unknown): { code?: unknown; message?: unknown } | null {
@@ -217,16 +218,21 @@ function walletUserRejection(err: unknown): string | null {
   return walletRpcMessage(err) ?? 'Request rejected in the wallet';
 }
 
-/** The message of the wallet's JSON-RPC error, without the transport framing. */
+/**
+ * The message of the wallet's JSON-RPC error, without the transport framing.
+ * Null when the message carries the Chia GUI's encoded payload, which only
+ * collectErrorText decodes.
+ */
 function walletRpcMessage(err: unknown): string | null {
   const message = walletRpcError(err)?.message;
-  return typeof message === 'string' && message ? message : null;
+  if (typeof message !== 'string' || !message || WC_ENCODED_ERROR.test(message)) return null;
+  return message;
 }
 
 /**
  * The reference wallet reports coin-selection failures as free text, so its
- * balance, not the message, says which state made an offer fail. Returns null
- * when the balance does not explain the failure.
+ * balance, not the message, says which state keeps it from spending `needed`.
+ * Returns null when the balance covers the amount or cannot be read.
  */
 async function describeOfferShortfall(needed: bigint): Promise<string | null> {
   if (needed <= 0n) return null;
@@ -234,7 +240,7 @@ async function describeOfferShortfall(needed: bigint): Promise<string | null> {
   try {
     balance = await rpc.getWalletBalance({ walletId: 1n });
   } catch (e) {
-    log(`[wc-blockchain] balance read after offer failure failed: ${collectErrorText(e)}`);
+    log(`[wc-blockchain] balance read for funding diagnosis failed: ${collectErrorText(e)}`);
     return null;
   }
   const confirmed = balance?.confirmedWalletBalance;
@@ -253,14 +259,17 @@ async function describeOfferShortfall(needed: bigint): Promise<string | null> {
   return null;
 }
 
-/** Reason shown to the user when the wallet refused to create an offer. */
+/**
+ * Reason shown to the user when the wallet refused to create an offer. A
+ * balance diagnosis keeps the wallet's own answer, since a low balance may not
+ * be what the wallet objected to.
+ */
 async function offerFailureReason(err: unknown, needed: bigint, detail: string): Promise<string> {
-  return (
-    walletUserRejection(err) ??
-    (await describeOfferShortfall(needed)) ??
-    walletRpcMessage(err) ??
-    detail
-  );
+  const rejection = walletUserRejection(err);
+  if (rejection) return rejection;
+  const walletAnswer = walletRpcMessage(err) ?? detail;
+  const shortfall = await describeOfferShortfall(needed);
+  return shortfall ? `${shortfall} Wallet response: ${walletAnswer}` : walletAnswer;
 }
 
 function boundedCancellationError(value: unknown): string {
@@ -674,6 +683,10 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       }
       return { kind: 'failure', reason: await offerFailureReason(e, fee, text) };
     }
+  }
+
+  spendShortfall(amount: bigint): Promise<string | null> {
+    return describeOfferShortfall(amount);
   }
 
   async getBalance(): Promise<bigint> {

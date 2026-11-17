@@ -373,6 +373,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     coins,
     pendingAdvisory,
     consentShortfall,
+    checkingFunds,
     topUpOptions,
     blockchainReady,
     pendingProposal,
@@ -723,10 +724,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
-            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp || checkingFunds}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
-            Accept
+            {checkingFunds ? 'Checking wallet…' : 'Accept'}
           </button>
           <button
             onClick={() => dispatch({ type: 'decline-session' })}
@@ -758,10 +759,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
         <div className="flex gap-3 justify-center">
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
-            disabled={!walletConnected || !blockchainReady || awaitingTopUp}
+            disabled={!walletConnected || !blockchainReady || awaitingTopUp || checkingFunds}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
-            Accept
+            {checkingFunds ? 'Checking wallet…' : 'Accept'}
           </button>
           <button
             onClick={() => dispatch({ type: 'decline-session' })}
