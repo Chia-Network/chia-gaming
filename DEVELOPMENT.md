@@ -177,7 +177,7 @@ as the web archive name and Electron application version.
 Before the first Pages deployment, select **GitHub Actions** in repository
 **Settings → Pages → Build and deployment**. The `github-pages` environment
 must allow deployments from release tags. Cloud Wallet OAuth client settings
-must allow `https://chia-network.github.io/chia-gaming/oauth/callback`.
+must allow `https://chia-network.github.io/chia-gaming/player/oauth/callback`.
 The player archive can also be served at any directory URL ending in `/`;
 its assets and OAuth callback resolve within that installation.
 
@@ -198,6 +198,9 @@ There is no separate publish-release script: the tag and `gh release create`
 commands below trigger the release workflows. `tools/build-deploy.sh` builds
 the archives locally; `tools/stage-production.sh` extracts them for local
 testing, and `tools/run-production.sh` starts local player and hub servers.
+The Pages root serves the project landing page from `project-page/index.html`; the
+production player app is hosted at `player/`. `tools/build-pages.sh <player.tgz>
+<empty-output-directory>` assembles both for the release workflow or a local preview.
 Neither local staging nor running servers is required for Pages publication.
 
 To test the production build under directories on another machine:

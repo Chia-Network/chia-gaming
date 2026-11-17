@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Two-player games for real stakes on Chia. Play directly with another person, with blockchain-enforced rules and no casino holding the pot."
+    />
+    <title>Chia Gaming — Real Gaming. No Casino.</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f5f2e9;
+        --fg: #192e28;
+        --muted: #52645b;
+        --line: #bec9bc;
+        --accent: #d7f56d;
+        --panel: #e8ecdf;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+      a {
+        color: inherit;
+        text-underline-offset: 0.25em;
+      }
+      a:hover {
+        text-decoration-thickness: 2px;
+      }
+      a:focus-visible {
+        outline: 3px solid currentColor;
+        outline-offset: 6px;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: auto;
+        padding: 0 40px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 28px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 750;
+        letter-spacing: -0.03em;
+        font-size: 21px;
+        text-decoration: none;
+      }
+      .brand img {
+        width: 32px;
+        height: 32px;
+        padding: 3px;
+        background: white;
+        border-radius: 6px;
+      }
+      nav {
+        display: flex;
+        gap: 24px;
+        font-size: 14px;
+      }
+      .hero {
+        padding: 80px 0 72px;
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      h1 {
+        font-size: clamp(56px, 8.5vw, 108px);
+        line-height: 0.98;
+        letter-spacing: -0.065em;
+        margin: 28px 0;
+        max-width: 1000px;
+      }
+      h1 span {
+        display: block;
+      }
+      h1 .second {
+        color: var(--muted);
+      }
+      .intro {
+        max-width: 660px;
+        font-size: clamp(19px, 2.4vw, 24px);
+        line-height: 1.5;
+        margin: 32px 0;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        padding: 16px 24px;
+        border: 1px solid var(--fg);
+        border-radius: 6px;
+        text-decoration: none;
+        font-weight: 650;
+      }
+      .primary {
+        background: var(--accent);
+        color: #192e28;
+        border-color: #192e28;
+      }
+      .button:hover {
+        transform: translateY(-2px);
+      }
+      .beta {
+        margin-top: 20px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      section {
+        border-top: 1px solid var(--line);
+        padding: 48px 0;
+      }
+      .section-heading {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 40px;
+        margin-bottom: 36px;
+      }
+      h2 {
+        font-size: 32px;
+        letter-spacing: -0.04em;
+        line-height: 1.15;
+        margin: 0;
+      }
+      .section-heading p {
+        margin: 0;
+        max-width: 650px;
+        line-height: 1.7;
+        color: var(--muted);
+        font-size: 17px;
+      }
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 32px;
+      }
+      .step {
+        border-left: 2px solid var(--line);
+        padding-left: 20px;
+      }
+      .number {
+        font-family: ui-monospace, monospace;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      h3 {
+        font-size: 21px;
+        letter-spacing: -0.025em;
+        margin: 14px 0 10px;
+      }
+      .step p {
+        color: var(--muted);
+        line-height: 1.65;
+        margin: 0;
+      }
+      .games {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .game {
+        padding: 28px;
+        background: var(--panel);
+      }
+      .game .mark {
+        font-size: 30px;
+        line-height: 1;
+        font-family: ui-monospace, monospace;
+        color: var(--fg);
+      }
+      .game p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .build {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 32px;
+      }
+      .build p {
+        max-width: 650px;
+        color: var(--muted);
+        line-height: 1.65;
+      }
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 28px 0 40px;
+        display: flex;
+        justify-content: space-between;
+        gap: 24px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111f1b;
+          --fg: #eef2e8;
+          --muted: #b3c3b6;
+          --line: #3b5145;
+          --panel: #1b2c24;
+        }
+      }
+      @media (max-width: 640px) {
+        .wrap {
+          padding: 0 22px;
+        }
+        header {
+          align-items: flex-start;
+        }
+        nav {
+          gap: 14px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .hero {
+          padding: 52px 0;
+        }
+        .section-heading,
+        .steps,
+        .games {
+          grid-template-columns: 1fr;
+        }
+        .section-heading {
+          gap: 20px;
+        }
+        .steps {
+          gap: 28px;
+        }
+        .build,
+        footer {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .button {
+          width: 100%;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <a class="brand" href="./"><img src="favicon.svg" alt="" />Chia Gaming</a>
+        <nav aria-label="Main navigation">
+          <a href="#how-it-works">How it works</a
+          ><a href="https://github.com/Chia-Network/chia-gaming">GitHub ↗</a>
+        </nav>
+      </header>
+      <main>
+        <div class="hero">
+          <div class="eyebrow">Two players. Shared rules. Real stakes.</div>
+          <h1><span>Real Gaming.</span><span class="second">No Casino.</span></h1>
+          <p class="intro">
+            Play directly with another person. Chia Gaming brings two-player games to Chia state
+            channels, with blockchain-enforced rules and no casino holding the pot.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="player/"
+              >Open player app <span aria-hidden="true">↗</span></a
+            >
+            <a class="button" href="https://github.com/Chia-Network/chia-gaming/releases/latest"
+              >Get the latest release <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <p class="beta">
+            Currently in beta · Connect a compatible wallet and choose a hub to find a peer.
+          </p>
+        </div>
+        <section id="how-it-works">
+          <div class="section-heading">
+            <h2>The players play.<br />The chain keeps score.</h2>
+            <p>
+              Both players fund a shared channel on the Chia blockchain. Moves travel directly
+              between the players through a hub, without waiting for a block every turn. Signed game
+              states let either player take the game on-chain when needed.
+            </p>
+          </div>
+          <div class="steps">
+            <div class="step">
+              <span class="number">01 / CONNECT</span>
+              <h3>Find your opponent</h3>
+              <p>
+                Connect a wallet, join a hub, and agree on the funds each player will contribute.
+              </p>
+            </div>
+            <div class="step">
+              <span class="number">02 / PLAY</span>
+              <h3>Keep the game moving</h3>
+              <p>
+                Exchange signed moves off-chain. The hub relays messages; it doesn’t hold the
+                players’ funds.
+              </p>
+            </div>
+            <div class="step">
+              <span class="number">03 / SETTLE</span>
+              <h3>Let the rules decide</h3>
+              <p>
+                Close the channel together, or use on-chain rules and timeouts to finish without the
+                other player’s cooperation.
+              </p>
+            </div>
+          </div>
+        </section>
+        <section>
+          <div class="section-heading">
+            <h2>Three ways to play.</h2>
+            <p>
+              The project includes three reference games, built on the same open-source
+              state-channel system.
+            </p>
+          </div>
+          <div class="games">
+            <article class="game">
+              <div class="mark" aria-hidden="true">♠ ♣</div>
+              <h3>California Poker</h3>
+              <p>A two-player poker game using commit-and-reveal play.</p>
+            </article>
+            <article class="game">
+              <div class="mark" aria-hidden="true">♦ ♥</div>
+              <h3>Space Poker</h3>
+              <p>Texas Hold’em-style poker for two players.</p>
+            </article>
+            <article class="game">
+              <div class="mark" aria-hidden="true">[ A B C ]</div>
+              <h3>Krunk</h3>
+              <p>Wordle-style paired games. Take turns choosing and guessing.</p>
+            </article>
+          </div>
+        </section>
+        <section class="build">
+          <div>
+            <div class="eyebrow">Open source, from the ground up</div>
+            <h2 style="margin-top: 16px">Play it. Run it. Build on it.</h2>
+            <p>
+              Download the player app and hub, host your own setup, or write a game. The source and
+              game-writing guide are available on GitHub.
+            </p>
+            <a href="https://github.com/Chia-Network/chia-gaming/blob/main/GAME_WRITING_GUIDE.md"
+              >Read the game-writing guide ↗</a
+            >
+          </div>
+          <a class="button" href="https://github.com/Chia-Network/chia-gaming/releases/latest"
+            >Latest release ↗</a
+          >
+        </section>
+      </main>
+      <footer>
+        <span>Chia Gaming · Built on Chia</span
+        ><a href="https://github.com/Chia-Network/chia-gaming">Explore the source ↗</a>
+      </footer>
+    </div>
+  </body>
+</html>
