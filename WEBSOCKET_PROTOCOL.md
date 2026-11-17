@@ -27,7 +27,8 @@ Blockchain, wallet, and chain-observation protocols are also out of scope.
 Given a selected hub HTTP URL, the player application:
 
 1. changes `http:` to `ws:` or `https:` to `wss:`;
-2. replaces the path with `/ws/game`; and
+2. appends `ws/game` to the selected hub directory (for example,
+   `https://hub.example/hubs/beta/` becomes `wss://hub.example/hubs/beta/ws/game`); and
 3. removes the query string and fragment.
 
 All application frames on `/ws/game` are WebSocket binary messages. Text
@@ -394,7 +395,7 @@ HMAC-SHA256 over a domain separator and that origin. It reuses the derived value
 only for reconnects to the same origin. `identify.session_id` sends those
 derived bytes.
 
-The hub HTML is opened at `<hub-origin>/` without credentials in the URL. Once
+The hub HTML is opened at the selected hub directory URL without credentials in the URL. Once
 loaded, it requests the hub session ID from the embedding player application
 with `postMessage`. The player verifies the requesting iframe window and origin,
 then addresses the credential response only to that hub origin. The same hub

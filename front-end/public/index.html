@@ -4,7 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Chia Gaming</title>
   </head>
   <body id="body">
@@ -21,14 +20,24 @@
           return;
         }
 
-        fetch('/build-meta.json')
+        // Capture the installation root before installing the asset base URL.
+        // The OAuth callback is a real directory page on static hosts.
+        var rootPath = window.location.pathname.replace(/oauth\/callback\/?$/, '');
+        var appRoot = new URL('./', new URL(rootPath, window.location.origin));
+        fetch(new URL('build-meta.json', appRoot), { cache: 'no-store' })
           .then(function (r) {
             return r.json();
           })
           .then(function (meta) {
             var base = document.createElement('base');
-            base.href = meta.basePath;
+            base.href = new URL(meta.basePath.replace(/^\/+/, ''), appRoot).href;
             document.head.appendChild(base);
+
+            var icon = document.createElement('link');
+            icon.rel = 'icon';
+            icon.type = 'image/svg+xml';
+            icon.href = 'favicon.svg';
+            document.head.appendChild(icon);
 
             // Start WASM bytes as early as possible (before glue calls loadWasm).
             var preloadWasm = document.createElement('link');

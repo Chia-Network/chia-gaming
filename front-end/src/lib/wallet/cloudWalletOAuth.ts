@@ -68,7 +68,11 @@ export async function createPkceChallenge(verifier: string): Promise<string> {
   return toBase64Url(digest);
 }
 
-export function oauthRedirectUri(origin = window.location.origin): string {
+export function oauthRedirectUri(
+  origin = typeof document !== 'undefined' && document.querySelector('base')
+    ? new URL('../../', document.baseURI).href
+    : window.location.origin,
+): string {
   return `${origin.replace(/\/$/, '')}${CLOUD_WALLET_OAUTH_CALLBACK_PATH}`;
 }
 

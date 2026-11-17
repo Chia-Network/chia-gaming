@@ -35,7 +35,7 @@ export function pageBasePath(
   // Fall back to document.baseURI when it already includes an /app/<nonce>/ path.
   try {
     const pathname = new URL(doc.baseURI).pathname;
-    if (pathname.startsWith('/app/')) return doc.baseURI;
+    if (/\/app\/[^/]+\/$/.test(pathname)) return doc.baseURI;
   } catch {
     /* ignore */
   }
@@ -63,7 +63,7 @@ export function resolveDeployAssetUrl(
 }
 
 /**
- * True when `/build-meta.json` points at a different nonce tree than this tab.
+ * True when the installation's build-meta.json points at a different nonce tree.
  * Used when a nonce-scoped asset 404s after a redeploy wiped the old files.
  */
 export async function isStaleDeploy(
@@ -72,11 +72,15 @@ export async function isStaleDeploy(
 ): Promise<boolean> {
   if (currentBase === null) return false;
   try {
-    const resp = await fetchImpl('/build-meta.json', { cache: 'no-store' });
+    const appRoot = new URL('../../', currentBase);
+    const resp = await fetchImpl(new URL('build-meta.json', appRoot).href, { cache: 'no-store' });
     if (!resp.ok) return false;
     const meta = (await resp.json()) as { basePath?: unknown };
     if (typeof meta.basePath !== 'string') return false;
-    return basePathKey(meta.basePath) !== basePathKey(currentBase);
+    return (
+      basePathKey(new URL(meta.basePath.replace(/^\/+/, ''), appRoot).href) !==
+      basePathKey(currentBase)
+    );
   } catch {
     return false;
   }

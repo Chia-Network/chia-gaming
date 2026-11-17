@@ -119,8 +119,25 @@ describe('cloudWalletOAuth helpers', () => {
     expect(parsed.searchParams.get('chia_gaming_client')).toBe('true');
   });
 
+  it('oauthRedirectUri uses the installed asset base by default', () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+    setTestGlobal('document', {
+      querySelector: () => ({}),
+      baseURI: 'https://game.example/chia-gaming/app/build123/',
+    });
+    try {
+      expect(oauthRedirectUri()).toBe('https://game.example/chia-gaming/oauth/callback');
+    } finally {
+      if (previous) Object.defineProperty(globalThis, 'document', previous);
+      else Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
   it('oauthRedirectUri appends callback path', () => {
     expect(oauthRedirectUri('https://game.example/')).toBe('https://game.example/oauth/callback');
+    expect(oauthRedirectUri('https://game.example/chia-gaming/')).toBe(
+      'https://game.example/chia-gaming/oauth/callback',
+    );
   });
 
   it('signatureRequestApproveUrl builds UI path', () => {

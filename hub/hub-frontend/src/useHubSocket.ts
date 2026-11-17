@@ -41,7 +41,7 @@ type InboundMessage =
 function toWsUrl(input: string): string {
   const url = new URL(input);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.pathname = '/ws/hub';
+  url.pathname = url.pathname.replace(/\/+$/, '') + '/ws/hub';
   url.search = '';
   url.hash = '';
   return url.toString();

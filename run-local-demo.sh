@@ -152,10 +152,8 @@ if [ -n "${CHIA_GAMING_CLOUD_WALLET_API_URL:-}${CHIA_GAMING_CLOUD_WALLET_UI_URL:
       fs.writeFileSync(file, html.replace("</head>", `<script>${assignments}</script></head>`));
     ' "$GAME_SERVE/index.html"
 fi
-if [ -f "$FE_DIR/public/favicon.svg" ]; then
-    cp "$FE_DIR/public/favicon.svg" "$GAME_SERVE/favicon.svg"
-fi
 GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
+cp "$FE_DIR/public/favicon.svg" "$GAME_NONCE_DIR/favicon.svg"
 cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
 cp "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
 cp "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
@@ -190,6 +188,7 @@ HUB_SERVE="$HUB_FRONTEND_DIR/serve"
 mkdir -p "$HUB_SERVE/app/$BUILD_NONCE"
 cp "$HUB_FRONTEND_DIR/public/index.html" "$HUB_SERVE/index.html"
 HUB_NONCE_DIR="$HUB_SERVE/app/$BUILD_NONCE"
+cp "$FE_DIR/public/favicon.svg" "$HUB_NONCE_DIR/favicon.svg"
 cp "$HUB_FRONTEND_DIR/public/index.js" "$HUB_NONCE_DIR/index.js"
 cp "$HUB_FRONTEND_DIR/dist/css/index.css" "$HUB_NONCE_DIR/index.css"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$HUB_SERVE/build-meta.json"

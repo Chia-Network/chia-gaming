@@ -39,6 +39,21 @@ function parseArgs() {
 }
 
 const args = parseArgs();
+// --self is the public installation URL, including any directory mount.
+const mountPath = new URL(args.self).pathname.replace(/\/+$/, '');
+const hubApp = express.Router();
+if (mountPath) {
+  app.get(mountPath, (req, res, next) => {
+    if (req.path !== mountPath) {
+      next();
+      return;
+    }
+    const search = new URL(req.originalUrl, 'http://localhost').search;
+    res.redirect(308, mountPath + '/' + search);
+  });
+}
+app.use(mountPath || '/', hubApp);
+
 const verbose = Boolean(args.verbose);
 
 type HubInboundMessage =
@@ -290,9 +305,9 @@ httpServer.on('upgrade', (req, socket, head) => {
     socket.destroy();
     return;
   }
-  if (pathname === '/ws/hub') {
+  if (pathname === mountPath + '/ws/hub') {
     handleUpgrade(hubWsServer, req, socket, head);
-  } else if (pathname === '/ws/game') {
+  } else if (pathname === mountPath + '/ws/game') {
     handleUpgrade(gameWsServer, req, socket, head);
   } else {
     socket.destroy();
@@ -479,14 +494,14 @@ function ensureSession(sessionId: string): string | null {
   return playerId;
 }
 
-app.use(
+hubApp.use(
   cors({
     origin: '*',
     methods: ['GET', 'POST', 'HEAD', 'OPTIONS'],
   }),
 );
 
-app.use((req, res, next) => {
+hubApp.use((req, res, next) => {
   res.set('Referrer-Policy', 'no-referrer');
   // Nonce /app/* URLs change every rebuild; only root shell/meta are stable.
   const p = req.path;
@@ -504,7 +519,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+hubApp.use(express.json());
 
 // Top-level browser visits to the hub's HTML go to the player app instead. The
 // player app embeds this same HTML in an iframe (Sec-Fetch-Dest: iframe), so
@@ -517,12 +532,13 @@ function redirectTarget(req: express.Request): string {
   if (host.startsWith('hub.')) {
     // Scheme-relative: the browser keeps the scheme it used for the hub (e.g.
     // https behind a TLS-terminating proxy) without trusting forwarded headers.
-    return `//player.${host.slice('hub.'.length)}/`;
+    const target = new URL(redirectHtmlTo!);
+    return `//player.${host.slice('hub.'.length)}${target.pathname}${target.search}${target.hash}`;
   }
   return redirectHtmlTo!;
 }
 if (redirectHtmlTo) {
-  app.use((req, res, next) => {
+  hubApp.use((req, res, next) => {
     const p = req.path;
     const isHtml = p === '/' || p.endsWith('.html');
     if (
@@ -539,7 +555,7 @@ if (redirectHtmlTo) {
 }
 
 if (args.dir) {
-  app.use(express.static(args.dir));
+  hubApp.use(express.static(args.dir));
 }
 
 function sendSerializedWs(ws: WebSocket, type: string, serialized: string): void {

@@ -2,6 +2,9 @@
 # Run the staged production player app and hub services.
 #
 # Must be run after ./tools/stage-production.sh. Press Ctrl-C to stop both.
+# PLAYER_PATH=/player/ HUB_PATH=/hub/ selects independent directory mounts.
+# For access from another machine, set HOST=0.0.0.0 and PUBLIC_HOST to this
+# machine's reachable hostname or IP address.
 
 set -e
 
@@ -11,6 +14,22 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 GAME_PORT="${GAME_PORT:-3002}"
 HUB_PORT="${HUB_PORT:-3003}"
 HOST="${HOST:-127.0.0.1}"
+PUBLIC_HOST="${PUBLIC_HOST:-$HOST}"
+
+normalize_path() {
+    node -e '
+const value = process.argv[1];
+const url = new URL(value, "http://mount.invalid");
+if (url.origin !== "http://mount.invalid" || url.pathname !== value || url.search || url.hash) {
+    throw new Error("Mount paths must be absolute URL paths without dot segments, queries, or fragments");
+}
+process.stdout.write(value.replace(/\/+$/, "") + "/");
+' "$1"
+}
+PLAYER_PATH=$(normalize_path "${PLAYER_PATH:-/}")
+HUB_PATH=$(normalize_path "${HUB_PATH:-/}")
+PLAYER_URL="http://$PUBLIC_HOST:$GAME_PORT$PLAYER_PATH"
+HUB_URL="http://$PUBLIC_HOST:$HUB_PORT$HUB_PATH"
 
 PLAYER_STAGE="${PLAYER_STAGE:-$ROOT_DIR/.stage-player}"
 HUB_STAGE="${HUB_STAGE:-$ROOT_DIR/.stage-hub}"
@@ -69,21 +88,21 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "=== Starting player app on http://$HOST:$GAME_PORT ==="
-node "$PLAYER_STAGE/static-server.js" "$PLAYER_STAGE" "$GAME_PORT" "$HOST" &
+echo "=== Starting player app on $PLAYER_URL ==="
+node "$PLAYER_STAGE/static-server.js" "$PLAYER_STAGE" "$GAME_PORT" "$HOST" "$PLAYER_PATH" &
 PIDS+=($!)
 
-echo "=== Starting hub on http://$HOST:$HUB_PORT ==="
+echo "=== Starting hub on $HUB_URL ==="
 PORT="$HUB_PORT" node "$HUB_STAGE/service.js" \
-    --self "http://$HOST:$HUB_PORT" \
+    --self "$HUB_URL" \
     --dir "$HUB_STAGE" \
-    --redirect-html-to "http://$HOST:$GAME_PORT" &
+    --redirect-html-to "$PLAYER_URL" &
 PIDS+=($!)
 
 echo ""
 echo "════════════════════════════════════════════════════════"
-echo "  Player app: http://$HOST:$GAME_PORT"
-echo "  Hub:        http://$HOST:$HUB_PORT"
+echo "  Player app: $PLAYER_URL"
+echo "  Hub:        $HUB_URL"
 echo ""
 echo "  Press Ctrl-C to stop both services."
 echo "════════════════════════════════════════════════════════"

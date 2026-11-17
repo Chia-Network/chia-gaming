@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -12,12 +12,21 @@
     <div id="root"></div>
     <script>
       (function () {
-        fetch('/build-meta.json')
-          .then(function (r) { return r.json(); })
+        var appRoot = new URL('./', window.location.href);
+        fetch(new URL('build-meta.json', appRoot), { cache: 'no-store' })
+          .then(function (r) {
+            return r.json();
+          })
           .then(function (meta) {
             var base = document.createElement('base');
-            base.href = meta.basePath;
+            base.href = new URL(meta.basePath.replace(/^\/+/, ''), appRoot).href;
             document.head.appendChild(base);
+
+            var icon = document.createElement('link');
+            icon.rel = 'icon';
+            icon.type = 'image/svg+xml';
+            icon.href = 'favicon.svg';
+            document.head.appendChild(icon);
 
             var css = document.createElement('link');
             css.rel = 'stylesheet';

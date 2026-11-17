@@ -77,7 +77,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     cancelChallenge,
     setHubAlias,
     publicId,
-  } = useHubSocket(window.location.origin, sessionId);
+  } = useHubSocket(new URL('../../', document.baseURI).href, sessionId);
 
   const autoJoinedRef = useRef(false);
   useEffect(() => {

@@ -66,7 +66,9 @@ describe('deployFreshness', () => {
     })) as unknown as typeof fetch;
 
     await expect(isStaleDeploy(fetchImpl, 'http://localhost:3002/app/same/')).resolves.toBe(false);
-    expect(fetchImpl).toHaveBeenCalledWith('/build-meta.json', { cache: 'no-store' });
+    expect(fetchImpl).toHaveBeenCalledWith('http://localhost:3002/build-meta.json', {
+      cache: 'no-store',
+    });
   });
 
   it('isStaleDeploy is true when build-meta points at a new nonce', async () => {
@@ -76,6 +78,19 @@ describe('deployFreshness', () => {
     })) as unknown as typeof fetch;
 
     await expect(isStaleDeploy(fetchImpl, 'http://localhost:3002/app/old/')).resolves.toBe(true);
+  });
+
+  it.each(['same', 'new'])('checks updates within a subdirectory (%s)', async (nonce) => {
+    const fetchImpl = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({ basePath: '/app/' + nonce + '/' }),
+    })) as unknown as typeof fetch;
+    await expect(
+      isStaleDeploy(fetchImpl, 'https://example.org/chia-gaming/app/same/'),
+    ).resolves.toBe(nonce !== 'same');
+    expect(fetchImpl).toHaveBeenCalledWith('https://example.org/chia-gaming/build-meta.json', {
+      cache: 'no-store',
+    });
   });
 
   it('isStaleDeploy is false when there is no page base', async () => {

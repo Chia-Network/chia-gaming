@@ -6,7 +6,7 @@ const mockSetAlias = jest.fn();
 let mockSavedAlias: string | null = null;
 
 jest.mock('../../../../hub/hub-frontend/src/useHubSocket', () => ({
-  useHubSocket: () => ({
+  useHubSocket: jest.fn(() => ({
     players: [],
     hubUpdateReceived: false,
     pendingChallenge: null,
@@ -25,16 +25,21 @@ jest.mock('../../../../hub/hub-frontend/src/useHubSocket', () => ({
     cancelChallenge: jest.fn(),
     setHubAlias: jest.fn(),
     publicId: null,
-  }),
+  })),
 }));
 
 import HubScreen from '../../../../hub/hub-frontend/src/hub';
+import { useHubSocket } from '../../../../hub/hub-frontend/src/useHubSocket';
 
 describe('hub automatic join', () => {
   it('does not auto-join again when a manually entered alias is saved', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: { location: { origin: 'https://hub.example' } },
+    });
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { baseURI: 'https://hub.example/hubs/beta/app/build/' },
     });
     mockSavedAlias = null;
     mockJoinHub.mockClear();
@@ -44,6 +49,8 @@ describe('hub automatic join', () => {
     act(() => {
       renderer = create(React.createElement(HubScreen, { sessionId: 'ab'.repeat(16) }));
     });
+
+    expect(useHubSocket).toHaveBeenCalledWith('https://hub.example/hubs/beta/', 'ab'.repeat(16));
 
     const input = renderer!.root.findByProps({ placeholder: 'Your name' });
     act(() => {

@@ -278,7 +278,7 @@ export class HubConnection {
   private getWsUrl(): string {
     const url = new URL(this.hubUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    url.pathname = '/ws/game';
+    url.pathname = url.pathname.replace(/\/+$/, '') + '/ws/game';
     url.search = '';
     url.hash = '';
     return url.toString();

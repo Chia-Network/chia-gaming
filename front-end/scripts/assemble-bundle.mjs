@@ -20,6 +20,7 @@ const GAMES_DIR = process.env.GAMES_DIR || resolve(FE, '..', 'games');
 const REPO_ROOT = resolve(FE, '..');
 
 mkdirSync(APP, { recursive: true });
+copyFileSync(join(FE, 'public', 'favicon.svg'), join(APP, 'favicon.svg'));
 
 // Fixed wasm pair (a genuinely fixed 2-file set, so naming it is not fragile).
 const WASM_FILES = ['chia_gaming_wasm.js', 'chia_gaming_wasm_bg.wasm'];
@@ -92,7 +93,7 @@ function floorCheckDebugSidecars(dir) {
   }
 }
 
-for (const f of ['index.js', 'index.css', ...WASM_FILES]) {
+for (const f of ['index.js', 'index.css', 'favicon.svg', ...WASM_FILES]) {
   if (!existsSync(join(APP, f))) {
     errors.push(`missing required file: ${f}`);
   }

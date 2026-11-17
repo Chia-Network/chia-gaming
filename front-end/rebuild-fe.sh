@@ -40,7 +40,7 @@ NONCE_DIR="$SERVE/app/$BUILD_NONCE"
 
 # Root-level files (not versioned)
 cp "$FE_DIR/public/index.html" "$SERVE/index.html"
-[ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$SERVE/favicon.svg"
+cp "$FE_DIR/public/favicon.svg" "$NONCE_DIR/favicon.svg"
 
 cp "$FE_DIR/dist/js/index-rollup.js" "$NONCE_DIR/index.js"
 [ -f "$FE_DIR/dist/js/index-rollup.js.map" ] && cp "$FE_DIR/dist/js/index-rollup.js.map" "$NONCE_DIR/index-rollup.js.map"
