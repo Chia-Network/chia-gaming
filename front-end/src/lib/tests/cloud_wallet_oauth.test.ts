@@ -1,3 +1,4 @@
+import { CLOUD_WALLET_OVERRIDE } from '../../constants/env';
 function makeStorage() {
   const map = new Map<string, string>();
   return {
@@ -435,7 +436,7 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
                 data: {
                   wallet: {
                     id: 'Wallet_stored',
-                    balance: '7',
+                    asset: { spendableAmount: '7' },
                     address: { puzzleHash: 'ab'.repeat(32) },
                   },
                 },
@@ -490,7 +491,7 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
           if (
             (stage === 'refreshing tokens' && url.endsWith('/token')) ||
             (stage === 'resolving the wallet' && body.includes('wallet(id: $id) { id }')) ||
-            (stage === 'starting monitoring' && body.includes('address { puzzleHash }'))
+            (stage === 'starting monitoring' && body.includes('address { puzzleHash address }'))
           ) {
             reached();
             await held;
@@ -684,6 +685,82 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
     // Substituting the grant's first wallet here would send later funding
     // spends to a wallet the user never selected.
     expect(loadCloudWalletAuth()?.walletId).toBe('Wallet_stored');
+  });
+
+  it('reports spendable XCH and offers buy and deposit top-ups for the wallet', async () => {
+    void storageRepository.updatePreference({ key: 'network', value: 'mainnet' });
+    const queries: string[] = [];
+    mockEndpoints((_url, query) => {
+      queries.push(query);
+      if (query.includes('spendableAmount')) {
+        return {
+          status: 200,
+          body: { data: { wallet: { asset: { spendableAmount: '1500' } } } },
+        };
+      }
+      return {
+        status: 200,
+        body: {
+          data: {
+            wallet: {
+              id: 'Wallet_stored',
+              address: { puzzleHash: 'ab'.repeat(32), address: 'xch1deposit' },
+            },
+          },
+        },
+      };
+    });
+
+    const iface = new CloudBlockchainInterface();
+    await (await iface.beginConnect('uid')).finalize();
+
+    await expect(iface.getBalance()).resolves.toBe(1500n);
+    // The settled total would count purchases still inside their clawback window.
+    expect(queries.some((q) => q.includes('asset(assetHash: null)'))).toBe(true);
+    // The walletId preselects, on the purchase page, the vault the game funds from.
+    expect(iface.getTopUpOptions()).toEqual({
+      buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_stored',
+      depositAddress: 'xch1deposit',
+    });
+
+    void storageRepository.updatePreference({ key: 'network', value: 'testnet' });
+    expect(iface.getTopUpOptions().buyUrl).toBeNull();
+    // A local Cloud Wallet runs on testnet but can still sell XCH.
+    CLOUD_WALLET_OVERRIDE.uiUrl = 'https://local.chiatechlab.com';
+    try {
+      expect(iface.getTopUpOptions().buyUrl).toBe(
+        'https://local.chiatechlab.com/buy-xch?walletId=Wallet_stored',
+      );
+    } finally {
+      delete CLOUD_WALLET_OVERRIDE.uiUrl;
+    }
+
+    await iface.disconnect();
+    expect(iface.getTopUpOptions()).toEqual({ buyUrl: null, depositAddress: null });
+    storageRepository._resetForTests();
+  });
+
+  it('fails the balance read when the wallet reports no XCH asset', async () => {
+    mockEndpoints((_url, query) => {
+      if (query.includes('spendableAmount')) {
+        return { status: 200, body: { data: { wallet: { asset: null } } } };
+      }
+      return {
+        status: 200,
+        body: {
+          data: {
+            wallet: {
+              id: 'Wallet_stored',
+              address: { puzzleHash: 'ab'.repeat(32), address: 'xch1a' },
+            },
+          },
+        },
+      };
+    });
+
+    const iface = new CloudBlockchainInterface();
+    await (await iface.beginConnect('uid')).finalize();
+    await expect(iface.getBalance()).rejects.toThrow(/balance unavailable/);
   });
 });
 

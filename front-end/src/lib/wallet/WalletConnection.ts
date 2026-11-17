@@ -11,6 +11,7 @@ import { markSavedSession } from '../session/saveCoordination';
 import type { BlockchainType } from '../session/saveEnvelope';
 import { storageRepository } from '../session/storageRepository';
 import {
+  TOP_UP_BALANCE_POLL_INTERVAL_MS,
   BALANCE_POLL_INTERVAL_MS,
   CHAIN_POLL_INTERVAL_MS,
   BlockchainPoller,
@@ -108,6 +109,14 @@ export class WalletConnection {
   setSessionPolling(active: boolean): void {
     if (active) this.poller?.start();
     else this.poller?.pauseChainPolling();
+  }
+  setAwaitingTopUp(active: boolean): void {
+    this.poller?.setBalanceInterval(
+      active ? TOP_UP_BALANCE_POLL_INTERVAL_MS : BALANCE_POLL_INTERVAL_MS,
+    );
+  }
+  topUpOptions() {
+    return this.provider?.getTopUpOptions?.() ?? null;
   }
   providerScope() {
     return this.provider?.getWalletOfferProvider()?.scope;

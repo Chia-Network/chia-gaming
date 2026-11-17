@@ -166,7 +166,7 @@ describe('desktop Cloud Wallet sign-in through the system browser', () => {
 
   it.each([
     ['resolving the wallet', 'wallet(id: $id) { id }'],
-    ['starting monitoring', 'address { puzzleHash }'],
+    ['starting monitoring', 'address { puzzleHash address }'],
   ])('stores nothing when cancelled while %s', async (_step, heldQuery) => {
     // Hold one GraphQL query open so Cancel lands after the browser returned.
     let release: () => void = () => {};
