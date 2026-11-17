@@ -725,7 +725,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
             disabled={!walletConnected || !blockchainReady || awaitingTopUp || checkingFunds}
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-default disabled:hover:bg-primary-solid"
           >
             {checkingFunds ? 'Checking funds…' : 'Accept'}
           </button>
@@ -760,7 +760,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
           <button
             onClick={() => dispatch({ type: 'accept-session' })}
             disabled={!walletConnected || !blockchainReady || awaitingTopUp || checkingFunds}
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-default disabled:hover:bg-primary-solid"
           >
             {checkingFunds ? 'Checking funds…' : 'Accept'}
           </button>
