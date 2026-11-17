@@ -769,7 +769,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
             &channel_ph,
             &channel_amount,
         )?;
-        self.funding_announcement = Some(announcement);
+        self.funding_announcement = Some(announcement.clone());
 
         let settlement_solution = if let Some(settlement_coin) = &settlement_coin {
             let payment = (pre_identity.puzzle_hash.clone(), (amount.clone(), ()))
@@ -799,6 +799,12 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
             (
                 crate::common::constants::ASSERT_CONCURRENT_SPEND_ATOM[0],
                 (launcher_coin.to_coin_id(), ()),
+            )
+                .to_clvm(env.allocator)
+                .into_gen()?,
+            (
+                crate::common::constants::ASSERT_COIN_ANNOUNCEMENT,
+                (announcement, ()),
             )
                 .to_clvm(env.allocator)
                 .into_gen()?,

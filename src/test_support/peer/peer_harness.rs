@@ -964,6 +964,78 @@ fn prepare_receiver_for_handshake_c(
     (allocator, handlers, pipes, valid_c)
 }
 
+fn receiver_pre_launcher_binds_agreed_channel_output() {
+    use crate::common::types::{CoinCondition, GetCoinStringParts, Sha256Input};
+
+    let (mut allocator, mut handlers, _, valid_c) = prepare_receiver_for_handshake_c([25; 32]);
+    let (launcher_id, channel_puzzle_hash, channel_amount) =
+        get_channel_coin_for_handler(handlers[0].as_ref())
+            .expect("agreed channel coin")
+            .get_coin_string_parts()
+            .expect("channel coin parts");
+    let mut env = ChannelEnv::new(&mut allocator).expect("env");
+    let effects = handlers[1]
+        .received_message(&mut env, valid_c)
+        .expect("valid handshake C");
+    let receiver_bundle = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SendPeer(PeerMessage::HandshakeD(payload)) => Some(&payload.bundle),
+            _ => None,
+        })
+        .expect("receiver funding bundle");
+
+    let launcher = receiver_bundle
+        .spends
+        .iter()
+        .find(|spend| spend.coin.to_coin_id() == launcher_id)
+        .expect("launcher spend");
+    let launcher_conditions = CoinCondition::from_puzzle_and_solution(
+        &mut allocator,
+        launcher.bundle.puzzle.to_program().as_ref(),
+        launcher.bundle.solution.p().as_ref(),
+    )
+    .expect("launcher conditions");
+    assert!(launcher_conditions.iter().any(|condition| matches!(
+        condition,
+        CoinCondition::CreateCoin(ph, amount) if ph == &channel_puzzle_hash && amount == &channel_amount
+    )));
+    let announcement = launcher_conditions
+        .iter()
+        .find_map(|condition| match condition {
+            CoinCondition::CreateCoinAnnouncement(message) => Some(message),
+            _ => None,
+        })
+        .expect("launcher announcement");
+    let announcement_id = Sha256Input::Array(vec![
+        Sha256Input::Bytes(launcher_id.bytes()),
+        Sha256Input::Bytes(announcement),
+    ])
+    .hash();
+
+    let (pre_launcher_id, _, _) = launcher
+        .coin
+        .get_coin_string_parts()
+        .expect("launcher parts");
+    let pre_launcher = receiver_bundle
+        .spends
+        .iter()
+        .find(|spend| spend.coin.to_coin_id() == pre_launcher_id)
+        .expect("pre-launcher spend");
+    let pre_conditions = CoinCondition::from_puzzle_and_solution(
+        &mut allocator,
+        pre_launcher.bundle.puzzle.to_program().as_ref(),
+        pre_launcher.bundle.solution.p().as_ref(),
+    )
+    .expect("pre-launcher conditions");
+    assert!(
+        pre_conditions.iter().any(|condition| matches!(condition,
+            CoinCondition::AssertCoinAnnouncement(id) if id == announcement_id.bytes()
+        )),
+        "receiver's signed pre-launcher must assert the agreed launcher announcement"
+    );
+}
+
 pub fn test_receiver_handshake_c_is_atomic() {
     let (mut allocator, mut handlers, mut pipes, valid_c) =
         prepare_receiver_for_handshake_c([23; 32]);
@@ -1102,6 +1174,10 @@ pub fn test_receiver_handshake_c_genesis_signature_failure_is_atomic() {
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_peer_smoke", &test_peer_smoke),
+        (
+            "receiver_pre_launcher_binds_agreed_channel_output",
+            &receiver_pre_launcher_binds_agreed_channel_output,
+        ),
         (
             "test_receiver_handshake_c_is_atomic",
             &test_receiver_handshake_c_is_atomic,
