@@ -79,6 +79,7 @@ export class BlockchainPoller {
   private previousPeakForCoinReport = 0n;
   private registrationScopeKey: string | undefined;
   private balanceCallbacks: BalanceCallbacks | null = null;
+  private balanceInterestGeneration = 0;
   private balancePollIntervalMs = BALANCE_POLL_INTERVAL_MS;
   private readLane: AsyncJobQueue;
   private mutationLane: AsyncJobQueue;
@@ -492,6 +493,7 @@ export class BlockchainPoller {
   }
 
   stopBalanceInterest(): void {
+    this.balanceInterestGeneration++;
     this.balancePollingScheduler.stop();
     this.balanceCallbacks = null;
     this.releaseConnectionListenerIfIdle();
@@ -733,6 +735,7 @@ export class BlockchainPoller {
 
   private async runBalancePoll(): Promise<void> {
     const connectionEpoch = this.connectionEpoch;
+    const interestGeneration = this.balanceInterestGeneration;
     if (!this.balanceCallbacks || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const balance = await this.runAdapterRpc(connectionEpoch, 'getBalance', () =>
@@ -740,12 +743,17 @@ export class BlockchainPoller {
       );
       if (
         this.isConnectionEpochActive(connectionEpoch) &&
+        interestGeneration === this.balanceInterestGeneration &&
         this.balancePollingScheduler.isInterested()
       ) {
         this.balanceCallbacks?.onBalance(balance);
       }
     } catch (e) {
-      if (!this.isConnectionEpochActive(connectionEpoch)) return;
+      if (
+        !this.isConnectionEpochActive(connectionEpoch) ||
+        interestGeneration !== this.balanceInterestGeneration
+      )
+        return;
       this.balanceCallbacks?.onError?.(e);
     }
   }

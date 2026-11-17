@@ -1,5 +1,5 @@
 import QRCode from 'qrcode';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { getCurrencyLabels } from '../constants/currency';
 import { desktopCloudWalletBridge } from '../lib/wallet/cloudWalletOAuth';
@@ -77,6 +77,7 @@ export function WalletTopUp(props: WalletTopUpProps) {
   // Each result is about the wallet whose page it came from; after a switch the
   // earlier wallet's "placed" or error no longer describes this one.
   const [buyResult, setBuyResult] = useState<{ state: BuyState; url: string } | null>(null);
+  const buyRequest = useRef(0);
   const buyState: BuyState = buyResult && buyResult.url === buyUrl ? buyResult.state : 'idle';
 
   useEffect(() => {
@@ -117,16 +118,19 @@ export function WalletTopUp(props: WalletTopUpProps) {
   }, [showDeposit, depositAddress]);
 
   const openBuy = async (url: string) => {
+    const request = ++buyRequest.current;
     // Desktop has no popups and no passkeys, so the purchase runs in the
     // system browser and only the balance poll reports the result.
     const desktop = desktopCloudWalletBridge();
     if (desktop) {
       try {
         const opened = await desktop.openInBrowser(url);
-        setBuyResult({ state: opened ? 'in-browser' : 'browser-failed', url });
+        // A later Buy click owns the status, even if this response arrives last.
+        if (request === buyRequest.current)
+          setBuyResult({ state: opened ? 'in-browser' : 'browser-failed', url });
       } catch (err) {
         console.error('[WalletTopUp] opening the browser failed', err);
-        setBuyResult({ state: 'browser-failed', url });
+        if (request === buyRequest.current) setBuyResult({ state: 'browser-failed', url });
       }
       return;
     }

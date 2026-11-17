@@ -280,6 +280,61 @@ describe('WalletTopUp Buy', () => {
     expect(text(r)).not.toContain('Finish the purchase in your browser.');
   });
 
+  it.each([
+    ['another wallet', 'opened', true],
+    ['another wallet', 'not-opened', false],
+    ['another wallet', 'rejected', true],
+    ['same wallet', 'opened', false],
+    ['same wallet', 'rejected', true],
+  ] as const)(
+    'preserves the newest desktop result for %s when the old request is %s',
+    async (selection, oldOutcome, newestOpened) => {
+      let resolveOld!: (opened: boolean) => void;
+      let rejectOld!: (error: Error) => void;
+      const openInBrowser = jest
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>((resolve, reject) => {
+              resolveOld = resolve;
+              rejectOld = reject;
+            }),
+        )
+        .mockResolvedValueOnce(newestOpened);
+      win.__chiaCloudWallet = { openInBrowser };
+      const r = render();
+      await clickBuy(r);
+      if (selection === 'another wallet') {
+        act(() => {
+          r.update(
+            <WalletTopUp
+              options={{
+                buyUrl: 'https://vault.chia.net/buy-xch?walletId=Wallet_other',
+                depositAddress: null,
+              }}
+              shortfall={0n}
+            />,
+          );
+        });
+      }
+      await clickBuy(r);
+      const latestMessage = newestOpened
+        ? 'Finish the purchase in your browser.'
+        : 'Could not open your browser.';
+      expect(text(r)).toContain(latestMessage);
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        await act(async () => {
+          if (oldOutcome === 'rejected') rejectOld(new Error('old open failed'));
+          else resolveOld(oldOutcome === 'opened');
+        });
+        expect(text(r)).toContain(latestMessage);
+      } finally {
+        error.mockRestore();
+      }
+    },
+  );
+
   it('ignores a purchase from a window still buying for an earlier wallet', async () => {
     const popup = { closed: false, focus: jest.fn() };
     win.open = jest.fn(() => popup);
