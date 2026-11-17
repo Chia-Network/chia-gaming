@@ -147,10 +147,11 @@ communicates with its own service is internal to the hub and out of scope. The
 player app separately opens a game relay WebSocket at `/ws/game`; that
 connection carries match notifications and peer payloads.
 
-The player app persists one random master secret. For each canonical hub origin
-it derives a distinct 16-byte hub session credential with HMAC-SHA256. The same
-origin-scoped credential is supplied independently to that hub's iframe and
-`identify` message; it is never reused at another hub origin.
+The player app persists one random master secret. For each canonical hub URL
+(origin plus directory mount) it derives a distinct 16-byte hub session
+credential with HMAC-SHA256. The same hub-scoped credential is supplied
+independently to that hub's iframe and `identify` message; it is never reused
+at another hub origin or directory.
 
 The player app remains truly static files deployable on any web server with zero
 configuration.
