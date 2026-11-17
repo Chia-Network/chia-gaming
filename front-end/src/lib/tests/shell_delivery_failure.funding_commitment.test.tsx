@@ -572,8 +572,8 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await act(async () => {
       accept().props.onClick();
     });
-    await waitForText(renderer!, 'Checking wallet…');
-    expect(renderer!.root.findByProps({ children: 'Checking wallet…' }).props.disabled).toBe(true);
+    await waitForText(renderer!, 'Checking funds…');
+    expect(renderer!.root.findByProps({ children: 'Checking funds…' }).props.disabled).toBe(true);
     await act(async () => answer(shortfall));
     await waitForText(renderer!, shortfall);
     expect(spendShortfall).toHaveBeenCalledWith(

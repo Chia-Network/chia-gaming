@@ -727,7 +727,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             disabled={!walletConnected || !blockchainReady || awaitingTopUp || checkingFunds}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
-            {checkingFunds ? 'Checking wallet…' : 'Accept'}
+            {checkingFunds ? 'Checking funds…' : 'Accept'}
           </button>
           <button
             onClick={() => dispatch({ type: 'decline-session' })}
@@ -762,7 +762,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             disabled={!walletConnected || !blockchainReady || awaitingTopUp || checkingFunds}
             className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
           >
-            {checkingFunds ? 'Checking wallet…' : 'Accept'}
+            {checkingFunds ? 'Checking funds…' : 'Accept'}
           </button>
           <button
             onClick={() => dispatch({ type: 'decline-session' })}
