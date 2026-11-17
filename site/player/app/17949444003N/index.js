@@ -57279,6 +57279,21 @@ var Shell = ({ application }) => {
                           )
                         ] }),
                         /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(Button, { onClick: () => dispatch({ type: "wallet-disconnect" }), children: "Disconnect" })
+                      ] }) : walletView.expiredQrWallet ? /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("div", { className: "flex flex-col items-center gap-4 p-6 max-w-md w-full", children: [
+                        /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("p", { className: "text-lg font-semibold text-canvas-text-contrast", role: "status", children: "QR code expired" }),
+                        /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("p", { className: "text-sm text-canvas-text text-center", children: "This connection request timed out. Generate a new QR code to connect your wallet." }),
+                        /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
+                          Button,
+                          {
+                            onClick: () => dispatch({
+                              type: "wallet-connect",
+                              wallet: walletView.expiredQrWallet,
+                              fresh: true
+                            }),
+                            children: "Generate new QR code"
+                          }
+                        ),
+                        /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(Button, { variant: "outline", onClick: () => dispatch({ type: "wallet-cancel" }), children: "Cancel" })
                       ] }) : connectionSetup && !connectionSetup.skipQr ? /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("div", { className: "flex flex-col items-center gap-4 p-6 max-w-md w-full", children: [
                         /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("p", { className: "text-lg font-semibold text-canvas-text-contrast", role: "status", children: "Connecting wallet\u2026" }),
                         /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("p", { className: "text-sm text-canvas-text text-center", children: "Open your Chia wallet and scan this QR code to connect" }),
@@ -58206,12 +58221,12 @@ function bytesFromHex(value) {
 function hexFromBytes(value) {
   return Array.from(value, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-function canonicalHubOrigin(hubUrl) {
+function canonicalHubUrl(hubUrl) {
   const url = new URL(hubUrl);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`unsupported hub URL protocol: ${url.protocol}`);
   }
-  return url.origin;
+  return url.origin + url.pathname.replace(/\/+$/, "");
 }
 async function deriveHubSessionId(masterSessionId, hubUrl, subtle = crypto.subtle) {
   const key = await subtle.importKey(
@@ -58221,8 +58236,8 @@ async function deriveHubSessionId(masterSessionId, hubUrl, subtle = crypto.subtl
     false,
     ["sign"]
   );
-  const origin = canonicalHubOrigin(hubUrl);
-  const signature = await subtle.sign("HMAC", key, encoder.encode(`${CONTEXT}${origin}`));
+  const scope = canonicalHubUrl(hubUrl);
+  const signature = await subtle.sign("HMAC", key, encoder.encode(`${CONTEXT}${scope}`));
   return hexFromBytes(new Uint8Array(signature).subarray(0, 16));
 }
 
@@ -85556,10 +85571,17 @@ function networkName() {
 function wrongNetworkError() {
   return new Error(`Wallet is not currently configured for ${networkName()}.`);
 }
+var WalletConnectProposalExpiredError = class extends Error {
+  constructor() {
+    super("QR code expired");
+    this.name = "WalletConnectProposalExpiredError";
+  }
+};
 function approvalFailure(err) {
-  if (err instanceof Error) return err;
   const { code: code2, message } = typeof err === "object" && err !== null ? err : {};
   const text = typeof message === "string" ? message : typeof err === "string" ? err : "";
+  if (text === "Proposal expired") return new WalletConnectProposalExpiredError();
+  if (err instanceof Error) return err;
   if (typeof code2 === "number" && WC_CHAIN_REJECTION_CODES.includes(code2) || /chain|network/i.test(text)) {
     return wrongNetworkError();
   }
@@ -87993,7 +88015,7 @@ var WalletConnection = class {
     const { provider, interval } = providerFor(type);
     try {
       this.select(type);
-      this.update({ connecting: true, preparingConnection: true });
+      this.update({ connecting: true, preparingConnection: true, expiredQrWallet: void 0 });
       const setup = await provider.beginConnect(storageRepository.getPlayerId(), fresh);
       if (attempt !== this.connectionAttempt) return false;
       this.update({ preparingConnection: false });
@@ -88020,9 +88042,11 @@ var WalletConnection = class {
       return true;
     } catch (error2) {
       if (attempt !== this.connectionAttempt) return false;
-      console.error(`[wallet] ${type} connect failed`, error2);
+      const expiredQrWallet = error2 instanceof WalletConnectProposalExpiredError && (type === "walletconnect" || type === "sage") ? type : void 0;
+      if (!expiredQrWallet) console.error(`[wallet] ${type} connect failed`, error2);
       this.update({
-        error: error2 instanceof Error ? error2.message : String(error2),
+        error: expiredQrWallet ? null : error2 instanceof Error ? error2.message : String(error2),
+        expiredQrWallet,
         preparingConnection: false
       });
       if (silent) {
@@ -88102,6 +88126,7 @@ var WalletConnection = class {
     this.presentSetup(null);
     this.update({
       walletType: void 0,
+      expiredQrWallet: void 0,
       connecting: false,
       preparingConnection: false,
       connected: false,
@@ -88119,6 +88144,7 @@ var WalletConnection = class {
     this.presentSetup(null);
     this.update({
       walletType: void 0,
+      expiredQrWallet: void 0,
       connected: false,
       connecting: false,
       preparingConnection: false,

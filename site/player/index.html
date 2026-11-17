@@ -23,7 +23,9 @@
         // Capture the installation root before installing the asset base URL.
         // The OAuth callback is a real directory page on static hosts.
         var rootPath = window.location.pathname.replace(/oauth\/callback\/?$/, '');
-        var appRoot = new URL('./', new URL(rootPath, window.location.origin));
+        // Concatenate rather than resolve: a path starting with `//` would
+        // otherwise parse as scheme-relative and move the root to another host.
+        var appRoot = new URL('./', window.location.origin + rootPath);
         fetch(new URL('build-meta.json', appRoot), { cache: 'no-store' })
           .then(function (r) {
             return r.json();
