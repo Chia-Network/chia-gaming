@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <title>Chia Gaming</title>
+  </head>
+  <body id="body">
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+    <script>
+      (function () {
+        if (window.top !== window) {
+          document.getElementById('root').innerHTML =
+            '<main style="box-sizing:border-box;max-width:40rem;margin:4rem auto;padding:0 1.5rem;font-family:system-ui,sans-serif;line-height:1.5;color:#b91c1c">' +
+            '<h1 style="font-size:1.25rem">This is a player URL, not a hub URL</h1>' +
+            '<p>The Chia Gaming player cannot run inside the hub frame. Go back and enter the hub address instead (for example, <code>https://hub.example.com</code>).</p>' +
+            '</main>';
+          return;
+        }
+
+        // Capture the installation root before installing the asset base URL.
+        // The OAuth callback is a real directory page on static hosts.
+        var rootPath = window.location.pathname.replace(/oauth\/callback\/?$/, '');
+        var appRoot = new URL('./', new URL(rootPath, window.location.origin));
+        fetch(new URL('build-meta.json', appRoot), { cache: 'no-store' })
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (meta) {
+            var base = document.createElement('base');
+            base.href = new URL(meta.basePath.replace(/^\/+/, ''), appRoot).href;
+            document.head.appendChild(base);
+
+            var icon = document.createElement('link');
+            icon.rel = 'icon';
+            icon.type = 'image/svg+xml';
+            icon.href = 'favicon.svg';
+            document.head.appendChild(icon);
+
+            // Start WASM bytes as early as possible (before glue calls loadWasm).
+            var preloadWasm = document.createElement('link');
+            preloadWasm.rel = 'preload';
+            preloadWasm.as = 'fetch';
+            preloadWasm.href = 'chia_gaming_wasm_bg.wasm';
+            preloadWasm.crossOrigin = 'anonymous';
+            document.head.appendChild(preloadWasm);
+
+            var css = document.createElement('link');
+            css.rel = 'stylesheet';
+            css.href = 'index.css';
+            document.head.appendChild(css);
+
+            var wasm = document.createElement('script');
+            wasm.type = 'module';
+            wasm.textContent = [
+              'import * as cg from "./chia_gaming_wasm.js";',
+              'const deliver = () => window.loadWasm(cg.default, cg);',
+              'if (window.loadWasm) deliver();',
+              'else window.addEventListener("chia-gaming-wasm-loader-ready", deliver, { once: true });',
+            ].join('\n');
+            document.body.appendChild(wasm);
+
+            var app = document.createElement('script');
+            app.type = 'module';
+            app.src = 'index.js';
+            document.body.appendChild(app);
+          })
+          .catch(function (err) {
+            document.getElementById('root').textContent =
+              'Failed to load build metadata: ' + err.message;
+          });
+      })();
+    </script>
+  </body>
+</html>

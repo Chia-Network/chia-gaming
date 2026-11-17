@@ -1,0 +1,627 @@
+ÿCHIALISP_DEBUGÿÿÿÿ€ÿ Eój£öAqÜŒÇ¦¢XîÂAÏÅå~‹X³ß"ÙQÿÿÿ¬games/spacepoker/clsp/onchain/mid_round.clspÿÊÈ(include *standard-cl-26*)
+(import std.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
+
+(import games.spacepoker.clsp.onchain.begin_round exposing (program_hash as begin_hash))
+(import games.spacepoker.clsp.onchain.end exposing (program_hash as end_hash))
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
+(import std.relops)
+(import std.li)
+
+; state is (bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N)
+;
+; begin_hash is imported directly (begin_round does not import mid_round,
+; so there is no circular dependency). mod_hash (mid_round's own hash) is
+; used for the raise self-loop and passed into begin_round's state on
+; callback so begin_round can transition here without importing mid_round.
+;
+; Image positions swap perspective each turn: begin_round outputs
+; (waiter_image, mover_image) from its own view, which mid_round reads
+; as (mover_image, waiter_image) since the mover/waiter roles alternate.
+;
+; MOVE is either:
+;   - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
+;   - a call: preimage that hashes to mover_image_N (16 bytes at N=1, 32 otherwise)
+; evidence is empty
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (space-raise bet_unit half_pot last_raise_amount mover_image_N waiter_image_N N) previous_validation_program evidence unused_payout)
+
+    (if (> (strlen MOVE) 32)
+        ; raise branch â€” prior raise commits to pot for both players
+        (assign
+            new_raise_amount (substr MOVE 32 (strlen MOVE))
+            (if_any_fail
+                (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
+                (>= new_raise_amount 0)
+                (<= (+ half_pot last_raise_amount new_raise_amount) (/ AMOUNT 2))
+                0
+                (validator-transition mod_hash (make-space-raise bet_unit (+ half_pot last_raise_amount) new_raise_amount
+                        waiter_image_N mover_image_N N) 42)
+            )
+        )
+        ; call branch: MOVE is preimage that hashes to mover_image_N
+        (if_any_fail
+            (= (strlen MOVE) (i (= N 1) 16 32))
+            (= (sha256 MOVE) mover_image_N)
+            (= MOVER_SHARE (- (/ AMOUNT 2) (+ half_pot last_raise_amount)))
+            0
+            (if (= N 1)
+                (validator-transition end_hash (make-space-end (+ half_pot last_raise_amount) waiter_image_N MOVE) 17)
+                (validator-transition begin_hash (make-space-open bet_unit (+ half_pot last_raise_amount)
+                        waiter_image_N MOVE (- N 1) mod_hash) 42)
+            )
+        )
+    )
+)
+€ÿÿ‡*prims*ÿ€€ÿÿ–clsp/std/prelude.clincÿÅ;; Standard prelude
+
+(defmac __chia__primitive__if (A B C)
+  (qq (a (i (unquote A) (com (unquote B)) (com (unquote C))) @))
+  )
+
+(defun __chia__if (ARGS)
+  (__chia__primitive__if (r (r (r ARGS)))
+    (qq (a (i (unquote (f ARGS)) (com (unquote (f (r ARGS)))) (com (unquote (__chia__if (r (r ARGS)))))) @))
+    (qq (a (i (unquote (f ARGS)) (com (unquote (f (r ARGS)))) (com (unquote (f (r (r ARGS)))))) @))
+    )
+  )
+
+(defmac if ARGS (__chia__if ARGS))
+
+(defun __chia__compile-list (args)
+  (if args
+    (c 4 (c (f args) (c (__chia__compile-list (r args)) ())))
+    ()
+    )
+  )
+
+(defmac list ARGS (__chia__compile-list ARGS))
+
+(defun-inline / (A B) (f (divmod A B)))
+
+(defun __chia__sha256tree (t)
+  (a
+    (i
+      (l t)
+      (com (sha256 2 (__chia__sha256tree (f t)) (__chia__sha256tree (r t))))
+      (com (sha256 1 t))
+      )
+    @
+    )
+  )
+
+(defun-inline c* (A B) (c A B))
+(defun-inline a* (A B) (a A B))
+(defun-inline coerce (X) : (Any -> Any) X)
+(defun-inline explode (X) : (forall a ((Exec a) -> a)) X)
+(defun-inline bless (X) : (forall a ((Pair a Unit) -> (Exec a))) (coerce X))(defun-inline lift (X V) : (forall a (forall b ((Pair (Exec a) (Pair b Unit)) -> (Exec (Pair a b))))) (coerce X))
+(defun-inline unlift (X) : (forall a (forall b ((Pair (Exec (Pair a b)) Unit) -> (Exec b)))) (coerce X))
+€ÿÿ•clsp/std/shapes.clincÿà.}(import std.pack)
+
+; Generated constructors need an identity in this directly imported namespace.
+(defun-inline shapes-li VALUES VALUES)
+
+; Shape templates are compile-time syntax. See clsp/std/shapes.md.
+; Facts use masks: pair=1, non-nil atom=2, nil=4; unconstrained=7.
+; Paths are binary heap indices (root=1, left=2*p, right=2*p+1).
+
+(defun shapes-append (A B)
+    (if A (c (f A) (shapes-append (r A) B)) B))
+
+(defun shapes-tag (TREE TAG)
+    (if (l TREE) (if (l (f TREE)) 0 (= (f TREE) TAG)) 0))
+
+(defun shapes-optional (ARGS)
+    (if ARGS (if (r ARGS) ARGS (f ARGS)) ()))
+
+(defun shapes-literal-nil (TREE)
+    (if (l TREE) 0 (if TREE (= TREE (q . nil)) 1)))
+
+; Validation runs on macro syntax only, never on runtime values.
+(defun shapes-reserved-name (NAME)
+    (if (l NAME) 0
+        (if (shapes-literal-nil NAME) 1
+            (if (= NAME (q . atom)) 1 (= NAME (q . optional))))))
+
+(defun shapes-proper-list (XS)
+    (if (l XS) (shapes-proper-list (r XS)) (not XS)))
+
+(defun shapes-check (TREE BINDING)
+    (if (l TREE) (shapes-check-pair TREE BINDING)
+        (if (shapes-literal-nil TREE) TREE
+            (if (if BINDING (shapes-reserved-name TREE) 0)
+                (x (q . "reserved shape field name: atom or optional")) TREE))))
+
+(defun shapes-check-atom (ARGS BINDING)
+    (if (l ARGS)
+        (if (r ARGS) (x (q . "atom takes exactly one field"))
+            (assign FIELD (f ARGS)
+                (if (l FIELD) (x (q . "atom field must be a leaf"))
+                    (if (if BINDING (shapes-reserved-name FIELD) 0)
+                        (x (q . "atom field cannot be nil, atom, or optional"))
+                        (list (q . atom) FIELD)))))
+        (x (q . "atom takes exactly one field"))))
+
+(defun shapes-check-optional (ARGS BINDING)
+    (if (l ARGS)
+        (if (shapes-proper-list ARGS)
+            (list (q . optional) (shapes-check (shapes-optional ARGS) BINDING))
+            (x (q . "optional needs a proper list of template arguments")))
+        (x (q . "optional needs at least one template"))))
+
+(defun shapes-check-pair (TREE BINDING)
+    (if (shapes-tag TREE (q . atom)) (shapes-check-atom (r TREE) BINDING)
+        (shapes-tag TREE (q . optional)) (shapes-check-optional (r TREE) BINDING)
+        (c (shapes-check (f TREE) BINDING) (shapes-check (r TREE) BINDING))))
+
+; Keep pair traversal in a separate helper: the cl-23 optimizer can hoist
+; repeated tail access across sibling branches. Enter only after testing l.
+; Return (facts stripped-pattern names). Optional suppresses every fact below it.
+(defun shapes-parse (TREE PATH OPTIONAL)
+    (if (l TREE) (shapes-parse-pair TREE PATH OPTIONAL)
+        (if (shapes-literal-nil TREE)
+            (list (if OPTIONAL () (list (list PATH 4))) () ())
+            (list () TREE (list TREE)))))
+
+(defun shapes-parse-pair (TREE PATH OPTIONAL)
+    (if (shapes-tag TREE (q . optional))
+        (shapes-parse (shapes-optional (r TREE)) PATH 1)
+        (shapes-tag TREE (q . atom))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (f (r TREE)) PATH 1)
+            (if (r (r TREE)) (x (q . "atom takes one name"))
+                (list (if OPTIONAL () (list (list PATH 6))) PATTERN NAMES)))
+        (assign
+            (LF LP LN) (shapes-parse (f TREE) (* PATH 2) OPTIONAL)
+            (RF RP RN) (shapes-parse (r TREE) (+ (* PATH 2) 1) OPTIONAL)
+            (list (shapes-append (if OPTIONAL () (list (list PATH 1)))
+                                (shapes-append LF RF))
+                  (c LP RP) (shapes-append LN RN)))))
+
+(defun shapes-lookup (KEY ENTRIES DEFAULT)
+    (if ENTRIES
+        (if (= KEY (f (f ENTRIES))) (f (r (f ENTRIES)))
+            (shapes-lookup KEY (r ENTRIES) DEFAULT))
+        DEFAULT))
+
+(defun shapes-zip (NAMES VALUES)
+    (if NAMES
+        (if VALUES (c (list (f NAMES) (f VALUES)) (shapes-zip (r NAMES) (r VALUES)))
+            (x (q . "too few shape arguments")))
+        (if VALUES (x (q . "too many shape arguments")) ())))
+
+(defun shapes-substitute (TREE VALUES)
+    (if (l TREE) (shapes-substitute-pair TREE VALUES)
+        (if (shapes-literal-nil TREE) TREE (shapes-lookup TREE VALUES TREE))))
+
+(defun shapes-substitute-pair (TREE VALUES)
+    (if (shapes-tag TREE (q . optional))
+        (c (q . optional) (shapes-substitute (r TREE) VALUES))
+        (shapes-tag TREE (q . atom))
+        (list (q . atom) (shapes-substitute (f (r TREE)) VALUES))
+        (c (shapes-substitute (f TREE) VALUES) (shapes-substitute (r TREE) VALUES))))
+
+(defun shapes-instantiate (TREE VALUES)
+    (if VALUES
+        (assign (_ _ NAMES) (shapes-parse TREE 1 0)
+            (shapes-substitute TREE (shapes-zip NAMES VALUES)))
+        TREE))
+
+; Expose dotted tails as standalone forms so nested shape macros expand there,
+; too. The compiler's ordinary inward expansion walks proper-list elements.
+(defmac shapes-join (LEFT RIGHT) (c LEFT RIGHT))
+(defmac shapes-normalize (TREE)
+    (if (l TREE)
+        (list (q . shapes-join)
+            (list (q . shapes-normalize) (f TREE))
+            (list (q . shapes-normalize) (r TREE)))
+        TREE))
+
+(defmac defun-shape (NAME TREE)
+    (if (shapes-reserved-name NAME)
+        (x (q . "shape name cannot be nil, atom, or optional"))
+        (list (q . shapes-define-expanded) NAME (list (q . shapes-normalize) TREE))))
+
+(defun shapes-unique (NAMES)
+    (if NAMES
+        (if (shapes-contains (f NAMES) (r NAMES)) 0 (shapes-unique (r NAMES)))
+        1))
+
+(defmac shapes-define-expanded (NAME TREE)
+    (assign (_ _ NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+        (if (shapes-unique NAMES)
+            (list (q . defmac) NAME (q . shapes-values)
+                (list (q . shapes-instantiate) (c 1 TREE) (q . shapes-values)))
+            (x (q . "shape field names must be unique")))))
+
+(defmac make (TREE)
+    (list (q . shapes-make-expanded) (list (q . shapes-normalize) TREE)))
+(defmac shapes-make-expanded (TREE)
+    (assign (_ PATTERN _) (shapes-parse (shapes-check TREE 0) 1 0)
+        (pack-build (q . shapes-li) PATTERN)))
+
+(defmac invoke (FUNCTION TREE)
+    (list FUNCTION (q . &rest) (list (q . make) TREE)))
+
+(defun shapes-access (PATH VALUE)
+    (if (= PATH 1) VALUE
+        (list (if (logand PATH 1) 6 5) (shapes-access (/ PATH 2) VALUE))))
+
+; Find a declared field in the stripped pattern. Zero means absent.
+(defun shapes-field-path (TREE FIELD PATH)
+    (if (l TREE)
+        (assign LEFT (shapes-field-path (f TREE) FIELD (* PATH 2))
+            (if LEFT LEFT (shapes-field-path (r TREE) FIELD (+ (* PATH 2) 1))))
+        (if (= TREE FIELD) PATH 0)))
+
+(defmac get-field (TREE FIELD VALUE)
+    (list (q . shapes-get-field-expanded) (list (q . shapes-normalize) TREE) FIELD VALUE))
+
+(defmac shapes-get-field-expanded (TREE FIELD VALUE)
+    (if (if (l FIELD) 1 (shapes-reserved-name FIELD))
+        (x (q . "get-field needs a non-reserved field name"))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (assign PATH (shapes-field-path PATTERN FIELD 1)
+                    (if PATH (shapes-access PATH VALUE)
+                        (x (q . "unknown shape field") FIELD)))
+                (x (q . "shape field names must be unique"))))))
+
+(defun shapes-cases (CASES)
+    (if CASES
+        (assign
+            (TREE BODY) (f CASES)
+            (FACTS PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (c (list FACTS PATTERN BODY) (shapes-cases (r CASES)))
+                (x (q . "shape field names must be unique"))))
+        ()))
+
+; Common guarantees are usable under the closed-union contract. Optional paths
+; contribute none. Facts learned by actual tests refine each surviving case.
+(defun shapes-common-pair (PATH CASES)
+    (if CASES
+        (if (= (shapes-lookup PATH (f (f CASES)) 7) 1)
+            (shapes-common-pair PATH (r CASES)) 0)
+        1))
+
+(defun shapes-safe (PATH CASES)
+    (if (= PATH 1) 1
+        (if (shapes-common-pair (/ PATH 2) CASES)
+            (shapes-safe (/ PATH 2) CASES) 0)))
+
+(defun shapes-tests-for (FACTS)
+    (if FACTS
+        (assign
+            (PATH MASK) (f FACTS)
+            REST (shapes-tests-for (r FACTS))
+            (c (list PATH 1) (if (= MASK 4) (c (list PATH 4) REST) REST)))
+        ()))
+
+(defun shapes-tests (CASES)
+    (if CASES (shapes-append (shapes-tests-for (f (f CASES))) (shapes-tests (r CASES))) ()))
+
+(defun shapes-refine (CASES PATH MASK)
+    (if CASES
+        (assign
+            (FACTS PATTERN BODY) (f CASES)
+            NARROW (logand (shapes-lookup PATH FACTS 7) MASK)
+            REST (shapes-refine (r CASES) PATH MASK)
+            (if NARROW (c (list (c (list PATH NARROW) FACTS) PATTERN BODY) REST) REST))
+        ()))
+
+(defun shapes-length (XS)
+    (if XS (+ 1 (shapes-length (r XS))) 0))
+
+; Prefer a singleton split first, then the split with the smallest worst side.
+; If no separating test is safe, allow a parent guard whose pair outcome keeps
+; every candidate but makes a deeper test safe. At least one outcome must remove
+; a candidate; refining facts prevents the same guard being selected again.
+(defun shapes-best (TESTS CASES COUNT BEST SCORE)
+    (if TESTS
+        (assign
+            (PATH MASK) (f TESTS)
+            YES (shapes-length (shapes-refine CASES PATH MASK))
+            NO (shapes-length (shapes-refine CASES PATH (logxor 7 MASK)))
+            WORST (if (> YES NO) YES NO)
+            BEST-SIDE (if (> YES NO) NO YES)
+            RANK (if (> COUNT WORST)
+                (if (if (= YES 1) 1 (= NO 1)) 0 WORST)
+                (* COUNT 2))
+            USE (if (shapes-safe PATH CASES)
+                (if YES (if NO (if (> COUNT BEST-SIDE) (> SCORE RANK) 0) 0) 0) 0)
+            (shapes-best (r TESTS) CASES COUNT
+                (if USE (f TESTS) BEST) (if USE RANK SCORE)))
+        BEST))
+
+(defun shapes-dispatch (VALUE CASES)
+    (if (r CASES)
+        (assign
+            TEST (shapes-best (shapes-tests CASES) CASES (shapes-length CASES) () 0x7fffffff)
+            (if TEST
+                (assign
+                    (PATH MASK) TEST
+                    ACCESS (shapes-access PATH VALUE)
+                    (list (q . if) (list (if (= MASK 1) 7 32) ACCESS)
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
+                (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
+        (assign (_ PATTERN BODY) (f CASES)
+            (list (q . assign) PATTERN VALUE BODY))))
+
+; Pick a binding name absent from the entire input, including nested dispatches.
+; Preserve its symbol type: concat yields a numeric atom, not a variable name.
+(defun shapes-contains (NAME TREE)
+    (if (l TREE)
+        (if (shapes-contains NAME (f TREE)) 1 (shapes-contains NAME (r TREE)))
+        (= NAME TREE)))
+
+(defun shapes-fresh (NAME TREE)
+    (if (shapes-contains NAME TREE) (shapes-fresh (string->symbol (string-append (symbol->string NAME) "_")) TREE) NAME))
+
+(defun shapes-check-case (CASE)
+    (if (shapes-proper-list CASE)
+        (if (= (shapes-length CASE) 2) CASE
+            (x (q . "if-shape branch needs a template and one body")))
+        (x (q . "if-shape branch needs a template and one body"))))
+
+(defun shapes-normalize-cases (CASES)
+    (if CASES
+        (assign CASE (shapes-check-case (f CASES))
+            (c (list (list (q . shapes-normalize) (f CASE)) (f (r CASE)))
+                (shapes-normalize-cases (r CASES))))
+        ()))
+
+(defmac if-shape (VALUE . CASES)
+    (c (q . shapes-if-expanded) (c VALUE (shapes-normalize-cases CASES))))
+
+(defmac shapes-if-expanded (VALUE . CASES)
+    (if CASES
+        (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
+            (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+        (x (q . "if-shape needs at least one alternative"))))
+€ÿÿ¡clsp/referee/onchain/shapes.clincÿÆ(import std.shapes)
+
+; Keep the Rust encoders/decoder in src/referee/types.rs aligned with these.
+(defun-shape referee-parameters
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+      MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A))
+
+(defun-shape referee-timeout
+    ((atom mover_payout_ph) . (atom waiter_payout_ph)))
+
+(defun-shape referee-move
+    (((atom new_move) . (atom infohash_c)) . ((atom new_mover_share) . (atom new_max_move_size))))
+
+; A pair on the left and an atom on the right distinguishes slash from both
+; timeout (two atoms) and move (two pairs). Evidence contributes no constraints.
+(defun-shape referee-slash
+    ((previous_state previous_validation_program . (optional evidence)) . (atom mover_payout_ph)))
+
+; Shared by on-chain validators and off-chain validation. Payout is unused by
+; validators; off-chain calls supply nil there. No terminating list nils.
+(defun-shape referee-validator-args
+    (validator_hash curried_args (state validation_program . evidence) . payout))
+
+; Non-nil validator result. The conditions tail is a variable-length list.
+; Terminal success has nil hash/state and zero size; nil itself means slash.
+(defun-shape referee-result
+    ((next_validator_hash . new_state) . (max_move_size . extra_conditions)))
+(defun-inline validator-result (next_validator_hash new_state max_move_size extra_conditions)
+    (make (referee-result)))
+(defun-inline validator-transition (next_validator_hash new_state max_move_size)
+    (validator-result next_validator_hash new_state max_move_size ()))
+€ÿÿ°./games/spacepoker/clsp/onchain/begin_round.clspÿËá(include *standard-cl-26*)
+(import std.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
+
+(import games.game_codes)
+(import std.and)
+(import std.if_any_fail)
+(import std.relops)
+(import std.li)
+
+; state is (bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash)
+; mid_hash is curried into begin_round's state by commitB (and by mid_round
+; on callback), avoiding a circular import: mid_round imports begin_round
+; directly, and begin_round gets mid_hash from state instead.
+;
+; At N=4, a coin toss decides who opens the first betting round. With both
+; image_4s revealed, the toss is:
+;   mover_opens = (> mover_image_N waiter_image_N) ==
+;                 (logand (logxor mover_image_N waiter_image_N) 1)
+; The xor bit is invariant under mover/waiter swap, while (>) flips, so
+; the toss flips exactly under swap -- after a pong, the new mover always
+; opens.
+;
+; The coin toss decides interpretation of MOVE BEFORE move shape is
+; inspected. A bare 32-byte move is ambiguous (could be "check" or "pong");
+; the toss disambiguates so the mover cannot ignore an unfavorable toss
+; by opening with a check.
+;
+; MOVE is either:
+;   - open: mover_image_N (32 bytes) concatenated with raise amount
+;     (>=0 bytes). Valid only when mover_opens.
+;   - pong: mover_image_N (exactly 32 bytes). Valid only at N=4 when
+;     mover_opens is false. Transitions back to begin_round with
+;     mover/waiter images swapped and N still 4.
+; evidence is empty
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (space-open bet_unit half_pot mover_image_Nplus1 waiter_image_N N mid_hash) previous_validation_program evidence unused_payout)
+
+    (if (< (strlen MOVE) 32)
+        0
+        (assign
+            mover_image_N (substr MOVE 0 32)
+            raise_amount (substr MOVE 32 (strlen MOVE))
+            mover_opens (if (= N 4)
+                (= (> mover_image_N waiter_image_N)
+                   (logand (logxor mover_image_N waiter_image_N) 1))
+                1
+            )
+            (if_any_fail
+                (= MOVER_SHARE (- (/ AMOUNT 2) half_pot))
+                (= mover_image_Nplus1 (sha256 mover_image_N))
+                0
+                (if mover_opens
+                    (if_any_fail
+                        (>= raise_amount 0)
+                        (<= (+ half_pot raise_amount) (/ AMOUNT 2))
+                        0
+                        (validator-transition mid_hash (make-space-raise bet_unit half_pot raise_amount
+                                waiter_image_N mover_image_N N) 42)
+                    )
+                    (if (= (strlen MOVE) 32)
+                        (validator-transition mod_hash (make-space-open bet_unit half_pot
+                                (sha256 waiter_image_N) mover_image_N N mid_hash) 42)
+                        0
+                    )
+                )
+            )
+        )
+    )
+)
+€ÿÿ¨./games/spacepoker/clsp/onchain/end.clspÿÓó(include *standard-cl-26*)
+(import std.shapes)
+(import games.spacepoker.clsp.onchain.shapes)
+(import referee.onchain.shapes)
+
+(import games.spacepoker.clsp.onchain.space_hand_eval exposing space_hand_eval)
+(import std.and)
+(import std.assert)
+(import std.if_any_fail)
+(import std.relops)
+(import std.deep_compare)
+(import std.popcount)
+(import std.li)
+
+; state is (space-end)
+; MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
+; evidence is waiter's card selection bitfield
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (space-end) previous_validation_program evidence unused_payout)
+
+    (if_any_fail
+        (= (strlen MOVE) 17)
+        (not VALIDATION_INFO_HASH)
+        (= mover_image (sha256 (substr MOVE 0 16)))
+        0
+        (assign
+            mover_bitfield (substr MOVE 16 17)
+            (if_any_fail
+                (not (logand mover_bitfield 0x80))
+                (= (popcount mover_bitfield) 5)
+                0
+                ; Nil evidence inspects the transition without attempting
+                ; a slash. Non-nil evidence is the waiter's selection.
+                (if (not evidence)
+                    (validator-transition 0 0 0)
+                    (assign
+                        (space-cards mover_cards waiter_cards mover_boost waiter_boost)
+                            (make_all_cards (substr MOVE 0 16) waiter_preimage)
+                        mover_selected (pull_from_bitfield mover_cards mover_bitfield)
+                        (assert
+                            (= (strlen evidence) 1)
+                            (not (logand evidence 0x80))
+                            (= (popcount evidence) 5)
+                            (assign
+                                waiter_selected (pull_from_bitfield waiter_cards evidence)
+                                fair_share (assign result (deep_compare
+                                        (space_hand_eval mover_selected mover_boost)
+                                        (space_hand_eval waiter_selected waiter_boost))
+                                    (if (not result)
+                                        (/ AMOUNT 2)
+                                        (= result 1)
+                                        (- (/ AMOUNT 2) half_pot)
+                                        (+ (/ AMOUNT 2) half_pot)
+                                    )
+                                )
+                                ; The move creates a coin with roles swapped,
+                                ; so MOVER_SHARE is the previous waiter's share.
+                                (if (< MOVER_SHARE fair_share)
+                                    0
+                                    (validator-transition 0 0 0)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+
+(defun pull_from_bitfield (cards bitfield)
+    (if (not cards) 0
+        (assign remaining (pull_from_bitfield (r cards) (lsh bitfield -1))
+            (if (logand bitfield 1)
+                (c (f cards) remaining)
+                remaining
+            )
+        )
+    )
+)
+
+; Community cards are revealed in the order: flop (3 cards from chain
+; position 3, revealed first), turn (1 card from position 2), river (1
+; card from position 1). The card list order here must match
+; derive_all_cards in spacepoker_generate.clinc so the bitfield indexes
+; the same cards on both sides.
+(defun make_all_cards (alice_pre bob_pre)
+    (assign
+        alice_image_1 (sha256 alice_pre)
+        alice_image_2 (sha256 alice_image_1)
+        alice_image_3 (sha256 alice_image_2)
+        alice_image_4 (sha256 alice_image_3)
+        bob_image_1 (sha256 bob_pre)
+        bob_image_2 (sha256 bob_image_1)
+        bob_image_3 (sha256 bob_image_2)
+        bob_image_4 (sha256 bob_image_3)
+        (flop_1 flop_2 flop_3) (make_cards alice_image_3 bob_image_3 3)
+        turn_card (f (make_cards alice_image_2 bob_image_2 1))
+        river_card (f (make_cards alice_image_1 bob_image_1 1))
+        (alice_hole_1 alice_hole_2) (make_cards alice_pre bob_image_4 2)
+        (bob_hole_1 bob_hole_2) (make_cards bob_pre alice_image_4 2)
+        alice_cards (li alice_hole_1 alice_hole_2 flop_1 flop_2 flop_3 turn_card river_card)
+        bob_cards (li bob_hole_1 bob_hole_2 flop_1 flop_2 flop_3 turn_card river_card)
+        alice_boost (not (% (sha256 (logxor alice_pre bob_image_4)) 3))
+        bob_boost (not (% (sha256 (logxor bob_pre alice_image_4)) 3))
+        (make-space-cards alice_cards bob_cards alice_boost bob_boost)
+    )
+)
+
+(defun make_cards (thing1 thing2 num_cards)
+    (extract_cards (sha256 (logxor thing1 thing2)) num_cards)
+)
+
+(defun extract_cards (value num_cards)
+    (if (not num_cards)
+        0
+        (assign
+            (nextval . next_card) (divmod value 13)
+            (c (+ 2 next_card) (extract_cards nextval (- num_cards 1)))
+        )
+    )
+)
+€ÿÿ•clsp/std/relops.clincÿÀ‘(defun-inline >= (A B) (not (> B A)))
+(defun-inline <= (A B) (not (> A B)))
+(defun-inline <  (A B) (> B A))
+(defun-inline != (A B) (not (= A B)))€€ÿÿˆmod_hashÿŒMOVER_PUBKEYÿWAITER_PUBKEYÿ‡TIMEOUTÿ†AMOUNTÿˆMOD_HASHÿ…NONCEÿ„MOVEÿMAX_MOVE_SIZEÿ”VALIDATION_INFO_HASHÿ‹MOVER_SHAREÿPREVIOUS_VALIDATION_INFO_HASHÿˆbet_unitÿˆhalf_potÿ‘last_raise_amountÿmover_image_Nÿwaiter_image_NÿNÿ›previous_validation_programÿˆevidenceÿunused_payoutÿnew_raise_amountÿ’letbinding_$_86483ÿ†<main>€ÿÿÿ€ÿ"ÿÿ"ÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ"ÿ
+ÿ"ÿ€ÿÿ€ÿ"ÿÿ"ÿ€ÿÿ€ÿ"ÿÿ"ÿ€ÿÿ€ÿ"ÿÿ"ÿ€ÿÿ€ÿ"ÿÿ$ÿ€ÿÿ€ÿ$ÿ
+ÿ$ÿ€ÿÿ€ÿ%ÿÿ%ÿ%€ÿÿ€ÿ%ÿ&ÿ%ÿ*€ÿÿ€ÿ%ÿ+ÿ%ÿ-€ÿÿ€ÿ%ÿ/ÿ%ÿ5€ÿÿ€ÿ%ÿ6ÿ%ÿ:€ÿÿ€ÿ"ÿÿ0ÿ€ÿÿ€ÿ0ÿ	ÿ0ÿ€ÿÿ€ÿ1ÿÿ1ÿ€ÿÿ€ÿ1ÿÿ1ÿ€ÿÿ€ÿ1ÿÿ1ÿ€ÿÿ€ÿ1ÿÿ1ÿ €ÿÿ€ÿ1ÿ"ÿ1ÿ#€ÿÿ€ÿ1ÿ$ÿ1ÿ%€ÿÿ€ÿ1ÿ&ÿ1ÿ'€ÿÿ€ÿ1ÿ)ÿ1ÿ+€ÿÿ€ÿ1ÿ,ÿ1ÿ.€ÿÿ€ÿ0ÿ	ÿ0ÿ€ÿÿ€ÿ2ÿÿ2ÿ€ÿÿ€ÿ2ÿÿ2ÿ€ÿÿ€ÿ2ÿÿ2ÿ€ÿÿ€ÿ2ÿÿ2ÿ+€ÿÿ€ÿ0ÿ	ÿ3ÿM€ÿÿ€ÿ3ÿÿ3ÿ€ÿÿ€ÿ3ÿÿ3ÿ€ÿÿ€ÿ3ÿÿ3ÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ!€ÿÿ€ÿ3ÿ"ÿ3ÿ(€ÿÿ€ÿ3ÿ)ÿ3ÿ*€ÿÿ€ÿ3ÿ-ÿ3ÿ.€ÿÿ€ÿ3ÿ/ÿ3ÿ7€ÿÿ€ÿ3ÿ8ÿ3ÿI€ÿÿ€ÿ0ÿ	ÿ0ÿ€ÿÿ€ÿ0ÿ	ÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ6ÿx€ÿÿÿÿÿÿ€ÿÿ€ÿ6ÿ'ÿ6ÿ/€ÿÿ€ÿ6ÿAÿ6ÿB€ÿÿ€ÿ6ÿCÿ6ÿK€ÿÿ€ÿ6ÿLÿ6ÿ]€ÿÿ€ÿ6ÿ_ÿ6ÿm€ÿÿ€ÿ6ÿnÿ6ÿr€ÿÿ€ÿ6ÿtÿ6ÿv€ÿÿÿÿCÿÿE€ÿÿ€ÿ5ÿÿ8ÿC€ÿÿ€ÿ7ÿ'ÿ7ÿ1€ÿÿ€ÿ7ÿCÿ7ÿK€ÿÿ€ÿ7ÿMÿ7ÿN€ÿÿ€ÿ7ÿOÿ7ÿW€ÿÿ€ÿ7ÿXÿ7ÿi€ÿÿ€ÿ8ÿÿ8ÿ'€ÿÿ€ÿ8ÿ(ÿ8ÿ,€ÿÿ€ÿ8ÿ.ÿ8ÿ/€ÿÿ€ÿ8ÿ0ÿ8ÿ1€ÿÿ€ÿ8ÿ2ÿ8ÿ3€ÿÿ€ÿ8ÿ5ÿ8ÿ=€ÿÿ€ÿ8ÿ?ÿ8ÿA€ÿÿ€ÿ0ÿ	ÿ4ÿ€ÿÿ€ÿ4ÿÿ4ÿ€ÿÿ€ÿÿÿÿ	€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ&ÿÿ&ÿ€ÿÿ€ÿ'ÿÿ'ÿ€ÿÿ€ÿ'ÿÿ'ÿ€ÿÿ€ÿ'ÿ!ÿ'ÿ"€ÿÿ€ÿ'ÿ&ÿ'ÿ,€ÿÿ€ÿ'ÿ-ÿ'ÿ.€ÿÿ€ÿ'ÿ1ÿ'ÿ2€ÿÿ€ÿ'ÿ3ÿ'ÿ;€ÿÿ€ÿ'ÿ<ÿ'ÿM€ÿÿ€ÿ&ÿÿ&ÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ(ÿ&ÿ(ÿ'€ÿÿ€ÿ(ÿÿ(ÿ%€ÿÿ€ÿ&ÿÿ)ÿR€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ)ÿÿ)ÿ€ÿÿ€ÿ)ÿÿ)ÿ €ÿÿ€ÿ)ÿ!ÿ)ÿ2€ÿÿ€ÿ)ÿ3ÿ)ÿC€ÿÿ€ÿ)ÿHÿ)ÿN€ÿÿ€ÿ)ÿOÿ)ÿP€ÿÿ€ÿ&ÿÿ&ÿ€ÿÿ€ÿ&ÿÿ,ÿ=€ÿÿ€ÿ+ÿ'ÿ+ÿ/€ÿÿ€ÿ+ÿBÿ+ÿJ€ÿÿ€ÿ+ÿLÿ+ÿM€ÿÿ€ÿ+ÿNÿ+ÿV€ÿÿ€ÿ+ÿWÿ+ÿh€ÿÿ€ÿ+ÿjÿ+ÿz€ÿÿ€ÿ,ÿÿ,ÿ'€ÿÿ€ÿ,ÿ(ÿ,ÿ5€ÿÿ€ÿ,ÿ6ÿ,ÿ7€ÿÿ€ÿ,ÿ9ÿ,ÿ;€ÿÿ€ÿ&ÿÿ*ÿ€ÿÿ€ÿ*ÿÿ*ÿ€€ÿÿÿÿÿÿÿÿÿÿÿ€ÿ	ÿÿ€€€ÿÿÿÿÿÿÿÿÿÿÿÿ‚ …ÿÿ€€€ÿÿÿÿ‚ Åÿÿ€€€€ÿÿÿÿÿÿ‚ ¥ÿÿ€€€ÿÿÿÿÿÿ‚eÿÿ€€ÿÿÿÿ‚åÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚ •ÿÿ€€€ÿÿÿÿÿÿ‚Uÿÿ€€€ÿÿÿÿ‚Õÿÿ€€€€€ÿÿÿÿÿ	ÿ‚ µÿÿ€€€ÿÿÿÿÿ
+ÿ‚uÿÿ€€ÿÿÿÿ‚õÿÿ€€€€€€€ÿÿÿÿÿÿÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿÿ‚ÿÿ€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚Mÿÿ€€€ÿÿÿÿÿÿ‚Íÿÿ€€€ÿÿÿÿ‚Íÿÿ€€€€€€ÿÿÿÿÿÿ‚ ­ÿÿ€€€ÿÿÿÿ‚ íÿÿ€€€€€ÿÿÿÿ=ÿÿ€€€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿÿ€ÿÿÿÿÿ€ÿÿÿ€€€ÿÿÿÿÿÿÿÿÿÿÿÿ!ÿÿ€€€ÿÿÿÿ1ÿÿ€€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿÿÿÿÿYÿÿ€€€ÿÿÿÿyÿÿ€€€€€€ÿÿÿÿÿÿÿÿ%ÿÿ€€€ÿÿÿÿÿÿUÿÿ€€€ÿÿÿÿuÿÿ€€€€€ÿÿÿÿÿ	ÿ-ÿÿ€€€ÿÿÿÿÿ
+ÿ]ÿÿ€€€ÿÿÿÿ}ÿÿ€€€€€€€ÿÿÿÿÿÿÿÿÿÿÿÿCÿÿ€€€ÿÿÿÿÿÿ‚ £ÿÿ€€€ÿÿÿÿ‚ ãÿÿ€€€€€ÿÿÿÿÿÿSÿÿ€€€ÿÿÿÿÿÿ‚ ³ÿÿ€€€ÿÿÿÿ‚ óÿÿ€€€€€€ÿÿÿÿÿÿ+ÿÿ€€€ÿÿÿÿ;ÿÿ€€€€€ÿÿÿÿÿÿ€€€€€€€€ÿÿÿÿ€ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ «€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿ	ÿ€ÿ€ÿ€ÿÿÿ	ÿ€ÿ€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ‚ «€ÿÿÿ	ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €€ÿÿÿ	ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ «€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿ	ÿ€ÿ€ÿ€€€€€€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿ	ÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ «€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ç€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ «€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ §€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿ€ÿ ÿ€ÿ€ÿ‚ »€ÿÿÿÿ€ÿ€ÿÿÿ!ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ!ÿ€ÿ€ÿÿÿ"ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ"ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ$ÿ€ÿ€ÿ‚ ³€ÿÿÿ#ÿ€ÿ€ÿÿÿ%ÿ€ÿ€ÿÿ€ÿ%ÿ€ÿ€ÿ€ÿÿ€ÿ%ÿ€ÿ€ÿ€€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ"ÿ€ÿ€ÿ€€€€ÿÿÿ!ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ‚G€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ‚Ç€ÿÿ€ÿ&ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ!ÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ*ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ-ÿ€ÿ€ÿ‚ç€ÿÿÿ,ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿ.ÿ€ÿ€ÿ€ÿÿ€ÿ.ÿ€ÿ€ÿ€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ+ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ/ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ
+€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿ€ÿ3ÿ€ÿ€ÿ‚G€ÿÿÿ2ÿ€ÿ€ÿÿ€ÿ4ÿ€ÿ€ÿ‚Ç€ÿÿ€ÿ2ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ5ÿ€ÿ€ÿ‚g€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ6ÿ€ÿ€ÿ‚ «€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ8ÿ€ÿ€ÿ€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€€ÿÿÿ+ÿ€ÿ€ÿÿÿ9ÿ€ÿ€ÿÿ€ÿ9ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ:ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ;ÿ€ÿ€ÿ‚ ‡€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿ=ÿ€ÿ€ÿ‚G€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿ>ÿ€ÿ€ÿ‚Ç€ÿÿ€ÿ<ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ?ÿ€ÿ€ÿ‚g€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ@ÿ€ÿ€ÿ‚ «€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿAÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿAÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ‚ç€ÿÿÿAÿ€ÿ€ÿÿÿCÿ€ÿ€ÿÿ€ÿCÿ€ÿ€ÿ€ÿÿ€ÿCÿ€ÿ€ÿ€€ÿÿ€ÿAÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿDÿ€ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿEÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ*€€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ8ÿ€ÿ€ÿ€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿFÿ€ÿ€ÿÿ€ÿFÿ€ÿ€ÿ€ÿÿÿGÿ€ÿ€ÿÿ€ÿGÿ€ÿ€ÿ€ÿÿ€ÿGÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿHÿ€ÿ€ÿÿ€ÿIÿ€ÿ€ÿ pÖ"áöş*·FÚóø~ÚñÉ
+­0‡¬Â*@sÿ¢€ÿÿÿHÿ€ÿ€ÿÿ€ÿJÿ€ÿ€ÿ ©á	¤ÿŠáû²ï½õÊƒŠ[U8äp+Ã¹O=çğ—Ò€ÿÿÿKÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿÿLÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿLÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ‚u€ÿÿÿLÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿÿ"ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ"ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿOÿ€ÿ€ÿ‚e€ÿÿÿ#ÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ"ÿ€ÿ€ÿ€€€€ÿÿÿNÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿRÿ€ÿ€ÿ‚€ÿÿÿQÿ€ÿ€ÿÿ€ÿSÿ€ÿ€ÿ‚€ÿÿ€ÿQÿ€ÿ€ÿ€€€€€ÿÿ€ÿNÿ€ÿ€ÿ€€€€€ÿÿ€ÿLÿ€ÿ€ÿ€€€€€ÿÿÿKÿ€ÿ€ÿÿÿTÿ€ÿ€ÿÿ€ÿTÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿUÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿ€ÿWÿ€ÿ€ÿ€€ÿÿÿVÿ€ÿ€ÿÿ€ÿXÿ€ÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ€€€€€ÿÿ€ÿUÿ€ÿ€ÿ€€€€ÿÿÿKÿ€ÿ€ÿÿÿYÿ€ÿ€ÿÿ€ÿYÿ€ÿ€ÿ€ÿÿÿZÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿZÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿ]ÿ€ÿ€ÿ‚€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿ^ÿ€ÿ€ÿ‚€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿ_ÿ€ÿ€ÿ€ÿÿ€ÿ\ÿ€ÿ€ÿ€€€€€€ÿÿÿ[ÿ€ÿ€ÿÿÿ"ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ"ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ`ÿ€ÿ€ÿ‚e€ÿÿÿ#ÿ€ÿ€ÿÿÿaÿ€ÿ€ÿÿ€ÿaÿ€ÿ€ÿ€ÿÿ€ÿaÿ€ÿ€ÿ€€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ"ÿ€ÿ€ÿ€€€€ÿÿ€ÿ[ÿ€ÿ€ÿ€€€€€ÿÿ€ÿZÿ€ÿ€ÿ€€€€€ÿÿÿKÿ€ÿ€ÿÿÿbÿ€ÿ€ÿÿ€ÿbÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€€€€ÿÿ€ÿKÿ€ÿ€ÿ€€€€€€ÿÿÿKÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€€€€€€ÿÿÿKÿ€ÿ€ÿÿÿbÿ€ÿ€ÿÿ€ÿbÿ€ÿ€ÿ€ÿÿÿKÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€€€€ÿÿ€ÿKÿ€ÿ€ÿ€€€€€€ÿÿÿKÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€€€€€ÿÿÿKÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿdÿ€ÿ€ÿ	€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ‚€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿfÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿfÿ€ÿ€ÿÿ€ÿgÿ€ÿ€ÿ‚€ÿÿÿfÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ‚€ÿÿ€ÿfÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿjÿ€ÿ€ÿ‚Í€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿkÿ€ÿ€ÿ‚M€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ‚Í€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿÿ0ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿmÿ€ÿ€ÿÿ€ÿmÿ€ÿ€ÿ€ÿÿ€ÿmÿ€ÿ€ÿ*€€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ8ÿ€ÿ€ÿ€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€€ÿÿÿKÿ€ÿ€ÿÿÿnÿ€ÿ€ÿÿ€ÿnÿ€ÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿ€ÿoÿ€ÿ€ÿ€ÿÿ€ÿoÿ€ÿ€ÿ€€€€ÿÿ€ÿKÿ€ÿ€ÿ€€€€€€ÿÿÿKÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€€€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€

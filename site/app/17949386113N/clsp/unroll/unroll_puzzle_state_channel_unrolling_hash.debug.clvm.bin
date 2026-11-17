@@ -1,0 +1,41 @@
+ÿCHIALISP_DEBUGÿÿÿÿ€ÿ ¥ÀŠñÔ<óaÜüJ”üÛÄ<×E§"{ù‹ËEõÿÿÿclsp/unroll/unroll_puzzle.clspÿÆs
+; The actual state channel coin is a vanilla coin which does 2-of-2 aggregation at the signature level and
+; unrolls to the unrolling puzzle. Unrolls to the unrolling puzzle are signed in tandem with sequence number
+; updates to the unrolling puzzle. The keys of the state channel puzzle and the unrolling puzzle don't
+; have to be related
+;
+; Curried params: SHARED_PUBKEY (aggregate 2-of-2 unroll public key),
+;                 OLD_SEQUENCE_NUMBER, DEFAULT_CONDITIONS_HASH
+;
+; Solution: conditions (as dotted-pair cdr of args, not a wrapped list)
+;
+; Timeout path: shatree(conditions) == DEFAULT_CONDITIONS_HASH -> return conditions as-is
+; Preemption path: first condition must be (REM sequence_number); checks
+;                  sequence number > old with opposite parity, prepends AGG_SIG_UNSAFE
+
+(include *standard-cl-26*)
+(import std.assert)
+(import std.shapes)
+(import std.shatree)
+(import std.condition_codes)
+
+(defun state_channel_unrolling (SHARED_PUBKEY OLD_SEQUENCE_NUMBER DEFAULT_CONDITIONS_HASH . conditions)
+    (assign
+        conditions_hash (shatree conditions)
+        (if (= DEFAULT_CONDITIONS_HASH conditions_hash)
+            conditions
+            (assign
+                new_sequence_number
+                    (get-field (opcode sequence_number . tail) sequence_number (f conditions))
+                (assert
+                    (> new_sequence_number OLD_SEQUENCE_NUMBER)
+                    (logand 1 (logxor new_sequence_number OLD_SEQUENCE_NUMBER))
+                    (c (list AGG_SIG_UNSAFE SHARED_PUBKEY conditions_hash) conditions)
+                )
+            )
+        )
+    )
+)
+
+(export state_channel_unrolling)
+€€ÿÿ†<main>€ÿÿÿ€ÿÿÿ%ÿ€€ÿÿÿ€ÿ€ÿÿ€€€€ÿÿ€ÿÿ€ÿÿ Ÿ0ã¬Ã­–|”p)q¹âQ?¶ÜCìÎí¤¾&ÏkF€€

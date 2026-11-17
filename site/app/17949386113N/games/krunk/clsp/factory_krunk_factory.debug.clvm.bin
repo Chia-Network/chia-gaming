@@ -1,0 +1,1294 @@
+ÿŽCHIALISP_DEBUGÿÿÿÿ€ÿ :ë[ü?m	Ï%¤±Ö?µ9¡ß°oµÎ,%oQÈì³ÿÿÿ§./games/krunk/clsp/krunk_generate.clincÿÝ“(include *standard-cl-26*)
+(import std.shapes)
+(import games.krunk.clsp.onchain.shapes)
+
+(import games.krunk.clsp.krunk_helpers exposing
+    expand_clue
+    krunk_should_reveal
+    krunk_reveal_move
+    krunk_reveal_mover_share
+)
+(import games.krunk.clsp.krunk_dict_tree)
+(import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)
+(import std.li)
+(import std.shatree)
+(import std.curry)
+(import std.assert)
+(import std.len)
+(import std.deep_compare)
+(import std.or)
+
+; --- deterministic factory ---
+;
+; DICT_TREE and DICT_PUBKEY are curried in at startup from a single .dat file
+; (48-byte BLS pubkey prefix + serialized CLVM tree).
+; The on-chain initial state is (DICT_PUBKEY base_unit clue_hash); the full
+; dictionary tree stays off-chain. Derive clue_hash from the registered
+; validator so every transition names its exact compiled program.
+
+(import games.krunk.clsp.onchain.commit exposing (program as val_commit))
+(import games.krunk.clsp.onchain.guess exposing (program as val_guess))
+(import games.krunk.clsp.onchain.clue exposing (program as val_clue))
+
+(defconstant MIN_WORD 0x8000000000)
+(defconstant MAX_WORD 0x7fffffffff)
+
+(defun krunk_factory
+    (DICT_PUBKEY DICT_TREE
+     @ _args
+     (proposer_reserve accepter_reserve requested_stake))
+    (assert
+        (> requested_stake 0)
+        (= (% requested_stake 100) 0)
+        (deep= _args (li proposer_reserve accepter_reserve requested_stake))
+        (if (or (> requested_stake proposer_reserve) (> requested_stake accepter_reserve))
+            (li 0 (> requested_stake proposer_reserve) (> requested_stake accepter_reserve))
+            (assign
+                base_unit (/ requested_stake 100)
+                initial_state (make-krunk-initial DICT_PUBKEY base_unit (shatree val_clue))
+                alice_handler (curry krunk_alice_handler_commit DICT_TREE)
+                bob_handler (curry krunk_bob_handler_commit DICT_TREE)
+                (li 1
+                    (li
+                        ; Slot 0 allocates the proposer's contribution.
+                        (li
+                            requested_stake 0 1 0 32 initial_state 0
+                            alice_handler bob_handler (list val_commit val_guess val_clue)
+                            requested_stake
+                        )
+                        ; Slot 1 allocates the accepter's contribution and swaps first role.
+                        (li
+                            0 requested_stake 0 0 32 initial_state 0
+                            alice_handler bob_handler (list val_commit val_guess val_clue)
+                            requested_stake
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+
+; --- Alice handlers ---
+
+(defun krunk_alice_handler_commit (DICT_TREE local_move amount state mover_share entropy)
+    (assign
+        word local_move
+        salt (substr entropy 0 16)
+        move (sha256 salt word)
+        (if (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+            (list "not_in_dictionary" word)
+            (list
+                "krunk_alice_handler_commit"
+                move
+                0
+                (curry krunk_alice_handler_guess salt word DICT_TREE)
+                0
+            )
+        )
+    )
+)
+
+(defun krunk_alice_handler_guess (SALT WORD DICT_TREE amount pre_state state move validation_info_hash mover_share)
+    (assign
+        (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
+        lookup_result (dict_lookup MIN_WORD MAX_WORD move DICT_TREE)
+        (if lookup_result
+            (list 0
+                (li (li "s"
+                        (concat
+                            (get-field (krunk-dictionary-gap) left_bound lookup_result)
+                            (get-field (krunk-dictionary-gap) right_bound lookup_result))
+                        (get-field (krunk-dictionary-gap) signature lookup_result)))
+                0)
+            (assign
+                clue (make_clue WORD move)
+                (list
+                    (li move (expand_clue clue))
+                    0
+                    (curry krunk_alice_handler_clue SALT WORD clue DICT_TREE)
+                )
+            )
+        )
+    )
+)
+
+(defun krunk_alice_handler_clue (SALT WORD CLUE DICT_TREE local_move amount state mover_share entropy)
+    (assign
+        (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
+        num_guesses (len bob_guesses)
+        latest_guess (f bob_guesses)
+        (if (krunk_should_reveal latest_guess WORD num_guesses)
+            (assign
+                reveal (krunk_reveal_move SALT WORD)
+                payout (krunk_reveal_mover_share base_unit bob_guesses WORD)
+                (list
+                    "krunk_alice_handler_clue reveal"
+                    reveal
+                    payout
+                    0
+                    0
+                )
+            )
+            (list
+                "krunk_alice_handler_clue"
+                CLUE
+                0
+                (curry krunk_alice_handler_guess SALT WORD DICT_TREE)
+                0
+            )
+        )
+    )
+)
+
+; --- Bob handlers ---
+
+(defun krunk_bob_handler_commit (DICT_TREE amount pre_state state move validation_info_hash mover_share)
+    (list
+        0
+        0
+        (curry krunk_bob_handler_guess DICT_TREE)
+    )
+)
+
+(defun krunk_bob_handler_guess (DICT_TREE local_move amount state mover_share entropy)
+    (assign
+        (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
+        guess local_move
+        (if (dict_lookup MIN_WORD MAX_WORD guess DICT_TREE)
+            (list "not_in_dictionary" guess)
+            (list
+                "krunk_bob_handler_guess"
+                guess
+                0
+                (curry krunk_bob_handler_clue DICT_TREE)
+                0
+            )
+        )
+    )
+)
+
+(defconst KRUNK_EVIDENCE_INDICES (li (q . 0x00) 1 2 3 4))
+
+(defun krunk_bob_handler_clue (DICT_TREE amount pre_state state move validation_info_hash mover_share)
+    (if (= (strlen move) 1)
+        ; Non-terminal clue: state is valid.
+        (assign
+            (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) state
+            (list
+                (expand_clue move)
+                0
+                (curry krunk_bob_handler_guess DICT_TREE)
+            )
+        )
+        ; Terminal reveal: framework passes nil state, use pre_state.
+        (assign
+            (krunk-state dict_pubkey base_unit bob_guesses alice_clues alice_commit _clue_hash) pre_state
+            word (substr move 16 21)
+            reveal_clue (if mover_share
+                (expand_clue 0x72)
+                (expand_clue (make_clue word (f bob_guesses)))
+            )
+            lookup_result (dict_lookup MIN_WORD MAX_WORD word DICT_TREE)
+            (if lookup_result
+                (list
+                    (li word reveal_clue)
+                    (li (li "s"
+                            (concat
+                                (get-field (krunk-dictionary-gap) left_bound lookup_result)
+                                (get-field (krunk-dictionary-gap) right_bound lookup_result))
+                            (get-field (krunk-dictionary-gap) signature lookup_result)))
+                    0
+                    0
+                )
+                (list
+                    (li word reveal_clue)
+                    KRUNK_EVIDENCE_INDICES
+                    0
+                    0
+                )
+            )
+        )
+    )
+)
+€ÿÿ‡*prims*ÿ€€ÿÿ‘clsp/std/li.clincÿ—
+(defun-inline li x x)
+€ÿÿ–clsp/std/prelude.clincÿÅ;; Standard prelude
+
+(defmac __chia__primitive__if (A B C)
+  (qq (a (i (unquote A) (com (unquote B)) (com (unquote C))) @))
+  )
+
+(defun __chia__if (ARGS)
+  (__chia__primitive__if (r (r (r ARGS)))
+    (qq (a (i (unquote (f ARGS)) (com (unquote (f (r ARGS)))) (com (unquote (__chia__if (r (r ARGS)))))) @))
+    (qq (a (i (unquote (f ARGS)) (com (unquote (f (r ARGS)))) (com (unquote (f (r (r ARGS)))))) @))
+    )
+  )
+
+(defmac if ARGS (__chia__if ARGS))
+
+(defun __chia__compile-list (args)
+  (if args
+    (c 4 (c (f args) (c (__chia__compile-list (r args)) ())))
+    ()
+    )
+  )
+
+(defmac list ARGS (__chia__compile-list ARGS))
+
+(defun-inline / (A B) (f (divmod A B)))
+
+(defun __chia__sha256tree (t)
+  (a
+    (i
+      (l t)
+      (com (sha256 2 (__chia__sha256tree (f t)) (__chia__sha256tree (r t))))
+      (com (sha256 1 t))
+      )
+    @
+    )
+  )
+
+(defun-inline c* (A B) (c A B))
+(defun-inline a* (A B) (a A B))
+(defun-inline coerce (X) : (Any -> Any) X)
+(defun-inline explode (X) : (forall a ((Exec a) -> a)) X)
+(defun-inline bless (X) : (forall a ((Pair a Unit) -> (Exec a))) (coerce X))(defun-inline lift (X V) : (forall a (forall b ((Pair (Exec a) (Pair b Unit)) -> (Exec (Pair a b))))) (coerce X))
+(defun-inline unlift (X) : (forall a (forall b ((Pair (Exec (Pair a b)) Unit) -> (Exec b)))) (coerce X))
+€ÿÿgames/krunk/clsp/factory.clspÿÀt(include *standard-cl-26*)
+
+(import games.krunk.clsp.krunk_generate exposing krunk_factory)
+
+(export krunk_factory)
+€ÿÿ¨./games/krunk/clsp/krunk_dict_tree.clincÿÆn(import std.relops)
+(import std.li)
+(import std.shapes)
+
+; These remain proper lists to match the dictionary built by Rust.
+(defun-shape krunk-dictionary-node (left_node right_node word_here))
+(defun-shape krunk-dictionary-gap (left_bound right_bound signature))
+
+; Balanced BST dictionary lookup with signatures at leaves.
+;
+; Tree structure (built in Rust, curried into handlers):
+;   Interior node: (left_node right_node word) â€” proper 3-element list
+;   Leaf: 96-byte BLS signature atom (aggregated sig for that gap)
+;
+; The lookup carries left_bound and right_bound, adjusting them with +1/-1
+; as it descends. This way the leaf knows the exact gap range it covers.
+;
+; Returns:
+;   () â€” word IS in the dictionary
+;   (left_bound right_bound signature) â€” word is NOT in the dictionary;
+;       left_bound/right_bound are the gap boundaries and signature is
+;       the BLS signature certifying that gap.
+
+(defun dict_lookup (left_bound right_bound word node)
+    (if (l node)
+        ; interior: (left_node right_node word_here)
+        (assign
+            left_node (get-field (krunk-dictionary-node) left_node node)
+            right_node (get-field (krunk-dictionary-node) right_node node)
+            word_here (get-field (krunk-dictionary-node) word_here node)
+            (if (= word word_here)
+                ()
+                (if (> word word_here)
+                    (dict_lookup (+ word_here 1) right_bound word right_node)
+                    (dict_lookup left_bound (- word_here 1) word left_node)
+                )
+            )
+        )
+        ; leaf: signature atom
+        (li left_bound right_bound node)
+    )
+)
+€ÿÿ•clsp/std/shapes.clincÿà.}(import std.pack)
+
+; Generated constructors need an identity in this directly imported namespace.
+(defun-inline shapes-li VALUES VALUES)
+
+; Shape templates are compile-time syntax. See clsp/std/shapes.md.
+; Facts use masks: pair=1, non-nil atom=2, nil=4; unconstrained=7.
+; Paths are binary heap indices (root=1, left=2*p, right=2*p+1).
+
+(defun shapes-append (A B)
+    (if A (c (f A) (shapes-append (r A) B)) B))
+
+(defun shapes-tag (TREE TAG)
+    (if (l TREE) (if (l (f TREE)) 0 (= (f TREE) TAG)) 0))
+
+(defun shapes-optional (ARGS)
+    (if ARGS (if (r ARGS) ARGS (f ARGS)) ()))
+
+(defun shapes-literal-nil (TREE)
+    (if (l TREE) 0 (if TREE (= TREE (q . nil)) 1)))
+
+; Validation runs on macro syntax only, never on runtime values.
+(defun shapes-reserved-name (NAME)
+    (if (l NAME) 0
+        (if (shapes-literal-nil NAME) 1
+            (if (= NAME (q . atom)) 1 (= NAME (q . optional))))))
+
+(defun shapes-proper-list (XS)
+    (if (l XS) (shapes-proper-list (r XS)) (not XS)))
+
+(defun shapes-check (TREE BINDING)
+    (if (l TREE) (shapes-check-pair TREE BINDING)
+        (if (shapes-literal-nil TREE) TREE
+            (if (if BINDING (shapes-reserved-name TREE) 0)
+                (x (q . "reserved shape field name: atom or optional")) TREE))))
+
+(defun shapes-check-atom (ARGS BINDING)
+    (if (l ARGS)
+        (if (r ARGS) (x (q . "atom takes exactly one field"))
+            (assign FIELD (f ARGS)
+                (if (l FIELD) (x (q . "atom field must be a leaf"))
+                    (if (if BINDING (shapes-reserved-name FIELD) 0)
+                        (x (q . "atom field cannot be nil, atom, or optional"))
+                        (list (q . atom) FIELD)))))
+        (x (q . "atom takes exactly one field"))))
+
+(defun shapes-check-optional (ARGS BINDING)
+    (if (l ARGS)
+        (if (shapes-proper-list ARGS)
+            (list (q . optional) (shapes-check (shapes-optional ARGS) BINDING))
+            (x (q . "optional needs a proper list of template arguments")))
+        (x (q . "optional needs at least one template"))))
+
+(defun shapes-check-pair (TREE BINDING)
+    (if (shapes-tag TREE (q . atom)) (shapes-check-atom (r TREE) BINDING)
+        (shapes-tag TREE (q . optional)) (shapes-check-optional (r TREE) BINDING)
+        (c (shapes-check (f TREE) BINDING) (shapes-check (r TREE) BINDING))))
+
+; Keep pair traversal in a separate helper: the cl-23 optimizer can hoist
+; repeated tail access across sibling branches. Enter only after testing l.
+; Return (facts stripped-pattern names). Optional suppresses every fact below it.
+(defun shapes-parse (TREE PATH OPTIONAL)
+    (if (l TREE) (shapes-parse-pair TREE PATH OPTIONAL)
+        (if (shapes-literal-nil TREE)
+            (list (if OPTIONAL () (list (list PATH 4))) () ())
+            (list () TREE (list TREE)))))
+
+(defun shapes-parse-pair (TREE PATH OPTIONAL)
+    (if (shapes-tag TREE (q . optional))
+        (shapes-parse (shapes-optional (r TREE)) PATH 1)
+        (shapes-tag TREE (q . atom))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (f (r TREE)) PATH 1)
+            (if (r (r TREE)) (x (q . "atom takes one name"))
+                (list (if OPTIONAL () (list (list PATH 6))) PATTERN NAMES)))
+        (assign
+            (LF LP LN) (shapes-parse (f TREE) (* PATH 2) OPTIONAL)
+            (RF RP RN) (shapes-parse (r TREE) (+ (* PATH 2) 1) OPTIONAL)
+            (list (shapes-append (if OPTIONAL () (list (list PATH 1)))
+                                (shapes-append LF RF))
+                  (c LP RP) (shapes-append LN RN)))))
+
+(defun shapes-lookup (KEY ENTRIES DEFAULT)
+    (if ENTRIES
+        (if (= KEY (f (f ENTRIES))) (f (r (f ENTRIES)))
+            (shapes-lookup KEY (r ENTRIES) DEFAULT))
+        DEFAULT))
+
+(defun shapes-zip (NAMES VALUES)
+    (if NAMES
+        (if VALUES (c (list (f NAMES) (f VALUES)) (shapes-zip (r NAMES) (r VALUES)))
+            (x (q . "too few shape arguments")))
+        (if VALUES (x (q . "too many shape arguments")) ())))
+
+(defun shapes-substitute (TREE VALUES)
+    (if (l TREE) (shapes-substitute-pair TREE VALUES)
+        (if (shapes-literal-nil TREE) TREE (shapes-lookup TREE VALUES TREE))))
+
+(defun shapes-substitute-pair (TREE VALUES)
+    (if (shapes-tag TREE (q . optional))
+        (c (q . optional) (shapes-substitute (r TREE) VALUES))
+        (shapes-tag TREE (q . atom))
+        (list (q . atom) (shapes-substitute (f (r TREE)) VALUES))
+        (c (shapes-substitute (f TREE) VALUES) (shapes-substitute (r TREE) VALUES))))
+
+(defun shapes-instantiate (TREE VALUES)
+    (if VALUES
+        (assign (_ _ NAMES) (shapes-parse TREE 1 0)
+            (shapes-substitute TREE (shapes-zip NAMES VALUES)))
+        TREE))
+
+; Expose dotted tails as standalone forms so nested shape macros expand there,
+; too. The compiler's ordinary inward expansion walks proper-list elements.
+(defmac shapes-join (LEFT RIGHT) (c LEFT RIGHT))
+(defmac shapes-normalize (TREE)
+    (if (l TREE)
+        (list (q . shapes-join)
+            (list (q . shapes-normalize) (f TREE))
+            (list (q . shapes-normalize) (r TREE)))
+        TREE))
+
+(defmac defun-shape (NAME TREE)
+    (if (shapes-reserved-name NAME)
+        (x (q . "shape name cannot be nil, atom, or optional"))
+        (list (q . shapes-define-expanded) NAME (list (q . shapes-normalize) TREE))))
+
+(defun shapes-unique (NAMES)
+    (if NAMES
+        (if (shapes-contains (f NAMES) (r NAMES)) 0 (shapes-unique (r NAMES)))
+        1))
+
+(defmac shapes-define-expanded (NAME TREE)
+    (assign (_ _ NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+        (if (shapes-unique NAMES)
+            (list (q . defmac) NAME (q . shapes-values)
+                (list (q . shapes-instantiate) (c 1 TREE) (q . shapes-values)))
+            (x (q . "shape field names must be unique")))))
+
+(defmac make (TREE)
+    (list (q . shapes-make-expanded) (list (q . shapes-normalize) TREE)))
+(defmac shapes-make-expanded (TREE)
+    (assign (_ PATTERN _) (shapes-parse (shapes-check TREE 0) 1 0)
+        (pack-build (q . shapes-li) PATTERN)))
+
+(defmac invoke (FUNCTION TREE)
+    (list FUNCTION (q . &rest) (list (q . make) TREE)))
+
+(defun shapes-access (PATH VALUE)
+    (if (= PATH 1) VALUE
+        (list (if (logand PATH 1) 6 5) (shapes-access (/ PATH 2) VALUE))))
+
+; Find a declared field in the stripped pattern. Zero means absent.
+(defun shapes-field-path (TREE FIELD PATH)
+    (if (l TREE)
+        (assign LEFT (shapes-field-path (f TREE) FIELD (* PATH 2))
+            (if LEFT LEFT (shapes-field-path (r TREE) FIELD (+ (* PATH 2) 1))))
+        (if (= TREE FIELD) PATH 0)))
+
+(defmac get-field (TREE FIELD VALUE)
+    (list (q . shapes-get-field-expanded) (list (q . shapes-normalize) TREE) FIELD VALUE))
+
+(defmac shapes-get-field-expanded (TREE FIELD VALUE)
+    (if (if (l FIELD) 1 (shapes-reserved-name FIELD))
+        (x (q . "get-field needs a non-reserved field name"))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (assign PATH (shapes-field-path PATTERN FIELD 1)
+                    (if PATH (shapes-access PATH VALUE)
+                        (x (q . "unknown shape field") FIELD)))
+                (x (q . "shape field names must be unique"))))))
+
+(defun shapes-cases (CASES)
+    (if CASES
+        (assign
+            (TREE BODY) (f CASES)
+            (FACTS PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (c (list FACTS PATTERN BODY) (shapes-cases (r CASES)))
+                (x (q . "shape field names must be unique"))))
+        ()))
+
+; Common guarantees are usable under the closed-union contract. Optional paths
+; contribute none. Facts learned by actual tests refine each surviving case.
+(defun shapes-common-pair (PATH CASES)
+    (if CASES
+        (if (= (shapes-lookup PATH (f (f CASES)) 7) 1)
+            (shapes-common-pair PATH (r CASES)) 0)
+        1))
+
+(defun shapes-safe (PATH CASES)
+    (if (= PATH 1) 1
+        (if (shapes-common-pair (/ PATH 2) CASES)
+            (shapes-safe (/ PATH 2) CASES) 0)))
+
+(defun shapes-tests-for (FACTS)
+    (if FACTS
+        (assign
+            (PATH MASK) (f FACTS)
+            REST (shapes-tests-for (r FACTS))
+            (c (list PATH 1) (if (= MASK 4) (c (list PATH 4) REST) REST)))
+        ()))
+
+(defun shapes-tests (CASES)
+    (if CASES (shapes-append (shapes-tests-for (f (f CASES))) (shapes-tests (r CASES))) ()))
+
+(defun shapes-refine (CASES PATH MASK)
+    (if CASES
+        (assign
+            (FACTS PATTERN BODY) (f CASES)
+            NARROW (logand (shapes-lookup PATH FACTS 7) MASK)
+            REST (shapes-refine (r CASES) PATH MASK)
+            (if NARROW (c (list (c (list PATH NARROW) FACTS) PATTERN BODY) REST) REST))
+        ()))
+
+(defun shapes-length (XS)
+    (if XS (+ 1 (shapes-length (r XS))) 0))
+
+; Prefer a singleton split first, then the split with the smallest worst side.
+; If no separating test is safe, allow a parent guard whose pair outcome keeps
+; every candidate but makes a deeper test safe. At least one outcome must remove
+; a candidate; refining facts prevents the same guard being selected again.
+(defun shapes-best (TESTS CASES COUNT BEST SCORE)
+    (if TESTS
+        (assign
+            (PATH MASK) (f TESTS)
+            YES (shapes-length (shapes-refine CASES PATH MASK))
+            NO (shapes-length (shapes-refine CASES PATH (logxor 7 MASK)))
+            WORST (if (> YES NO) YES NO)
+            BEST-SIDE (if (> YES NO) NO YES)
+            RANK (if (> COUNT WORST)
+                (if (if (= YES 1) 1 (= NO 1)) 0 WORST)
+                (* COUNT 2))
+            USE (if (shapes-safe PATH CASES)
+                (if YES (if NO (if (> COUNT BEST-SIDE) (> SCORE RANK) 0) 0) 0) 0)
+            (shapes-best (r TESTS) CASES COUNT
+                (if USE (f TESTS) BEST) (if USE RANK SCORE)))
+        BEST))
+
+(defun shapes-dispatch (VALUE CASES)
+    (if (r CASES)
+        (assign
+            TEST (shapes-best (shapes-tests CASES) CASES (shapes-length CASES) () 0x7fffffff)
+            (if TEST
+                (assign
+                    (PATH MASK) TEST
+                    ACCESS (shapes-access PATH VALUE)
+                    (list (q . if) (list (if (= MASK 1) 7 32) ACCESS)
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
+                (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
+        (assign (_ PATTERN BODY) (f CASES)
+            (list (q . assign) PATTERN VALUE BODY))))
+
+; Pick a binding name absent from the entire input, including nested dispatches.
+; Preserve its symbol type: concat yields a numeric atom, not a variable name.
+(defun shapes-contains (NAME TREE)
+    (if (l TREE)
+        (if (shapes-contains NAME (f TREE)) 1 (shapes-contains NAME (r TREE)))
+        (= NAME TREE)))
+
+(defun shapes-fresh (NAME TREE)
+    (if (shapes-contains NAME TREE) (shapes-fresh (string->symbol (string-append (symbol->string NAME) "_")) TREE) NAME))
+
+(defun shapes-check-case (CASE)
+    (if (shapes-proper-list CASE)
+        (if (= (shapes-length CASE) 2) CASE
+            (x (q . "if-shape branch needs a template and one body")))
+        (x (q . "if-shape branch needs a template and one body"))))
+
+(defun shapes-normalize-cases (CASES)
+    (if CASES
+        (assign CASE (shapes-check-case (f CASES))
+            (c (list (list (q . shapes-normalize) (f CASE)) (f (r CASE)))
+                (shapes-normalize-cases (r CASES))))
+        ()))
+
+(defmac if-shape (VALUE . CASES)
+    (c (q . shapes-if-expanded) (c VALUE (shapes-normalize-cases CASES))))
+
+(defmac shapes-if-expanded (VALUE . CASES)
+    (if CASES
+        (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
+            (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+        (x (q . "if-shape needs at least one alternative"))))
+€ÿÿ¦./games/krunk/clsp/krunk_helpers.clincÿÄ(import std.li)
+(import std.len)
+(import std.or)
+(import std.relops)
+(import std.reverse)
+
+(defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
+
+(defun expand_clue (clue_byte)
+    (reverse (expand_clue_inner (+ clue_byte 128) 5))
+)
+
+(defun expand_clue_inner (val n)
+    (if (= n 0)
+        0
+        (c (% val 3) (expand_clue_inner (/ val 3) (- n 1)))
+    )
+)
+
+(defun krunk_payout_share (base_unit n)
+    (* base_unit (f (drop (- n 1) KRUNK_PAYOUTS)))
+)
+
+(defun drop (n lst)
+    (if (= n 0)
+        lst
+        (drop (- n 1) (r lst))
+    )
+)
+
+(defun guess_matches_word (guess word)
+    (= guess word)
+)
+
+(defun krunk_should_reveal (guess word num_guesses)
+    (or (guess_matches_word guess word) (= num_guesses 5))
+)
+
+(defun krunk_reveal_move (salt word)
+    (concat salt word)
+)
+
+(defun krunk_reveal_mover_share (base_unit bob_guesses word)
+    (if (= (f bob_guesses) word)
+        (krunk_payout_share base_unit (len bob_guesses))
+        (if (= (len bob_guesses) 5)
+            0
+            (x "krunk_reveal_mover_share: not terminal")
+        )
+    )
+)
+€ÿÿ¤./games/krunk/clsp/onchain/clue.clspÿÌ|(include *standard-cl-26*)
+(import std.shapes)
+(import games.krunk.clsp.onchain.shapes)
+(import referee.onchain.shapes)
+
+(import games.krunk.clsp.onchain.guess exposing (program_hash as guess_hash))
+(import games.krunk.clsp.onchain.krunk_make_clue exposing make_clue)
+(import std.if_any_fail)
+(import std.assert)
+(import std.and)
+(import std.or)
+(import std.relops)
+(import std.li)
+(import std.len)
+(import std.condition_codes)
+
+(defconst KRUNK_PAYOUTS (li 100 100 20 5 1))
+
+(defun krunk_payout_share (base_unit n)
+    (* base_unit (f (drop (- n 1) KRUNK_PAYOUTS)))
+)
+
+(defun drop (n lst)
+    (if (= n 0)
+        lst
+        (drop (- n 1) (r lst))
+    )
+)
+
+(defun reveal_mover_share (base_unit bob_guesses revealed_word)
+    (if (!= (len bob_guesses) 5)
+        (krunk_payout_share base_unit (len bob_guesses))
+        (= (f bob_guesses) revealed_word)
+        (krunk_payout_share base_unit 5)
+        0
+    )
+)
+
+; Bob challenging Alice's clue or reveal.
+; state is (krunk-state)
+; MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
+; On a continue (clue), we transition back to guess. guess_hash is imported
+; directly from games.krunk.clsp.onchain.guess.
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (krunk-state) previous_validation_program evidence unused_payout)
+
+    (if (= (strlen MOVE) 1)
+        ; Alice gave a clue for Bob's latest guess.
+        (if_any_fail
+            (= MOVER_SHARE 0)
+            (< (len alice_clues) 4)
+            (> 0x72 MOVE)
+            0
+            (validator-transition guess_hash (make-krunk-state dict_pubkey base_unit bob_guesses (c MOVE alice_clues) alice_commit clue_hash) 5)
+        )
+        (!= (strlen MOVE) 21)
+        0
+        ; Alice revealed salt||word.
+        (assign
+            revealed_word (substr MOVE 16 21)
+            (if_any_fail
+                (= MOVER_SHARE (reveal_mover_share base_unit bob_guesses revealed_word))
+                (= alice_commit (sha256 (substr MOVE 0 16) revealed_word))
+                ; A one-byte clue index authorizes a slash only when it
+                ; identifies an incorrect prior clue. Nil is inspection,
+                ; while the only other accepted evidence is a signed range.
+                (or
+                    (!= (strlen evidence) 1)
+                    (= (make_clue revealed_word
+                            (f (drop (+ evidence 1) bob_guesses)))
+                        (f (drop (+ evidence 0) alice_clues))
+                    )
+                )
+                0
+                (if (= (strlen evidence) 10)
+                    ; A signed dictionary-gap range containing the
+                    ; word authorizes this conditional slash.
+                    (assert
+                        (>= revealed_word (substr evidence 0 5))
+                        (<= revealed_word (substr evidence 5 10))
+                        (validator-result 0 0 0 (list (list AGG_SIG_UNSAFE dict_pubkey evidence)))
+                    )
+                    (validator-transition 0 0 0)
+                )
+            )
+        )
+    )
+)
+€ÿÿ•clsp/std/relops.clincÿÀ‘(defun-inline >= (A B) (not (> B A)))
+(defun-inline <= (A B) (not (> A B)))
+(defun-inline <  (A B) (> B A))
+(defun-inline != (A B) (not (= A B)))€ÿÿ¡clsp/referee/onchain/shapes.clincÿÆ(import std.shapes)
+
+; Keep the Rust encoders/decoder in src/referee/types.rs aligned with these.
+(defun-shape referee-parameters
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+      MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A))
+
+(defun-shape referee-timeout
+    ((atom mover_payout_ph) . (atom waiter_payout_ph)))
+
+(defun-shape referee-move
+    (((atom new_move) . (atom infohash_c)) . ((atom new_mover_share) . (atom new_max_move_size))))
+
+; A pair on the left and an atom on the right distinguishes slash from both
+; timeout (two atoms) and move (two pairs). Evidence contributes no constraints.
+(defun-shape referee-slash
+    ((previous_state previous_validation_program . (optional evidence)) . (atom mover_payout_ph)))
+
+; Shared by on-chain validators and off-chain validation. Payout is unused by
+; validators; off-chain calls supply nil there. No terminating list nils.
+(defun-shape referee-validator-args
+    (validator_hash curried_args (state validation_program . evidence) . payout))
+
+; Non-nil validator result. The conditions tail is a variable-length list.
+; Terminal success has nil hash/state and zero size; nil itself means slash.
+(defun-shape referee-result
+    ((next_validator_hash . new_state) . (max_move_size . extra_conditions)))
+(defun-inline validator-result (next_validator_hash new_state max_move_size extra_conditions)
+    (make (referee-result)))
+(defun-inline validator-transition (next_validator_hash new_state max_move_size)
+    (validator-result next_validator_hash new_state max_move_size ()))
+€ÿÿ¥./games/krunk/clsp/onchain/guess.clspÿÅ(include *standard-cl-26*)
+(import std.shapes)
+(import games.krunk.clsp.onchain.shapes)
+(import referee.onchain.shapes)
+
+(import std.if_any_fail)
+(import std.assert)
+(import std.and)
+(import std.relops)
+(import std.li)
+(import std.condition_codes)
+
+; Alice challenging Bob's guess.
+; state is (krunk-state)
+; MOVE is Bob's 5-letter guess.
+; evidence is a 10-byte atom (begin_range || end_range) when Alice slashes
+; an out-of-dictionary guess. A condition (AGG_SIG_UNSAFE dict_pubkey evidence)
+; is emitted to prove the range was signed by both players.
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (krunk-state) previous_validation_program evidence unused_payout)
+
+    (if_any_fail
+        (= (strlen MOVE) 5)
+        (= MOVER_SHARE 0)
+        0
+        (validator-result clue_hash (make-krunk-state dict_pubkey base_unit (c MOVE bob_guesses) alice_clues alice_commit clue_hash) 21 (if (not evidence) 0
+                (assert
+                    (>= MOVE (substr evidence 0 5))
+                    (<= MOVE (substr evidence 5 10))
+                    (li (li AGG_SIG_UNSAFE dict_pubkey evidence))
+                )
+            ))
+    )
+)
+€ÿÿ°./games/krunk/clsp/onchain/krunk_make_clue.clincÿÆ (import std.shapes)
+(import games.krunk.clsp.onchain.shapes)
+(defun make_clue (word guess)
+    (assign
+        (krunk-green not_green_word not_green_guess green) (make_green (expand_word word) (expand_word guess))
+        yellow (make_yellow not_green_word not_green_guess)
+        (- (merge_colors green yellow 0) 128)
+    )
+)
+
+(defun expand_word (word)
+    (list (substr word 0 1) (substr word 1 2) (substr word 2 3) (substr word 3 4) (substr word 4 5))
+)
+
+(defun make_green (word guess)
+    (if (not word)
+        (make-krunk-green 0 0 0)
+        (assign (krunk-green inner_not_green_word inner_not_green_guess inner_green) (make_green (r word) (r guess))
+            (if (= (f word) (f guess))
+                (make-krunk-green inner_not_green_word inner_not_green_guess (c 1 inner_green))
+                (make-krunk-green (c (f word) inner_not_green_word) (c (f guess) inner_not_green_guess) (c 0 inner_green))
+            )
+        )
+    )
+)
+
+(defun make_yellow (word guess)
+    (if (not guess)
+        0
+        (if (is_yellow word (f guess))
+            (c 1 (make_yellow (elide_one word (f guess)) (r guess)))
+            (c 0 (make_yellow word (r guess)))
+        )
+    )
+)
+
+(defun elide_one (word letter)
+    (if (= (f word) letter)
+        (r word)
+        (c (f word) (elide_one (r word) letter))
+    )
+)
+
+(defun is_yellow (word letter)
+    (if (not word)
+        0
+        (if (= (f word) letter)
+            1
+            (is_yellow (r word) letter)
+        )
+    )
+)
+
+(defun merge_colors (green yellow val)
+    (if (not green)
+        val
+        (merge_colors (r green)
+            (if (f green) yellow (r yellow))
+            (+ (* 3 val) (if (f green) 2 (f yellow))))
+    )
+)
+€ÿÿžclsp/std/condition_codes.clincÿÄñ; See chia/types/condition_opcodes.py
+
+(defconst AGG_SIG_UNSAFE 49)
+(defconst AGG_SIG_ME 50)
+
+; the conditions below reserve coin amounts and have to be accounted for in output totals
+
+(defconst CREATE_COIN 51)
+(defconst RESERVE_FEE 52)
+
+; the conditions below deal with announcements, for inter-coin communication
+
+; coin announcements
+(defconst CREATE_COIN_ANNOUNCEMENT 60)
+(defconst ASSERT_COIN_ANNOUNCEMENT 61)
+
+; puzzle announcements
+(defconst CREATE_PUZZLE_ANNOUNCEMENT 62)
+(defconst ASSERT_PUZZLE_ANNOUNCEMENT 63)
+
+; the conditions below let coins inquire about themselves
+
+(defconst ASSERT_MY_COIN_ID 70)
+(defconst ASSERT_MY_PARENT_ID 71)
+(defconst ASSERT_MY_PUZZLEHASH 72)
+(defconst ASSERT_MY_AMOUNT 73)
+
+; the conditions below ensure that we're "far enough" in the future
+
+; wall-clock time
+(defconst ASSERT_SECONDS_RELATIVE 80)
+(defconst ASSERT_SECONDS_ABSOLUTE 81)
+
+; block index
+(defconst ASSERT_HEIGHT_RELATIVE 82)
+(defconst ASSERT_HEIGHT_ABSOLUTE 83)
+
+; wall-clock time
+(defconst ASSERT_BEFORE_SECONDS_RELATIVE 84)
+(defconst ASSERT_BEFORE_SECONDS_ABSOLUTE 85)
+
+; block index
+(defconst ASSERT_BEFORE_HEIGHT_RELATIVE 86)
+(defconst ASSERT_BEFORE_HEIGHT_ABSOLUTE 87)
+
+; A condition that is always true and always ignore all arguments
+(defconst REMARK 1)
+€ÿÿ’clsp/std/len.clincÿ«(defun len (L) (if L (+ 1 (len (r L))) 0))
+€ÿÿ¦./games/krunk/clsp/onchain/commit.clspÿÃú(include *standard-cl-26*)
+(import std.shapes)
+(import games.krunk.clsp.onchain.shapes)
+(import referee.onchain.shapes)
+
+(import games.krunk.clsp.onchain.guess exposing (program_hash as guess_hash))
+(import std.if_any_fail)
+(import std.and)
+(import std.li)
+
+; Bob challenging Alice's commit.
+; previous_state is (krunk-initial).
+; MOVE is sha256(salt || word), 32 bytes.
+;
+; The factory supplies clue_hash from its registered program. Thread it
+; through state so transitions name that exact program instead of a separate
+; nested compilation of clue.clsp.
+(export (referee-validator-args mod_hash
+    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
+       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
+    (krunk-initial) previous_validation_program evidence unused_payout)
+
+    (if_any_fail
+        (= (strlen MOVE) 32)
+        (= MOVER_SHARE 0)
+        0
+        (validator-transition guess_hash (make-krunk-state dict_pubkey base_unit 0 0 MOVE clue_hash) 5)
+    )
+)
+€ÿÿ”clsp/std/curry.clincÿÓû(import std.li)
+
+;; The code below is used to calculate of the tree hash of a curried function
+;; without actually doing the curry, and using other optimization tricks
+;; like unrolling `shatree`.
+
+(defconstant TWO 2)
+(defconstant constant-tree (
+    (0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a .   ;  = `(sha256 1)`
+    0x9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2) .  ;  = `(sha256 1 1)` = `(sha256 1 #q)`
+    (0x02a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222 . ;  = `(concat 2 (sha256 1 #a))`
+    0x02a8d5dd63fba471ebcb1f3e8f7c1e1879b7152a6e7298a91ce119a63400ade7c5)  ;  = `(concat 2 (sha256 1 #c))`
+    )
+)
+
+; I looked into calculating the values of `constant-tree` because it's pretty easy to code-golf
+; out an implementation that produces the values cheaper than just inlining them. The problem is,
+; when do we calculate them? If there were a way to calculate it "before main" and include it in
+; the globally-accessible constant table, we could do that. But we can't which means to be optimal,
+; client code should call the "build table" code once, then pass it around to anyone that wants to
+; call `curry` or `curry2`. This is pretty intrusive, so for now we'll just use the existing
+; global constant infrastructure, and include it as a fixed table so the tree of four values will
+; appear in all code that includes this file, and it will compress better in generators.
+
+(defun-inline sha256_one _noargs (f (f constant-tree)))
+(defun-inline sha256_one_one _noargs (r (f constant-tree)))
+(defun-inline two_sha256_one_a_kw _noargs (f (r constant-tree)))
+(defun-inline two_sha256_one_c_kw _noargs (r (r constant-tree)))
+
+;; this returns the sha256 tree hash of expression F = `((q . a1) a2)`
+(defun hash-expression-F (a1 a2)
+    (sha256 TWO (sha256 TWO (sha256_one_one) a1) (sha256 TWO a2 (sha256_one)))
+)
+
+;; Given the tree hash `environment-hash` of an environment tree E
+;; and the tree hash `parameter-hash` of a constant parameter P
+;; return the tree hash of the tree corresponding to
+;; `(c (q . P) E)`
+;; This is the new environment tree with the addition parameter P curried in.
+;;
+;; Note that `(c (q . P) E)` = `(c . ((q . P) . (E . 0)))`
+(defun-inline update-hash-for-parameter-hash (parameter-hash environment-hash)
+    (sha256 (two_sha256_one_c_kw) (hash-expression-F parameter-hash environment-hash))
+)
+
+;; Given the tree hash `environment-hash` of an environment tree E
+;; and the tree hash `mod-hash` of a mod M
+;; return the tree hash of the tree corresponding to
+;; `(a (q . M) E)`
+;; This is the hash of a new function that adopts the new environment E.
+;; This is used to build of the tree hash of a curried function.
+;;
+;; Note that `(a (q . M) E)` = `(a . ((q . M)  . (E . 0)))`
+(defun-inline tree-hash-of-apply (mod-hash environment-hash)
+    (sha256 (two_sha256_one_a_kw) (hash-expression-F mod-hash environment-hash))
+)
+
+;; This function recursively calls `update-hash-for-parameter-hash`
+(defun calculate-hash-of-curried-parameters (curry-parameter-hashes)
+    (if curry-parameter-hashes
+        (update-hash-for-parameter-hash (f curry-parameter-hashes) (calculate-hash-of-curried-parameters (r curry-parameter-hashes)))
+        (sha256_one_one)
+    )
+)
+
+;; mod-hash:
+;;   the hash of a puzzle function, ie. a `mod`
+;;
+;; curry-parameter-hashes:
+;;   a list of pre-hashed trees representing parameters to be curried into the puzzle.
+;;
+;; we return the hash of the curried expression
+;;   (a (q . mod-hash) (c (cp1 (c cp2 (c ... 1)...))))
+;;
+;; Note that from a user's perspective the hashes passed in here aren't simply
+;; the hashes of the desired parameters, but their treehash representation since
+;; that's the form we're assuming they take in the acutal curried program.
+
+;; inline functions that take varargs don't seem to work, so we can't inline `curry`
+(defun curry_hashes (mod-hash . curry-parameter-hashes)
+    (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
+)
+
+(defun curry_unhashed_inner ((@ args (first_arg . rest_arg)))
+    (if args
+        (c (qq (shatree (unquote first_arg))) (curry_unhashed_inner rest_arg))
+        0
+    )
+)
+
+;; Given a mod hash and unhashed arguments, return the modhash of the resulting
+;; curried callable object.
+(defmac curry_unhashed_args (mod-hash . args)
+    (c (q . curry_hashes) (c mod-hash (curry_unhashed_inner args)))
+)
+
+(defun curry (mod . parameters)
+    (li TWO (c 1 mod) (build_curry_parameters parameters))
+)
+
+(defun build_curry_parameters (parameters)
+    (if (not parameters)
+        1
+        (li 4 (c 1 (f parameters)) (build_curry_parameters (r parameters)))
+    )
+)
+
+(defun-inline curry_hashes_inline (mod-hash . curry-parameter-hashes)
+    (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
+)
+
+;; `curry_mod_hashes_inline` takes exactly two parameters rather than varags, and it can be inlined
+(defun-inline curry_mod_hashes_inline (mod-hash curry-parameter-hashes)
+    (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
+)
+€ÿÿ›clsp/std/deep_compare.clincÿÂÑ
+(defun deep_compare (a b)
+    (if (l a)
+        (if (l b)
+            (assign-lambda inner_result (deep_compare (f a) (f b))
+                (if inner_result
+                    inner_result
+                    (deep_compare (r a) (r b))
+                )
+            )
+            1
+        )
+        (if (l b)
+            -1
+            (if (> a b)
+                1
+                (- 0 (> b a))
+            )
+        )
+    )
+)
+
+(defun deep< (a b)
+    (= (deep_compare a b) -1)
+)
+
+(defun deep> (a b)
+    (= (deep_compare a b) 1)
+)
+
+(defun deep= (a b)
+    (= (deep_compare a b) 0)
+)
+
+(defun deep<= (a b)
+    (not (deep> a b))
+)
+
+(defun deep>= (a b)
+    (not (deep< a b))
+)
+
+(defun deep!= (a b)
+    (not (deep= a b))
+)
+€ÿÿ–clsp/std/reverse.clincÿÀ¶(defun reverse_inner (reversed rest)
+    (if rest
+        (reverse_inner (c (f rest) reversed) (r rest))
+        reversed
+    )
+)
+
+(defun reverse (vals)
+    (reverse_inner 0 vals)
+)
+€ÿÿ–clsp/std/shatree.clincÿÀÖ;; hash a tree
+;; This is used to calculate a puzzle hash given a puzzle program.
+(defun shatree
+    (TREE)
+    (if (l TREE)
+        (sha256 2 (shatree (f TREE)) (shatree (r TREE)))
+        (sha256 1 TREE)
+    )
+)
+€€ÿÿ‰base_unitÿnÿ±games.krunk.clsp.krunk_helpers.krunk_payout_shareÿŒSALT_$_92287ÿŒWORD_$_92288ÿŒCLUE_$_92289ÿ‘DICT_TREE_$_92290ÿ’local_move_$_92291ÿŽamount_$_92292ÿstate_$_92293ÿ“mover_share_$_92294ÿentropy_$_92295ÿ“dict_pubkey_$_92296ÿ‘base_unit_$_92297ÿ“bob_guesses_$_92298ÿ“alice_clues_$_92299ÿ”alice_commit_$_92300ÿ’_clue_hash_$_92301ÿ“num_guesses_$_92302ÿ”latest_guess_$_92303ÿ‹cse_$_92474ÿ’letbinding_$_92482ÿaÿbÿstd.deep_compare.deep_compareÿŒSALT_$_92213ÿŒWORD_$_92214ÿ‘DICT_TREE_$_92215ÿŽamount_$_92216ÿ‘pre_state_$_92217ÿstate_$_92218ÿŒmove_$_92219ÿœvalidation_info_hash_$_92220ÿ“mover_share_$_92221ÿ•lookup_result_$_92228ÿ“dict_pubkey_$_92222ÿ‘base_unit_$_92223ÿ“bob_guesses_$_92224ÿ“alice_clues_$_92225ÿ”alice_commit_$_92226ÿ’_clue_hash_$_92227ÿ’letbinding_$_92486ÿˆreversedÿ„restÿ™std.reverse.reverse_innerÿ‹DICT_PUBKEYÿ‰DICT_TREEÿproposer_reserveÿaccepter_reserveÿrequested_stakeÿ­games.krunk.clsp.krunk_generate.krunk_factoryÿŠparametersÿ std.curry.build_curry_parametersÿ„wordÿ†letterÿ²games.krunk.clsp.onchain.krunk_make_clue.elide_oneÿŒword_$_92452ÿŽletter_$_92453ÿ‹cse_$_92476ÿ‹cse_$_92477ÿ’letbinding_$_92495ÿ…greenÿ†yellowÿƒvalÿµgames.krunk.clsp.onchain.krunk_make_clue.merge_colorsÿ„saltÿ°games.krunk.clsp.krunk_helpers.krunk_reveal_moveÿ‰clue_byteÿªgames.krunk.clsp.krunk_helpers.expand_clueÿ’letbinding_$_92480ÿ„valsÿ“std.reverse.reverseÿLÿ‹std.len.lenÿ‘DICT_TREE_$_92185ÿ’local_move_$_92186ÿŽamount_$_92187ÿstate_$_92188ÿ“mover_share_$_92189ÿentropy_$_92190ÿŒsalt_$_92192ÿŒword_$_92191ÿŒmove_$_92193ÿ’letbinding_$_92485ÿŒword_$_92277ÿguess_$_92278ÿ–not_green_word_$_92279ÿ—not_green_guess_$_92280ÿgreen_$_92281ÿ’letbinding_$_92496ÿŒclue_$_92229ÿ’letbinding_$_92487ÿ‘DICT_TREE_$_92315ÿŽamount_$_92316ÿ‘pre_state_$_92317ÿstate_$_92318ÿŒmove_$_92319ÿœvalidation_info_hash_$_92320ÿ“mover_share_$_92321ÿŒword_$_92334ÿ“dict_pubkey_$_92328ÿ‘base_unit_$_92329ÿ“bob_guesses_$_92330ÿ“alice_clues_$_92331ÿ”alice_commit_$_92332ÿ’_clue_hash_$_92333ÿ’letbinding_$_92489ÿ†amountÿ‰pre_stateÿ…stateÿ„moveÿ”validation_info_hashÿ‹mover_shareÿ¸games.krunk.clsp.krunk_generate.krunk_bob_handler_commitÿ‘base_unit_$_92349ÿ“bob_guesses_$_92350ÿŒword_$_92351ÿ‹cse_$_92475ÿ’letbinding_$_92494ÿ²games.krunk.clsp.onchain.krunk_make_clue.is_yellowÿ’letbinding_$_92481ÿ´games.krunk.clsp.onchain.krunk_make_clue.expand_wordÿ‹bob_guessesÿ·games.krunk.clsp.krunk_helpers.krunk_reveal_mover_shareÿ“dict_pubkey_$_92322ÿ‘base_unit_$_92323ÿ“bob_guesses_$_92324ÿ“alice_clues_$_92325ÿ”alice_commit_$_92326ÿ’_clue_hash_$_92327ÿ’letbinding_$_92488ÿ„TREEÿ“std.shatree.shatreeÿ“DICT_PUBKEY_$_92160ÿ‘DICT_TREE_$_92161ÿ˜proposer_reserve_$_92163ÿ˜accepter_reserve_$_92164ÿ—requested_stake_$_92165ÿ“bob_handler_$_92168ÿ•alice_handler_$_92167ÿ‘base_unit_$_92166ÿ•initial_state_$_92169ÿ’letbinding_$_92493ÿƒlstÿ£games.krunk.clsp.krunk_helpers.dropÿ•lookup_result_$_92336ÿ“reveal_clue_$_92335ÿ’letbinding_$_92490ÿ‘DICT_TREE_$_92232ÿ’local_move_$_92233ÿŽamount_$_92234ÿstate_$_92235ÿ“mover_share_$_92236ÿentropy_$_92237ÿguess_$_92244ÿ“dict_pubkey_$_92238ÿ‘base_unit_$_92239ÿ“bob_guesses_$_92240ÿ“alice_clues_$_92241ÿ”alice_commit_$_92242ÿ’_clue_hash_$_92243ÿ’letbinding_$_92491ÿŒword_$_92411ÿguess_$_92412ÿœinner_not_green_word_$_92413ÿinner_not_green_guess_$_92414ÿ“inner_green_$_92415ÿ’letbinding_$_92498ÿ…guessÿ³games.krunk.clsp.onchain.krunk_make_clue.make_greenÿŠlocal_moveÿ‡entropyÿºgames.krunk.clsp.krunk_generate.krunk_alice_handler_commitÿ°games.krunk.clsp.krunk_helpers.expand_clue_innerÿ’letbinding_$_92492ÿ‰a_$_92248ÿ‰b_$_92249ÿ‹cse_$_92478ÿ’letbinding_$_92499ÿƒmodÿstd.curry.curryÿ’letbinding_$_92484ÿŠleft_boundÿ‹right_boundÿ„nodeÿ¬games.krunk.clsp.krunk_dict_tree.dict_lookupÿŽpayout_$_92305ÿŽreveal_$_92304ÿ’letbinding_$_92483ÿ’left_bound_$_92204ÿ“right_bound_$_92205ÿŒword_$_92206ÿŒnode_$_92207ÿ‘word_here_$_92210ÿ’right_node_$_92209ÿ‘left_node_$_92208ÿ’letbinding_$_92479ÿ”inner_result_$_92250ÿ’letbinding_$_92500ÿ„SALTÿ„WORDÿ¹games.krunk.clsp.krunk_generate.krunk_alice_handler_guessÿ‹num_guessesÿ²games.krunk.clsp.krunk_helpers.krunk_should_revealÿ·games.krunk.clsp.krunk_generate.krunk_bob_handler_guessÿ–std.deep_compare.deep=ÿ±games.krunk.clsp.krunk_helpers.guess_matches_wordÿ´games.krunk.clsp.onchain.krunk_make_clue.make_yellowÿ„CLUEÿ¸games.krunk.clsp.krunk_generate.krunk_alice_handler_clueÿ¶games.krunk.clsp.krunk_generate.krunk_bob_handler_clueÿŽyellow_$_92282ÿ’letbinding_$_92497ÿ²games.krunk.clsp.onchain.krunk_make_clue.make_clueÿ†<main>€ÿÿÿ€ÿ$ÿÿ(ÿ€ÿÿ€ÿ(ÿÿ(ÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ)ÿ
+ÿ)ÿ€ÿÿ€ÿ)ÿÿ)ÿ€ÿÿ€ÿ)ÿÿ)ÿ€ÿÿ€ÿ(ÿÿ(ÿ€ÿÿ€ÿ*ÿ
+ÿ*ÿ€ÿÿ€ÿ*ÿÿ*ÿ€ÿÿ€ÿ*ÿÿ*ÿ€ÿÿ€ÿ*ÿÿ*ÿ"€ÿÿ€ÿ*ÿ$ÿ*ÿ%€ÿÿ€ÿ+ÿ
+ÿ+ÿ€ÿÿ€ÿ+ÿÿ+ÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ+ÿÿ+ÿ*€ÿÿ€ÿ+ÿ+ÿ+ÿ;€ÿÿ€ÿ+ÿ<ÿ+ÿK€ÿÿ€ÿ(ÿÿ,ÿ€ÿÿ€ÿ,ÿ	ÿ,ÿ€ÿÿ€ÿ,ÿÿ,ÿ€ÿÿ€ÿ,ÿÿ,ÿ€ÿÿ€ÿ,ÿÿ,ÿ#€ÿÿ€ÿ,ÿ$ÿ,ÿ4€ÿÿ€ÿ,ÿÿ,ÿ€ÿÿ€ÿ,ÿÿ,ÿ[€ÿÿ€ÿ,ÿ7ÿ,ÿ8€ÿÿ€ÿ,ÿ9ÿ,ÿH€ÿÿ€ÿ,ÿIÿ,ÿY€ÿÿ€ÿ,ÿ	ÿ-ÿ^€ÿÿ€ÿ-ÿÿ-ÿ€ÿÿ€ÿ-ÿÿ-ÿ€ÿÿ€ÿ-ÿÿ-ÿ%€ÿÿ€ÿ-ÿ&ÿ-ÿ6€ÿÿ€ÿ-ÿ9ÿ-ÿ:€ÿÿ€ÿ-ÿ;ÿ-ÿJ€ÿÿ€ÿ-ÿKÿ-ÿ[€ÿÿ€ÿ,ÿ	ÿ/ÿ4€ÿÿ€ÿ.ÿÿ.ÿ€ÿÿ€ÿ2ÿÿ2ÿ#€ÿÿ€ÿ2ÿ$ÿ2ÿ<€ÿÿ€ÿ2ÿ=ÿ2ÿF€ÿÿ€ÿ1ÿ ÿ1ÿ%€ÿÿ€ÿ1ÿ&ÿ1ÿ@€ÿÿ€ÿ1ÿAÿ1ÿJ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ!€ÿÿ€ÿ/ÿÿ/ÿ-€ÿÿ€ÿ/ÿ.ÿ/ÿ1€ÿÿÿÿÿÿ	€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿK€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ!€ÿÿÿÿDÿÿH€ÿÿÿÿÿÿ"€ÿÿÿÿFÿÿJ€ÿÿÿÿÿÿ!€ÿÿÿÿDÿÿH€ÿÿÿÿÿ(ÿ*€ÿÿÿ(ÿÿ(ÿ€ÿÿÿ(ÿÿ(ÿ#€ÿÿÿ(ÿ$ÿ(ÿ(€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ"€ÿÿÿÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿÿÿ!ÿ€ÿÿÿ!ÿÿ!ÿ€ÿÿÿ!ÿÿ!ÿ€ÿÿÿ!ÿÿ!ÿ€ÿÿÿ!ÿÿ!ÿ&€ÿÿÿ!ÿÿ"ÿO€ÿÿÿ"ÿÿ"ÿ!€ÿÿÿ"ÿ#ÿ"ÿ$€ÿÿÿ"ÿ%ÿ"ÿ.€ÿÿÿ"ÿ/ÿ"ÿ0€ÿÿÿ"ÿ2ÿ"ÿ=€ÿÿÿ"ÿ>ÿ"ÿB€ÿÿÿ"ÿCÿ"ÿM€ÿÿÿ!ÿÿ#ÿM€ÿÿÿ#ÿÿ#ÿ!€ÿÿÿ#ÿ"ÿ#ÿ,€ÿÿÿ#ÿ.ÿ#ÿ/€ÿÿÿ#ÿ0ÿ#ÿ9€ÿÿÿ#ÿ:ÿ#ÿ;€ÿÿÿ#ÿ=ÿ#ÿA€ÿÿÿ#ÿBÿ#ÿK€ÿÿ€ÿ‚ «ÿ+ÿ‚ «ÿ/€ÿÿ€ÿ‚ «ÿ1ÿ‚ «ÿ2€ÿÿ€ÿ‚ «ÿ3ÿ‚ «ÿ4€ÿÿ€ÿ‚ «ÿ5ÿ‚ «ÿ6€ÿÿ€ÿ‚ «ÿ7ÿ‚ «ÿ8€ÿÿ€ÿ‚ «ÿ"ÿ‚ «ÿ8€ÿÿ€ÿuÿÿuÿ€ÿÿ€ÿvÿ]ÿvÿb€ÿÿ€ÿwÿÿwÿ€ÿÿ€ÿwÿÿwÿ%€ÿÿ€ÿxÿÿxÿ€ÿÿ€ÿxÿÿxÿ$€ÿÿ€ÿ}ÿÿ}ÿ€ÿÿ€ÿ‚ ‚ÿÿ‚ ‚ÿ€ÿÿ€ÿyÿ	ÿyÿ€ÿÿ€ÿyÿÿyÿ!€ÿÿ€ÿyÿ"ÿyÿ.€ÿÿ€ÿyÿ/ÿyÿ3€ÿÿ€ÿyÿ4ÿyÿ?€ÿÿ€ÿyÿ	ÿ{ÿ7€ÿÿ€ÿzÿÿzÿ€ÿÿ€ÿ|ÿÿ|ÿ1€ÿÿ€ÿ|ÿ2ÿ|ÿ;€ÿÿ€ÿ|ÿ<ÿ|ÿG€ÿÿ€ÿ|ÿHÿ|ÿL€ÿÿ€ÿ{ÿÿ{ÿ*€ÿÿ€ÿ{ÿ+ÿ{ÿ/€ÿÿ€ÿ{ÿ0ÿ{ÿ4€ÿÿ€ÿyÿ	ÿ‚ …ÿ€ÿÿ€ÿ‚ …ÿÿ‚ …ÿ€ÿÿ€ÿ‚ †ÿÿ‚ †ÿ+€ÿÿ€ÿ‚ ‡ÿÿ‚ ‡ÿ€ÿÿ€ÿ‚ ˆÿÿ‚ ˆÿ€ÿÿ€ÿ‚ ‰ÿÿ‚ ‰ÿ€ÿÿ€ÿ‚ ‰ÿÿ‚ ‰ÿ1€ÿÿ€ÿ‚ ‰ÿ2ÿ‚ ‰ÿ6€ÿÿ€ÿ‚ ‰ÿ7ÿ‚ ‰ÿ;€ÿÿ€ÿ‚ ‰ÿ<ÿ‚ ‰ÿE€ÿÿ€ÿ}ÿÿ}ÿ€ÿÿ€ÿ~ÿÿ~ÿ6€ÿÿ€ÿÿÿÿ€ÿÿ€ÿ‚ €ÿÿ‚ €ÿ€ÿÿ€ÿ‚ ÿÿ‚ ÿ€ÿÿ€ÿKÿÿKÿ€ÿÿ€ÿMÿÿMÿ€ÿÿ€ÿMÿÿMÿ€ÿÿ€ÿMÿÿMÿ€ÿÿ€ÿMÿ ÿMÿ"€ÿÿ€ÿLÿÿLÿ€ÿÿ€ÿNÿÿNÿ€ÿÿ€ÿNÿÿNÿ€ÿÿ€ÿNÿÿNÿ€ÿÿ€ÿOÿ	ÿOÿ€ÿÿ€ÿOÿÿOÿ€ÿÿ€ÿ!ÿÿ!ÿ€ÿÿ€ÿ!ÿÿ!ÿ#€ÿÿ€ÿ"ÿÿ"ÿ€ÿÿ€ÿ"ÿÿ"ÿ#€ÿÿ€ÿOÿ,ÿOÿ0€ÿÿ€ÿOÿ1ÿOÿ:€ÿÿ€ÿOÿ	ÿPÿ€ÿÿ€ÿPÿÿPÿ€ÿÿ€ÿPÿÿPÿ&€ÿÿ€ÿPÿ'ÿPÿ+€ÿÿ€ÿOÿ	ÿQÿ€ÿÿ€ÿQÿÿQÿ€ÿÿ€ÿRÿÿRÿ-€ÿÿ€ÿSÿÿSÿ€ÿÿ€ÿTÿÿTÿ€ÿÿ€ÿUÿÿUÿ€ÿÿ€ÿUÿÿUÿ1€ÿÿ€ÿUÿ2ÿUÿ6€ÿÿ€ÿUÿ7ÿUÿ;€ÿÿ€ÿUÿ<ÿUÿE€ÿÿ€ÿVÿÿVÿ€ÿÿ€ÿ]ÿÿ]ÿ€ÿÿ€ÿ_ÿÿ_ÿ#€ÿÿ€ÿ_ÿ6ÿ_ÿ:€ÿÿ€ÿ_ÿ;ÿ_ÿD€ÿÿ€ÿ^ÿ]ÿ^ÿb€ÿÿ€ÿ`ÿ	ÿ`ÿ€ÿÿ€ÿ`ÿÿ`ÿ€ÿÿ€ÿ`ÿ	ÿaÿ€ÿÿ€ÿaÿÿaÿ€ÿÿ€ÿaÿÿaÿ€ÿÿ€ÿbÿÿbÿ€ÿÿ€ÿcÿÿcÿ €ÿÿ€ÿdÿJÿdÿW€ÿÿ€ÿeÿKÿeÿX€ÿÿ€ÿfÿEÿfÿR€ÿÿ€ÿgÿÿgÿ€ÿÿ€ÿ`ÿ	ÿiÿ-€ÿÿ€ÿhÿÿhÿ€ÿÿ€ÿiÿÿiÿ €ÿÿ€ÿiÿ!ÿiÿ%€ÿÿ€ÿiÿ&ÿiÿ*€ÿÿ€ÿjÿÿjÿ€ÿÿ€ÿkÿÿkÿ€ÿÿ€ÿkÿÿkÿ*€ÿÿ€ÿkÿ+ÿkÿ/€ÿÿ€ÿlÿÿlÿ€ÿÿ€ÿmÿÿmÿ€ÿÿ€ÿmÿÿmÿ4€ÿÿ€ÿmÿ5ÿmÿ9€ÿÿ€ÿmÿ:ÿmÿ>€ÿÿ€ÿmÿ?ÿmÿC€ÿÿ€ÿmÿDÿmÿM€ÿÿ€ÿ‚ ®ÿÿ‚ ®ÿ€ÿÿ€ÿ‚ ®ÿ
+ÿ‚ ®ÿ€ÿÿ€ÿ‚ ®ÿÿ‚ ®ÿ€ÿÿ€ÿ‚ ®ÿÿ‚ ®ÿ€ÿÿ€ÿ‚ ®ÿÿ‚ ®ÿ€ÿÿ€ÿ‚ ®ÿÿ‚ ±ÿh€ÿÿ€ÿ‚ °ÿ
+ÿ‚ °ÿ€ÿÿ€ÿ‚ ±ÿaÿ‚ ±ÿf€ÿÿ€ÿ‚ ®ÿÿ‚ ºÿl€ÿÿ€ÿ‚ ¹ÿ
+ÿ‚ ¹ÿ€ÿÿ€ÿ‚ »ÿÿ‚ »ÿ€ÿÿ€ÿ‚ »ÿÿ‚ »ÿ€ÿÿ€ÿ‚ »ÿÿ‚ »ÿ!€ÿÿ€ÿ‚ »ÿ"ÿ‚ »ÿ$€ÿÿ€ÿ‚ ºÿaÿ‚ ºÿj€ÿÿ€ÿ‚ ²ÿÿ‚ ²ÿ€ÿÿ€ÿ‚ ³ÿÿ‚ ³ÿ€ÿÿ€ÿ‚ ³ÿÿ‚ ³ÿ"€ÿÿ€ÿ‚ ´ÿÿ‚ ´ÿ€ÿÿ€ÿ‚ µÿÿ‚ µÿ€ÿÿ€ÿ‚ µÿÿ‚ µÿ/€ÿÿ€ÿ‚ µÿ0ÿ‚ µÿ9€ÿÿ€ÿ‚ Àÿÿ‚ Àÿ'€ÿÿ€ÿ‚ Àÿ:ÿ‚ Àÿ>€ÿÿ€ÿ‚ Àÿ?ÿ‚ ÀÿH€ÿÿ€ÿ‚ ¼ÿÿ‚ ¼ÿ€ÿÿ€ÿ‚ ¼ÿÿ‚ ¼ÿ(€ÿÿ€ÿ‚ ¼ÿÿ‚ ½ÿ$€ÿÿ€ÿ‚ ½ÿÿ‚ ½ÿ€ÿÿ€ÿ‚ ½ÿÿ‚ ½ÿ"€ÿÿ€ÿ‚ ¼ÿÿ‚ ¾ÿ@€ÿÿ€ÿ‚ ¾ÿÿ‚ ¾ÿ€ÿÿ€ÿ‚ ¾ÿÿ‚ ¾ÿ(€ÿÿ€ÿ‚ ¾ÿ)ÿ‚ ¾ÿ-€ÿÿ€ÿ‚ ¾ÿ/ÿ‚ ¾ÿ0€ÿÿ€ÿ‚ ¾ÿ1ÿ‚ ¾ÿ<€ÿÿ€ÿ‚ Áÿÿ‚ Áÿ€ÿÿ€ÿ‚ Áÿÿ‚ Áÿ€ÿÿ€ÿ‚ Áÿÿ‚ Âÿ€ÿÿ€ÿ‚ Âÿÿ‚ Âÿ€ÿÿ€ÿ‚ Ãÿÿ‚ Ãÿ€ÿÿ€ÿ‚ Ãÿÿ‚ Ãÿ)€ÿÿ€ÿ‚ Äÿÿ‚ Äÿ €ÿÿ€ÿ‚ Åÿÿ‚ Åÿ$€ÿÿ€ÿ‚ ÆÿNÿ‚ Æÿ[€ÿÿ€ÿ‚ ÇÿOÿ‚ Çÿ\€ÿÿ€ÿ‚ ÈÿIÿ‚ ÈÿV€ÿÿ€ÿ‚ Éÿÿ‚ Éÿ€ÿÿ€ÿ‚ Êÿÿ‚ Êÿ€ÿÿ€ÿ‚ Áÿÿ‚ Ìÿ€ÿÿ€ÿ‚ Ìÿÿ‚ Ìÿ€ÿÿ€ÿ‚ Íÿÿ‚ Íÿ€ÿÿ€ÿ‚ Íÿÿ‚ Íÿ)€ÿÿ€ÿ‚ Îÿÿ‚ Îÿ+€ÿÿ€ÿ‚ Ïÿÿ‚ Ïÿ€ÿÿ€ÿ‚ Ðÿÿ‚ Ðÿ€ÿÿ€ÿ‚ “ÿÿ‚ “ÿ
+€ÿÿ€ÿ‚ ”ÿ	ÿ‚ ”ÿ
+€ÿÿ€ÿ‚ •ÿ	ÿ‚ •ÿ
+€ÿÿ€ÿ‚ –ÿ
+ÿ‚ –ÿ€ÿÿ€ÿ‚ –ÿÿ‚ –ÿ'€ÿÿ€ÿ‚ –ÿ(ÿ‚ –ÿ1€ÿÿ€ÿ‚ ›ÿÿ‚ ›ÿ€ÿÿ€ÿ‚ ÿÿ‚ ÿ€ÿÿ€ÿ‚ œÿ]ÿ‚ œÿb€ÿÿ€ÿ‚ žÿ	ÿ‚ žÿ€ÿÿ€ÿ‚ žÿÿ‚ žÿ€ÿÿ€ÿ‚ žÿ,ÿ‚ žÿ1€ÿÿ€ÿ‚ žÿ2ÿ‚ žÿ;€ÿÿ€ÿ‚ žÿ	ÿ‚ Ÿÿ€ÿÿ€ÿ‚ Ÿÿÿ‚ Ÿÿ€ÿÿ€ÿ‚ Ÿÿÿ‚ Ÿÿ&€ÿÿ€ÿ‚ Ÿÿ'ÿ‚ Ÿÿ,€ÿÿ€ÿ‚ žÿ	ÿ‚  ÿ€ÿÿ€ÿ‚  ÿÿ‚  ÿ€ÿÿ€ÿ‚ ¡ÿÿ‚ ¡ÿ*€ÿÿ€ÿ‚ ¢ÿÿ‚ ¢ÿ€ÿÿ€ÿ‚ £ÿÿ‚ £ÿ€ÿÿ€ÿ‚ ¤ÿÿ‚ ¤ÿ€ÿÿ€ÿ‚ ¤ÿÿ‚ ¤ÿ.€ÿÿ€ÿ‚ ¤ÿ/ÿ‚ ¤ÿ8€ÿÿ€ÿ‚ ¥ÿÿ‚ ¥ÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ0ÿ3ÿ0ÿ>€ÿÿ€ÿ0ÿ?ÿ0ÿH€ÿÿ€ÿ0ÿJÿ0ÿQ€ÿÿ€ÿ0ÿRÿ0ÿZ€ÿÿ€ÿ3ÿÿ3ÿ€ÿÿ€ÿ7ÿÿ7ÿ,€ÿÿ€ÿ7ÿ-ÿ7ÿ.€ÿÿ€ÿ7ÿ/ÿ7ÿ0€ÿÿ€ÿ7ÿ1ÿ7ÿ2€ÿÿ€ÿ7ÿ3ÿ7ÿ5€ÿÿ€ÿ7ÿ6ÿ7ÿC€ÿÿ€ÿ7ÿDÿ7ÿE€ÿÿ€ÿ8ÿÿ8ÿ*€ÿÿ€ÿ8ÿ+ÿ8ÿ6€ÿÿ€ÿ8ÿ7ÿ8ÿ<€ÿÿ€ÿ8ÿ=ÿ8ÿG€ÿÿ€ÿ8ÿHÿ8ÿQ€ÿÿ€ÿ8ÿRÿ8ÿZ€ÿÿ€ÿ9ÿÿ9ÿ,€ÿÿ€ÿ=ÿÿ=ÿ€ÿÿ€ÿ=ÿÿ=ÿ.€ÿÿ€ÿ=ÿ/ÿ=ÿ0€ÿÿ€ÿ=ÿ1ÿ=ÿ2€ÿÿ€ÿ=ÿ3ÿ=ÿ5€ÿÿ€ÿ=ÿ6ÿ=ÿC€ÿÿ€ÿ=ÿDÿ=ÿE€ÿÿ€ÿ>ÿÿ>ÿ*€ÿÿ€ÿ>ÿ+ÿ>ÿ6€ÿÿ€ÿ>ÿ7ÿ>ÿ<€ÿÿ€ÿ>ÿ=ÿ>ÿG€ÿÿ€ÿ>ÿHÿ>ÿQ€ÿÿ€ÿ>ÿRÿ>ÿZ€ÿÿ€ÿ?ÿÿ?ÿ,€ÿÿÿÿÿÿ €ÿÿÿÿ!ÿÿ$€ÿÿÿÿ%ÿÿ'€ÿÿÿÿ(ÿÿ)€ÿÿÿÿ*ÿÿ+€ÿÿÿÿÿÿ+€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ €ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿ
+ÿÿ
+ÿ€ÿÿÿ
+ÿÿ
+ÿ €ÿÿÿ
+ÿ"ÿ
+ÿ#€ÿÿÿ
+ÿ$ÿ
+ÿ-€ÿÿÿ
+ÿ.ÿ
+ÿ1€ÿÿÿ
+ÿ3ÿ
+ÿ4€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ
+€ÿÿÿÿ	ÿÿ
+€ÿÿÿÿÿÿ<€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ(€ÿÿÿÿ,ÿÿ/€ÿÿÿÿ0ÿÿ1€ÿÿÿÿ4ÿÿ5€ÿÿÿÿ6ÿÿ7€ÿÿÿÿ8ÿÿ9€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ ÿÿ!€ÿÿÿÿ#ÿÿ0€ÿÿÿ(ÿÿ(ÿ€ÿÿÿ(ÿÿ(ÿ€ÿÿÿ(ÿÿ(ÿ€ÿÿÿ,ÿÿ,ÿ	€ÿÿÿ-ÿ(ÿ-ÿ+€ÿÿÿ-ÿ,ÿ-ÿ7€ÿÿÿ,ÿÿ,ÿ€ÿÿÿ,ÿ
+ÿ,ÿ€ÿÿÿ,ÿÿ,ÿ€ÿÿÿ,ÿÿ,ÿ €ÿÿÿ,ÿÿ-ÿ:€ÿÿÿ-ÿ
+ÿ-ÿ€ÿÿÿ-ÿÿ-ÿ&€ÿÿÿ-ÿ'ÿ-ÿ8€ÿÿÿ,ÿÿ.ÿ€ÿÿÿ.ÿ	ÿ.ÿ€ÿÿÿ.ÿÿ.ÿ€ÿÿÿ.ÿ"ÿ.ÿ#€ÿÿÿ.ÿ	ÿ/ÿ€ÿÿÿ/ÿÿ/ÿ€ÿÿÿ.ÿ	ÿ0ÿ:€ÿÿÿ0ÿÿ0ÿ€ÿÿÿ0ÿÿ0ÿ8€ÿÿÿ$ÿÿ$ÿ€ÿÿÿ$ÿ
+ÿ$ÿ€ÿÿÿ$ÿÿ$ÿ"€ÿÿÿ$ÿ#ÿ$ÿ'€ÿÿÿ$ÿÿ$ÿ	€ÿÿÿ$ÿÿ$ÿ:€ÿÿÿ$ÿ*ÿ$ÿ+€ÿÿÿ$ÿ,ÿ$ÿ7€ÿÿÿ$ÿ8ÿ$ÿ9€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿ
+ÿ1ÿ€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿÿ3ÿ€ÿÿÿ3ÿ	ÿ3ÿ€ÿÿÿ4ÿÿ4ÿ€ÿÿÿ4ÿÿ4ÿ€ÿÿÿ4ÿÿ4ÿ€ÿÿÿ3ÿ	ÿ3ÿ€ÿÿ	ÿÿÿÿ€ÿÿÿ5ÿ"ÿ5ÿ#€ÿÿÿ5ÿÿ5ÿ€ÿÿÿ5ÿÿ5ÿ €ÿÿÿ3ÿ	ÿ6ÿ€ÿÿÿ6ÿÿ6ÿ€ÿÿÿ6ÿÿ6ÿ€ÿÿÿ6ÿÿ6ÿ€ÿÿÿ3ÿ	ÿ3ÿ€ÿÿÿ3ÿ	ÿ8ÿ‚ ‘€ÿÿÿ8ÿ#ÿ8ÿ-€ÿÿÿ8ÿ@ÿ8ÿK€ÿÿÿ8ÿLÿ8ÿU€ÿÿÿ8ÿVÿ8ÿa€ÿÿÿ8ÿcÿ8ÿd€ÿÿÿ8ÿeÿ8ÿi€ÿÿÿ8ÿjÿ8ÿu€ÿÿÿ8ÿwÿ8ÿ‚ ƒ€ÿÿÿ8ÿ‚ „ÿ8ÿ‚ €ÿÿÿ8ÿ‚ ÿ8ÿ‚ €ÿÿ
+ÿÿCÿÿE€ÿÿÿ3ÿ	ÿ7ÿ€ÿÿÿ7ÿÿ7ÿ€ÿÿÿ1ÿÿ1ÿ
+€ÿÿ	ÿÿÿÿ€ÿÿ	ÿÿÿÿ€ÿÿÿ:ÿÿ:ÿ€ÿÿÿ:ÿÿ:ÿ€ÿÿÿ:ÿÿ:ÿ€ÿÿÿ1ÿÿ;ÿ
+€ÿÿÿ;ÿ	ÿ;ÿ
+€ÿÿÿ1ÿÿ>ÿ0€ÿÿÿ=ÿ
+ÿ=ÿ€ÿÿÿ>ÿÿ>ÿ"€ÿÿÿ>ÿ#ÿ>ÿ'€ÿÿÿ>ÿ(ÿ>ÿ*€ÿÿÿ>ÿ+ÿ>ÿ-€ÿÿÿÿÿÿ	€ÿÿÿÿÿÿ €ÿÿÿÿ!ÿÿ$€ÿÿÿÿ%ÿÿ'€ÿÿÿÿ(ÿÿ)€ÿÿÿÿ*ÿÿ+€ÿÿÿÿÿÿ+€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ €ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿ&ÿÿ&ÿ	€ÿÿÿ&ÿÿ&ÿ€ÿÿÿ&ÿÿ&ÿ€ÿÿÿ'ÿ
+ÿ'ÿ€ÿÿÿ'ÿÿ'ÿ€ÿÿÿ&ÿÿ&ÿ€ÿÿÿ&ÿ
+ÿ&ÿ€ÿÿÿ&ÿÿ&ÿ€ÿÿÿ&ÿÿ&ÿ€ÿÿÿ&ÿÿ'ÿ€ÿÿÿ'ÿ	ÿ'ÿ€ÿÿÿ&ÿÿ(ÿ2€ÿÿÿ(ÿ
+ÿ(ÿ€ÿÿÿ(ÿÿ(ÿ€ÿÿÿ(ÿ)ÿ(ÿ/€ÿÿÿÿÿÿ
+€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ$€ÿÿÿÿ%ÿÿ)€ÿÿÿÿ*ÿÿ+€ÿÿÿÿ,ÿÿ-€ÿÿÿÿ0ÿÿ6€ÿÿÿÿ7ÿÿ;€ÿÿÿÿ<ÿÿ=€ÿÿÿÿ>ÿÿ?€ÿÿÿÿBÿÿH€ÿÿÿÿIÿÿM€ÿÿÿÿNÿÿO€ÿÿÿÿPÿÿQ€ÿÿÿÿTÿÿZ€ÿÿÿÿ[ÿÿ_€ÿÿÿÿ`ÿÿa€ÿÿÿÿbÿÿc€ÿÿÿ-ÿÿ-ÿ€ÿÿÿ-ÿÿ-ÿ€ÿÿÿ-ÿÿ/ÿ€ÿÿÿ/ÿ	ÿ/ÿ€ÿÿÿ/ÿÿ/ÿ€ÿÿÿ/ÿÿ/ÿ€ÿÿÿ/ÿÿ/ÿ€ÿÿÿ/ÿ	ÿ0ÿ€ÿÿÿ0ÿÿ0ÿ€ÿÿÿ/ÿ	ÿ1ÿ)€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿÿ1ÿ€ÿÿÿ1ÿ!ÿ1ÿ'€ÿÿÿ-ÿÿ.ÿ
+€ÿÿÿ.ÿ	ÿ.ÿ
+€ÿÿÿÿÿÿ€ÿÿÿÿ=ÿÿG€ÿÿÿÿIÿÿT€ÿÿÿÿUÿÿY€ÿÿÿÿ\ÿÿg€ÿÿÿÿhÿÿm€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ+€ÿÿÿÿ,ÿÿ;€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ ÿÿ&€ÿÿÿÿ'ÿÿ(€ÿÿÿÿ*ÿÿ-€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿw€ÿÿÿÿ
+ÿÿ€ÿÿÿÿWÿÿa€ÿÿÿÿcÿÿd€ÿÿÿÿeÿÿi€ÿÿÿÿlÿÿm€ÿÿÿÿnÿÿs€ÿÿÿÿÿÿ!€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ €ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ ÿÿ%€ÿÿÿÿÿÿa€ÿÿÿÿ#ÿÿ7€ÿÿÿÿ8ÿÿM€ÿÿÿÿOÿÿP€ÿÿÿÿQÿÿR€ÿÿÿÿSÿÿ^€ÿÿÿÿÿÿ|€ÿÿÿÿ$ÿÿ%€ÿÿÿÿ)ÿÿ-€ÿÿÿÿ/ÿÿC€ÿÿÿÿFÿÿG€ÿÿÿÿKÿÿP€ÿÿÿÿRÿÿg€ÿÿÿÿjÿÿk€ÿÿÿÿlÿÿm€ÿÿÿÿnÿÿy€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ ÿÿ%€ÿÿÿÿ	ÿÿF€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ ÿÿ)€ÿÿÿÿ*ÿÿ.€ÿÿÿÿ0ÿÿ1€ÿÿÿÿ2ÿÿ7€ÿÿÿÿ;ÿÿ<€ÿÿÿÿ=ÿÿB€ÿÿÿÿ	ÿ ÿ0€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ#€ÿÿÿ ÿ%ÿ ÿ&€ÿÿÿ ÿ'ÿ ÿ,€ÿÿÿÿÿÿ
+€ÿÿÿÿ	ÿÿ
+€ÿÿÿ7ÿÿ7ÿ€ÿÿÿ7ÿÿ7ÿ€ÿÿÿ7ÿÿ;ÿ!€ÿÿÿ9ÿ
+ÿ9ÿ€ÿÿÿ9ÿÿ9ÿ€ÿÿÿ9ÿÿ9ÿ€ÿÿÿ:ÿÿ:ÿ€ÿÿÿ:ÿÿ:ÿ€ÿÿÿ:ÿÿ:ÿ"€ÿÿÿ:ÿÿ:ÿ!€ÿÿÿ:ÿÿ:ÿ-€ÿÿÿ:ÿ%ÿ:ÿ+€ÿÿÿ;ÿÿ;ÿ€ÿÿÿ;ÿÿ;ÿ€ÿÿÿ;ÿÿ;ÿ€ÿÿÿ;ÿÿ;ÿ€ÿÿÿ;ÿÿ;ÿ€ÿÿÿ;ÿ!ÿ;ÿ&€ÿÿÿ;ÿÿ;ÿ)€ÿÿÿ;ÿ(ÿ;ÿ)€ÿÿÿ;ÿÿ;ÿ5€ÿÿÿ;ÿ-ÿ;ÿ3€ÿÿÿ7ÿÿ8ÿ€ÿÿÿ8ÿ	ÿ8ÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ ÿÿ!€ÿÿÿÿ#ÿÿ0€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ €ÿÿÿÿÿ ÿ:€ÿÿÿ ÿ
+ÿ ÿ€ÿÿÿÿÿÿ%€ÿÿÿÿÿÿ	€ÿÿÿÿÿÿ
+€ÿÿÿ!ÿ
+ÿ!ÿ€ÿÿÿÿÿ"ÿ)€ÿÿÿ"ÿ
+ÿ"ÿ€ÿÿÿ"ÿ'ÿ"ÿ(€ÿÿÿÿÿ#ÿ
+€ÿÿÿ#ÿ	ÿ#ÿ
+€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ'€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ!ÿÿ"€ÿÿÿÿ#ÿÿ$€ÿÿÿÿÿÿ)€ÿÿÿÿ(ÿÿ)€ÿÿÿ?ÿÿ?ÿ€ÿÿÿ@ÿÿ@ÿ€ÿÿÿ@ÿÿ@ÿ€ÿÿÿ@ÿ!ÿ@ÿ3€ÿÿÿ@ÿ4ÿ@ÿ=€ÿÿÿ@ÿ>ÿ@ÿI€ÿÿÿ@ÿJÿ@ÿW€ÿÿÿ?ÿÿ?ÿ€ÿÿÿAÿÿAÿ€ÿÿÿAÿÿAÿ €ÿÿÿAÿ"ÿAÿ(€ÿÿÿAÿ*ÿAÿ0€ÿÿÿAÿ1ÿAÿ5€ÿÿÿAÿ6ÿAÿ7€ÿÿÿAÿ8ÿAÿ:€ÿÿÿAÿ<ÿAÿI€ÿÿÿ?ÿÿEÿ€ÿÿÿEÿÿEÿ€ÿÿÿFÿÿFÿ €ÿÿÿFÿ!ÿFÿ)€ÿÿÿFÿ+ÿFÿ,€ÿÿÿEÿÿEÿ€ÿÿÿEÿÿIÿ@€ÿÿÿGÿÿGÿ€ÿÿÿGÿÿGÿ"€ÿÿÿGÿ#ÿGÿ0€ÿÿÿHÿÿHÿ€ÿÿÿHÿ!ÿHÿ%€ÿÿÿHÿ'ÿHÿ(€ÿÿÿHÿ)ÿHÿ1€ÿÿÿHÿ2ÿHÿ3€ÿÿÿHÿ5ÿHÿ@€ÿÿÿIÿÿIÿ€ÿÿÿIÿÿIÿ!€ÿÿÿIÿ#ÿIÿ$€ÿÿÿIÿ%ÿIÿ-€ÿÿÿIÿ.ÿIÿ/€ÿÿÿIÿ1ÿIÿ<€ÿÿÿ?ÿÿ?ÿ€ÿÿÿ?ÿÿMÿ€ÿÿÿMÿÿMÿ€ÿÿÿMÿÿMÿ€ÿÿÿMÿÿMÿ€ÿÿÿMÿ ÿMÿ(€ÿÿÿMÿ*ÿMÿ,€ÿÿÿMÿÿPÿ€ÿÿÿPÿÿPÿ€ÿÿ	ÿÿÿÿ€ÿÿ	ÿÿÿÿ€ÿÿÿQÿ,ÿQÿ2€ÿÿÿQÿ3ÿQÿ;€ÿÿÿQÿ<ÿQÿ=€ÿÿÿQÿ>ÿQÿ?€ÿÿÿQÿÿQÿ*€ÿÿÿPÿÿPÿ€ÿÿ	ÿÿÿÿ€ÿÿ	ÿÿÿÿ€ÿÿÿRÿÿRÿ*€ÿÿÿRÿ,ÿRÿ2€ÿÿÿRÿ3ÿRÿ;€ÿÿÿRÿ<ÿRÿ=€ÿÿÿRÿ>ÿRÿ@€ÿÿÿPÿÿSÿ9€ÿÿÿSÿ+ÿSÿ,€ÿÿÿSÿ-ÿSÿ.€ÿÿÿSÿ/ÿSÿ0€ÿÿÿSÿ1ÿSÿ6€ÿÿÿSÿ7ÿSÿ<€ÿÿÿSÿ=ÿSÿK€ÿÿÿSÿLÿSÿW€ÿÿÿSÿXÿSÿ`€ÿÿÿMÿÿUÿ1€ÿÿÿUÿ+ÿUÿ,€ÿÿÿUÿ-ÿUÿ.€ÿÿÿUÿ/ÿUÿ0€ÿÿÿ?ÿÿLÿ€ÿÿÿLÿÿLÿ€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿh€ÿÿÿÿÿÿ)€ÿÿÿÿ<ÿÿG€ÿÿÿÿHÿÿQ€ÿÿÿÿRÿÿS€ÿÿÿÿTÿÿU€ÿÿÿÿVÿÿZ€ÿÿÿÿ[ÿÿd€ÿÿÿÿfÿÿg€ÿÿÿÿÿÿ
+€ÿÿÿÿ	ÿÿ
+€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ‚ €ÿÿÿÿÿÿ$€ÿÿÿÿ7ÿÿB€ÿÿÿÿCÿÿL€ÿÿÿÿNÿÿO€ÿÿÿÿPÿÿT€ÿÿÿÿUÿÿ`€ÿÿÿÿbÿÿm€ÿÿÿÿnÿÿz€ÿÿÿÿ{ÿÿ‚ „€ÿÿÿÿ‚ †ÿÿ‚ ˆ€ÿÿÿÿ‚ ‰ÿÿ‚ Œ€ÿÿÿÿ‚ Žÿÿ‚ ‘€ÿÿÿÿ‚ ’ÿÿ‚ š€ÿÿÿÿ‚ ‰ÿÿ‚ €ÿÿÿÿ‚ œÿÿ‚ €ÿÿÿÿ‚ ‰ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ%€ÿÿÿÿ&ÿÿ.€ÿÿÿÿ/ÿÿ0€ÿÿÿÿ1ÿÿ2€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ%€ÿÿÿÿ&ÿÿ.€ÿÿÿÿ/ÿÿ0€ÿÿÿÿ1ÿÿ3€ÿÿÿÿÿ ÿC€ÿÿÿ ÿÿ ÿ+€ÿÿÿ ÿ,ÿ ÿ7€ÿÿÿ ÿ8ÿ ÿ@€ÿÿÿÿÿÿ
+€ÿÿÿÿ	ÿÿ
+€ÿÿÿfÿÿfÿ€ÿÿÿfÿÿfÿ€ÿÿÿfÿÿhÿM€ÿÿÿhÿÿhÿ€ÿÿÿhÿÿhÿ€ÿÿÿhÿÿhÿ€ÿÿÿhÿÿhÿ!€ÿÿÿhÿ%ÿhÿ;€ÿÿÿhÿ=ÿhÿ>€ÿÿÿhÿ?ÿhÿI€ÿÿÿfÿÿgÿ
+€ÿÿÿgÿ	ÿgÿ
+€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿbÿÿbÿ€ÿÿÿbÿÿbÿ€ÿÿÿbÿÿbÿ€ÿÿÿbÿÿbÿ.€ÿÿÿbÿ/ÿbÿ9€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿ	ÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿÿÿÿ	€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿD€ÿÿÿÿÿÿ€ÿÿÿÿ*ÿÿ6€ÿÿÿÿ8ÿÿ9€ÿÿÿÿ:ÿÿ;€ÿÿÿÿ>ÿÿ?€ÿÿÿÿ@ÿÿA€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ!€ÿÿÿÿÿÿ"€ÿÿÿÿÿÿ!€ÿÿÿÿÿÿ/€ÿÿÿÿÿÿ"€ÿÿÿÿ$ÿÿ%€ÿÿÿÿ&ÿÿ'€ÿÿÿÿ*ÿÿ+€ÿÿÿÿ,ÿÿ-€ÿÿÿ	ÿÿ	ÿ€ÿÿÿ	ÿÿ	ÿ€ÿÿÿ	ÿÿ	ÿ€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ8€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ"€ÿÿÿÿ$ÿÿ,€ÿÿÿÿ/ÿÿ0€ÿÿÿÿ1ÿÿ5€ÿÿÿÿÿÿ€ÿÿÿÿ	ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ:€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ#€ÿÿÿÿ'ÿÿ.€ÿÿÿÿ0ÿÿ1€ÿÿÿÿ2ÿÿ6€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€€ÿÿÿÿÿÿÿÿÿ€ÿÿÿ€€ÿÿÿÿÿÿÿÿ€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ!ÿÿ€€€ÿÿÿÿÿÿQÿÿ€€€ÿÿÿÿÿÿ‚ ±ÿÿ€€€ÿÿÿÿÿÿ‚qÿÿ€€€ÿÿÿÿÿÿ‚ñÿÿ€€€ÿÿÿÿÿÿ‚ñÿÿ€€€ÿÿÿÿÿ	ÿ‚ñÿÿ€€€ÿÿÿÿÿ
+ÿ‚ñÿÿ€€€ÿÿÿÿÿÿ‚/ñÿÿ€€€ÿÿ€€€€€€€€€€€ÿÿÿÿÿÿÿÿÿÿ‚ ‰ÿÿ€€€ÿÿÿÿÿÿ‚Iÿÿ€€€ÿÿÿÿ‚Éÿÿ€€€€€ÿÿÿÿÿÿ‚ ©ÿÿ€€€ÿÿÿÿÿÿ‚iÿÿ€€€ÿÿÿÿ‚éÿÿ€€€€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ-ÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿ)ÿÿÿÿÿÿÿÿÿ	ÿÿ€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ-ÿÿ€€€ÿÿÿÿÿÿ]ÿÿ€€€ÿÿÿÿÿÿ‚ ½ÿÿ€€€ÿÿÿÿÿÿ‚}ÿÿ€€€ÿÿÿÿÿÿ‚ýÿÿ€€€ÿÿÿÿÿ ÿ‚ýÿÿ€€€ÿÿÿÿÿ!ÿ‚ýÿÿ€€€ÿÿ€€€€€€€€€€€ÿÿÿÿÿ"ÿÿÿ€€€ÿÿÿÿÿÿÿÿÿ#ÿGÿÿ€€€ÿÿÿÿÿ$ÿ‚ §ÿÿ€€€ÿÿÿ%ÿ‚ çÿÿ€€€€€ÿÿÿÿÿ&ÿWÿÿ€€€ÿÿÿÿÿ'ÿ‚ ·ÿÿ€€€ÿÿÿ(ÿ‚ ÷ÿÿ€€€€€€ÿÿ€€€€€€ÿÿ,ÿÿÿÿÿÿ*ÿÿÿ€€€ÿÿÿÿÿ+ÿÿÿ€€€ÿÿ€€€€€ÿÿ2ÿÿÿÿÿÿ-ÿÿÿ€€€ÿÿÿÿÿ.ÿÿÿ€€€ÿÿÿÿÿ/ÿÿÿ€€€ÿÿÿÿÿ0ÿ/ÿÿ€€€ÿÿÿÿÿ1ÿ_ÿÿ€€ÿÿ€€€€€€€€ÿÿ4ÿÿÿÿÿÿ3ÿÿÿ€€€ÿÿ€€€€ÿÿ7ÿÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ6ÿÿÿ€€€ÿÿ€€€€€ÿÿ<ÿÿÿÿÿÿÿÿ8ÿ	ÿÿ€€€ÿÿÿÿÿ9ÿÿÿ€€ÿÿ€€€€ÿÿÿÿÿ:ÿÿÿ€€ÿÿÿÿÿ;ÿÿÿ€€€ÿÿ€€€€€€ÿÿ@ÿÿÿÿÿÿ=ÿÿÿ€€€ÿÿÿÿÿ>ÿÿÿ€€€ÿÿÿÿÿ?ÿÿÿ€€€ÿÿ€€€€€€ÿÿBÿÿÿÿÿÿAÿÿÿ€€ÿÿÿÿÿ5ÿÿÿ€€ÿÿ€€€€€ÿÿDÿÿÿÿÿÿCÿÿÿ€€ÿÿ€€€€ÿÿEÿÿÿÿÿÿÿÿÿ	ÿÿ€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ-ÿÿ€€€ÿÿÿÿÿÿ]ÿÿ€€€ÿÿÿÿÿÿ‚ ½ÿÿ€€€ÿÿÿÿÿÿ‚}ÿÿ€€€ÿÿÿÿÿ	ÿ‚ýÿÿ€€€ÿÿÿÿÿ
+ÿ‚ýÿÿ€€€ÿÿÿÿÿÿ‚ýÿÿ€€€ÿÿ€€€€€€€€€€€ÿÿÿÿÿÿÿÿÿÿ#ÿÿ€€€ÿÿÿÿÿÿSÿÿ€€€ÿÿÿÿsÿÿ€€€€€ÿÿÿÿÿÿ+ÿÿ€€€ÿÿÿÿÿÿ[ÿÿ€€€ÿÿÿÿ{ÿÿ€€€€€€ÿÿ€€€€€ÿÿGÿÿÿÿÿÿFÿÿÿ€€€ÿÿ€€€€ÿÿIÿÿÿÿÿÿHÿÿÿ€€€ÿÿ€€€€ÿÿSÿÿÿÿÿÿÿÿÿÿJÿÿÿ€€€ÿÿÿÿÿKÿ)ÿÿ€€€ÿÿÿÿÿLÿYÿÿ€€€ÿÿÿÿÿMÿ‚ ¹ÿÿ€€€ÿÿÿÿÿNÿ‚yÿÿ€€€ÿÿÿÿÿOÿ‚ùÿÿ€€€ÿÿ€€€€€€€€ÿÿÿÿÿPÿÿÿ€€€ÿÿÿÿÿQÿ-ÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿRÿÿÿ€€€ÿÿ€€€€€ÿÿYÿÿÿÿÿÿÿÿTÿ	ÿÿ€€€ÿÿÿÿÿUÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿVÿÿÿ€€€ÿÿÿÿÿWÿ+ÿÿ€€€ÿÿÿXÿ;ÿÿ€€€€€ÿÿ€€€€€ÿÿ[ÿÿÿÿÿÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿÿÿÿÿYÿÿ€€€ÿÿÿÿÿÿ‚ ¹ÿÿ€€€ÿÿÿÿÿÿ‚yÿÿ€€€ÿÿÿÿÿÿ‚ùÿÿ€€€ÿÿÿÿÿÿ‚ùÿÿ€€€ÿÿÿÿÿ ÿ‚ùÿÿ€€€ÿÿÿÿÿ!ÿ‚ùÿÿ€€€ÿÿ€€€€€€€€€€€ÿÿÿÿÿ"ÿÿÿ€€€ÿÿÿÿÿÿÿÿÿ#ÿ‚ ÿÿ€€€ÿÿÿÿÿ$ÿ‚Mÿÿ€€€ÿÿÿ%ÿ‚Íÿÿ€€€€€ÿÿÿÿÿ&ÿ‚ ­ÿÿ€€€ÿÿÿÿÿ'ÿ‚mÿÿ€€€ÿÿÿ(ÿ‚íÿÿ€€€€€€ÿÿ€€€€€ÿÿÿÿÿZÿÿÿ€€€ÿÿ€€€€€ÿÿjÿÿÿÿÿÿÿÿ\ÿ	ÿÿ€€€ÿÿÿÿÿ]ÿÿÿ€€€ÿÿÿÿÿ^ÿ-ÿÿ€€€ÿÿÿÿÿ_ÿ]ÿÿ€€€ÿÿÿÿÿ`ÿ‚ ½ÿÿ€€€ÿÿÿÿÿaÿ‚}ÿÿ€€€ÿÿÿÿÿbÿ‚ýÿÿ€€€ÿÿ€€€€€€€€€ÿÿÿÿÿcÿÿÿ€€€ÿÿÿÿÿÿÿÿÿdÿGÿÿ€€€ÿÿÿÿÿeÿ‚ §ÿÿ€€€ÿÿÿfÿ‚ çÿÿ€€€€€ÿÿÿÿÿgÿWÿÿ€€€ÿÿÿÿÿhÿ‚ ·ÿÿ€€€ÿÿÿiÿ‚ ÷ÿÿ€€€€€€ÿÿ€€€€€€ÿÿqÿÿÿÿÿÿ.ÿÿÿ€€€ÿÿÿÿÿkÿÿÿ€€€ÿÿÿÿÿlÿÿÿ€€€ÿÿÿÿÿmÿ/ÿÿ€€€ÿÿÿÿÿnÿ_ÿÿ€€€ÿÿÿÿÿoÿ‚ ¿ÿÿ€€€ÿÿÿÿÿpÿ‚ÿÿ€€€ÿÿ€€€€€€€€€€ÿÿvÿÿÿÿÿÿÿÿrÿ	ÿÿ€€€ÿÿÿÿÿsÿÿÿ€€€ÿÿÿÿÿtÿ-ÿÿ€€ÿÿ€€€€€ÿÿÿÿÿuÿÿÿ€€€ÿÿ€€€€€ÿÿwÿÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ6ÿÿÿ€€€ÿÿ€€€€€ÿÿxÿÿÿÿÿÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿÿÿÿÿYÿÿ€€€ÿÿÿÿÿÿ‚ ¹ÿÿ€€€ÿÿÿÿÿÿ‚yÿÿ€€€ÿÿÿÿÿÿ‚ùÿÿ€€€ÿÿÿÿÿ	ÿ‚ùÿÿ€€€ÿÿÿÿÿ
+ÿ‚ùÿÿ€€€ÿÿÿÿÿÿ‚ùÿÿ€€€ÿÿ€€€€€€€€€€€ÿÿÿÿÿÿÿÿÿÿEÿÿ€€€ÿÿÿÿÿÿ‚ ¥ÿÿ€€€ÿÿÿÿ‚ åÿÿ€€€€€ÿÿÿÿÿÿUÿÿ€€€ÿÿÿÿÿÿ‚ µÿÿ€€€ÿÿÿÿ‚ õÿÿ€€€€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€€ÿÿyÿÿÿÿÿÿ5ÿÿÿ€€ÿÿ€€€€ÿÿ{ÿÿÿÿÿÿ€ÿÿÿ€€€ÿÿÿÿÿzÿÿÿ€€€ÿÿÿÿÿ5ÿÿÿ€€€ÿÿ€€€€€€ÿÿ‚ ‚ÿÿÿÿÿÿÿÿ\ÿ	ÿÿ€€€ÿÿÿÿÿ]ÿÿÿ€€€ÿÿÿÿÿ^ÿ-ÿÿ€€€ÿÿÿÿÿ_ÿ]ÿÿ€€€ÿÿÿÿÿ`ÿ‚ ½ÿÿ€€€ÿÿÿÿÿaÿ‚}ÿÿ€€€ÿÿÿÿÿbÿ‚ýÿÿ€€€ÿÿ€€€€€€€€€ÿÿÿÿÿÿÿÿÿ|ÿ#ÿÿ€€€ÿÿÿÿÿ}ÿSÿÿ€€€ÿÿÿ~ÿsÿÿ€€€€€ÿÿÿÿÿÿ+ÿÿ€€€ÿÿÿÿÿ‚ €ÿ[ÿÿ€€€ÿÿÿ‚ ÿ{ÿÿ€€€€€€ÿÿ€€€€€ÿÿ‚ „ÿÿÿÿÿÿ‚ ƒÿÿÿ€€€ÿÿ€€€€ÿÿ‚ Žÿÿÿÿÿÿÿÿÿÿ‚ …ÿÿÿ€€€ÿÿÿÿÿ‚ †ÿ)ÿÿ€€€ÿÿÿÿÿ‚ ‡ÿYÿÿ€€€ÿÿÿÿÿ‚ ˆÿ‚ ¹ÿÿ€€€ÿÿÿÿÿ‚ ‰ÿ‚yÿÿ€€€ÿÿ€€€€€€€ÿÿÿÿÿ‚ Šÿÿÿ€€€ÿÿÿÿÿ‚ ‹ÿ-ÿÿ€€€ÿÿÿÿÿ‚ Œÿ]ÿÿ€€€ÿÿ€€€€€€ÿÿÿÿÿ‚ ÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ ÿÿÿÿÿÿÿÿÿ€€ÿÿÿÿÿ‚ ÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ “ÿÿÿÿÿÿÿÿÿÿ\ÿÿÿ€€€ÿÿÿÿÿ]ÿ)ÿÿ€€€ÿÿÿÿÿ^ÿYÿÿ€€€ÿÿÿÿÿ_ÿ‚ ¹ÿÿ€€€ÿÿÿÿÿ`ÿ‚yÿÿ€€€ÿÿÿÿÿaÿ‚ùÿÿ€€€ÿÿÿÿÿbÿ‚ùÿÿ€€€ÿÿ€€€€€€€€€ÿÿÿÿÿcÿÿÿ€€€ÿÿÿÿÿÿÿÿÿdÿ‚ ÿÿ€€€ÿÿÿÿÿeÿ‚Mÿÿ€€€ÿÿÿfÿ‚Íÿÿ€€€€€ÿÿÿÿÿgÿ‚ ­ÿÿ€€€ÿÿÿÿÿhÿ‚mÿÿ€€€ÿÿÿiÿ‚íÿÿ€€€€€€ÿÿ€€€€€ÿÿÿÿÿ‚ ‘ÿÿÿ€€€ÿÿÿÿÿ‚ ’ÿÿÿ€€€ÿÿ€€€€€€ÿÿ‚ ¡ÿÿÿÿÿÿÿÿ‚ ”ÿ	ÿÿ€€€ÿÿÿÿÿ‚ •ÿÿÿ€€€ÿÿÿÿÿ‚ –ÿ-ÿÿ€€€ÿÿÿÿÿ‚ —ÿ]ÿÿ€€€ÿÿÿÿÿ‚ ˜ÿ‚ ½ÿÿ€€€ÿÿÿÿÿ‚ ™ÿ‚}ÿÿ€€€ÿÿ€€€€€€€€ÿÿÿÿÿ‚ šÿÿÿ€€€ÿÿÿÿÿÿÿÿÿ‚ ›ÿGÿÿ€€€ÿÿÿÿÿ‚ œÿ‚ §ÿÿ€€€ÿÿÿ‚ ÿ‚ çÿÿ€€€€€ÿÿÿÿÿ‚ žÿWÿÿ€€€ÿÿÿÿÿ‚ Ÿÿ‚ ·ÿÿ€€€ÿÿÿ‚  ÿ‚ ÷ÿÿ€€€€€€ÿÿ€€€€€€ÿÿ‚ §ÿÿÿÿÿÿÿÿ‚ ¢ÿ	ÿÿ€€€ÿÿÿÿÿ‚ £ÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿ‚ ¤ÿÿÿ€€€ÿÿÿÿÿ‚ ¥ÿ+ÿÿ€€€ÿÿÿ‚ ¦ÿ;ÿÿ€€€€€ÿÿ€€€€€ÿÿ‚ ©ÿÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ‚ ¨ÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ ¬ÿÿÿÿÿÿ.ÿÿÿ€€€ÿÿÿÿÿ‚ ªÿÿÿ€€€ÿÿÿÿÿkÿÿÿ€€€ÿÿÿÿÿmÿ/ÿÿ€€€ÿÿÿÿÿpÿ_ÿÿ€€€ÿÿÿÿÿ‚ «ÿ‚ ¿ÿÿ€€ÿÿ€€€€€€€€€ÿÿ‚ ­ÿÿÿÿÿÿ?ÿÿÿ€€€ÿÿÿÿÿÿÿÿ€€ÿÿ€€€€€ÿÿ‚ ®ÿÿÿÿÿÿÿÿ‚ …ÿ	ÿÿ€€€ÿÿÿÿÿ‚ †ÿÿÿ€€€ÿÿÿÿÿ‚ ‡ÿ-ÿÿ€€€ÿÿÿÿÿ‚ ˆÿ]ÿÿ€€€ÿÿÿÿÿ‚ ‰ÿ‚ ½ÿÿ€€€ÿÿ€€€€€€€ÿÿÿÿÿ‚ Šÿÿÿ€€€ÿÿÿÿÿ‚ ‹ÿÿÿ€€€ÿÿÿÿÿ‚ Œÿ/ÿÿ€€€ÿÿ€€€€€€€ÿÿ‚ ²ÿÿÿÿÿÿÿÿ‚ ¯ÿ	ÿÿ€€€ÿÿÿÿÿ‚ °ÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿ‚ ±ÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ ´ÿÿÿÿÿÿ‚ ³ÿÿÿ€€€ÿÿÿ3ÿÿÿ€€€€€ÿÿ‚ µÿÿÿÿÿÿÿÿJÿ	ÿÿ€€€ÿÿÿÿÿKÿÿÿ€€€ÿÿÿÿÿLÿ-ÿÿ€€€ÿÿÿÿÿMÿ]ÿÿ€€€ÿÿÿÿÿNÿ‚ ½ÿÿ€€€ÿÿÿÿÿOÿ‚}ÿÿ€€€ÿÿ€€€€€€€€ÿÿÿÿÿPÿÿÿ€€ÿÿÿÿÿQÿÿÿ€€ÿÿ€€€€€€ÿÿ‚ ¹ÿÿÿÿÿÿ‚ ¶ÿÿÿ€€€ÿÿÿÿÿ‚ ·ÿÿÿ€€€ÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ‚ ¸ÿ/ÿÿ€€€ÿÿ€€€€€€€ÿÿ‚ ¼ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿAÿÿ€€€ÿÿÿÿÿÿ‚ ¡ÿÿ€€€ÿÿÿÿÿÿ‚aÿÿ€€€ÿÿÿÿÿÿ‚áÿÿ€€€ÿÿÿÿÿÿ‚áÿÿ€€€ÿÿÿÿÿÿ‚áÿÿ€€€ÿÿÿÿÿ	ÿ‚áÿÿ€€€ÿÿÿÿÿ
+ÿ‚/áÿÿ€€€ÿÿÿÿÿÿ‚_áÿÿ€€€ÿÿ€€€€€€€€€€€ÿÿÿÿÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿÿ‚‘ÿÿ€€€ÿÿÿÿ‚‘ÿÿ€€€€€ÿÿÿÿÿÿ‚Qÿÿ€€€ÿÿÿÿÿÿ‚Ñÿÿ€€€ÿÿÿÿ‚Ñÿÿ€€€€€€ÿÿ€€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿÿÿÿÿYÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿ‚ ºÿÿÿ€€€ÿÿÿÿÿ‚ »ÿÿÿ€€€ÿÿ€€€€€€ÿÿ‚ Äÿÿÿÿÿÿÿÿ‚ ½ÿ	ÿÿ€€€ÿÿÿÿÿ‚ ¾ÿÿÿ€€€ÿÿÿÿÿ‚ ¿ÿ-ÿÿ€€ÿÿÿÿÿ‚ Àÿ]ÿÿ€€€ÿÿ€€€€€€ÿÿÿÿÿ‚ Áÿÿÿ€€ÿÿÿÿÿ‚ Âÿÿÿ€€€ÿÿÿÿÿ‚ Ãÿ/ÿÿ€€€ÿÿ€€€€€€€ÿÿ‚ Æÿÿÿÿÿÿÿÿÿÿ‚ ¯ÿÿÿ€€€ÿÿÿÿÿ‚ °ÿ)ÿÿ€€€ÿÿ€€€€ÿÿÿÿÿ‚ ±ÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿ‚ Åÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ Éÿÿÿÿÿÿ‚ Çÿÿÿ€€€ÿÿÿÿÿ‚ Èÿÿÿ€€€ÿÿÿÿÿ.ÿÿÿ€€€ÿÿÿÿÿkÿ/ÿÿ€€€ÿÿÿÿÿlÿ_ÿÿ€€€ÿÿÿÿÿmÿ‚ ¿ÿÿ€€€ÿÿÿÿÿnÿ‚ÿÿ€€€ÿÿÿÿÿoÿ‚ÿÿÿ€€€ÿÿÿÿÿpÿ‚ÿÿÿ€€€ÿÿ€€€€€€€€€€€€ÿÿ‚ Ëÿÿÿÿÿÿ‚ ¨ÿÿÿ€€€ÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ‚ Êÿÿÿ€€€ÿÿ€€€€€€ÿÿ‚ Ìÿÿÿÿÿÿ.ÿÿÿ€€€ÿÿÿÿÿ‚ ªÿÿÿ€€€ÿÿÿÿÿkÿÿÿ€€€ÿÿÿÿÿmÿ/ÿÿ€€€ÿÿÿÿÿpÿ_ÿÿ€€€ÿÿÿÿÿ‚ «ÿ‚ ¿ÿÿ€€€ÿÿ€€€€€€€€€ÿÿ‚ Íÿÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ Îÿÿÿÿÿÿ‚ ¨ÿÿÿ€€ÿÿÿÿÿ5ÿÿÿ€€ÿÿ€€€€€ÿÿ‚ Ïÿÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ‚ ¨ÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ Ñÿÿÿÿÿÿ‚ Çÿÿÿ€€€ÿÿÿÿÿ‚ Èÿÿÿ€€€ÿÿÿÿÿ‚ Ðÿÿÿ€€€ÿÿÿÿÿ.ÿ/ÿÿ€€€ÿÿÿÿÿ‚ ªÿ_ÿÿ€€€ÿÿÿÿÿkÿ‚ ¿ÿÿ€€€ÿÿÿÿÿmÿ‚ÿÿ€€€ÿÿÿÿÿpÿ‚ÿÿÿ€€€ÿÿÿÿÿ‚ «ÿ‚ÿÿÿ€€€ÿÿ€€€€€€€€€€€€ÿÿ‚ Òÿÿÿÿÿÿ.ÿÿÿ€€€ÿÿÿÿÿkÿÿÿ€€€ÿÿÿÿÿlÿÿÿ€€€ÿÿÿÿÿmÿ/ÿÿ€€€ÿÿÿÿÿnÿ_ÿÿ€€ÿÿÿÿÿoÿ‚ ¿ÿÿ€€€ÿÿÿÿÿpÿ‚ÿÿ€€€ÿÿ€€€€€€€€€€ÿÿ‚ ÔÿÿÿÿÿÿÿÿÿÿTÿÿÿ€€€ÿÿÿÿÿUÿ)ÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿVÿ%ÿÿ€€€ÿÿÿÿÿWÿUÿÿ€€€ÿÿÿXÿuÿÿ€€€€€ÿÿ€€€€ÿÿÿÿÿ‚ Óÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ Õÿÿÿÿÿÿ5ÿÿÿ€€€ÿÿÿÿÿ‚ ¨ÿÿÿ€€€ÿÿ€€€€€ÿÿ‚ Öÿ€ÿÿ€€€€ÿÿÿÿ€ÿ6ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ3ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ=€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ_€ÿÿÿ	ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿd€€ÿÿ€ÿ	ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ Ž€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ/€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ/€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ_€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ"ÿ€ÿ€ÿ€ÿÿ€ÿ ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ$ÿ€ÿ€ÿ_€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ%ÿ€ÿ€ÿ/€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ‚ Ì€ÿÿÿ'ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ‚ ö€ÿÿÿ(ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ‚ Ô€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ*ÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ*ÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€€ÿÿ€ÿ*ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ(ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ(ÿ€ÿ€ÿ€€€€€ÿÿÿ(ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ‚ ö€ÿÿÿ+ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ‚ ¨€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿ-ÿ€ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿ-ÿ€ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€€ÿÿ€ÿ-ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€ÿÿÿ+ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿ.ÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ_€ÿÿÿ/ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿd€€ÿÿ€ÿ/ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ(ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ3ÿ‚ ºÿ(ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ3ÿ€ÿ€ÿÿÿ3ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ3ÿ€ÿ€ÿÿÿ4ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ4ÿ€ÿ€ÿÿ€ÿ5ÿ€ÿ€ÿ/€ÿÿ€ÿ4ÿ€ÿ€ÿ€€€€ÿÿÿ3ÿ€ÿ€ÿÿÿ6ÿ€ÿ€ÿÿ€ÿ6ÿ€ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ‚  €ÿÿÿ7ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿÿ7ÿ€ÿ€ÿÿÿ8ÿ€ÿ€ÿÿ€ÿ8ÿ€ÿ€ÿ€ÿÿÿ8ÿ€ÿ€ÿÿ€ÿ9ÿ€ÿ€ÿ‚o€ÿÿÿ8ÿ€ÿ€ÿÿÿ:ÿ€ÿ€ÿÿ€ÿ:ÿ€ÿ€ÿ€ÿÿÿ:ÿ€ÿ€ÿÿ€ÿ;ÿ€ÿ€ÿ‚ ¯€ÿÿÿ:ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿ<ÿ€ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿ=ÿ€ÿ€ÿO€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€€ÿÿ€ÿ<ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ:ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ8ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ7ÿ€ÿ€ÿ€€€€€€ÿÿÿ3ÿ€ÿ€ÿÿÿ>ÿ€ÿ€ÿÿ€ÿ>ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ?ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ@ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿAÿ€ÿ€ÿ/€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ3ÿ€ÿ€ÿ€€€€€€ÿÿÿ3ÿ€ÿ€ÿÿ€ÿ3ÿ€ÿ€ÿ€ÿÿ€ÿ3ÿ€ÿ€ÿ€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿBÿ‚ Åÿ*ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿÿCÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿCÿ€ÿ€ÿÿ€ÿDÿ€ÿ€ÿ-€ÿÿÿCÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ€ÿÿ€ÿCÿ€ÿ€ÿ€€€€€ÿÿÿBÿ€ÿ€ÿÿÿFÿ€ÿ€ÿÿ€ÿFÿ€ÿ€ÿ€ÿÿÿGÿ€ÿ€ÿÿ€ÿGÿ€ÿ€ÿ€ÿÿ€ÿGÿ€ÿ€ÿ€€€€ÿÿÿBÿ€ÿ€ÿÿÿHÿ€ÿ€ÿÿ€ÿHÿ€ÿ€ÿ€ÿÿÿIÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿIÿ€ÿ€ÿÿÿIÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿIÿ€ÿ€ÿÿÿJÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿJÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ-€ÿÿÿJÿ€ÿ€ÿÿ€ÿLÿ€ÿ€ÿ€ÿÿ€ÿJÿ€ÿ€ÿ€€€€€ÿÿÿIÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ@€ÿÿÿNÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿ€ÿOÿ€ÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿQÿ€ÿ€ÿ€ÿÿ€ÿQÿ€ÿ€ÿ€€ÿÿ€ÿOÿ€ÿ€ÿ€€€€€ÿÿÿOÿ€ÿ€ÿÿÿRÿ€ÿ€ÿÿ€ÿRÿ€ÿ€ÿ€ÿÿÿRÿ€ÿ€ÿÿ€ÿRÿ€ÿ€ÿ€ÿÿÿRÿ€ÿ€ÿÿÿSÿ€ÿ€ÿÿ€ÿSÿ€ÿ€ÿ€ÿÿÿSÿ€ÿ€ÿÿ€ÿSÿ€ÿ€ÿ-€ÿÿÿSÿ€ÿ€ÿÿÿTÿ€ÿ€ÿÿ€ÿTÿ€ÿ€ÿ€ÿÿÿTÿ€ÿ€ÿÿ€ÿTÿ€ÿ€ÿ€ÿÿÿTÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€€ÿÿ€ÿTÿ€ÿ€ÿ€€€€€ÿÿ€ÿSÿ€ÿ€ÿ€€€€€ÿÿ€ÿRÿ€ÿ€ÿ€€€€€ÿÿ€ÿOÿ€ÿ€ÿ€€€€€ÿÿ€ÿNÿ€ÿ€ÿ€€€€€ÿÿ€ÿNÿ€ÿ€ÿ€€€€€€ÿÿÿIÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿUÿ€ÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ@€ÿÿÿVÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ€ÿÿÿVÿ€ÿ€ÿÿÿWÿ€ÿ€ÿÿ€ÿWÿ€ÿ€ÿ€ÿÿÿWÿ€ÿ€ÿÿ€ÿWÿ€ÿ€ÿ	€ÿÿÿWÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿ€ÿXÿ€ÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿ€ÿYÿ€ÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿÿZÿ€ÿ€ÿÿ€ÿZÿ€ÿ€ÿ€ÿÿ€ÿZÿ€ÿ€ÿ€€ÿÿ€ÿXÿ€ÿ€ÿ€€€€€ÿÿÿXÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿ[ÿ€ÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿ[ÿ€ÿ€ÿ-€ÿÿÿ[ÿ€ÿ€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿ\ÿ€ÿ€ÿ€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿ\ÿ€ÿ€ÿ/€ÿÿÿ\ÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ€€ÿÿ€ÿ\ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ[ÿ€ÿ€ÿ€€€€€ÿÿ€ÿXÿ€ÿ€ÿ€€€€€ÿÿ€ÿWÿ€ÿ€ÿ€€€€€ÿÿ€ÿVÿ€ÿ€ÿ€€€€€ÿÿ€ÿVÿ€ÿ€ÿ€€€€€€ÿÿ€ÿIÿ€ÿ€ÿ€€€€€€ÿÿÿIÿ€ÿ€ÿÿ€ÿIÿ€ÿ€ÿ€ÿÿ€ÿIÿ€ÿ€ÿ€€€€€€ÿÿ€ÿBÿ€ÿ€ÿ€€€€€€ÿÿÿBÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿ]ÿ€ÿ€ÿ €ÿÿÿÿ€ÿ€ÿÿ€ÿ^ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ_ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ`ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿaÿ€ÿ€ÿ€ÿÿ€ÿbÿ€ÿ€ÿ€€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿcÿ‚ Òÿ2ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ‚ Ð€ÿÿÿcÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿdÿ€ÿ€ÿÿ€ÿdÿ€ÿ€ÿ€ÿÿÿdÿ€ÿ€ÿÿ€ÿdÿ€ÿ€ÿ‚€ÿÿÿdÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€€ÿÿ€ÿdÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿÿcÿFÿÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ‚ °€ÿÿÿcÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ‚ ž€ÿÿÿeÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿÿfÿ€ÿ€ÿÿ€ÿfÿ€ÿ€ÿ€ÿÿÿfÿ€ÿ€ÿÿ€ÿfÿ€ÿ€ÿs€ÿÿÿfÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€€ÿÿ€ÿfÿ€ÿ€ÿ€€€€€ÿÿ€ÿeÿ€ÿ€ÿ€€€€€ÿÿ€ÿeÿ€ÿ€ÿ€€€€€ÿÿÿeÿ€ÿ€ÿÿÿgÿ€ÿ€ÿÿ€ÿgÿ€ÿ€ÿ€ÿÿÿgÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ‚ ³€ÿÿÿgÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€€ÿÿ€ÿgÿ€ÿ€ÿ€€€€€ÿÿ€ÿeÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿcÿyÿÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ‚ ð€ÿÿÿcÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿjÿ€ÿ€ÿ€€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿÿiÿ€ÿ€ÿÿ€ÿcÿ€ÿ€ÿ€€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿÿkÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿkÿ€ÿ€ÿÿÿkÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿkÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ‚ Ò€ÿÿÿlÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿÿmÿ€ÿ€ÿÿ€ÿmÿ€ÿ€ÿ€ÿÿÿmÿ€ÿ€ÿÿ€ÿmÿ€ÿ€ÿ-€ÿÿÿmÿ€ÿ€ÿÿÿnÿ€ÿ€ÿÿ€ÿnÿ€ÿ€ÿ€ÿÿÿnÿ€ÿ€ÿÿ€ÿnÿ€ÿ€ÿQ€ÿÿÿnÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿ€ÿoÿ€ÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿ€ÿoÿ€ÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€€ÿÿ€ÿoÿ€ÿ€ÿ€€€€€ÿÿ€ÿnÿ€ÿ€ÿ€€€€€ÿÿ€ÿmÿ€ÿ€ÿ€€€€€ÿÿ€ÿlÿ€ÿ€ÿ€€€€€ÿÿ€ÿlÿ€ÿ€ÿ€€€€€ÿÿÿkÿ€ÿ€ÿÿÿpÿ€ÿ€ÿÿ€ÿpÿ€ÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿH€ÿÿÿqÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿrÿ€ÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿrÿ€ÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿrÿ€ÿ€ÿ‚ â€ÿÿÿrÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿrÿ€ÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿrÿ€ÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿÿsÿ€ÿ€ÿÿ€ÿsÿ€ÿ€ÿ€ÿÿÿsÿ€ÿ€ÿÿ€ÿsÿ€ÿ€ÿ‚I€ÿÿÿsÿ€ÿ€ÿÿÿtÿ€ÿ€ÿÿ€ÿtÿ€ÿ€ÿ€ÿÿÿtÿ€ÿ€ÿÿ€ÿtÿ€ÿ€ÿ‚É€ÿÿÿtÿ€ÿ€ÿÿÿuÿ€ÿ€ÿÿ€ÿuÿ€ÿ€ÿ€ÿÿÿuÿ€ÿ€ÿÿ€ÿuÿ€ÿ€ÿQ€ÿÿÿuÿ€ÿ€ÿÿ€ÿrÿ€ÿ€ÿ€€ÿÿ€ÿuÿ€ÿ€ÿ€€€€€ÿÿ€ÿtÿ€ÿ€ÿ€€€€€ÿÿ€ÿsÿ€ÿ€ÿ€€€€€ÿÿ€ÿrÿ€ÿ€ÿ€€€€€ÿÿ€ÿrÿ€ÿ€ÿ€€€€€ÿÿÿrÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ‚ ¢€ÿÿÿvÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿÿwÿ€ÿ€ÿÿ€ÿwÿ€ÿ€ÿ€ÿÿÿwÿ€ÿ€ÿÿ€ÿwÿ€ÿ€ÿ!€ÿÿÿwÿ€ÿ€ÿÿÿxÿ€ÿ€ÿÿ€ÿxÿ€ÿ€ÿ€ÿÿÿxÿ€ÿ€ÿÿ€ÿxÿ€ÿ€ÿQ€ÿÿÿxÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€€ÿÿ€ÿxÿ€ÿ€ÿ€€€€€ÿÿ€ÿwÿ€ÿ€ÿ€€€€€ÿÿ€ÿvÿ€ÿ€ÿ€€€€€ÿÿ€ÿvÿ€ÿ€ÿ€€€€€ÿÿÿvÿ€ÿ€ÿÿ€ÿqÿ€ÿ€ÿ€€ÿÿ€ÿvÿ€ÿ€ÿ€€€€€ÿÿ€ÿrÿ€ÿ€ÿ€€€€€ÿÿ€ÿqÿ€ÿ€ÿ€€€€€ÿÿ€ÿqÿ€ÿ€ÿ€€€€€ÿÿ€ÿqÿ€ÿ€ÿ€€€€€€ÿÿÿkÿ€ÿ€ÿÿÿyÿ€ÿ€ÿÿ€ÿyÿ€ÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿzÿ€ÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿÿ{ÿ€ÿ€ÿÿ€ÿ{ÿ€ÿ€ÿ€ÿÿ€ÿ{ÿ€ÿ€ÿ˜krunk_alice_handler_clue€€ÿÿÿzÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿzÿ€ÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿ|ÿ€ÿ€ÿ‚ ±€ÿÿÿzÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿzÿ€ÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿ}ÿ€ÿ€ÿ€€ÿÿÿzÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿzÿ€ÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿÿ~ÿ€ÿ€ÿÿ€ÿ~ÿ€ÿ€ÿ€ÿÿÿ~ÿ€ÿ€ÿÿ€ÿ~ÿ€ÿ€ÿ‚ ö€ÿÿÿ~ÿ€ÿ€ÿÿÿ~ÿ€ÿ€ÿÿ€ÿ~ÿ€ÿ€ÿ€ÿÿÿ~ÿ€ÿ€ÿÿ€ÿ~ÿ€ÿ€ÿ€ÿÿÿ~ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ Ø€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿ‚ €ÿ€ÿ€ÿÿ€ÿ‚ €ÿ€ÿ€ÿ€ÿÿÿ‚ €ÿ€ÿ€ÿÿ€ÿ‚ €ÿ€ÿ€ÿ!€ÿÿÿ‚ €ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿQ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ‚ÿ€ÿ€ÿÿ€ÿ‚ ‚ÿ€ÿ€ÿ€ÿÿÿ‚ ‚ÿ€ÿ€ÿÿ€ÿ‚ ‚ÿ€ÿ€ÿ‚q€ÿÿÿ‚ ‚ÿ€ÿ€ÿÿ€ÿ~ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ €ÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿ~ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ~ÿ€ÿ€ÿ€€€€€ÿÿÿzÿ€ÿ€ÿÿ€ÿ‚ ƒÿ€ÿ€ÿ€ÿÿ€ÿzÿ€ÿ€ÿ€€€€€ÿÿ€ÿzÿ€ÿ€ÿ€€€€€ÿÿ€ÿzÿ€ÿ€ÿ€€€€€ÿÿ€ÿzÿ€ÿ€ÿ€€€€€€ÿÿ€ÿkÿ€ÿ€ÿ€€€€€€ÿÿÿkÿ€ÿ€ÿÿ€ÿkÿ€ÿ€ÿ€ÿÿ€ÿkÿ€ÿ€ÿ€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿiÿ‚ ½ÿ)ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿÿ‚ „ÿ€ÿ€ÿÿ€ÿ‚ „ÿ€ÿ€ÿ€ÿÿ€ÿ‚ „ÿ€ÿ€ÿŸkrunk_alice_handler_clue reveal€€ÿÿÿiÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿ‚ …ÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿ‚ ‡ÿ€ÿ€ÿ€€ÿÿÿiÿ€ÿ€ÿÿ€ÿ‚ ƒÿ€ÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ ˆÿ‚ ­ÿ"ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ‚ è€ÿÿÿ‚ ˆÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿ€ÿ‚ ‰ÿ€ÿ€ÿ€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿ€ÿ‚ Šÿ€ÿ€ÿ‚ ¿€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿ€ÿ‚ ‹ÿ€ÿ€ÿ€€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ‰ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ‰ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ˆÿ‚ ¶ÿ'ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ‚ ˜€ÿÿÿ‚ ˆÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿÿ‚ Žÿ€ÿ€ÿÿ€ÿ‚ Žÿ€ÿ€ÿ€ÿÿÿ‚ Žÿ€ÿ€ÿÿÿ‚ Žÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ Žÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ Žÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿ€ÿ‚ Žÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Žÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ ‘ÿTÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ‘ÿ€ÿ€ÿÿÿ‚ ‘ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ‘ÿ€ÿ€ÿÿÿ‚ ’ÿ€ÿ€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ€ÿÿÿ‚ ’ÿ€ÿ€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ@€ÿÿÿ‚ ’ÿ€ÿ€ÿÿÿ‚ ’ÿ€ÿ€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ€ÿÿÿ‚ ’ÿ€ÿ€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ€ÿÿÿ‚ ’ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ”ÿ€ÿ€ÿ…€    €€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿ€ÿ‚ –ÿ€ÿ€ÿ…ÿÿÿÿ€€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ —ÿ€ÿ€ÿÿ€ÿ‚ —ÿ€ÿ€ÿ€ÿÿÿ‚ —ÿ€ÿ€ÿÿ€ÿ‚ —ÿ€ÿ€ÿ-€ÿÿÿ‚ —ÿ€ÿ€ÿÿÿ‚ ˜ÿ€ÿ€ÿÿ€ÿ‚ ˜ÿ€ÿ€ÿ€ÿÿÿ‚ ˜ÿ€ÿ€ÿÿ€ÿ‚ ˜ÿ€ÿ€ÿ€ÿÿÿ‚ ˜ÿ€ÿ€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ˜ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ —ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ‘ÿ€ÿ€ÿÿÿ‚ ™ÿ€ÿ€ÿÿ€ÿ‚ ™ÿ€ÿ€ÿ€ÿÿÿ‚ šÿ€ÿ€ÿÿ€ÿ‚ šÿ€ÿ€ÿ€ÿÿÿ‚ šÿ€ÿ€ÿÿÿ‚ ›ÿ€ÿ€ÿÿ€ÿ‚ ›ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ›ÿ€ÿ€ÿ‘not_in_dictionary€€ÿÿÿ‚ šÿ€ÿ€ÿÿÿ‚ šÿ€ÿ€ÿÿ€ÿ‚ šÿ€ÿ€ÿ€ÿÿÿ‚ šÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ-€ÿÿÿ‚ šÿ€ÿ€ÿÿ€ÿ‚ šÿ€ÿ€ÿ€€ÿÿ€ÿ‚ šÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ šÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ‘ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿÿ‚ Ÿÿ€ÿ€ÿÿ€ÿ‚ Ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ÿÿ€ÿ€ÿškrunk_alice_handler_commit€€ÿÿÿ‚ žÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚  ÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ ¡ÿ€ÿ€ÿ€€ÿÿÿ‚ žÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿÿ‚ ¢ÿ€ÿ€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ€ÿÿÿ‚ ¢ÿ€ÿ€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ‚ ö€ÿÿÿ‚ ¢ÿ€ÿ€ÿÿÿ‚ ¢ÿ€ÿ€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ€ÿÿÿ‚ ¢ÿ€ÿ€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ€ÿÿÿ‚ ¢ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ‚ Ø€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ £ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ £ÿ€ÿ€ÿÿÿ‚ ¤ÿ€ÿ€ÿÿ€ÿ‚ ¤ÿ€ÿ€ÿ€ÿÿÿ‚ ¤ÿ€ÿ€ÿÿ€ÿ‚ ¤ÿ€ÿ€ÿ€ÿÿÿ‚ ¤ÿ€ÿ€ÿÿÿ‚ ¥ÿ€ÿ€ÿÿ€ÿ‚ ¥ÿ€ÿ€ÿ€ÿÿÿ‚ ¥ÿ€ÿ€ÿÿ€ÿ‚ ¥ÿ€ÿ€ÿ-€ÿÿÿ‚ ¥ÿ€ÿ€ÿÿÿ‚ ¦ÿ€ÿ€ÿÿ€ÿ‚ ¦ÿ€ÿ€ÿ€ÿÿÿ‚ ¦ÿ€ÿ€ÿÿ€ÿ‚ ¦ÿ€ÿ€ÿ€ÿÿÿ‚ ¦ÿ€ÿ€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ¦ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¥ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¤ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ žÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ §ÿ€ÿ€ÿ€€ÿÿÿ‚ žÿ€ÿ€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ žÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ‘ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ‘ÿ€ÿ€ÿÿ€ÿ‚ ‘ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ‘ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ¨ÿ‚ Êÿ,ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ‚ ¸€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ@€ÿÿÿ‚ ©ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€ÿÿÿ‚ ©ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ”ÿ€ÿ€ÿ…€    €€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿ€ÿ‚ –ÿ€ÿ€ÿ…ÿÿÿÿ€€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ ªÿ€ÿ€ÿÿ€ÿ‚ ªÿ€ÿ€ÿ€ÿÿÿ‚ ªÿ€ÿ€ÿÿ€ÿ‚ ªÿ€ÿ€ÿ‚€ÿÿÿ‚ ªÿ€ÿ€ÿÿÿ‚ «ÿ€ÿ€ÿÿ€ÿ‚ «ÿ€ÿ€ÿ€ÿÿÿ‚ «ÿ€ÿ€ÿÿ€ÿ‚ «ÿ€ÿ€ÿ€ÿÿÿ‚ «ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ «ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ªÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ©ÿ€ÿ€ÿÿÿ‚ ¬ÿ€ÿ€ÿÿ€ÿ‚ ¬ÿ€ÿ€ÿ€ÿÿÿ‚ ¬ÿ€ÿ€ÿÿ€ÿ‚ ¬ÿ€ÿ€ÿ‚ ¿€ÿÿÿ‚ ¬ÿ€ÿ€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ¬ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ ­ÿ*ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ­ÿ€ÿ€ÿÿÿ‚ ­ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ­ÿ€ÿ€ÿÿ€ÿ‚ ®ÿ€ÿ€ÿ€ÿÿÿ‚ ­ÿ€ÿ€ÿÿÿ‚ ¯ÿ€ÿ€ÿÿ€ÿ‚ ¯ÿ€ÿ€ÿ€ÿÿÿ‚ °ÿ€ÿ€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€ÿÿÿ‚ °ÿ€ÿ€ÿÿ€ÿ‚ ±ÿ€ÿ€ÿ€€ÿÿÿ‚ °ÿ€ÿ€ÿÿÿ‚ °ÿ€ÿ€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€ÿÿÿ‚ °ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚ ²ÿ€ÿ€ÿÿ€ÿ‚ ²ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ²ÿ€ÿ€ÿs€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚ ³ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ³ÿ€ÿ€ÿÿ€ÿ‚ ´ÿ€ÿ€ÿ€ÿÿÿ‚ ³ÿ€ÿ€ÿÿ€ÿ‚ µÿ€ÿ€ÿ+€ÿÿ€ÿ‚ ³ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ ¶ÿ€ÿ€ÿ[€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿ‚ °ÿ€ÿ€ÿÿÿ‚ °ÿ€ÿ€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€ÿÿÿ‚ °ÿ€ÿ€ÿÿ€ÿ‚ ·ÿ€ÿ€ÿ€€ÿÿÿ‚ °ÿ€ÿ€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ °ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ­ÿ€ÿ€ÿÿÿ‚ ¸ÿ€ÿ€ÿÿ€ÿ‚ ¸ÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ‚ ø€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ‚ º€ÿÿÿ‚ ºÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿÿ‚ »ÿ€ÿ€ÿÿ€ÿ‚ »ÿ€ÿ€ÿ€ÿÿÿ‚ »ÿ€ÿ€ÿÿ€ÿ‚ »ÿ€ÿ€ÿ€ÿÿÿ‚ »ÿ€ÿ€ÿÿÿ‚ ¼ÿ€ÿ€ÿÿ€ÿ‚ ¼ÿ€ÿ€ÿ€ÿÿÿ‚ ¼ÿ€ÿ€ÿÿ€ÿ‚ ¼ÿ€ÿ€ÿ‚ý€ÿÿÿ‚ ¼ÿ€ÿ€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ¼ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ »ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ­ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ­ÿ€ÿ€ÿÿ€ÿ‚ ­ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ­ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ½ÿ\ÿÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€ÿÿÿ‚ ½ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ ¾ÿ€ÿ€ÿ‚ù€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚ ¿ÿ€ÿ€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ€ÿÿÿ‚ ¿ÿ€ÿ€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ‚ Ü€ÿÿÿ‚ ¿ÿ€ÿ€ÿÿÿ‚ ¿ÿ€ÿ€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ€ÿÿÿ‚ ¿ÿ€ÿ€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ€ÿÿÿ‚ ¿ÿ€ÿ€ÿÿÿ‚ Àÿ€ÿ€ÿÿ€ÿ‚ Àÿ€ÿ€ÿ€ÿÿÿ‚ Àÿ€ÿ€ÿÿ€ÿ‚ Àÿ€ÿ€ÿ€ÿÿÿ‚ Àÿ€ÿ€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Àÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ½ÿ€ÿ€ÿÿÿ‚ ½ÿ€ÿ€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€ÿÿÿ‚ ½ÿ€ÿ€ÿÿ€ÿ‚ Áÿ€ÿ€ÿ€€ÿÿÿ‚ ½ÿ€ÿ€ÿÿÿ‚ ½ÿ€ÿ€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€ÿÿÿ‚ ½ÿ€ÿ€ÿÿÿ‚ Âÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€ÿÿÿ‚ Âÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ‚ ö€ÿÿÿ‚ Âÿ€ÿ€ÿÿÿ‚ Âÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€ÿÿÿ‚ Âÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€ÿÿÿ‚ Âÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ‚ €ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Ãÿ€ÿ€ÿÿÿ‚ Äÿ€ÿ€ÿÿ€ÿ‚ Äÿ€ÿ€ÿ€ÿÿÿ‚ Äÿ€ÿ€ÿÿ€ÿ‚ Äÿ€ÿ€ÿ€ÿÿÿ‚ Äÿ€ÿ€ÿÿÿ‚ Åÿ€ÿ€ÿÿ€ÿ‚ Åÿ€ÿ€ÿ€ÿÿÿ‚ Åÿ€ÿ€ÿÿ€ÿ‚ Åÿ€ÿ€ÿ)€ÿÿÿ‚ Åÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Çÿ€ÿ€ÿY€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Äÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ½ÿ€ÿ€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ Èÿ‚ Óÿ3ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ Èÿ€ÿ€ÿÿÿ‚ Èÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ Èÿ€ÿ€ÿÿÿ‚ Éÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚ Éÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Ëÿ€ÿ€ÿ_€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€€€€ÿÿÿ‚ Éÿ€ÿ€ÿÿÿ‚ Ìÿ€ÿ€ÿÿ€ÿ‚ Ìÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ìÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Éÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Èÿ€ÿ€ÿÿÿ‚ Íÿ€ÿ€ÿÿ€ÿ‚ Íÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ‚ ¤€ÿÿÿ‚ Îÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿÿ‚ Ïÿ€ÿ€ÿÿ€ÿ‚ Ïÿ€ÿ€ÿ€ÿÿÿ‚ Ïÿ€ÿ€ÿÿ€ÿ‚ Ïÿ€ÿ€ÿ/€ÿÿÿ‚ Ïÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Ïÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ Èÿ€ÿ€ÿÿÿ‚ Ðÿ€ÿ€ÿÿ€ÿ‚ Ðÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ‚ ä€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Òÿ€ÿ€ÿÿ€ÿ‚ Òÿ€ÿ€ÿ€ÿÿÿ‚ Òÿ€ÿ€ÿÿÿ‚ Òÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ Òÿ€ÿ€ÿÿ€ÿ‚ Óÿ€ÿ€ÿ_€ÿÿÿ‚ Òÿ€ÿ€ÿÿÿ‚ Ôÿ€ÿ€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€€ÿÿÿ‚ Òÿ€ÿ€ÿÿÿ‚ Õÿ€ÿ€ÿÿ€ÿ‚ Õÿ€ÿ€ÿ€ÿÿ€ÿ‚ Õÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Òÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ Òÿ€ÿ€ÿÿÿ‚ Öÿ€ÿ€ÿÿ€ÿ‚ Öÿ€ÿ€ÿ€ÿÿÿ‚ Öÿ€ÿ€ÿÿ€ÿ‚ Öÿ€ÿ€ÿ€ÿÿÿ‚ Öÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Öÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Òÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ Èÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ Èÿ€ÿ€ÿÿ€ÿ‚ Èÿ€ÿ€ÿ€ÿÿ€ÿ‚ Èÿ€ÿ€ÿ€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ ×ÿ‚ ƒÿÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ Øÿ€ÿ€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ€ÿÿÿ‚ Øÿ€ÿ€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ‚ Ü€ÿÿÿ‚ Øÿ€ÿ€ÿÿÿ‚ Øÿ€ÿ€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ€ÿÿÿ‚ Øÿ€ÿ€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ€ÿÿÿ‚ Øÿ€ÿ€ÿÿÿ‚ Ùÿ€ÿ€ÿÿ€ÿ‚ Ùÿ€ÿ€ÿ€ÿÿÿ‚ Ùÿ€ÿ€ÿÿ€ÿ‚ Ùÿ€ÿ€ÿ‚ ½€ÿÿÿ‚ Ùÿ€ÿ€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Ùÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ Ûÿ€ÿ€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ€ÿÿÿ‚ Ûÿ€ÿ€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ‚ ö€ÿÿÿ‚ Ûÿ€ÿ€ÿÿÿ‚ Ûÿ€ÿ€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ€ÿÿÿ‚ Ûÿ€ÿ€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ€ÿÿÿ‚ Ûÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ‚ ´€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Üÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Üÿ€ÿ€ÿÿÿ‚ Ýÿ€ÿ€ÿÿ€ÿ‚ Ýÿ€ÿ€ÿ€ÿÿÿ‚ Ýÿ€ÿ€ÿÿ€ÿ‚ Ýÿ€ÿ€ÿ	€ÿÿÿ‚ Ýÿ€ÿ€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Ýÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Ñÿkÿÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ‚ ”€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ@€ÿÿÿ‚ Þÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€ÿÿÿ‚ Þÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ”ÿ€ÿ€ÿ…€    €€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿ€ÿ‚ –ÿ€ÿ€ÿ…ÿÿÿÿ€€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿÿ‚ àÿ€ÿ€ÿÿ€ÿ‚ àÿ€ÿ€ÿ€ÿÿÿ‚ àÿ€ÿ€ÿÿ€ÿ‚ àÿ€ÿ€ÿ	€ÿÿÿ‚ àÿ€ÿ€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€€ÿÿ€ÿ‚ àÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Þÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿ‚ áÿ€ÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿ‚ âÿ€ÿ€ÿ‚ý€ÿÿÿ‚ áÿ€ÿ€ÿÿÿ‚ ãÿ€ÿ€ÿÿ€ÿ‚ ãÿ€ÿ€ÿ€ÿÿÿ‚ äÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€ÿÿÿ‚ äÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ‚ Ü€ÿÿÿ‚ äÿ€ÿ€ÿÿÿ‚ äÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€ÿÿÿ‚ äÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€ÿÿÿ‚ äÿ€ÿ€ÿÿÿ‚ åÿ€ÿ€ÿÿ€ÿ‚ åÿ€ÿ€ÿ€ÿÿÿ‚ åÿ€ÿ€ÿÿÿ‚ åÿ€ÿ€ÿÿ€ÿ‚ åÿ€ÿ€ÿ€ÿÿ€ÿ‚ åÿ€ÿ€ÿr€€ÿÿÿ‚ åÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€€ÿÿ€ÿ‚ åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ áÿ€ÿ€ÿÿÿ‚ æÿ€ÿ€ÿÿ€ÿ‚ æÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ‚ Ü€ÿÿÿ‚ çÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ‚ º€ÿÿÿ‚ èÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€ÿÿÿ‚ èÿ€ÿ€ÿÿÿ‚ éÿ€ÿ€ÿÿ€ÿ‚ éÿ€ÿ€ÿ€ÿÿÿ‚ éÿ€ÿ€ÿÿ€ÿ‚ éÿ€ÿ€ÿ€ÿÿÿ‚ éÿ€ÿ€ÿÿÿ‚ êÿ€ÿ€ÿÿ€ÿ‚ êÿ€ÿ€ÿ€ÿÿÿ‚ êÿ€ÿ€ÿÿ€ÿ‚ ëÿ€ÿ€ÿ‚g€ÿÿÿ‚ êÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€€ÿÿ€ÿ‚ êÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ éÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€€€€€ÿÿÿ‚ èÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€ÿÿ€ÿ‚ èÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ áÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿ‚ áÿ€ÿ€ÿ€ÿÿ€ÿ‚ áÿ€ÿ€ÿ€€€€€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€ÿÿ€ÿ‚ áÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Þÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ ìÿ‚ ”ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ìÿ€ÿ€ÿÿÿ‚ ìÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ìÿ€ÿ€ÿÿ€ÿ‚ íÿ€ÿ€ÿ€ÿÿÿ‚ ìÿ€ÿ€ÿÿÿ‚ îÿ€ÿ€ÿÿ€ÿ‚ îÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ ðÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ ñÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚ òÿ€ÿ€ÿÿ€ÿ‚ òÿ€ÿ€ÿ€ÿÿ€ÿ‚ òÿ€ÿ€ÿs€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚ óÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ óÿ€ÿ€ÿÿ€ÿ‚ ôÿ€ÿ€ÿ€ÿÿÿ‚ óÿ€ÿ€ÿÿ€ÿ‚ õÿ€ÿ€ÿ+€ÿÿ€ÿ‚ óÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ öÿ€ÿ€ÿ[€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ÷ÿ€ÿ€ÿ€€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ øÿ€ÿ€ÿ€€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ìÿ€ÿ€ÿÿÿ‚ ùÿ€ÿ€ÿÿ€ÿ‚ ùÿ€ÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ üÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿ‚ úÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ ýÿ€ÿ€ÿ‚ à€ÿÿÿ‚ úÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ þÿ€ÿ€ÿ€€ÿÿÿ‚ úÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ ÿÿ€ÿ€ÿ€€ÿÿÿ‚ úÿ€ÿ€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ úÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ìÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ìÿ€ÿ€ÿÿ€ÿ‚ ìÿ€ÿ€ÿ€ÿÿ€ÿ‚ ìÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿrÿÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ö€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ´€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ÿ‚ Íÿ.ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ô€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ/€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚	ÿ‚ ¢ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚	ÿ€ÿ€ÿÿÿ‚	ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚	ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ@€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ “ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ”ÿ€ÿ€ÿ…€    €€ÿÿÿ‚ “ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ •ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€ÿÿ€ÿ‚ –ÿ€ÿ€ÿ…ÿÿÿÿ€€ÿÿÿ‚ •ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ	€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿÿ‚	ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‘not_in_dictionary€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚	ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ—krunk_bob_handler_guess€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ö€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿD€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ	€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚	ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿÿ3ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ=€ÿÿÿ	ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ_€ÿÿÿ	ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿd€€ÿÿ€ÿ	ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ‚ Ž€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ/€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ_€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ/€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ_€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ"ÿ€ÿ€ÿ€ÿÿ€ÿ ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ$ÿ€ÿ€ÿ_€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ%ÿ€ÿ€ÿ/€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ‚ Ì€ÿÿÿ'ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ‚ ö€ÿÿÿ(ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ(ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ‚ Ô€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿÿ)ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ*ÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ*ÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€€ÿÿ€ÿ*ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ(ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ(ÿ€ÿ€ÿ€€€€€ÿÿÿ(ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ‚ ö€ÿÿÿ+ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ‚ ¨€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿ€ÿ,ÿ€ÿ€ÿ€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿ-ÿ€ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿ-ÿ€ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿ+ÿ€ÿ€ÿ€€ÿÿ€ÿ-ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€ÿÿÿ+ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿ.ÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ_€ÿÿÿ/ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿd€€ÿÿ€ÿ/ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ(ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿ'ÿ‚ ¯ÿ$ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ‚ ¬€ÿÿÿ'ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ	€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ/€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ þ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ²€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿÿ‚ ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ‚y€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚!ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚"ÿ€ÿ€ÿÿ€ÿ‚"ÿ€ÿ€ÿ€ÿÿ€ÿ‚"ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚#ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚$ÿ€ÿ€ÿÿ€ÿ‚$ÿ€ÿ€ÿ€ÿÿ€ÿ‚$ÿ€ÿ€ÿ €€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚'ÿ€ÿ€ÿ-€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚(ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚*ÿ€ÿ€ÿ‚ ò€ÿÿÿ‚)ÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚+ÿ€ÿ€ÿJ€ÿÿÿ‚)ÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚,ÿ€ÿ€ÿ‚ ²€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚-ÿ€ÿ€ÿ‚y€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚.ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ‚y€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚0ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚1ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚2ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ €€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚3ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚4ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚5ÿ€ÿ€ÿ-€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚8ÿ€ÿ€ÿ‚ ò€ÿÿÿ‚7ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚9ÿ€ÿ€ÿJ€ÿÿÿ‚7ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚:ÿ€ÿ€ÿ‚ ²€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚;ÿ€ÿ€ÿ‚y€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚<ÿ€ÿ€ÿd€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿd€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚Bÿ‚ ‘ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿÿ‚Cÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Cÿ€ÿ€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€ÿÿÿ‚Cÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€ÿÿ€ÿ‚Cÿ€ÿ€ÿ€€€€€ÿÿÿ‚Bÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€€ÿÿÿ‚Bÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Hÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ‚ œ€ÿÿÿ‚Iÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Kÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿÿ‚Lÿ€ÿ€ÿÿ€ÿ‚Lÿ€ÿ€ÿ€ÿÿ€ÿ‚Lÿ€ÿ€ÿ€€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€€€€€ÿÿÿ‚Jÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿ‚Nÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Bÿ€ÿ€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€€€€€ÿÿÿ‚OÿEÿÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ‚ Þ€ÿÿÿ‚Oÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ‚ ¼€ÿÿÿ‚Pÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Rÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿÿ‚Sÿ€ÿ€ÿÿ€ÿ‚Sÿ€ÿ€ÿ€ÿÿ€ÿ‚Sÿ€ÿ€ÿ‚ €€€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€€€€€ÿÿÿ‚Qÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€€€€€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚Uÿ‚ ®ÿ#ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Vÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Vÿ€ÿ€ÿÿ€ÿ‚Wÿ€ÿ€ÿ€ÿÿÿ‚Vÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€ÿÿ€ÿ‚Vÿ€ÿ€ÿ€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€ÿÿÿ‚Zÿ€ÿ€ÿÿ€ÿ‚Zÿ€ÿ€ÿ€ÿÿ€ÿ‚Zÿ€ÿ€ÿ€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€ÿÿÿ‚\ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚\ÿ€ÿ€ÿÿÿ‚]ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ=€ÿÿÿ‚]ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€ÿÿÿ‚]ÿ€ÿ€ÿÿÿ‚_ÿ€ÿ€ÿÿ€ÿ‚_ÿ€ÿ€ÿ€ÿÿ€ÿ‚_ÿ€ÿ€ÿ€€ÿÿ€ÿ‚]ÿ€ÿ€ÿ€€€€€ÿÿÿ‚\ÿ€ÿ€ÿÿÿ‚`ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€ÿÿÿ‚`ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ‚ ¼€ÿÿÿ‚`ÿ€ÿ€ÿÿÿ‚`ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€ÿÿÿ‚`ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€ÿÿÿ‚`ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿ.ÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ‚aÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿÿ‚bÿ€ÿ€ÿÿ€ÿ‚bÿ€ÿ€ÿ€ÿÿ€ÿ‚bÿ€ÿ€ÿ€€ÿÿ€ÿ/ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€ÿÿÿ.ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚dÿ€ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€€€€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€€€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚\ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€€€€ÿÿÿ‚fÿ‚ Ïÿ0ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚fÿ€ÿ€ÿÿ€ÿ‚gÿ€ÿ€ÿ€ÿÿÿ‚fÿ€ÿ€ÿÿ€ÿ‚hÿ€ÿ€ÿ€ÿÿ€ÿ‚fÿ€ÿ€ÿ€€€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚iÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚jÿ€ÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿÿ‚kÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚kÿ€ÿ€ÿÿÿ‚lÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€ÿÿÿ‚lÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ‚ œ€ÿÿÿ‚lÿ€ÿ€ÿÿÿ‚lÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€ÿÿÿ‚lÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€ÿÿÿ‚lÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿ‚mÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿ‚nÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿÿ‚oÿ€ÿ€ÿÿ€ÿ‚oÿ€ÿ€ÿ€ÿÿ€ÿ‚oÿ€ÿ€ÿ€€ÿÿ€ÿ‚mÿ€ÿ€ÿ€€€€€ÿÿÿ‚mÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ‚ ì€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€€ÿÿ€ÿ‚pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚mÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚lÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚lÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚kÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚iÿ€ÿ€ÿ€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚qÿCÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿ‚rÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿ‚sÿ€ÿ€ÿ€ÿÿ€ÿ‚qÿ€ÿ€ÿ€€€€€ÿÿÿ‚tÿ|ÿÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ‚ ’€ÿÿÿ‚tÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ‚ ž€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚tÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚tÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚tÿ€ÿ€ÿ€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚wÿwÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿ‚yÿ€ÿ€ÿ%€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ-€ÿÿ€ÿ‚xÿ€ÿ€ÿ€€€€€ÿÿÿ‚wÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€ÿÿÿ‚|ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚|ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿB€ÿÿÿ‚|ÿ€ÿ€ÿÿÿ‚|ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚|ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚|ÿ€ÿ€ÿÿÿ‚}ÿ€ÿ€ÿÿ€ÿ‚}ÿ€ÿ€ÿ€ÿÿÿ‚}ÿ€ÿ€ÿÿ€ÿ‚}ÿ€ÿ€ÿ	€ÿÿÿ‚}ÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿ‚~ÿ€ÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿ‚~ÿ€ÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€€ÿÿ€ÿ‚~ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚}ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚wÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚~ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚‚ÿ€ÿ€ÿÿ€ÿ‚‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚€ÿ€ÿ€ÿÿÿ‚ƒÿ€ÿ€ÿÿ€ÿ‚ƒÿ€ÿ€ÿ€ÿÿÿ‚„ÿ€ÿ€ÿÿ€ÿ‚„ÿ€ÿ€ÿ€ÿÿ€ÿ‚„ÿ€ÿ€ÿ€€€€ÿÿÿ‚€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€ÿÿÿ‚†ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚†ÿ€ÿ€ÿÿÿ‚‡ÿ€ÿ€ÿÿ€ÿ‚‡ÿ€ÿ€ÿ€ÿÿ€ÿ‚‡ÿ€ÿ€ÿ¦krunk_reveal_mover_share: not terminal€€ÿÿ€ÿ‚†ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€€€€€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€€€€ÿÿÿ‚ˆÿ‚ Ìÿ-ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ‚ ü€ÿÿÿ‚‰ÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚Œÿ€ÿ€ÿÿ€ÿ‚Œÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€€€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚Žÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Žÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚Žÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚Žÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ˆÿ€ÿ€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚“ÿ€ÿ€ÿÿÿ‚“ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚”ÿ€ÿ€ÿÿ€ÿ‚”ÿ€ÿ€ÿ‚ «€ÿÿ€ÿ‚“ÿ€ÿ€ÿ€€€€ÿÿÿ‚•ÿ€ÿ€ÿÿÿ‚•ÿ€ÿ€ÿÿ€ÿ‚•ÿ€ÿ€ÿ€ÿÿ€ÿ‚•ÿ€ÿ€ÿ€€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€€€€€ÿÿÿ‚–ÿ€ÿ€ÿÿÿ‚–ÿ€ÿ€ÿÿ€ÿ‚–ÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚˜ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚˜ÿ€ÿ€ÿÿ€ÿ‚™ÿ€ÿ€ÿ‚ »€ÿÿÿ‚˜ÿ€ÿ€ÿÿ€ÿ‚šÿ€ÿ€ÿ€€ÿÿ€ÿ‚˜ÿ€ÿ€ÿ€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚›ÿ€ÿ€ÿÿ€ÿ‚›ÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚œÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚œÿ€ÿ€ÿÿÿ‚žÿ€ÿ€ÿÿ€ÿ‚žÿ€ÿ€ÿ€ÿÿÿ‚žÿ€ÿ€ÿÿ€ÿ‚žÿ€ÿ€ÿ^€ÿÿÿ‚žÿ€ÿ€ÿÿÿ‚žÿ€ÿ€ÿÿ€ÿ‚žÿ€ÿ€ÿ€ÿÿÿ‚žÿ€ÿ€ÿÿ€ÿ‚žÿ€ÿ€ÿ€ÿÿÿ‚žÿ€ÿ€ÿÿÿ‚Ÿÿ€ÿ€ÿÿ€ÿ‚Ÿÿ€ÿ€ÿ€ÿÿÿ‚Ÿÿ€ÿ€ÿÿ€ÿ‚Ÿÿ€ÿ€ÿ‚ §€ÿÿÿ‚Ÿÿ€ÿ€ÿÿ€ÿ‚žÿ€ÿ€ÿ€€ÿÿ€ÿ‚Ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚žÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚œÿ€ÿ€ÿ€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚¡ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¡ÿ€ÿ€ÿÿÿ‚¢ÿ€ÿ€ÿÿ€ÿ‚¢ÿ€ÿ€ÿ€ÿÿ€ÿ‚¢ÿ€ÿ€ÿr€€ÿÿÿ‚¡ÿ€ÿ€ÿÿ€ÿ‚£ÿ€ÿ€ÿ‚ «€ÿÿ€ÿ‚¡ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚¤ÿ€ÿ€ÿÿ€ÿ‚¤ÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚¤ÿ€ÿ€ÿÿ€ÿ‚¤ÿ€ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚¥ÿ€ÿ€ÿÿ€ÿ‚¥ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚¦ÿ€ÿ€ÿ(€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚§ÿ€ÿ€ÿ‚ ‡€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚¨ÿ€ÿ€ÿ‚G€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚©ÿ€ÿ€ÿ‚Ç€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿ‚«ÿ€ÿ€ÿ‚ «€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿ‚¬ÿ€ÿ€ÿ‚ §€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚­ÿ€ÿ€ÿ‚g€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚®ÿ€ÿ€ÿ‚ç€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚¯ÿ€ÿ€ÿÿ€ÿ‚¯ÿ€ÿ€ÿ€ÿÿ€ÿ‚¯ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚±ÿ€ÿ€ÿÿ€ÿ‚±ÿ€ÿ€ÿ€ÿÿÿ‚²ÿ€ÿ€ÿÿ€ÿ‚²ÿ€ÿ€ÿ€ÿÿ€ÿ‚²ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚³ÿ€ÿ€ÿÿÿ‚³ÿ€ÿ€ÿÿ€ÿ‚³ÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚´ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚´ÿ€ÿ€ÿÿÿ‚µÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚µÿ€ÿ€ÿÿÿ‚¶ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¶ÿ€ÿ€ÿÿ€ÿ‚·ÿ€ÿ€ÿ‚ «€ÿÿ€ÿ‚¶ÿ€ÿ€ÿ€€€€ÿÿÿ‚µÿ€ÿ€ÿÿÿ‚¸ÿ€ÿ€ÿÿ€ÿ‚¸ÿ€ÿ€ÿ€ÿÿ€ÿ‚¸ÿ€ÿ€ÿ€€ÿÿ€ÿ‚µÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚´ÿ€ÿ€ÿ€€€€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚¹ÿ€ÿ€ÿÿ€ÿ‚¹ÿ€ÿ€ÿ€ÿÿÿ‚ºÿ€ÿ€ÿÿ€ÿ‚ºÿ€ÿ€ÿ€ÿÿ€ÿ‚ºÿ€ÿ€ÿ€€€€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚»ÿ€ÿ€ÿÿ€ÿ‚»ÿ€ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ~€ÿÿÿ‚¼ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿ‚¾ÿ€ÿ€ÿ‚ «€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚¿ÿ€ÿ€ÿÿ€ÿ‚¿ÿ€ÿ€ÿ€ÿÿ€ÿ‚¿ÿ€ÿ€ÿ€€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚Àÿ€ÿ€ÿÿ€ÿ‚Àÿ€ÿ€ÿ€ÿÿ€ÿ‚Àÿ€ÿ€ÿ€€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚Âÿ€ÿ€ÿd€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚Ãÿ€ÿ€ÿd€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚Äÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚Åÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚Æÿ€ÿ€ÿ€ÿÿ€ÿ‚Çÿ€ÿ€ÿ€€€€€€€ÿÿÿ‚Èÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Èÿ€ÿ€ÿÿÿ‚Èÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Èÿ€ÿ€ÿÿÿ‚Éÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Éÿ€ÿ€ÿÿ€ÿ‚Êÿ€ÿ€ÿ€ÿÿÿ‚Éÿ€ÿ€ÿÿ€ÿ‚Ëÿ€ÿ€ÿ€€ÿÿ€ÿ‚Éÿ€ÿ€ÿ€€€€€ÿÿÿ‚Èÿ€ÿ€ÿÿÿ‚Ìÿ€ÿ€ÿÿ€ÿ‚Ìÿ€ÿ€ÿ€ÿÿ€ÿ‚Íÿ€ÿ€ÿ€€ÿÿÿ‚Èÿ€ÿ€ÿÿÿ‚Îÿ€ÿ€ÿÿ€ÿ‚Îÿ€ÿ€ÿ€ÿÿÿ‚Ïÿ€ÿ€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€ÿÿÿ‚Ïÿ€ÿ€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ0€ÿÿÿ‚Ïÿ€ÿ€ÿÿÿ‚Ïÿ€ÿ€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€ÿÿÿ‚Ïÿ€ÿ€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€ÿÿÿ‚Ïÿ€ÿ€ÿÿÿ‚Ðÿ€ÿ€ÿÿ€ÿ‚Ðÿ€ÿ€ÿ€ÿÿÿ‚Ðÿ€ÿ€ÿÿÿ‚Ðÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Ðÿ€ÿ€ÿÿ€ÿ‚Ñÿ€ÿ€ÿ€ÿÿÿ‚Ðÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€€ÿÿ€ÿ‚Ðÿ€ÿ€ÿ€€€€€ÿÿÿ‚Ðÿ€ÿ€ÿÿÿ‚Óÿ€ÿ€ÿÿ€ÿ‚Óÿ€ÿ€ÿ€ÿÿÿ‚Óÿ€ÿ€ÿÿ€ÿ‚Ôÿ€ÿ€ÿ€ÿÿÿ‚Óÿ€ÿ€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€€ÿÿ€ÿ‚Óÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Ðÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Èÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Èÿ€ÿ€ÿÿ€ÿ‚Èÿ€ÿ€ÿ€ÿÿ€ÿ‚Èÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿ€ÿ‚Õÿ€ÿ€ÿ `3ÊL¾­Üê‘¢ÊD‡–®Æzt§iˆ´œ®íì'ÛÁ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ$€ÿÿÿ‚Öÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿÿ‚×ÿ€ÿ€ÿÿ€ÿ‚×ÿ€ÿ€ÿ€ÿÿÿ‚×ÿ€ÿ€ÿÿ€ÿ‚Øÿ€ÿ€ÿ	€ÿÿÿ‚×ÿ€ÿ€ÿÿÿ‚Ùÿ€ÿ€ÿÿ€ÿ‚Ùÿ€ÿ€ÿ€ÿÿÿ‚Ùÿ€ÿ€ÿÿ€ÿ‚Úÿ€ÿ€ÿ€ÿÿÿ‚Ùÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€ÿÿ€ÿ‚Ùÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚×ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Ýÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Þÿ€ÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚ßÿ€ÿ€ÿÿ€ÿ‚ßÿ€ÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚áÿ€ÿ€ÿÿ€ÿ‚áÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿ‚Ýÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ8€ÿÿÿ‚ãÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿÿ‚äÿ€ÿ€ÿÿ€ÿ‚äÿ€ÿ€ÿ€ÿÿÿ‚äÿ€ÿ€ÿÿ€ÿ‚äÿ€ÿ€ÿ€ÿÿÿ‚äÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€€ÿÿ€ÿ‚äÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚àÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚âÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Ûÿ€ÿ€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€€€€€ÿÿÿ‚åÿzÿÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿ‚çÿ€ÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿ‚èÿ€ÿ€ÿ€€ÿÿÿ‚æÿ€ÿ€ÿÿÿ‚éÿ€ÿ€ÿÿ€ÿ‚éÿ€ÿ€ÿ€ÿÿ€ÿ‚éÿ€ÿ€ÿ€€ÿÿ€ÿ‚æÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚êÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚êÿ€ÿ€ÿÿ€ÿ‚ëÿ€ÿ€ÿ€ÿÿÿ‚êÿ€ÿ€ÿÿÿ‚ìÿ€ÿ€ÿÿ€ÿ‚ìÿ€ÿ€ÿ€ÿÿ€ÿ‚ìÿ€ÿ€ÿ€€ÿÿÿ‚êÿ€ÿ€ÿÿÿ‚íÿ€ÿ€ÿÿ€ÿ‚íÿ€ÿ€ÿ€ÿÿ€ÿ‚íÿ€ÿ€ÿ€€ÿÿ€ÿ‚êÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿ€ÿ‚ïÿ€ÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿÿ‚ðÿ€ÿ€ÿÿ€ÿ‚ðÿ€ÿ€ÿ€ÿÿ€ÿ‚ðÿ€ÿ€ÿ€€ÿÿÿ‚îÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€ÿÿ€ÿ‚îÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿ€ÿ‚óÿ€ÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿÿ‚ôÿ€ÿ€ÿÿ€ÿ‚ôÿ€ÿ€ÿ€ÿÿ€ÿ‚ôÿ€ÿ€ÿ€€ÿÿÿ‚òÿ€ÿ€ÿÿÿ‚õÿ€ÿ€ÿÿ€ÿ‚õÿ€ÿ€ÿ€ÿÿ€ÿ‚õÿ€ÿ€ÿ€€ÿÿ€ÿ‚òÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿ€ÿ‚÷ÿ€ÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿÿ‚øÿ€ÿ€ÿÿ€ÿ‚øÿ€ÿ€ÿ€ÿÿ€ÿ‚øÿ€ÿ€ÿ€€ÿÿÿ‚öÿ€ÿ€ÿÿÿ‚ùÿ€ÿ€ÿÿ€ÿ‚ùÿ€ÿ€ÿ€ÿÿ€ÿ‚ùÿ€ÿ€ÿ€€ÿÿ€ÿ‚öÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿ‚ûÿ€ÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚üÿ€ÿ€ÿÿ€ÿ‚üÿ€ÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚þÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚þÿ€ÿ€ÿÿ€ÿ‚ÿÿ€ÿ€ÿ	€ÿÿÿ‚þÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿ€ÿ‚þÿ€ÿ€ÿ€€€€€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ,€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ýÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ýÿ€ÿ€ÿÿ€ÿ‚ýÿ€ÿ€ÿ€ÿÿ€ÿ‚ýÿ€ÿ€ÿ€€€€€€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚	ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚úÿ€ÿ€ÿ€€€€€€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿ‚úÿ€ÿ€ÿ€ÿÿ€ÿ‚úÿ€ÿ€ÿ€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ|€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ2€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ4€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ4€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ"€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿZ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ+€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿz€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿu€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ €€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ*€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ2€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚!ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚"ÿ€ÿ€ÿÿ€ÿ‚"ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚#ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚$ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚&ÿ‚ ¨ÿ ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚'ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚'ÿ€ÿ€ÿÿ€ÿ‚(ÿ€ÿ€ÿ€ÿÿÿ‚'ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ%€ÿÿ€ÿ‚'ÿ€ÿ€ÿ€€€€€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚*ÿ€ÿ€ÿÿ€ÿ‚*ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚+ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚,ÿ€ÿ€ÿ+€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚-ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚-ÿ€ÿ€ÿÿÿ‚.ÿ€ÿ€ÿÿ€ÿ‚.ÿ€ÿ€ÿ€ÿÿ€ÿ‚.ÿ€ÿ€ÿ€€ÿÿÿ‚-ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ;€ÿÿ€ÿ‚-ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚0ÿ€ÿ€ÿÿ€ÿ‚0ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿ‚3ÿ€ÿ€ÿ€ÿÿ€ÿ‚1ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚5ÿ€ÿ€ÿ%€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ+€ÿÿ€ÿ‚4ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚8ÿ€ÿ€ÿ€€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚9ÿ€ÿ€ÿ;€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿ‚;ÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿÿ‚<ÿ€ÿ€ÿÿ€ÿ‚<ÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ,€ÿÿÿ‚>ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€ÿÿÿ‚Cÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Cÿ€ÿ€ÿÿÿ‚Dÿ€ÿ€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€€ÿÿÿ‚Cÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿZ€ÿÿÿ‚Eÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ8€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Hÿ€ÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€ÿÿ€ÿ‚Hÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€€€€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Kÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Cÿ€ÿ€ÿ€€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚Lÿ€ÿ€ÿÿ€ÿ‚Lÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿ‚Nÿ€ÿ€ÿ€€ÿÿÿ‚Mÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿZ€ÿÿÿ‚Oÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Rÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚:ÿ€ÿ€ÿÿÿ‚Sÿ€ÿ€ÿÿ€ÿ‚Sÿ€ÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿ‚Vÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Wÿ€ÿ€ÿÿ€ÿ‚Wÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿz€ÿÿÿ‚Xÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Zÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚\ÿ€ÿ€ÿ	€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚]ÿ€ÿ€ÿÿ€ÿ‚]ÿ€ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚_ÿ€ÿ€ÿÿ€ÿ‚_ÿ€ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€€€€€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚aÿ€ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿÿ‚bÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚bÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€ÿÿÿ‚bÿ€ÿ€ÿÿ€ÿ‚dÿ€ÿ€ÿ€ÿÿ€ÿ‚bÿ€ÿ€ÿ€€€€€ÿÿÿ‚aÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚fÿ€ÿ€ÿ	€ÿÿÿ‚eÿ€ÿ€ÿÿÿ‚gÿ€ÿ€ÿÿ€ÿ‚gÿ€ÿ€ÿ€ÿÿÿ‚hÿ€ÿ€ÿÿ€ÿ‚hÿ€ÿ€ÿ€ÿÿ€ÿ‚hÿ€ÿ€ÿ€€€ÿÿÿ‚eÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ€ÿÿ€ÿ‚jÿ€ÿ€ÿ€€ÿÿ€ÿ‚eÿ€ÿ€ÿ€€€€€€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚aÿ€ÿ€ÿ€€€€€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€ÿÿ€ÿ‚aÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚kÿ€ÿ€ÿÿ€ÿ‚kÿ€ÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿ‚nÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿÿ‚oÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚oÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ0€ÿÿÿ‚pÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ€ÿÿÿ‚pÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿ‚qÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿ‚rÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚sÿ€ÿ€ÿÿ€ÿ‚sÿ€ÿ€ÿ€ÿÿ€ÿ‚sÿ€ÿ€ÿ€€ÿÿ€ÿ‚qÿ€ÿ€ÿ€€€€€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ €ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ€€ÿÿ€ÿ‚tÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚qÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚oÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚mÿ€ÿ€ÿ€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚´ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚´ÿ€ÿ€ÿÿÿ‚µÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚µÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ^€ÿÿÿ‚vÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€€€€ÿÿÿ‚µÿ€ÿ€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿ‚xÿ€ÿ€ÿ€ÿÿ€ÿ‚xÿ€ÿ€ÿ€€ÿÿ€ÿ‚µÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚´ÿ€ÿ€ÿ€€€€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚yÿ€ÿ€ÿÿ€ÿ‚yÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ&€ÿÿÿ‚zÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ^€ÿÿÿ‚vÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€€€€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚zÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚zÿ€ÿ€ÿ€€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚}ÿ€ÿ€ÿÿ€ÿ‚}ÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿ€ÿ‚~ÿ€ÿ€ÿ€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ&€ÿÿÿ‚€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€ÿÿÿ‚€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚‚ÿ€ÿ€ÿÿ€ÿ‚‚ÿ€ÿ€ÿ€ÿÿÿ‚ƒÿ€ÿ€ÿÿ€ÿ‚ƒÿ€ÿ€ÿ€ÿÿ€ÿ‚ƒÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Áÿ€ÿ€ÿÿ€ÿ‚„ÿ€ÿ€ÿ1€ÿÿÿ‚Áÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿ‚†ÿ€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿÿ‚‡ÿ€ÿ€ÿÿ€ÿ‚‡ÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ^€ÿÿÿ‚Šÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚Œÿ€ÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€€€€€€ÿÿÿ‚…ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚Žÿ€ÿ€ÿÿ€ÿ‚Žÿ€ÿ€ÿ€ÿÿ€ÿ‚Žÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ‚u€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿ€ÿ‚’ÿ€ÿ€ÿ6€ÿÿÿ‚’ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€ÿÿÿ‚’ÿ€ÿ€ÿÿÿ‚“ÿ€ÿ€ÿÿ€ÿ‚“ÿ€ÿ€ÿ€ÿÿÿ‚“ÿ€ÿ€ÿÿ€ÿ‚“ÿ€ÿ€ÿ‚€ÿÿÿ‚“ÿ€ÿ€ÿÿÿ‚”ÿ€ÿ€ÿÿ€ÿ‚”ÿ€ÿ€ÿ€ÿÿÿ‚”ÿ€ÿ€ÿÿ€ÿ‚”ÿ€ÿ€ÿ‚€ÿÿÿ‚”ÿ€ÿ€ÿÿÿ‚•ÿ€ÿ€ÿÿ€ÿ‚•ÿ€ÿ€ÿ€ÿÿÿ‚•ÿ€ÿ€ÿÿ€ÿ‚•ÿ€ÿ€ÿ€ÿÿÿ‚•ÿ€ÿ€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€€ÿÿ€ÿ‚•ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚”ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚“ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚’ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚–ÿ€ÿ€ÿÿ€ÿ‚–ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚—ÿ€ÿ€ÿÿ€ÿ‚˜ÿ€ÿ€ÿ‚Í€ÿÿÿ‚—ÿ€ÿ€ÿÿÿ‚™ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚™ÿ€ÿ€ÿÿÿ‚šÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚šÿ€ÿ€ÿÿ€ÿ‚›ÿ€ÿ€ÿ‚U€ÿÿÿ‚šÿ€ÿ€ÿÿ€ÿ‚œÿ€ÿ€ÿ€€ÿÿÿ‚šÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚šÿ€ÿ€ÿ€€€€€€ÿÿÿ‚™ÿ€ÿ€ÿÿ€ÿ‚žÿ€ÿ€ÿ€ÿÿ€ÿ‚™ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚—ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚Ÿÿ€ÿ€ÿÿ€ÿ‚Ÿÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚´ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚´ÿ€ÿ€ÿÿÿ‚µÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚µÿ€ÿ€ÿÿÿ‚¡ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¡ÿ€ÿ€ÿÿ€ÿ‚¢ÿ€ÿ€ÿ‚ í€ÿÿ€ÿ‚¡ÿ€ÿ€ÿ€€€€ÿÿÿ‚µÿ€ÿ€ÿÿÿ‚£ÿ€ÿ€ÿÿ€ÿ‚£ÿ€ÿ€ÿ€ÿÿ€ÿ‚£ÿ€ÿ€ÿ€€ÿÿ€ÿ‚µÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚´ÿ€ÿ€ÿ€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚¤ÿ€ÿ€ÿÿ€ÿ‚¤ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚¥ÿ€ÿ€ÿÿ€ÿ‚¥ÿ€ÿ€ÿ€ÿÿÿ‚¦ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚¦ÿ€ÿ€ÿÿÿ‚§ÿ€ÿ€ÿÿ€ÿ‚§ÿ€ÿ€ÿ€ÿÿÿ‚§ÿ€ÿ€ÿÿ€ÿ‚§ÿ€ÿ€ÿ\€ÿÿÿ‚§ÿ€ÿ€ÿÿÿ‚§ÿ€ÿ€ÿÿ€ÿ‚§ÿ€ÿ€ÿ€ÿÿÿ‚§ÿ€ÿ€ÿÿ€ÿ‚§ÿ€ÿ€ÿ€ÿÿÿ‚§ÿ€ÿ€ÿÿÿ‚¨ÿ€ÿ€ÿÿ€ÿ‚¨ÿ€ÿ€ÿ€ÿÿÿ‚¨ÿ€ÿ€ÿÿ€ÿ‚¨ÿ€ÿ€ÿ€ÿÿÿ‚¨ÿ€ÿ€ÿÿÿ‚©ÿ€ÿ€ÿÿ€ÿ‚©ÿ€ÿ€ÿ€ÿÿÿ‚©ÿ€ÿ€ÿÿÿ‚©ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚©ÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿ‚ªÿ€ÿ€ÿ0€ÿÿÿ‚ªÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€ÿÿÿ‚ªÿ€ÿ€ÿÿÿ‚«ÿ€ÿ€ÿÿ€ÿ‚«ÿ€ÿ€ÿ€ÿÿÿ‚«ÿ€ÿ€ÿÿÿ‚«ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚«ÿ€ÿ€ÿÿ€ÿ‚¬ÿ€ÿ€ÿ‚ í€ÿÿÿ‚«ÿ€ÿ€ÿÿÿ‚­ÿ€ÿ€ÿÿ€ÿ‚­ÿ€ÿ€ÿ€ÿÿ€ÿ‚­ÿ€ÿ€ÿ€€ÿÿ€ÿ‚«ÿ€ÿ€ÿ€€€€€ÿÿÿ‚«ÿ€ÿ€ÿÿÿ‚®ÿ€ÿ€ÿÿ€ÿ‚®ÿ€ÿ€ÿ€ÿÿÿ‚®ÿ€ÿ€ÿÿ€ÿ‚®ÿ€ÿ€ÿ‚€ÿÿÿ‚®ÿ€ÿ€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€€ÿÿ€ÿ‚®ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚«ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ªÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚©ÿ€ÿ€ÿ€€€€ÿÿÿ‚©ÿ€ÿ€ÿÿ€ÿ‚§ÿ€ÿ€ÿ€€ÿÿ€ÿ‚©ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¨ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚§ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚§ÿ€ÿ€ÿ€€€€€ÿÿÿ‚¦ÿ€ÿ€ÿÿÿ‚¯ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¯ÿ€ÿ€ÿÿÿ‚°ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€ÿÿÿ‚°ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ0€ÿÿÿ‚°ÿ€ÿ€ÿÿÿ‚°ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€ÿÿÿ‚°ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€ÿÿÿ‚°ÿ€ÿ€ÿÿÿ‚±ÿ€ÿ€ÿÿ€ÿ‚±ÿ€ÿ€ÿ€ÿÿÿ‚±ÿ€ÿ€ÿÿÿ‚±ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚±ÿ€ÿ€ÿÿ€ÿ‚²ÿ€ÿ€ÿ‚ í€ÿÿÿ‚±ÿ€ÿ€ÿÿ€ÿ‚³ÿ€ÿ€ÿ€€ÿÿ€ÿ‚±ÿ€ÿ€ÿ€€€€€ÿÿÿ‚±ÿ€ÿ€ÿÿÿ‚´ÿ€ÿ€ÿÿ€ÿ‚´ÿ€ÿ€ÿ€ÿÿÿ‚´ÿ€ÿ€ÿÿ€ÿ‚´ÿ€ÿ€ÿ‚M€ÿÿÿ‚´ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€€ÿÿ€ÿ‚´ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚±ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¯ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚¦ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚µÿ€ÿ€ÿÿ€ÿ‚µÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚µÿ€ÿ€ÿÿ€ÿ‚µÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚¶ÿ€ÿ€ÿÿ€ÿ‚¶ÿ€ÿ€ÿ€ÿÿÿ‚·ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚·ÿ€ÿ€ÿÿÿ‚·ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚·ÿ€ÿ€ÿÿÿ‚¸ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚¸ÿ€ÿ€ÿÿÿ‚¹ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¹ÿ€ÿ€ÿÿ€ÿ‚ºÿ€ÿ€ÿ‚ í€ÿÿ€ÿ‚¹ÿ€ÿ€ÿ€€€€ÿÿÿ‚¸ÿ€ÿ€ÿÿÿ‚»ÿ€ÿ€ÿÿ€ÿ‚»ÿ€ÿ€ÿ€ÿÿ€ÿ‚»ÿ€ÿ€ÿ
+€€ÿÿ€ÿ‚¸ÿ€ÿ€ÿ€€€€€ÿÿÿ‚·ÿ€ÿ€ÿÿÿ‚¼ÿ€ÿ€ÿÿ€ÿ‚¼ÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚¾ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚¾ÿ€ÿ€ÿÿÿ‚¿ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¿ÿ€ÿ€ÿÿÿ‚Àÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Àÿ€ÿ€ÿÿ€ÿ‚Áÿ€ÿ€ÿ‚ í€ÿÿÿ‚Àÿ€ÿ€ÿÿ€ÿ‚Âÿ€ÿ€ÿ€€ÿÿÿ‚Àÿ€ÿ€ÿÿÿ‚Ãÿ€ÿ€ÿÿ€ÿ‚Ãÿ€ÿ€ÿ€ÿÿ€ÿ‚Ãÿ€ÿ€ÿ€€ÿÿ€ÿ‚Àÿ€ÿ€ÿ€€€€€€ÿÿÿ‚¿ÿ€ÿ€ÿÿ€ÿ‚Äÿ€ÿ€ÿ€ÿÿ€ÿ‚¿ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¾ÿ€ÿ€ÿ€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚Åÿ€ÿ€ÿÿ€ÿ‚Åÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚Æÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚Æÿ€ÿ€ÿÿÿ‚Çÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Çÿ€ÿ€ÿÿ€ÿ‚Èÿ€ÿ€ÿ€ÿÿÿ‚Çÿ€ÿ€ÿÿÿ‚Éÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Éÿ€ÿ€ÿÿ€ÿ‚Êÿ€ÿ€ÿ‚ í€ÿÿÿ‚Éÿ€ÿ€ÿÿÿ‚Ëÿ€ÿ€ÿÿ€ÿ‚Ëÿ€ÿ€ÿ€ÿÿ€ÿ‚Ëÿ€ÿ€ÿ€€ÿÿÿ‚Éÿ€ÿ€ÿÿÿ‚Ìÿ€ÿ€ÿÿ€ÿ‚Ìÿ€ÿ€ÿ€ÿÿ€ÿ‚Ìÿ€ÿ€ÿ
+€€ÿÿ€ÿ‚Éÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Æÿ€ÿ€ÿ€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚Íÿ€ÿ€ÿÿ€ÿ‚Íÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚Îÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚Ïÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚Ðÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚Ñÿ€ÿ€ÿÿ€ÿ‚Ñÿ€ÿ€ÿ€ÿÿÿ‚Ñÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Óÿ€ÿ€ÿ.€ÿÿÿ‚Òÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Ôÿ€ÿ€ÿ‚€ÿÿÿ‚Òÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Õÿ€ÿ€ÿ‚ í€ÿÿÿ‚Òÿ€ÿ€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Òÿ€ÿ€ÿ€€€€€ÿÿÿ‚Ñÿ€ÿ€ÿÿ€ÿ‚Ñÿ€ÿ€ÿ€€ÿÿ€ÿ‚Ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚Åÿ€ÿ€ÿÿ€ÿ‚Åÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿÿ‚Åÿ€ÿ€ÿÿ€ÿ‚Åÿ€ÿ€ÿ€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚½ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€ÿÿ€ÿ‚½ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚·ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚×ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚Øÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚Ùÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚·ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚·ÿ€ÿ€ÿÿ€ÿ‚·ÿ€ÿ€ÿ€ÿÿ€ÿ‚·ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚Úÿ€ÿ€ÿÿ€ÿ‚Úÿ€ÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€€€€€€ÿÿÿ‚‘ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚‘ÿ€ÿ€ÿ€€€€€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Ýÿ€ÿ€ÿÿÿ‚Ýÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Þÿ€ÿ€ÿÿÿ‚Þÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ßÿ€ÿ€ÿÿ€ÿ‚ßÿ€ÿ€ÿ‚ «€ÿÿ€ÿ‚Þÿ€ÿ€ÿ€€€€ÿÿÿ‚àÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ €€ÿÿ€ÿ‚Ýÿ€ÿ€ÿ€€€€€ÿÿÿ‚áÿ€ÿ€ÿÿÿ‚áÿ€ÿ€ÿÿ€ÿ‚áÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ‚ »€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿ‚äÿ€ÿ€ÿ€€ÿÿ€ÿ‚âÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚æÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿ‚æÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚çÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚èÿ€ÿ€ÿG€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚éÿ€ÿ€ÿ‚ §€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚êÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ëÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ìÿ€ÿ€ÿ‚ «€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚íÿ€ÿ€ÿ‚ ç€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿ€ÿ‚îÿ€ÿ€ÿ€ÿÿ€ÿ‚îÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚°ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ïÿ€ÿ€ÿÿÿ‚ïÿ€ÿ€ÿÿ€ÿ‚ïÿ€ÿ€ÿ€ÿÿÿ‚ðÿ€ÿ€ÿÿ€ÿ‚ðÿ€ÿ€ÿ€ÿÿ€ÿ‚ðÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Üÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿ€ÿ‚Õÿ€ÿ€ÿ `3ÊL¾­Üê‘¢ÊD‡–®Æzt§iˆ´œ®íì'ÛÁ€€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚óÿ€ÿ€ÿÿÿ‚óÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ôÿ€ÿ€ÿÿ€ÿ‚ôÿ€ÿ€ÿ‚ «€ÿÿ€ÿ‚óÿ€ÿ€ÿ€€€€ÿÿÿ‚õÿ€ÿ€ÿÿÿ‚õÿ€ÿ€ÿÿ€ÿ‚õÿ€ÿ€ÿ€ÿÿ€ÿ‚õÿ€ÿ€ÿ€€ÿÿ€ÿ‚òÿ€ÿ€ÿ€€€€€ÿÿÿ‚öÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿ€ÿ‚öÿ€ÿ€ÿ€ÿÿÿ‚÷ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚÷ÿ€ÿ€ÿÿ€ÿ‚øÿ€ÿ€ÿ‚ »€ÿÿÿ‚÷ÿ€ÿ€ÿÿ€ÿ‚ùÿ€ÿ€ÿ€€ÿÿ€ÿ‚÷ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿ‚úÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€€ÿÿÿ‚ûÿ€ÿ€ÿÿÿ‚ûÿ€ÿ€ÿÿ€ÿ‚ûÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚üÿ€ÿ€ÿ‚ç€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ýÿ€ÿ€ÿ‚ ‡€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚þÿ€ÿ€ÿ‚G€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ‚ «€ÿÿÿ‚ÿÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚Ç€ÿÿ€ÿ‚ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ §€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚g€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ç€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿw€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚	ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚¾ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚¾ÿ€ÿ€ÿÿÿ‚¿ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚¿ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿw€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚¿ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ «€ÿÿ€ÿ‚¿ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚¾ÿ€ÿ€ÿ€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚Æÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚Æÿ€ÿ€ÿÿÿ‚Çÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Çÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ «€ÿÿÿ‚Çÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿw€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ
+€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Æÿ€ÿ€ÿ€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ‡€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿw€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ñÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚„ÿ€ÿ€ÿ1€€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚Öÿ8ÿÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ‚ ê€ÿÿÿ‚Öÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€ÿÿÿ‚Öÿ€ÿ€ÿÿÿ‚×ÿ€ÿ€ÿÿ€ÿ‚×ÿ€ÿ€ÿ€ÿÿÿ‚×ÿ€ÿ€ÿÿ€ÿ‚Øÿ€ÿ€ÿ	€ÿÿÿ‚×ÿ€ÿ€ÿÿÿ‚Ùÿ€ÿ€ÿÿ€ÿ‚Ùÿ€ÿ€ÿ€ÿÿÿ‚Ùÿ€ÿ€ÿÿ€ÿ‚Úÿ€ÿ€ÿ€ÿÿÿ‚Ùÿ€ÿ€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€ÿÿ€ÿ‚Ùÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚×ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Öÿ€ÿ€ÿ€€€€€ÿÿÿ‚Ûÿ=ÿ	ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Ýÿ€ÿ€ÿ€ÿÿÿ‚Üÿ€ÿ€ÿÿ€ÿ‚Þÿ€ÿ€ÿ€ÿÿ€ÿ‚Üÿ€ÿ€ÿ€€€€€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚ßÿ€ÿ€ÿÿ€ÿ‚ßÿ€ÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€€ÿÿÿ‚Ûÿ€ÿ€ÿÿÿ‚áÿ€ÿ€ÿÿ€ÿ‚áÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿ€ÿ‚Ýÿ€ÿ€ÿ€ÿÿÿ‚âÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ‚ ª€ÿÿÿ‚ãÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€ÿÿÿ‚ãÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿ€ÿ‚àÿ€ÿ€ÿ€ÿÿÿ‚àÿ€ÿ€ÿÿÿ‚äÿ€ÿ€ÿÿ€ÿ‚äÿ€ÿ€ÿ€ÿÿÿ‚äÿ€ÿ€ÿÿ€ÿ‚äÿ€ÿ€ÿ€ÿÿÿ‚äÿ€ÿ€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€€ÿÿ€ÿ‚äÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚àÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ãÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚âÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Ûÿ€ÿ€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€ÿÿ€ÿ‚Ûÿ€ÿ€ÿ€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚åÿzÿÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿ‚çÿ€ÿ€ÿ€ÿÿÿ‚æÿ€ÿ€ÿÿ€ÿ‚èÿ€ÿ€ÿ€€ÿÿÿ‚æÿ€ÿ€ÿÿÿ‚éÿ€ÿ€ÿÿ€ÿ‚éÿ€ÿ€ÿ€ÿÿ€ÿ‚éÿ€ÿ€ÿ€€ÿÿ€ÿ‚æÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚êÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚êÿ€ÿ€ÿÿ€ÿ‚ëÿ€ÿ€ÿ€ÿÿÿ‚êÿ€ÿ€ÿÿÿ‚ìÿ€ÿ€ÿÿ€ÿ‚ìÿ€ÿ€ÿ€ÿÿ€ÿ‚ìÿ€ÿ€ÿ€€ÿÿÿ‚êÿ€ÿ€ÿÿÿ‚íÿ€ÿ€ÿÿ€ÿ‚íÿ€ÿ€ÿ€ÿÿ€ÿ‚íÿ€ÿ€ÿ€€ÿÿ€ÿ‚êÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿ€ÿ‚ïÿ€ÿ€ÿ€ÿÿÿ‚îÿ€ÿ€ÿÿÿ‚ðÿ€ÿ€ÿÿ€ÿ‚ðÿ€ÿ€ÿ€ÿÿ€ÿ‚ðÿ€ÿ€ÿ€€ÿÿÿ‚îÿ€ÿ€ÿÿÿ‚ñÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€ÿÿ€ÿ‚ñÿ€ÿ€ÿ€€ÿÿ€ÿ‚îÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿ€ÿ‚óÿ€ÿ€ÿ€ÿÿÿ‚òÿ€ÿ€ÿÿÿ‚ôÿ€ÿ€ÿÿ€ÿ‚ôÿ€ÿ€ÿ€ÿÿ€ÿ‚ôÿ€ÿ€ÿ€€ÿÿÿ‚òÿ€ÿ€ÿÿÿ‚õÿ€ÿ€ÿÿ€ÿ‚õÿ€ÿ€ÿ€ÿÿ€ÿ‚õÿ€ÿ€ÿ€€ÿÿ€ÿ‚òÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€ÿÿÿ‚åÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿ€ÿ‚÷ÿ€ÿ€ÿ€ÿÿÿ‚öÿ€ÿ€ÿÿÿ‚øÿ€ÿ€ÿÿ€ÿ‚øÿ€ÿ€ÿ€ÿÿ€ÿ‚øÿ€ÿ€ÿ€€ÿÿÿ‚öÿ€ÿ€ÿÿÿ‚ùÿ€ÿ€ÿÿ€ÿ‚ùÿ€ÿ€ÿ€ÿÿ€ÿ‚ùÿ€ÿ€ÿ€€ÿÿ€ÿ‚öÿ€ÿ€ÿ€€€€€€ÿÿÿ‚åÿ€ÿ€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚åÿ€ÿ€ÿ€€€€€ÿÿÿ‚úÿxÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿ‚ûÿ€ÿ€ÿ€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚üÿ€ÿ€ÿÿ€ÿ‚üÿ€ÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚þÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚þÿ€ÿ€ÿÿ€ÿ‚ÿÿ€ÿ€ÿ	€ÿÿÿ‚þÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿ€ÿ‚þÿ€ÿ€ÿ€€€€€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€ÿÿÿ‚ýÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ Ú€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ýÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ýÿ€ÿ€ÿÿ€ÿ‚ýÿ€ÿ€ÿ€ÿÿ€ÿ‚ýÿ€ÿ€ÿ€€€€€€ÿÿÿ‚úÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚	ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€ÿÿ€ÿ‚	ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚úÿ€ÿ€ÿ€€€€€€ÿÿÿ‚úÿ€ÿ€ÿÿ€ÿ‚úÿ€ÿ€ÿ€ÿÿ€ÿ‚úÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚
+ÿ‚ Öÿ5ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ‚ ú€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ¦€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ š€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ š€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿÿ‚
+ÿZÿÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿF€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€ÿÿÿ‚
+ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ –€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ+€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚
+ÿ€ÿ€ÿ€€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ÿ‚ Õÿ4ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ Ö€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿu€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ €€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ÿ‚ ªÿ!ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ æ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ‚ ¦€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚!ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚"ÿ€ÿ€ÿÿ€ÿ‚"ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚#ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚$ÿ€ÿ€ÿ€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿ‚&ÿ‚ ¨ÿ ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚'ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚'ÿ€ÿ€ÿÿ€ÿ‚(ÿ€ÿ€ÿ€ÿÿÿ‚'ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ%€ÿÿ€ÿ‚'ÿ€ÿ€ÿ€€€€€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚*ÿ€ÿ€ÿÿ€ÿ‚*ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚+ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚,ÿ€ÿ€ÿ+€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚-ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚-ÿ€ÿ€ÿÿÿ‚.ÿ€ÿ€ÿÿ€ÿ‚.ÿ€ÿ€ÿ€ÿÿ€ÿ‚.ÿ€ÿ€ÿ€€ÿÿÿ‚-ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ;€ÿÿ€ÿ‚-ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚&ÿ€ÿ€ÿÿÿ‚0ÿ€ÿ€ÿÿ€ÿ‚0ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿ‚3ÿ€ÿ€ÿ€ÿÿ€ÿ‚1ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚5ÿ€ÿ€ÿ%€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ+€ÿÿ€ÿ‚4ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚8ÿ€ÿ€ÿ€€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚9ÿ€ÿ€ÿ;€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚:ÿ‚ Ðÿ1ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿ‚;ÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿÿ‚<ÿ€ÿ€ÿÿ€ÿ‚<ÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ‚ Ú€ÿÿÿ‚>ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚>ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€ÿÿÿ‚Cÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Cÿ€ÿ€ÿÿÿ‚Dÿ€ÿ€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€€ÿÿÿ‚Cÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ‚ –€ÿÿÿ‚Eÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€ÿÿÿ‚Eÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ‚ ª€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Hÿ€ÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€ÿÿ€ÿ‚Hÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€€€€ÿÿÿ‚Fÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Kÿ€ÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Cÿ€ÿ€ÿ€€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚Lÿ€ÿ€ÿÿ€ÿ‚Lÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿ‚Nÿ€ÿ€ÿ€€ÿÿÿ‚Mÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ‚ –€ÿÿÿ‚Oÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€ÿÿÿ‚Oÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿÿ‚Pÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Rÿ€ÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Oÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚:ÿ€ÿ€ÿÿÿ‚Sÿ€ÿ€ÿÿ€ÿ‚Sÿ€ÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€€€€€ÿÿÿ‚UÿAÿ
+ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿ‚Vÿ€ÿ€ÿ€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚Wÿ€ÿ€ÿÿ€ÿ‚Wÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ‚ Ö€ÿÿÿ‚Xÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€ÿÿÿ‚Xÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Zÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚\ÿ€ÿ€ÿ	€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚]ÿ€ÿ€ÿÿ€ÿ‚]ÿ€ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚_ÿ€ÿ€ÿÿ€ÿ‚_ÿ€ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ€€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€€€€€ÿÿÿ‚[ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚aÿ€ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿÿ‚bÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚bÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€ÿÿÿ‚bÿ€ÿ€ÿÿ€ÿ‚dÿ€ÿ€ÿ€ÿÿ€ÿ‚bÿ€ÿ€ÿ€€€€€ÿÿÿ‚aÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚fÿ€ÿ€ÿ	€ÿÿÿ‚eÿ€ÿ€ÿÿÿ‚gÿ€ÿ€ÿÿ€ÿ‚gÿ€ÿ€ÿ€ÿÿÿ‚hÿ€ÿ€ÿÿ€ÿ‚hÿ€ÿ€ÿ€ÿÿ€ÿ‚hÿ€ÿ€ÿ€€€ÿÿÿ‚eÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ€ÿÿ€ÿ‚jÿ€ÿ€ÿ€€ÿÿ€ÿ‚eÿ€ÿ€ÿ€€€€€€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚aÿ€ÿ€ÿ€€€€€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€ÿÿ€ÿ‚aÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Xÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿÿ‚kÿ€ÿ€ÿÿ€ÿ‚kÿ€ÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Uÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚ÿ5ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚!ÿ€ÿ€ÿÿ€ÿ‚!ÿ€ÿ€ÿ€ÿÿ€ÿ‚!ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚"ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚"ÿ€ÿ€ÿÿÿ‚#ÿ€ÿ€ÿÿ€ÿ‚#ÿ€ÿ€ÿ€ÿÿ€ÿ‚#ÿ€ÿ€ÿ€€ÿÿÿ‚"ÿ€ÿ€ÿÿ€ÿ‚$ÿ€ÿ€ÿ	€ÿÿ€ÿ‚"ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚%ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€ÿÿÿ‚%ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ‚ ¶€ÿÿÿ‚%ÿ€ÿ€ÿÿÿ‚%ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€ÿÿÿ‚%ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€ÿÿÿ‚%ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿ‚'ÿ€ÿ€ÿ€ÿÿÿ‚&ÿ€ÿ€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€€ÿÿ€ÿ‚&ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚%ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚(ÿ€ÿ€ÿÿ€ÿ‚(ÿ€ÿ€ÿ€ÿÿÿ‚)ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€ÿÿ€ÿ‚)ÿ€ÿ€ÿ€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€ÿÿÿÿ‚ µÿ&ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚*ÿ€ÿ€ÿÿ€ÿ‚*ÿ€ÿ€ÿ€ÿÿ€ÿ‚+ÿ€ÿ€ÿ€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚,ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚,ÿ€ÿ€ÿÿÿ‚-ÿ€ÿ€ÿÿ€ÿ‚-ÿ€ÿ€ÿ€ÿÿ€ÿ‚-ÿ€ÿ€ÿ€€ÿÿÿ‚,ÿ€ÿ€ÿÿ€ÿ‚.ÿ€ÿ€ÿ€ÿÿ€ÿ‚,ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ‚/ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ€ÿÿÿ‚/ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ‚ ¶€ÿÿÿ‚/ÿ€ÿ€ÿÿÿ‚/ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ€ÿÿÿ‚/ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ€ÿÿÿ‚/ÿ€ÿ€ÿÿÿ‚0ÿ€ÿ€ÿÿ€ÿ‚0ÿ€ÿ€ÿ€ÿÿÿ‚0ÿ€ÿ€ÿÿ€ÿ‚0ÿ€ÿ€ÿ€ÿÿÿ‚0ÿ€ÿ€ÿÿ€ÿ‚/ÿ€ÿ€ÿ€€ÿÿ€ÿ‚0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚/ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚/ÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚1ÿ‚ Îÿ/ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚1ÿ€ÿ€ÿÿÿ‚2ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€ÿÿÿ‚2ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ‚ Î€ÿÿÿ‚2ÿ€ÿ€ÿÿÿ‚2ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€ÿÿÿ‚2ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€ÿÿÿ‚2ÿ€ÿ€ÿÿÿ‚3ÿ€ÿ€ÿÿ€ÿ‚3ÿ€ÿ€ÿ€ÿÿÿ‚3ÿ€ÿ€ÿÿ€ÿ‚3ÿ€ÿ€ÿ€ÿÿÿ‚3ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚4ÿ€ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚4ÿ€ÿ€ÿ€ÿÿÿ‚4ÿ€ÿ€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€€ÿÿ€ÿ‚4ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚3ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚2ÿ€ÿ€ÿ€€€€€ÿÿÿ‚1ÿ€ÿ€ÿÿ€ÿ‚5ÿ€ÿ€ÿ€€ÿÿ€ÿ‚1ÿ€ÿ€ÿ€€€€€ÿÿÿ‚6ÿÿÿÿ€ÿ‚6ÿ€ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ‚ ®€ÿÿÿ‚6ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€ÿÿÿ‚6ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚8ÿ€ÿ€ÿ€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€ÿÿÿ‚7ÿ€ÿ€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€€ÿÿ€ÿ‚7ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚6ÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚9ÿ‚ ³ÿ%ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚9ÿ€ÿ€ÿÿÿ‚9ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚9ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚:ÿ€ÿ€ÿÿ€ÿ‚;ÿ€ÿ€ÿ	€ÿÿ€ÿ‚:ÿ€ÿ€ÿ€€€€ÿÿÿ‚9ÿ€ÿ€ÿÿÿ‚<ÿ€ÿ€ÿÿ€ÿ‚<ÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚?ÿ€ÿ€ÿÿ€ÿ‚?ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ‚ î€ÿÿÿ‚@ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€ÿÿÿ‚@ÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ‚ Î€ÿÿÿ‚Aÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€ÿÿÿ‚Aÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿ€ÿ‚Cÿ€ÿ€ÿ€ÿÿÿ‚Bÿ€ÿ€ÿÿÿ‚Dÿ€ÿ€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€ÿÿÿ‚Dÿ€ÿ€ÿÿ€ÿ‚Eÿ€ÿ€ÿ%€ÿÿÿ‚Dÿ€ÿ€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€€ÿÿ€ÿ‚Dÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Bÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€€€€€ÿÿÿ‚Aÿ€ÿ€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€€ÿÿ€ÿ‚Aÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚@ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿÿ‚Fÿ€ÿ€ÿÿ€ÿ‚Fÿ€ÿ€ÿ€ÿÿÿ‚Gÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€ÿÿ€ÿ‚Gÿ€ÿ€ÿ€€€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚=ÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€ÿÿ€ÿ‚=ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚9ÿ€ÿ€ÿÿÿ‚Hÿ€ÿ€ÿÿ€ÿ‚Hÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿ‚>ÿ€ÿ€ÿ€ÿÿÿ‚Iÿ€ÿ€ÿÿÿ‚Jÿ€ÿ€ÿÿ€ÿ‚Jÿ€ÿ€ÿ€ÿÿÿ‚Kÿ€ÿ€ÿÿ€ÿ‚Kÿ€ÿ€ÿ€ÿÿ€ÿ‚Kÿ€ÿ€ÿÿ€€€ÿÿÿ‚Iÿ€ÿ€ÿÿÿ‚Lÿ€ÿ€ÿÿ€ÿ‚Lÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Mÿ€ÿ€ÿÿÿ‚Nÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Nÿ€ÿ€ÿÿ€ÿ‚Oÿ€ÿ€ÿ	€ÿÿÿ‚Nÿ€ÿ€ÿÿ€ÿ‚Pÿ€ÿ€ÿ€ÿÿ€ÿ‚Nÿ€ÿ€ÿ€€€€€ÿÿÿ‚Mÿ€ÿ€ÿÿÿ‚Qÿ€ÿ€ÿÿ€ÿ‚Qÿ€ÿ€ÿ€ÿÿÿ‚Rÿ€ÿ€ÿÿ€ÿ‚Rÿ€ÿ€ÿ€ÿÿ€ÿ‚Rÿ€ÿ€ÿ€€€ÿÿÿ‚Mÿ€ÿ€ÿÿÿ‚Sÿ€ÿ€ÿÿ€ÿ‚Sÿ€ÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Tÿ€ÿ€ÿÿ€ÿ‚Uÿ€ÿ€ÿ€€ÿÿÿ‚Tÿ€ÿ€ÿÿÿ‚Vÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Vÿ€ÿ€ÿÿ€ÿ‚Wÿ€ÿ€ÿ€ÿÿÿ‚Vÿ€ÿ€ÿÿ€ÿ‚Xÿ€ÿ€ÿ	€ÿÿ€ÿ‚Vÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Tÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Mÿ€ÿ€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€ÿÿ€ÿ‚Mÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Iÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€ÿÿ€ÿ‚Iÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚9ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚9ÿ€ÿ€ÿÿ€ÿ‚9ÿ€ÿ€ÿ€ÿÿ€ÿ‚9ÿ€ÿ€ÿ€€€€€ÿÿÿ‚Yÿ‚ Çÿ+ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Zÿ€ÿ€ÿ€ÿÿÿ‚Yÿ€ÿ€ÿÿÿ‚[ÿ€ÿ€ÿÿ€ÿ‚[ÿ€ÿ€ÿ€ÿÿ€ÿ‚\ÿ€ÿ€ÿ€€ÿÿÿ‚Yÿ€ÿ€ÿÿÿ‚]ÿ€ÿ€ÿÿ€ÿ‚]ÿ€ÿ€ÿ€ÿÿÿ‚^ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€ÿÿÿ‚^ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ‚ Î€ÿÿÿ‚^ÿ€ÿ€ÿÿÿ‚^ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€ÿÿÿ‚^ÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€ÿÿÿ‚^ÿ€ÿ€ÿÿÿ‚_ÿ€ÿ€ÿÿ€ÿ‚_ÿ€ÿ€ÿ€ÿÿÿ‚_ÿ€ÿ€ÿÿ€ÿ‚`ÿ€ÿ€ÿ1€ÿÿÿ‚_ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚aÿ€ÿ€ÿ€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚bÿ€ÿ€ÿi€ÿÿÿ‚aÿ€ÿ€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€€ÿÿ€ÿ‚aÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚_ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚^ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€€€€€€ÿÿÿ‚Yÿ€ÿ€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€ÿÿ€ÿ‚Yÿ€ÿ€ÿ€€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚…ÿJÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿ‚†ÿ€ÿ€ÿ€ÿÿÿ‚…ÿ€ÿ€ÿÿÿ‚‡ÿ€ÿ€ÿÿ€ÿ‚‡ÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚‰ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€ÿÿ€ÿ‚‰ÿ€ÿ€ÿ€€ÿÿÿ‚ˆÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ‚ ž€ÿÿÿ‚Šÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€ÿÿÿ‚Šÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚Œÿ€ÿ€ÿ€ÿÿÿ‚‹ÿ€ÿ€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€ÿÿ€ÿ‚‹ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚Šÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ˆÿ€ÿ€ÿ€€€€€€ÿÿÿ‚…ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚Žÿ€ÿ€ÿÿ€ÿ‚Žÿ€ÿ€ÿ€ÿÿ€ÿ‚Žÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚…ÿ€ÿ€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€ÿÿ€ÿ‚…ÿ€ÿ€ÿ€€€€€ÿÿÿ‚cÿHÿÿÿ€ÿ‚cÿ€ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ‚ ¾€ÿÿÿ‚cÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€ÿÿÿ‚cÿ€ÿ€ÿÿÿ‚dÿ€ÿ€ÿÿ€ÿ‚dÿ€ÿ€ÿ€ÿÿÿ‚dÿ€ÿ€ÿÿ€ÿ‚dÿ€ÿ€ÿ€€ÿÿÿ‚dÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚eÿ€ÿ€ÿ€ÿÿÿ‚eÿ€ÿ€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€ÿÿ€ÿ‚eÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚dÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚cÿ€ÿ€ÿ€€€€€€ÿÿÿ2ÿ€ÿ€ÿÿÿ‚fÿ-ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚fÿ€ÿ€ÿÿÿ‚fÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚fÿ€ÿ€ÿÿ€ÿ‚gÿ€ÿ€ÿ€ÿÿÿ‚fÿ€ÿ€ÿÿÿ‚hÿ€ÿ€ÿÿ€ÿ‚hÿ€ÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ‚ ¾€ÿÿÿ‚iÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ€ÿÿÿ‚iÿ€ÿ€ÿÿÿ‚jÿ€ÿ€ÿÿ€ÿ‚jÿ€ÿ€ÿ€ÿÿÿ‚jÿ€ÿ€ÿÿÿ‚jÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚jÿ€ÿ€ÿÿ€ÿ‚kÿ€ÿ€ÿ€ÿÿÿ‚jÿ€ÿ€ÿÿ€ÿ‚lÿ€ÿ€ÿ€ÿÿ€ÿ‚jÿ€ÿ€ÿ€€€€€ÿÿÿ‚jÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿ‚mÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿ‚nÿ€ÿ€ÿ€ÿÿÿ‚mÿ€ÿ€ÿÿ€ÿ‚iÿ€ÿ€ÿ€€ÿÿ€ÿ‚mÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚jÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚iÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚iÿ€ÿ€ÿ€€€€€€ÿÿÿ‚fÿ€ÿ€ÿÿÿ‚oÿ€ÿ€ÿÿ€ÿ‚oÿ€ÿ€ÿ€ÿÿ€ÿ‚pÿ€ÿ€ÿ€€ÿÿ€ÿ‚fÿ€ÿ€ÿ€€€€€€ÿÿÿ‚fÿ€ÿ€ÿÿ€ÿ‚fÿ€ÿ€ÿ€ÿÿ€ÿ‚fÿ€ÿ€ÿ€€€€€ÿÿÿ‚qÿ‚ …ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚rÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚rÿ€ÿ€ÿÿ€ÿ‚sÿ€ÿ€ÿ€ÿÿ€ÿ‚rÿ€ÿ€ÿ€€€€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚tÿ€ÿ€ÿÿ€ÿ‚tÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚vÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€ÿÿ€ÿ‚vÿ€ÿ€ÿ€€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ‚ þ€ÿÿÿ‚wÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€ÿÿÿ‚wÿ€ÿ€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿ‚xÿ€ÿ€ÿ€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿ‚yÿ€ÿ€ÿ	€ÿÿÿ‚xÿ€ÿ€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€ÿÿ€ÿ‚xÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚wÿ€ÿ€ÿ€€€€€ÿÿÿ‚uÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ‚ þ€ÿÿÿ‚zÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€ÿÿÿ‚zÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚|ÿ€ÿ€ÿ€ÿÿÿ‚{ÿ€ÿ€ÿÿ€ÿ‚zÿ€ÿ€ÿ€€ÿÿ€ÿ‚{ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚zÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚zÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚uÿ€ÿ€ÿ€€€€€€€ÿÿÿ‚qÿ€ÿ€ÿÿÿ‚}ÿ€ÿ€ÿÿ€ÿ‚}ÿ€ÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚~ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€ÿÿÿ‚~ÿ€ÿ€ÿÿ€ÿ‚€ÿ€ÿ€ÿ€ÿÿ€ÿ‚~ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚qÿ€ÿ€ÿ€€€€€€ÿÿÿ‚qÿ€ÿ€ÿÿ€ÿ‚qÿ€ÿ€ÿ€ÿÿ€ÿ‚qÿ€ÿ€ÿ€€€€€€€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€

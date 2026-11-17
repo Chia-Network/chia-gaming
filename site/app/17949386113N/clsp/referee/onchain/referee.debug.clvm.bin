@@ -1,0 +1,629 @@
+ÿCHIALISP_DEBUGÿÿÿÿ€ÿ xü=Ö§¹Ò97±ğ0Ûh‘«:Jõºm'ÔFèÿÿÿ¡clsp/referee/onchain/referee.clspÿÕè(include *standard-cl-26*)
+(import std.assert)
+(import std.curry)
+(import std.shatree)
+(import std.relops)
+(import std.condition_codes)
+(import std.li)
+(import std.append)
+(import std.shapes)
+(import referee.onchain.shapes)
+
+;
+; Adjudicates a two-player turn-based game.
+;
+; MOVE, INFOHASH_B, and MOVER_SHARE are accepted optimistically from the
+; previous move.
+;
+; INFOHASH_A and INFOHASH_B are commitments:
+;   sha256(validation_program_hash, shatree(state))
+;
+; In slash, this puzzle runs previous_validation_program against all_args.
+; The validator returns ((next_validator_hash . new_state) . (max_move_size . extra_conditions)).
+; Slash succeeds in three cases:
+;   1. validator_result is nil (0) â€” unconditional slash.
+;   2. validator_result is non-nil but its (next_validator_hash, new_state,
+;      max_move_size) misalign with this coin's commitments â€” unconditional.
+;   3. validator_result is non-nil, values align with commitments, AND there
+;      are extra conditions in the conditions field â€” conditional slash. The extra
+;      conditions are prepended to payout_conditions (e.g. AGG_SIG_UNSAFE
+;      for signed dictionary range proofs).
+; If validator_result is non-nil, values align, and there are no extra
+; conditions (the conditions field is nil), the move was valid and the slash
+; attempt fails (assert aborts the spend).
+;
+; MOVER_SHARE is how much the mover gets if they fold/accept timeout.
+; MOD_HASH should be the shatree of referee itself.
+; NONCE is for anti-replay prevention.
+;
+; Validation programs get (mod_hash . all_args) where all_args is
+; (curried_args . slash_solution_args). See referee.onchain.shapes for the shared
+; layouts. Validators ignore the payout field.
+
+; The curried argument is a balanced tree; every field is at most four edges
+; deep. Keep this shape aligned with RefereePuzzleArgs::to_clvm and validators.
+(export (@ all_args
+    ((referee-parameters) . args))
+    (if-shape args
+        ((referee-timeout)
+            (li (list ASSERT_HEIGHT_RELATIVE TIMEOUT)
+                (if MOVER_SHARE (list CREATE_COIN mover_payout_ph MOVER_SHARE) (assert (not mover_payout_ph) (list 1)))
+                (i MOVER_SHARE (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph)) (list 1))
+                &rest
+                (if (- AMOUNT MOVER_SHARE)
+                    (list
+                        (list CREATE_COIN waiter_payout_ph (- AMOUNT MOVER_SHARE))
+                        (list AGG_SIG_UNSAFE WAITER_PUBKEY (concat 0x78 waiter_payout_ph)))
+                    (assert (not waiter_payout_ph) ())
+                )
+            )
+        )
+        ((referee-slash)
+            (assign
+                previous_validation_program_hash (shatree previous_validation_program)
+                validator_result
+                    (a previous_validation_program (c previous_validation_program_hash all_args))
+                payout_conditions (list
+                    (list CREATE_COIN mover_payout_ph AMOUNT)
+                    (list AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph))
+                )
+
+                (assert
+                    (= INFOHASH_A (sha256 previous_validation_program_hash (shatree previous_state)))
+                    (if-shape validator_result
+                        ; if-shape assumes its closed union; reject other atoms
+                        ; rather than treating a malformed validator result as nil.
+                        (nil (assert (not validator_result) payout_conditions))
+                        ((referee-result)
+                            (if (not (logand
+                                    (= (i next_validator_hash
+                                            (sha256 next_validator_hash (shatree new_state))
+                                            0)
+                                        INFOHASH_B)
+                                    (= max_move_size MAX_MOVE_SIZE)
+                                    (i next_validator_hash 1 (not max_move_size))))
+                                payout_conditions
+                                (assert extra_conditions
+                                    (append extra_conditions payout_conditions)
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        )
+        ((referee-move)
+            (assign
+                new_puzzle_hash (curry_hashes MOD_HASH
+                    (shatree
+                        (make (referee-parameters WAITER_PUBKEY MOVER_PUBKEY
+                                    TIMEOUT AMOUNT MOD_HASH NONCE
+                                    new_move new_max_move_size infohash_c
+                                    new_mover_share INFOHASH_B))))
+                (assert
+                    INFOHASH_B
+                    (<= (strlen new_move) MAX_MOVE_SIZE)
+                    (<= (strlen new_max_move_size) 2)
+                    (>= new_max_move_size 0)
+                    (= new_max_move_size (+ new_max_move_size 0))
+                    (<= new_mover_share AMOUNT)
+                    (>= new_mover_share 0)
+                    (= new_mover_share (+ new_mover_share 0))
+                    (logior (not infohash_c) (= 32 (strlen infohash_c)))
+                    (i infohash_c 1 (not new_max_move_size))
+                    (list
+                            (list ASSERT_BEFORE_HEIGHT_RELATIVE TIMEOUT)
+                            (list CREATE_COIN new_puzzle_hash AMOUNT)
+                            (list AGG_SIG_ME MOVER_PUBKEY (shatree args)))
+                )
+            )
+        )
+    )
+)
+€ÿÿ•clsp/std/append.clincÿÀW(defun append (L R)
+     (if L
+         (c (f L) (append (r L) R))
+         R
+     )
+)
+€ÿÿ‡*prims*ÿ€€ÿÿclsp/std/condition_codes.clincÿÄñ; See chia/types/condition_opcodes.py
+
+(defconst AGG_SIG_UNSAFE 49)
+(defconst AGG_SIG_ME 50)
+
+; the conditions below reserve coin amounts and have to be accounted for in output totals
+
+(defconst CREATE_COIN 51)
+(defconst RESERVE_FEE 52)
+
+; the conditions below deal with announcements, for inter-coin communication
+
+; coin announcements
+(defconst CREATE_COIN_ANNOUNCEMENT 60)
+(defconst ASSERT_COIN_ANNOUNCEMENT 61)
+
+; puzzle announcements
+(defconst CREATE_PUZZLE_ANNOUNCEMENT 62)
+(defconst ASSERT_PUZZLE_ANNOUNCEMENT 63)
+
+; the conditions below let coins inquire about themselves
+
+(defconst ASSERT_MY_COIN_ID 70)
+(defconst ASSERT_MY_PARENT_ID 71)
+(defconst ASSERT_MY_PUZZLEHASH 72)
+(defconst ASSERT_MY_AMOUNT 73)
+
+; the conditions below ensure that we're "far enough" in the future
+
+; wall-clock time
+(defconst ASSERT_SECONDS_RELATIVE 80)
+(defconst ASSERT_SECONDS_ABSOLUTE 81)
+
+; block index
+(defconst ASSERT_HEIGHT_RELATIVE 82)
+(defconst ASSERT_HEIGHT_ABSOLUTE 83)
+
+; wall-clock time
+(defconst ASSERT_BEFORE_SECONDS_RELATIVE 84)
+(defconst ASSERT_BEFORE_SECONDS_ABSOLUTE 85)
+
+; block index
+(defconst ASSERT_BEFORE_HEIGHT_RELATIVE 86)
+(defconst ASSERT_BEFORE_HEIGHT_ABSOLUTE 87)
+
+; A condition that is always true and always ignore all arguments
+(defconst REMARK 1)
+€ÿÿ”clsp/std/curry.clincÿÓû(import std.li)
+
+;; The code below is used to calculate of the tree hash of a curried function
+;; without actually doing the curry, and using other optimization tricks
+;; like unrolling `shatree`.
+
+(defconstant TWO 2)
+(defconstant constant-tree (
+    (0x4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a .   ;  = `(sha256 1)`
+    0x9dcf97a184f32623d11a73124ceb99a5709b083721e878a16d78f596718ba7b2) .  ;  = `(sha256 1 1)` = `(sha256 1 #q)`
+    (0x02a12871fee210fb8619291eaea194581cbd2531e4b23759d225f6806923f63222 . ;  = `(concat 2 (sha256 1 #a))`
+    0x02a8d5dd63fba471ebcb1f3e8f7c1e1879b7152a6e7298a91ce119a63400ade7c5)  ;  = `(concat 2 (sha256 1 #c))`
+    )
+)
+
+; I looked into calculating the values of `constant-tree` because it's pretty easy to code-golf
+; out an implementation that produces the values cheaper than just inlining them. The problem is,
+; when do we calculate them? If there were a way to calculate it "before main" and include it in
+; the globally-accessible constant table, we could do that. But we can't which means to be optimal,
+; client code should call the "build table" code once, then pass it around to anyone that wants to
+; call `curry` or `curry2`. This is pretty intrusive, so for now we'll just use the existing
+; global constant infrastructure, and include it as a fixed table so the tree of four values will
+; appear in all code that includes this file, and it will compress better in generators.
+
+(defun-inline sha256_one _noargs (f (f constant-tree)))
+(defun-inline sha256_one_one _noargs (r (f constant-tree)))
+(defun-inline two_sha256_one_a_kw _noargs (f (r constant-tree)))
+(defun-inline two_sha256_one_c_kw _noargs (r (r constant-tree)))
+
+;; this returns the sha256 tree hash of expression F = `((q . a1) a2)`
+(defun hash-expression-F (a1 a2)
+    (sha256 TWO (sha256 TWO (sha256_one_one) a1) (sha256 TWO a2 (sha256_one)))
+)
+
+;; Given the tree hash `environment-hash` of an environment tree E
+;; and the tree hash `parameter-hash` of a constant parameter P
+;; return the tree hash of the tree corresponding to
+;; `(c (q . P) E)`
+;; This is the new environment tree with the addition parameter P curried in.
+;;
+;; Note that `(c (q . P) E)` = `(c . ((q . P) . (E . 0)))`
+(defun-inline update-hash-for-parameter-hash (parameter-hash environment-hash)
+    (sha256 (two_sha256_one_c_kw) (hash-expression-F parameter-hash environment-hash))
+)
+
+;; Given the tree hash `environment-hash` of an environment tree E
+;; and the tree hash `mod-hash` of a mod M
+;; return the tree hash of the tree corresponding to
+;; `(a (q . M) E)`
+;; This is the hash of a new function that adopts the new environment E.
+;; This is used to build of the tree hash of a curried function.
+;;
+;; Note that `(a (q . M) E)` = `(a . ((q . M)  . (E . 0)))`
+(defun-inline tree-hash-of-apply (mod-hash environment-hash)
+    (sha256 (two_sha256_one_a_kw) (hash-expression-F mod-hash environment-hash))
+)
+
+;; This function recursively calls `update-hash-for-parameter-hash`
+(defun calculate-hash-of-curried-parameters (curry-parameter-hashes)
+    (if curry-parameter-hashes
+        (update-hash-for-parameter-hash (f curry-parameter-hashes) (calculate-hash-of-curried-parameters (r curry-parameter-hashes)))
+        (sha256_one_one)
+    )
+)
+
+;; mod-hash:
+;;   the hash of a puzzle function, ie. a `mod`
+;;
+;; curry-parameter-hashes:
+;;   a list of pre-hashed trees representing parameters to be curried into the puzzle.
+;;
+;; we return the hash of the curried expression
+;;   (a (q . mod-hash) (c (cp1 (c cp2 (c ... 1)...))))
+;;
+;; Note that from a user's perspective the hashes passed in here aren't simply
+;; the hashes of the desired parameters, but their treehash representation since
+;; that's the form we're assuming they take in the acutal curried program.
+
+;; inline functions that take varargs don't seem to work, so we can't inline `curry`
+(defun curry_hashes (mod-hash . curry-parameter-hashes)
+    (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
+)
+
+(defun curry_unhashed_inner ((@ args (first_arg . rest_arg)))
+    (if args
+        (c (qq (shatree (unquote first_arg))) (curry_unhashed_inner rest_arg))
+        0
+    )
+)
+
+;; Given a mod hash and unhashed arguments, return the modhash of the resulting
+;; curried callable object.
+(defmac curry_unhashed_args (mod-hash . args)
+    (c (q . curry_hashes) (c mod-hash (curry_unhashed_inner args)))
+)
+
+(defun curry (mod . parameters)
+    (li TWO (c 1 mod) (build_curry_parameters parameters))
+)
+
+(defun build_curry_parameters (parameters)
+    (if (not parameters)
+        1
+        (li 4 (c 1 (f parameters)) (build_curry_parameters (r parameters)))
+    )
+)
+
+(defun-inline curry_hashes_inline (mod-hash . curry-parameter-hashes)
+    (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
+)
+
+;; `curry_mod_hashes_inline` takes exactly two parameters rather than varags, and it can be inlined
+(defun-inline curry_mod_hashes_inline (mod-hash curry-parameter-hashes)
+    (tree-hash-of-apply mod-hash (calculate-hash-of-curried-parameters curry-parameter-hashes))
+)
+€ÿÿ–clsp/std/shatree.clincÿÀÖ;; hash a tree
+;; This is used to calculate a puzzle hash given a puzzle program.
+(defun shatree
+    (TREE)
+    (if (l TREE)
+        (sha256 2 (shatree (f TREE)) (shatree (r TREE)))
+        (sha256 1 TREE)
+    )
+)
+€ÿÿ•clsp/std/shapes.clincÿà.}(import std.pack)
+
+; Generated constructors need an identity in this directly imported namespace.
+(defun-inline shapes-li VALUES VALUES)
+
+; Shape templates are compile-time syntax. See clsp/std/shapes.md.
+; Facts use masks: pair=1, non-nil atom=2, nil=4; unconstrained=7.
+; Paths are binary heap indices (root=1, left=2*p, right=2*p+1).
+
+(defun shapes-append (A B)
+    (if A (c (f A) (shapes-append (r A) B)) B))
+
+(defun shapes-tag (TREE TAG)
+    (if (l TREE) (if (l (f TREE)) 0 (= (f TREE) TAG)) 0))
+
+(defun shapes-optional (ARGS)
+    (if ARGS (if (r ARGS) ARGS (f ARGS)) ()))
+
+(defun shapes-literal-nil (TREE)
+    (if (l TREE) 0 (if TREE (= TREE (q . nil)) 1)))
+
+; Validation runs on macro syntax only, never on runtime values.
+(defun shapes-reserved-name (NAME)
+    (if (l NAME) 0
+        (if (shapes-literal-nil NAME) 1
+            (if (= NAME (q . atom)) 1 (= NAME (q . optional))))))
+
+(defun shapes-proper-list (XS)
+    (if (l XS) (shapes-proper-list (r XS)) (not XS)))
+
+(defun shapes-check (TREE BINDING)
+    (if (l TREE) (shapes-check-pair TREE BINDING)
+        (if (shapes-literal-nil TREE) TREE
+            (if (if BINDING (shapes-reserved-name TREE) 0)
+                (x (q . "reserved shape field name: atom or optional")) TREE))))
+
+(defun shapes-check-atom (ARGS BINDING)
+    (if (l ARGS)
+        (if (r ARGS) (x (q . "atom takes exactly one field"))
+            (assign FIELD (f ARGS)
+                (if (l FIELD) (x (q . "atom field must be a leaf"))
+                    (if (if BINDING (shapes-reserved-name FIELD) 0)
+                        (x (q . "atom field cannot be nil, atom, or optional"))
+                        (list (q . atom) FIELD)))))
+        (x (q . "atom takes exactly one field"))))
+
+(defun shapes-check-optional (ARGS BINDING)
+    (if (l ARGS)
+        (if (shapes-proper-list ARGS)
+            (list (q . optional) (shapes-check (shapes-optional ARGS) BINDING))
+            (x (q . "optional needs a proper list of template arguments")))
+        (x (q . "optional needs at least one template"))))
+
+(defun shapes-check-pair (TREE BINDING)
+    (if (shapes-tag TREE (q . atom)) (shapes-check-atom (r TREE) BINDING)
+        (shapes-tag TREE (q . optional)) (shapes-check-optional (r TREE) BINDING)
+        (c (shapes-check (f TREE) BINDING) (shapes-check (r TREE) BINDING))))
+
+; Keep pair traversal in a separate helper: the cl-23 optimizer can hoist
+; repeated tail access across sibling branches. Enter only after testing l.
+; Return (facts stripped-pattern names). Optional suppresses every fact below it.
+(defun shapes-parse (TREE PATH OPTIONAL)
+    (if (l TREE) (shapes-parse-pair TREE PATH OPTIONAL)
+        (if (shapes-literal-nil TREE)
+            (list (if OPTIONAL () (list (list PATH 4))) () ())
+            (list () TREE (list TREE)))))
+
+(defun shapes-parse-pair (TREE PATH OPTIONAL)
+    (if (shapes-tag TREE (q . optional))
+        (shapes-parse (shapes-optional (r TREE)) PATH 1)
+        (shapes-tag TREE (q . atom))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (f (r TREE)) PATH 1)
+            (if (r (r TREE)) (x (q . "atom takes one name"))
+                (list (if OPTIONAL () (list (list PATH 6))) PATTERN NAMES)))
+        (assign
+            (LF LP LN) (shapes-parse (f TREE) (* PATH 2) OPTIONAL)
+            (RF RP RN) (shapes-parse (r TREE) (+ (* PATH 2) 1) OPTIONAL)
+            (list (shapes-append (if OPTIONAL () (list (list PATH 1)))
+                                (shapes-append LF RF))
+                  (c LP RP) (shapes-append LN RN)))))
+
+(defun shapes-lookup (KEY ENTRIES DEFAULT)
+    (if ENTRIES
+        (if (= KEY (f (f ENTRIES))) (f (r (f ENTRIES)))
+            (shapes-lookup KEY (r ENTRIES) DEFAULT))
+        DEFAULT))
+
+(defun shapes-zip (NAMES VALUES)
+    (if NAMES
+        (if VALUES (c (list (f NAMES) (f VALUES)) (shapes-zip (r NAMES) (r VALUES)))
+            (x (q . "too few shape arguments")))
+        (if VALUES (x (q . "too many shape arguments")) ())))
+
+(defun shapes-substitute (TREE VALUES)
+    (if (l TREE) (shapes-substitute-pair TREE VALUES)
+        (if (shapes-literal-nil TREE) TREE (shapes-lookup TREE VALUES TREE))))
+
+(defun shapes-substitute-pair (TREE VALUES)
+    (if (shapes-tag TREE (q . optional))
+        (c (q . optional) (shapes-substitute (r TREE) VALUES))
+        (shapes-tag TREE (q . atom))
+        (list (q . atom) (shapes-substitute (f (r TREE)) VALUES))
+        (c (shapes-substitute (f TREE) VALUES) (shapes-substitute (r TREE) VALUES))))
+
+(defun shapes-instantiate (TREE VALUES)
+    (if VALUES
+        (assign (_ _ NAMES) (shapes-parse TREE 1 0)
+            (shapes-substitute TREE (shapes-zip NAMES VALUES)))
+        TREE))
+
+; Expose dotted tails as standalone forms so nested shape macros expand there,
+; too. The compiler's ordinary inward expansion walks proper-list elements.
+(defmac shapes-join (LEFT RIGHT) (c LEFT RIGHT))
+(defmac shapes-normalize (TREE)
+    (if (l TREE)
+        (list (q . shapes-join)
+            (list (q . shapes-normalize) (f TREE))
+            (list (q . shapes-normalize) (r TREE)))
+        TREE))
+
+(defmac defun-shape (NAME TREE)
+    (if (shapes-reserved-name NAME)
+        (x (q . "shape name cannot be nil, atom, or optional"))
+        (list (q . shapes-define-expanded) NAME (list (q . shapes-normalize) TREE))))
+
+(defun shapes-unique (NAMES)
+    (if NAMES
+        (if (shapes-contains (f NAMES) (r NAMES)) 0 (shapes-unique (r NAMES)))
+        1))
+
+(defmac shapes-define-expanded (NAME TREE)
+    (assign (_ _ NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+        (if (shapes-unique NAMES)
+            (list (q . defmac) NAME (q . shapes-values)
+                (list (q . shapes-instantiate) (c 1 TREE) (q . shapes-values)))
+            (x (q . "shape field names must be unique")))))
+
+(defmac make (TREE)
+    (list (q . shapes-make-expanded) (list (q . shapes-normalize) TREE)))
+(defmac shapes-make-expanded (TREE)
+    (assign (_ PATTERN _) (shapes-parse (shapes-check TREE 0) 1 0)
+        (pack-build (q . shapes-li) PATTERN)))
+
+(defmac invoke (FUNCTION TREE)
+    (list FUNCTION (q . &rest) (list (q . make) TREE)))
+
+(defun shapes-access (PATH VALUE)
+    (if (= PATH 1) VALUE
+        (list (if (logand PATH 1) 6 5) (shapes-access (/ PATH 2) VALUE))))
+
+; Find a declared field in the stripped pattern. Zero means absent.
+(defun shapes-field-path (TREE FIELD PATH)
+    (if (l TREE)
+        (assign LEFT (shapes-field-path (f TREE) FIELD (* PATH 2))
+            (if LEFT LEFT (shapes-field-path (r TREE) FIELD (+ (* PATH 2) 1))))
+        (if (= TREE FIELD) PATH 0)))
+
+(defmac get-field (TREE FIELD VALUE)
+    (list (q . shapes-get-field-expanded) (list (q . shapes-normalize) TREE) FIELD VALUE))
+
+(defmac shapes-get-field-expanded (TREE FIELD VALUE)
+    (if (if (l FIELD) 1 (shapes-reserved-name FIELD))
+        (x (q . "get-field needs a non-reserved field name"))
+        (assign
+            (_ PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (assign PATH (shapes-field-path PATTERN FIELD 1)
+                    (if PATH (shapes-access PATH VALUE)
+                        (x (q . "unknown shape field") FIELD)))
+                (x (q . "shape field names must be unique"))))))
+
+(defun shapes-cases (CASES)
+    (if CASES
+        (assign
+            (TREE BODY) (f CASES)
+            (FACTS PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
+            (if (shapes-unique NAMES)
+                (c (list FACTS PATTERN BODY) (shapes-cases (r CASES)))
+                (x (q . "shape field names must be unique"))))
+        ()))
+
+; Common guarantees are usable under the closed-union contract. Optional paths
+; contribute none. Facts learned by actual tests refine each surviving case.
+(defun shapes-common-pair (PATH CASES)
+    (if CASES
+        (if (= (shapes-lookup PATH (f (f CASES)) 7) 1)
+            (shapes-common-pair PATH (r CASES)) 0)
+        1))
+
+(defun shapes-safe (PATH CASES)
+    (if (= PATH 1) 1
+        (if (shapes-common-pair (/ PATH 2) CASES)
+            (shapes-safe (/ PATH 2) CASES) 0)))
+
+(defun shapes-tests-for (FACTS)
+    (if FACTS
+        (assign
+            (PATH MASK) (f FACTS)
+            REST (shapes-tests-for (r FACTS))
+            (c (list PATH 1) (if (= MASK 4) (c (list PATH 4) REST) REST)))
+        ()))
+
+(defun shapes-tests (CASES)
+    (if CASES (shapes-append (shapes-tests-for (f (f CASES))) (shapes-tests (r CASES))) ()))
+
+(defun shapes-refine (CASES PATH MASK)
+    (if CASES
+        (assign
+            (FACTS PATTERN BODY) (f CASES)
+            NARROW (logand (shapes-lookup PATH FACTS 7) MASK)
+            REST (shapes-refine (r CASES) PATH MASK)
+            (if NARROW (c (list (c (list PATH NARROW) FACTS) PATTERN BODY) REST) REST))
+        ()))
+
+(defun shapes-length (XS)
+    (if XS (+ 1 (shapes-length (r XS))) 0))
+
+; Prefer a singleton split first, then the split with the smallest worst side.
+; If no separating test is safe, allow a parent guard whose pair outcome keeps
+; every candidate but makes a deeper test safe. At least one outcome must remove
+; a candidate; refining facts prevents the same guard being selected again.
+(defun shapes-best (TESTS CASES COUNT BEST SCORE)
+    (if TESTS
+        (assign
+            (PATH MASK) (f TESTS)
+            YES (shapes-length (shapes-refine CASES PATH MASK))
+            NO (shapes-length (shapes-refine CASES PATH (logxor 7 MASK)))
+            WORST (if (> YES NO) YES NO)
+            BEST-SIDE (if (> YES NO) NO YES)
+            RANK (if (> COUNT WORST)
+                (if (if (= YES 1) 1 (= NO 1)) 0 WORST)
+                (* COUNT 2))
+            USE (if (shapes-safe PATH CASES)
+                (if YES (if NO (if (> COUNT BEST-SIDE) (> SCORE RANK) 0) 0) 0) 0)
+            (shapes-best (r TESTS) CASES COUNT
+                (if USE (f TESTS) BEST) (if USE RANK SCORE)))
+        BEST))
+
+(defun shapes-dispatch (VALUE CASES)
+    (if (r CASES)
+        (assign
+            TEST (shapes-best (shapes-tests CASES) CASES (shapes-length CASES) () 0x7fffffff)
+            (if TEST
+                (assign
+                    (PATH MASK) TEST
+                    ACCESS (shapes-access PATH VALUE)
+                    (list (q . if) (list (if (= MASK 1) 7 32) ACCESS)
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
+                        (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
+                (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
+        (assign (_ PATTERN BODY) (f CASES)
+            (list (q . assign) PATTERN VALUE BODY))))
+
+; Pick a binding name absent from the entire input, including nested dispatches.
+; Preserve its symbol type: concat yields a numeric atom, not a variable name.
+(defun shapes-contains (NAME TREE)
+    (if (l TREE)
+        (if (shapes-contains NAME (f TREE)) 1 (shapes-contains NAME (r TREE)))
+        (= NAME TREE)))
+
+(defun shapes-fresh (NAME TREE)
+    (if (shapes-contains NAME TREE) (shapes-fresh (string->symbol (string-append (symbol->string NAME) "_")) TREE) NAME))
+
+(defun shapes-check-case (CASE)
+    (if (shapes-proper-list CASE)
+        (if (= (shapes-length CASE) 2) CASE
+            (x (q . "if-shape branch needs a template and one body")))
+        (x (q . "if-shape branch needs a template and one body"))))
+
+(defun shapes-normalize-cases (CASES)
+    (if CASES
+        (assign CASE (shapes-check-case (f CASES))
+            (c (list (list (q . shapes-normalize) (f CASE)) (f (r CASE)))
+                (shapes-normalize-cases (r CASES))))
+        ()))
+
+(defmac if-shape (VALUE . CASES)
+    (c (q . shapes-if-expanded) (c VALUE (shapes-normalize-cases CASES))))
+
+(defmac shapes-if-expanded (VALUE . CASES)
+    (if CASES
+        (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
+            (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+        (x (q . "if-shape needs at least one alternative"))))
+€ÿÿ•clsp/std/relops.clincÿÀ‘(defun-inline >= (A B) (not (> B A)))
+(defun-inline <= (A B) (not (> A B)))
+(defun-inline <  (A B) (> B A))
+(defun-inline != (A B) (not (= A B)))€ÿÿ‘clsp/std/li.clincÿ—
+(defun-inline li x x)
+€€ÿÿŒMOVER_PUBKEYÿWAITER_PUBKEYÿ‡TIMEOUTÿ†AMOUNTÿˆMOD_HASHÿ…NONCEÿ„MOVEÿMAX_MOVE_SIZEÿŠINFOHASH_Bÿ‹MOVER_SHAREÿŠINFOHASH_Aÿ„argsÿshapes-value_ÿ‘letbinding_$_4132ÿ–curry-parameter-hashesÿ®std.curry.calculate-hash-of-curried-parametersÿˆnew_moveÿŠinfohash_cÿnew_mover_shareÿ‘new_max_move_sizeÿnew_puzzle_hashÿ‘letbinding_$_4141ÿprevious_stateÿ›previous_validation_programÿˆevidenceÿmover_payout_phÿ previous_validation_program_hashÿ‘payout_conditionsÿvalidator_resultÿ‘letbinding_$_4137ÿ‚a1ÿ‚a2ÿ›std.curry.hash-expression-Fÿ‘letbinding_$_4134ÿˆmod-hashÿ–std.curry.curry_hashesÿwaiter_payout_phÿ‘letbinding_$_4135ÿLÿRÿ‘std.append.appendÿŒshapes-valueÿ“next_validator_hashÿ‰new_stateÿmax_move_sizeÿextra_conditionsÿ‘letbinding_$_4139ÿ‘letbinding_$_4136ÿ‘letbinding_$_4133ÿ‘letbinding_$_4138ÿ„TREEÿ“std.shatree.shatreeÿ†<main>€ÿÿÿ€ÿ/ÿÿ/ÿ€ÿÿ€ÿ/ÿÿ/ÿ€ÿÿ€ÿÿÿÿ	€ÿÿÿÿÿÿ	€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ$€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿ!ÿÿ"€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿ+ÿ)ÿ+ÿ+€ÿÿÿ#ÿ"ÿ#ÿ$€ÿÿÿÿÿÿ€ÿÿÿ<ÿÿ<ÿ€ÿÿÿ<ÿ	ÿ<ÿ€ÿÿÿ<ÿÿ=ÿ‚ ‡€ÿÿÿ+ÿÿ+ÿ€ÿÿÿÿ,ÿÿ-€ÿÿÿÿ/ÿÿ0€ÿÿÿÿÿÿI€ÿÿÿ	ÿÿÿI€ÿÿÿ	ÿÿ
+ÿG€ÿÿÿ	ÿÿ	ÿH€ÿÿÿ
+ÿÿ
+ÿG€ÿÿÿÿÿÿI€ÿÿÿÿÿÿJ€ÿÿÿÿÿÿI€ÿÿÿ+ÿ$ÿ+ÿ5€ÿÿÿ=ÿ*ÿ=ÿ+€ÿÿÿ=ÿ,ÿ=ÿB€ÿÿÿ=ÿEÿ=ÿi€ÿÿÿ=ÿkÿ=ÿl€ÿÿÿ=ÿmÿ=ÿ‚ ƒ€ÿÿÿ<ÿÿ>ÿ€ÿÿÿÿ'ÿÿ(€ÿÿÿÿ*ÿÿ+€ÿÿÿ7ÿÿ7ÿ€ÿÿÿÿ,ÿÿ-€ÿÿÿÿ/ÿÿ0€ÿÿÿ7ÿ$ÿ7ÿ5€ÿÿÿQÿÿQÿ!€ÿÿÿQÿ#ÿQÿG€ÿÿÿQÿHÿQÿ^€ÿÿÿ ÿÿ ÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿ ÿÿ ÿ€ÿÿÿ ÿ.ÿ ÿ0€ÿÿÿ ÿ3ÿ ÿ9€ÿÿÿ ÿ>ÿ ÿ@€ÿÿÿÿ#ÿÿ$€ÿÿÿÿ&ÿÿ'€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ:€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ#€ÿÿÿÿ'ÿÿ.€ÿÿÿÿ0ÿÿ1€ÿÿÿÿ2ÿÿ6€ÿÿÿÿÿÿ€ÿÿÿÿ
+ÿÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿ€ÿ/ÿÿ/ÿ€ÿÿ€ÿ>ÿÿ>ÿ€ÿÿ€ÿ?ÿ3ÿ?ÿ:€ÿÿ€ÿ?ÿ;ÿ?ÿV€ÿÿ€ÿBÿ#ÿBÿ(€ÿÿ€ÿCÿÿCÿ€ÿÿ€ÿCÿÿCÿ&€ÿÿ€ÿCÿ'ÿCÿ6€ÿÿ€ÿCÿ7ÿCÿ=€ÿÿ€ÿDÿÿDÿ€ÿÿ€ÿDÿÿDÿ)€ÿÿ€ÿDÿ*ÿDÿ6€ÿÿ€ÿDÿ8ÿDÿ>€ÿÿ€ÿDÿ?ÿDÿC€ÿÿ€ÿDÿDÿDÿS€ÿÿ€ÿAÿÿAÿ€ÿÿ€ÿAÿÿAÿ3€ÿÿ€ÿAÿ5ÿAÿ6€ÿÿ€ÿAÿ7ÿAÿW€ÿÿ€ÿAÿXÿAÿ`€ÿÿ€ÿGÿÿGÿ€ÿÿ€ÿHÿÿHÿ€ÿÿ€ÿHÿÿHÿ"€ÿÿ€ÿHÿ$ÿHÿ*€ÿÿ€ÿHÿ+ÿHÿK€ÿÿ€ÿHÿMÿHÿT€ÿÿ€ÿHÿUÿHÿc€ÿÿ€ÿGÿÿIÿ1€ÿÿ€ÿIÿÿIÿ€ÿÿ€ÿIÿÿIÿ/€ÿÿ€ÿGÿÿGÿ€ÿÿ€ÿIÿÿIÿ €ÿÿ€ÿLÿÿLÿ%€ÿÿ€ÿLÿÿLÿ'€ÿÿ€ÿLÿÿLÿO€ÿÿ€ÿNÿÿNÿ €ÿÿ€ÿNÿ'ÿNÿ-€ÿÿ€ÿOÿ&ÿOÿ'€ÿÿ€ÿOÿ)ÿOÿ*€ÿÿ€ÿOÿ+ÿOÿ>€ÿÿ€ÿPÿ.ÿPÿ4€ÿÿ€ÿPÿ5ÿPÿH€ÿÿ€ÿPÿJÿPÿQ€ÿÿ€ÿPÿRÿPÿ[€ÿÿ€ÿQÿ-ÿQÿ.€ÿÿ€ÿRÿ)ÿRÿ3€ÿÿ€ÿSÿ&ÿSÿ'€ÿÿ€ÿSÿ(ÿSÿ5€ÿÿ€ÿSÿ6ÿSÿC€ÿÿ€ÿTÿ&ÿTÿ'€ÿÿ€ÿTÿ(ÿTÿ;€ÿÿ€ÿTÿ<ÿTÿ=€ÿÿ€ÿTÿ?ÿTÿB€ÿÿ€ÿTÿCÿTÿP€ÿÿ€ÿNÿÿVÿ*€ÿÿ€ÿVÿ!ÿVÿ(€ÿÿ€ÿVÿ)ÿVÿ9€ÿÿ€ÿVÿ!ÿWÿQ€ÿÿ€ÿWÿ&ÿWÿ,€ÿÿ€ÿWÿ-ÿWÿ=€ÿÿ€ÿWÿ>ÿWÿO€ÿÿ€ÿVÿ!ÿVÿ*€ÿÿ€ÿNÿÿUÿ3€ÿÿ€ÿUÿ!ÿUÿ2€ÿÿ€ÿ`ÿÿ`ÿ€ÿÿ€ÿaÿ"ÿaÿ.€ÿÿ€ÿaÿ/ÿaÿ7€ÿÿ€ÿbÿÿbÿ€ÿÿÿÿÿÿ€ÿÿ€ÿcÿ3ÿcÿ@€ÿÿ€ÿcÿAÿcÿM€ÿÿ€ÿdÿ%ÿdÿ,€ÿÿ€ÿdÿ-ÿdÿ3€ÿÿ€ÿdÿ4ÿdÿ<€ÿÿ€ÿdÿ=ÿdÿB€ÿÿ€ÿeÿ%ÿeÿ-€ÿÿ€ÿeÿ.ÿeÿ?€ÿÿ€ÿeÿ@ÿeÿJ€ÿÿ€ÿfÿ%ÿfÿ4€ÿÿ€ÿfÿ5ÿfÿ?€ÿÿ€ÿgÿÿgÿ€ÿÿ€ÿhÿÿhÿ€ÿÿ€ÿgÿÿgÿ€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿ€ÿiÿÿiÿ €ÿÿ€ÿiÿ!ÿiÿ)€ÿÿ€ÿiÿ+ÿiÿ8€ÿÿ€ÿjÿÿjÿ €ÿÿ€ÿjÿ!ÿjÿ2€ÿÿ€ÿjÿ4ÿjÿ5€ÿÿÿÿÿÿ€ÿÿÿÿÿÿ€ÿÿ€ÿkÿ+ÿkÿ,€ÿÿ€ÿkÿÿkÿ*€ÿÿ€ÿlÿÿlÿ€ÿÿ€ÿlÿÿlÿ)€ÿÿ€ÿlÿ+ÿlÿ,€ÿÿ€ÿlÿ-ÿlÿ>€ÿÿ€ÿlÿ?ÿlÿ@€ÿÿ€ÿmÿÿmÿ(€ÿÿ€ÿmÿ)ÿmÿ/€ÿÿ€ÿnÿ)ÿnÿ*€ÿÿ€ÿnÿÿnÿ(€ÿÿ€ÿoÿÿoÿ€ÿÿ€ÿoÿÿoÿ'€ÿÿ€ÿoÿ)ÿoÿ*€ÿÿ€ÿoÿ+ÿoÿ:€ÿÿ€ÿoÿ;ÿoÿ<€ÿÿ€ÿpÿÿpÿ€ÿÿ€ÿpÿÿpÿ!€ÿÿ€ÿpÿ"ÿpÿ,€ÿÿ€ÿpÿ/ÿpÿ0€ÿÿ€ÿpÿ1ÿpÿ3€ÿÿ€ÿpÿ5ÿpÿ;€ÿÿ€ÿpÿ<ÿpÿF€ÿÿ€ÿqÿÿqÿ€ÿÿ€ÿqÿÿqÿ"€ÿÿ€ÿqÿ#ÿqÿ$€ÿÿ€ÿqÿ&ÿqÿ)€ÿÿ€ÿqÿ*ÿqÿ;€ÿÿ€ÿgÿÿrÿ€ÿÿ€ÿrÿÿrÿ€ÿÿ€ÿsÿÿsÿ"€ÿÿ€ÿsÿ#ÿsÿ@€ÿÿ€ÿsÿAÿsÿH€ÿÿ€ÿtÿÿtÿ"€ÿÿ€ÿtÿ#ÿtÿ.€ÿÿ€ÿtÿ/ÿtÿ>€ÿÿ€ÿtÿ?ÿtÿE€ÿÿ€ÿuÿÿuÿ"€ÿÿ€ÿuÿ#ÿuÿ-€ÿÿ€ÿuÿ.ÿuÿ:€ÿÿ€ÿuÿ<ÿuÿC€ÿÿ€ÿuÿDÿuÿH€ÿÿÿÿÿÿ€ÿÿ€ÿ1ÿÿ1ÿ€ÿÿ€ÿ1ÿÿ1ÿ-€ÿÿ€ÿ1ÿ.ÿ1ÿ5€ÿÿ€ÿ2ÿÿ2ÿ€ÿÿ€ÿ2ÿÿ2ÿ €ÿÿ€ÿ2ÿÿ2ÿ*€ÿÿ€ÿ2ÿ!ÿ2ÿ&€ÿÿ€ÿ2ÿ'ÿ2ÿ2€ÿÿ€ÿ2ÿ3ÿ2ÿB€ÿÿ€ÿ2ÿCÿ2ÿN€ÿÿ€ÿ2ÿÿ2ÿY€ÿÿ€ÿ2ÿPÿ2ÿW€ÿÿ€ÿ2ÿ]ÿ2ÿl€ÿÿ€ÿ2ÿPÿ2ÿY€ÿÿ€ÿ2ÿPÿ2ÿu€ÿÿ€ÿ2ÿnÿ2ÿs€ÿÿ€ÿ2ÿtÿ2ÿu€ÿÿ€ÿ3ÿÿ3ÿ€ÿÿ€ÿ3ÿÿ3ÿ€ÿÿ€ÿ3ÿ ÿ3ÿ%€ÿÿ€ÿ3ÿ&ÿ3ÿ4€ÿÿ€ÿ3ÿ5ÿ3ÿA€ÿÿ€ÿ3ÿCÿ3ÿI€ÿÿ€ÿ3ÿJÿ3ÿN€ÿÿ€ÿ3ÿOÿ3ÿ^€ÿÿ€ÿ3ÿaÿ3ÿf€ÿÿ€ÿ3ÿgÿ3ÿh€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ€ÿÿ€ÿ5ÿÿ5ÿ*€ÿÿ€ÿ5ÿÿ6ÿ€ÿÿ€ÿ6ÿÿ6ÿ€ÿÿ€ÿ7ÿÿ7ÿ€ÿÿ€ÿ7ÿÿ7ÿ*€ÿÿ€ÿ7ÿ+ÿ7ÿ;€ÿÿ€ÿ7ÿ=ÿ7ÿ>€ÿÿ€ÿ7ÿ?ÿ7ÿE€ÿÿ€ÿ7ÿFÿ7ÿQ€ÿÿ€ÿ8ÿÿ8ÿ€ÿÿ€ÿ8ÿÿ8ÿ-€ÿÿ€ÿ8ÿ.ÿ8ÿ;€ÿÿ€ÿ8ÿ=ÿ8ÿC€ÿÿ€ÿ8ÿDÿ8ÿH€ÿÿ€ÿ8ÿIÿ8ÿY€ÿÿ€ÿ5ÿÿ9ÿ€ÿÿ€ÿ9ÿÿ9ÿ€ÿÿ€ÿ9ÿ"ÿ9ÿ2€ÿÿ€ÿ9ÿÿ9ÿ€ÿÿ€ÿ9ÿÿ9ÿ7€ÿÿ€ÿ9ÿ4ÿ9ÿ6€€ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿAÿÿ€€€ÿÿÿÿaÿÿ€€€€ÿÿÿÿÿÿQÿÿ€€€ÿÿÿÿÿÿ‚ ±ÿÿ€€€ÿÿÿÿ‚ ñÿÿ€€€€€€ÿÿÿÿÿÿÿÿIÿÿ€€€ÿÿÿÿÿÿ‚ ©ÿÿ€€€ÿÿÿÿ‚ éÿÿ€€€€€ÿÿÿÿÿÿYÿÿ€€€ÿÿÿÿÿ	ÿ‚ ¹ÿÿ€€€ÿÿÿ
+ÿ‚ ùÿÿ€€€€€€€ÿÿÿÿÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚Aÿÿ€€€ÿÿÿÿÿÿ‚Áÿÿ€€€ÿÿÿÿ‚Áÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚!ÿÿ€€€ÿÿÿÿÿÿ‚¡ÿÿ€€€ÿÿÿÿ‚¡ÿÿ€€€€€ÿÿÿÿÿÿ‚aÿÿ€€€ÿÿÿÿÿ	ÿ‚áÿÿ€€€ÿÿÿ
+ÿ‚áÿÿ€€€€€€€ÿÿÿÿ1ÿÿ€€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿEÿÿ€€€ÿÿÿÿeÿÿ€€€€ÿÿÿÿÿÿUÿÿ€€€ÿÿÿÿuÿÿ€€€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚Aÿÿ€€€ÿÿÿÿÿÿ‚Aÿÿ€€€ÿÿÿÿ‚Aÿÿ€€€€€ÿÿÿÿÿÿ‚Áÿÿ€€€ÿÿÿÿÿ	ÿ‚Áÿÿ€€€ÿÿÿ
+ÿ‚Áÿÿ€€€€€€ÿÿÿÿaÿÿ€€€€ÿÿÿÿÿÿQÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿ‚ ‰ÿÿ€€€ÿÿÿÿÿÿ‚Iÿÿ€€€ÿÿÿÿ‚Éÿÿ€€€€€ÿÿÿÿiÿÿ€€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿ€€ÿÿÿÿÿÿ-ÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿ ÿÿÿÿÿÿÿÿÿ€€ÿÿÿÿÿÿÿÿ€€ÿÿ€€€€€ÿÿ!ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ ÿÿ€€€ÿÿÿÿ‚ Áÿÿ€€€€ÿÿÿÿÿÿ‚ ¡ÿÿ€€€ÿÿÿÿÿÿ‚aÿÿ€€€ÿÿÿÿ‚áÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚ ‘ÿÿ€€€ÿÿÿÿÿÿ‚Qÿÿ€€€ÿÿÿÿ‚Ñÿÿ€€€€€ÿÿÿÿÿÿ‚ ±ÿÿ€€€ÿÿÿÿÿ	ÿ‚qÿÿ€€€ÿÿÿ
+ÿ‚ñÿÿ€€€€€€€ÿÿÿÿÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿ#ÿÿ€€€ÿÿÿÿ3ÿÿ€€€€ÿÿÿÿÿÿ+ÿÿ€€€ÿÿÿÿ;ÿÿ€€€€€ÿÿ€€€€€ÿÿ#ÿÿÿÿÿÿ"ÿÿÿ€€€ÿÿÿÿÿÿ€€€€€ÿÿ%ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ ÿÿ€€€ÿÿÿÿ‚ Áÿÿ€€€€ÿÿÿÿÿÿ‚ ¡ÿÿ€€€ÿÿÿÿÿÿ‚aÿÿ€€ÿÿÿÿ‚áÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚ ‘ÿÿ€€€ÿÿÿÿÿÿ‚Qÿÿ€€€ÿÿÿÿ‚Ñÿÿ€€€€€ÿÿÿÿÿÿ‚ ±ÿÿ€€€ÿÿÿÿÿ	ÿ‚qÿÿ€€ÿÿÿ
+ÿ‚ñÿÿ€€€€€€€ÿÿÿÿÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿ€€ÿÿÿ$ÿÿÿ€€€€ÿÿ€€€€€ÿÿ(ÿÿÿÿÿÿ&ÿÿÿ€€€ÿÿÿÿÿ'ÿÿÿ€€€ÿÿ€€€€€ÿÿ.ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚
+ÿÿ€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚	ÿÿ€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚ÿÿ€€ÿÿÿÿÿ	ÿ‚ÿÿ€€€ÿÿÿ
+ÿ‚ÿÿ€€€€€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚Aÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿ‚!ÿÿ€€€ÿÿÿÿÿÿ‚!ÿÿ€€€ÿÿÿÿ‚!ÿÿ€€€€€ÿÿÿÿ‚¡ÿÿ€€€€ÿÿ€€€€ÿÿÿÿÿÿQÿÿ€€€ÿÿÿÿÿÿ‚ ±ÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿ€€€€ÿÿÿÿÿ)ÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿ*ÿ#ÿÿ€€ÿÿÿ+ÿ3ÿÿ€€€€ÿÿÿÿÿ,ÿ+ÿÿ€€ÿÿÿ-ÿ;ÿÿ€€€€€ÿÿ€€€€€ÿÿ/ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚Aÿÿ€€€ÿÿÿÿÿÿ‚Áÿÿ€€€ÿÿÿÿ‚Áÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚!ÿÿ€€€ÿÿÿÿÿÿ‚¡ÿÿ€€€ÿÿÿÿ‚¡ÿÿ€€€€€ÿÿÿÿÿÿ‚aÿÿ€€€ÿÿÿÿÿ	ÿ‚áÿÿ€€€ÿÿÿ
+ÿ‚áÿÿ€€€€€€€ÿÿÿÿ1ÿÿ€€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿEÿÿ€€€ÿÿÿÿÿÿ‚ ¥ÿÿ€€€ÿÿÿÿ‚ åÿÿ€€€€€ÿÿÿÿ5ÿÿ€€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€€€ÿÿ0ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ ÿÿ€€€ÿÿÿÿ‚ Áÿÿ€€€€ÿÿÿÿÿÿ‚ ¡ÿÿ€€€ÿÿÿÿÿÿ‚aÿÿ€€€ÿÿÿÿ‚áÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚ ‘ÿÿ€€€ÿÿÿÿÿÿ‚Qÿÿ€€€ÿÿÿÿ‚Ñÿÿ€€€€€ÿÿÿÿÿÿ‚ ±ÿÿ€€€ÿÿÿÿÿ	ÿ‚qÿÿ€€€ÿÿÿ
+ÿ‚ñÿÿ€€€€€€€ÿÿÿÿÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿ#ÿÿ€€€ÿÿÿÿÿÿSÿÿ€€€ÿÿÿÿsÿÿ€€€€€ÿÿÿÿÿÿ€€€ÿÿ€€€€€ÿÿ1ÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿÿ€ÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€€€ÿÿÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿÿ‚
+ÿÿ€€€ÿÿÿÿ‚ÿÿ€€€€€ÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿ	ÿ‚ÿÿ€€€ÿÿÿ
+ÿ‚ÿÿ€€€€€€€ÿÿÿÿ‚ Áÿÿ€€€€ÿÿÿÿÿÿ‚ ¡ÿÿ€€€ÿÿ€€€€ÿÿÿÿÿÿÿÿÿÿ‚ÿÿ€€€ÿÿÿÿÿÿ‚‘ÿÿ€€€ÿÿÿÿ‚‘ÿÿ€€€€€ÿÿÿÿ‚ Ñÿÿ€€€€ÿÿ€€€€ÿÿÿÿÿÿ)ÿÿ€€€ÿÿÿÿÿÿYÿÿ€€€ÿÿ€€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿ€€€€ÿÿÿÿÿ)ÿÿÿ€€€ÿÿ€€€€€ÿÿ3ÿÿÿÿÿÿ2ÿÿÿ€€€ÿÿ€€€€ÿÿ4ÿ€ÿÿÿÿÿÿÿÿÿÿÿ€ÿÿÿ€€€ÿÿÿÿÿÿ€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ,ÿÿ€€€ÿÿÿÿ<ÿÿ€€€€€€ÿÿÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿÿ*ÿÿ€€€ÿÿÿÿ:ÿÿ€€€€€ÿÿÿÿÿÿÿÿ€€€ÿÿÿÿÿ	ÿ.ÿÿ€€€ÿÿÿ
+ÿ>ÿÿ€€€€€€€ÿÿÿÿÿÿ€€€€€€ÿÿÿÿ€ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ2€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ)ÿ	ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ	ÿ€ÿ€ÿ	€ÿÿÿÿ€ÿ€ÿÿÿ
+ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ€ÿÿÿ
+ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ €ÿÿÿ
+ÿ€ÿ€ÿÿÿ
+ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ€ÿÿÿ
+ÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ€ÿÿÿ
+ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿ
+ÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿ
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ
+ÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ2€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ1€ÿÿ€ÿÿ€ÿ€ÿV€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿR€ÿÿ€ÿÿ€ÿ€ÿ3€€ÿÿÿÿ€ÿ€ÿÿÿÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ Kõ/4ETÅ;Ş.»ŒÒ·ãÑ`
+Ö1Ã…¥×Ìâ<w…Eš€ÿÿ€ÿÿ€ÿ€ÿ Ï—¡„ó&#ÑsLë™¥p›7!èx¡mxõ–q‹§²€€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ¡¡(qşâû†)®¡”X½%1ä²7YÒ%ö€i#ö2"€ÿÿ€ÿ"ÿ€ÿ€ÿ¡¨Õİcû¤qëË>|y·*nr˜©á¦4 ­çÅ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿÿÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ#ÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ#ÿ€ÿ€ÿ|€ÿÿÿ#ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ#ÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿ€ÿ#ÿ€ÿ€ÿ€ÿÿÿ#ÿ€ÿ€ÿÿÿ$ÿ€ÿ€ÿÿ€ÿ$ÿ€ÿ€ÿ€ÿÿÿ$ÿ€ÿ€ÿÿ€ÿ%ÿ€ÿ€ÿ	€ÿÿÿ$ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ,€ÿÿÿ&ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€ÿÿÿ&ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ'ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ(ÿ€ÿ€ÿ€ÿÿÿ'ÿ€ÿ€ÿÿ€ÿ&ÿ€ÿ€ÿ€€ÿÿ€ÿ'ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ&ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ&ÿ€ÿ€ÿ€€€€€ÿÿÿ&ÿ€ÿ€ÿÿ€ÿ#ÿ€ÿ€ÿ€€ÿÿ€ÿ&ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ$ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ#ÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿ)ÿ€ÿ€ÿÿ€ÿ)ÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ Kõ/4ETÅ;Ş.»ŒÒ·ãÑ`
+Ö1Ã…¥×Ìâ<w…Eš€ÿÿ€ÿÿ€ÿ€ÿ Ï—¡„ó&#ÑsLë™¥p›7!èx¡mxõ–q‹§²€€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ¡¡(qşâû†)®¡”X½%1ä²7YÒ%ö€i#ö2"€ÿÿ€ÿ"ÿ€ÿ€ÿ¡¨Õİcû¤qëË>|y·*nr˜©á¦4 ­çÅ€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€ÿÿ€ÿ*ÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿ,ÿ$ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ,ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ-ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ.ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ Kõ/4ETÅ;Ş.»ŒÒ·ãÑ`
+Ö1Ã…¥×Ìâ<w…Eš€ÿÿ€ÿÿ€ÿ€ÿ Ï—¡„ó&#ÑsLë™¥p›7!èx¡mxõ–q‹§²€€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ¡¡(qşâû†)®¡”X½%1ä²7YÒ%ö€i#ö2"€ÿÿ€ÿ"ÿ€ÿ€ÿ¡¨Õİcû¤qëË>|y·*nr˜©á¦4 ­çÅ€€€€ÿÿ€ÿ.ÿ€ÿ€ÿ€€€€ÿÿ€ÿ-ÿ€ÿ€ÿ€€€€ÿÿÿ,ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ/ÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ/ÿ€ÿ€ÿ|€ÿÿÿ/ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ/ÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿ€ÿ/ÿ€ÿ€ÿ€ÿÿÿ/ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿ€ÿ0ÿ€ÿ€ÿ€ÿÿÿ0ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ,€ÿÿÿ1ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€ÿÿÿ1ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿ€ÿ2ÿ€ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿ€ÿ2ÿ€ÿ€ÿ€ÿÿÿ2ÿ€ÿ€ÿÿ€ÿ1ÿ€ÿ€ÿ€€ÿÿ€ÿ2ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ1ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ1ÿ€ÿ€ÿ€€€€€ÿÿÿ1ÿ€ÿ€ÿÿ€ÿ/ÿ€ÿ€ÿ€€ÿÿ€ÿ1ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ0ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ/ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ/ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ,ÿ€ÿ€ÿ€€€€€ÿÿÿ3ÿ!ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ3ÿ€ÿ€ÿÿÿ4ÿ€ÿ€ÿÿ€ÿ4ÿ€ÿ€ÿ€ÿÿ€ÿ5ÿ€ÿ€ÿ€€ÿÿÿ3ÿ€ÿ€ÿÿÿ6ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ6ÿ€ÿ€ÿÿÿ4ÿ€ÿ€ÿÿ€ÿ4ÿ€ÿ€ÿ€ÿÿ€ÿ5ÿ€ÿ€ÿ€€ÿÿÿ6ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ*ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ+ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ Kõ/4ETÅ;Ş.»ŒÒ·ãÑ`
+Ö1Ã…¥×Ìâ<w…Eš€ÿÿ€ÿÿ€ÿ€ÿ Ï—¡„ó&#ÑsLë™¥p›7!èx¡mxõ–q‹§²€€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ¡¡(qşâû†)®¡”X½%1ä²7YÒ%ö€i#ö2"€ÿÿ€ÿ"ÿ€ÿ€ÿ¡¨Õİcû¤qëË>|y·*nr˜©á¦4 ­çÅ€€€€ÿÿ€ÿ+ÿ€ÿ€ÿ€€€€ÿÿ€ÿ*ÿ€ÿ€ÿ€€€€ÿÿÿ6ÿ€ÿ€ÿÿ€ÿ7ÿ€ÿ€ÿ€ÿÿ€ÿ6ÿ€ÿ€ÿ€€€€€€ÿÿÿ3ÿ€ÿ€ÿÿÿ8ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ8ÿ€ÿ€ÿÿÿ4ÿ€ÿ€ÿÿ€ÿ4ÿ€ÿ€ÿ€ÿÿ€ÿ5ÿ€ÿ€ÿ€€ÿÿÿ8ÿ€ÿ€ÿÿ€ÿ9ÿ€ÿ€ÿ€ÿÿÿ8ÿ€ÿ€ÿÿÿ:ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ:ÿ€ÿ€ÿÿÿ;ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ;ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ Kõ/4ETÅ;Ş.»ŒÒ·ãÑ`
+Ö1Ã…¥×Ìâ<w…Eš€ÿÿ€ÿÿ€ÿ€ÿ Ï—¡„ó&#ÑsLë™¥p›7!èx¡mxõ–q‹§²€€ÿÿÿ ÿ€ÿ€ÿÿ€ÿ!ÿ€ÿ€ÿ¡¡(qşâû†)®¡”X½%1ä²7YÒ%ö€i#ö2"€ÿÿ€ÿ"ÿ€ÿ€ÿ¡¨Õİcû¤qëË>|y·*nr˜©á¦4 ­çÅ€€€€ÿÿ€ÿ;ÿ€ÿ€ÿ€€€€ÿÿ€ÿ:ÿ€ÿ€ÿ€€€€ÿÿ€ÿ8ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ3ÿ€ÿ€ÿ€€€€€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿ<ÿ4ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ<ÿ€ÿ€ÿÿÿ=ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ=ÿ€ÿ€ÿÿ€ÿ>ÿ€ÿ€ÿ€ÿÿ€ÿ=ÿ€ÿ€ÿ€€€€ÿÿÿ<ÿ€ÿ€ÿÿÿ?ÿ€ÿ€ÿÿ€ÿ?ÿ€ÿ€ÿ€ÿÿÿ@ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ@ÿ€ÿ€ÿÿÿAÿ€ÿ€ÿÿ€ÿAÿ€ÿ€ÿ€ÿÿ€ÿAÿ€ÿ€ÿ€€ÿÿÿ@ÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ"€ÿÿÿBÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ€ÿÿÿBÿ€ÿ€ÿÿÿCÿ€ÿ€ÿÿ€ÿCÿ€ÿ€ÿ€ÿÿÿCÿ€ÿ€ÿÿ€ÿDÿ€ÿ€ÿ	€ÿÿÿCÿ€ÿ€ÿÿ€ÿBÿ€ÿ€ÿ€€ÿÿ€ÿCÿ€ÿ€ÿ€€€€€ÿÿ€ÿBÿ€ÿ€ÿ€€€€€ÿÿ€ÿBÿ€ÿ€ÿ€€€€€ÿÿÿ@ÿ€ÿ€ÿÿÿEÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ€ÿÿÿEÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ"€ÿÿÿEÿ€ÿ€ÿÿÿEÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ€ÿÿÿEÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ€ÿÿÿEÿ€ÿ€ÿÿÿFÿ€ÿ€ÿÿ€ÿFÿ€ÿ€ÿ€ÿÿÿFÿ€ÿ€ÿÿ€ÿGÿ€ÿ€ÿ€ÿÿÿFÿ€ÿ€ÿÿ€ÿEÿ€ÿ€ÿ€€ÿÿ€ÿFÿ€ÿ€ÿ€€€€€ÿÿ€ÿEÿ€ÿ€ÿ€€€€€ÿÿ€ÿEÿ€ÿ€ÿ€€€€€ÿÿ€ÿ@ÿ€ÿ€ÿ€€€€€€€ÿÿÿ<ÿ€ÿ€ÿÿÿHÿ€ÿ€ÿÿ€ÿHÿ€ÿ€ÿ€ÿÿÿIÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿIÿ€ÿ€ÿÿÿJÿ€ÿ€ÿÿ€ÿJÿ€ÿ€ÿ€ÿÿ€ÿJÿ€ÿ€ÿ€€ÿÿÿIÿ€ÿ€ÿÿ€ÿKÿ€ÿ€ÿ€ÿÿ€ÿIÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ<ÿ€ÿ€ÿ€€€€€€ÿÿÿ<ÿ€ÿ€ÿÿ€ÿ<ÿ€ÿ€ÿ€ÿÿ€ÿ<ÿ€ÿ€ÿ€€€€€ÿÿÿÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿÿÿ€ÿ€ÿÿÿLÿ€ÿ€ÿÿ€ÿLÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ3€ÿÿ€ÿÿ€ÿ€ÿ€€€€ÿÿÿÿ€ÿ€ÿÿÿLÿ€ÿ€ÿÿ€ÿLÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ*€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿLÿ€ÿ€ÿÿ€ÿLÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ.€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿLÿ€ÿ€ÿÿ€ÿLÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ~€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿMÿ1ÿÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿZ€ÿÿÿMÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ"€ÿÿÿNÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€ÿÿÿNÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿ€ÿOÿ€ÿ€ÿ€ÿÿÿOÿ€ÿ€ÿÿ€ÿOÿ€ÿ€ÿS€ÿÿÿOÿ€ÿ€ÿÿ€ÿNÿ€ÿ€ÿ€€ÿÿ€ÿOÿ€ÿ€ÿ€€€€€ÿÿ€ÿNÿ€ÿ€ÿ€€€€€ÿÿ€ÿNÿ€ÿ€ÿ€€€€€ÿÿÿNÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿQÿ€ÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿRÿ€ÿ€ÿ4€ÿÿÿQÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿQÿ€ÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿSÿ€ÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿQÿ€ÿ€ÿ€ÿÿÿQÿ€ÿ€ÿÿ€ÿTÿ€ÿ€ÿ‚a€ÿÿÿQÿ€ÿ€ÿÿ€ÿQÿ€ÿ€ÿ€€ÿÿ€ÿQÿ€ÿ€ÿ€€€€€ÿÿ€ÿQÿ€ÿ€ÿ€€€€€ÿÿ€ÿQÿ€ÿ€ÿ€€€€€ÿÿÿPÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€ÿÿÿPÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿUÿ€ÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿVÿ€ÿ€ÿ(€ÿÿÿUÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿUÿ€ÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿWÿ€ÿ€ÿ‚ €ÿÿÿUÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿ€ÿUÿ€ÿ€ÿ€ÿÿÿUÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿXÿ€ÿ€ÿÿÿYÿ€ÿ€ÿÿ€ÿYÿ€ÿ€ÿ€ÿÿ€ÿYÿ€ÿ€ÿx€€ÿÿÿXÿ€ÿ€ÿÿ€ÿZÿ€ÿ€ÿ€ÿÿ€ÿXÿ€ÿ€ÿ€€€€€ÿÿÿUÿ€ÿ€ÿÿ€ÿUÿ€ÿ€ÿ€€ÿÿ€ÿUÿ€ÿ€ÿ€€€€€ÿÿ€ÿUÿ€ÿ€ÿ€€€€€ÿÿ€ÿUÿ€ÿ€ÿ€€€€€ÿÿÿPÿ€ÿ€ÿÿ€ÿPÿ€ÿ€ÿ€€ÿÿ€ÿPÿ€ÿ€ÿ€€€€€ÿÿ€ÿPÿ€ÿ€ÿ€€€€€ÿÿÿPÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€€ÿÿ€ÿPÿ€ÿ€ÿ€€€€€ÿÿ€ÿNÿ€ÿ€ÿ€€€€€ÿÿ€ÿMÿ€ÿ€ÿ€€€€€ÿÿ€ÿMÿ€ÿ€ÿ€€€€€ÿÿ€ÿMÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿMÿ0ÿÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿz€ÿÿÿMÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€ÿÿÿMÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿ[ÿ€ÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿ\ÿ€ÿ€ÿ‚ ¥€ÿÿÿ[ÿ€ÿ€ÿÿÿ]ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ]ÿ€ÿ€ÿÿ€ÿ^ÿ€ÿ€ÿ€ÿÿÿ]ÿ€ÿ€ÿÿ€ÿ_ÿ€ÿ€ÿ€ÿÿ€ÿ]ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ[ÿ€ÿ€ÿ€€€€€ÿÿÿ[ÿ€ÿ€ÿÿ€ÿMÿ€ÿ€ÿ€€ÿÿ€ÿ[ÿ€ÿ€ÿ€€€€€ÿÿ€ÿMÿ€ÿ€ÿ€€€€€ÿÿ€ÿMÿ€ÿ€ÿ€€€€€ÿÿ€ÿMÿ€ÿ€ÿ€€€€€ÿÿÿ`ÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ`ÿ€ÿ€ÿÿÿ`ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ`ÿ€ÿ€ÿÿÿaÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿaÿ€ÿ€ÿÿ€ÿbÿ€ÿ€ÿ‚Á€ÿÿÿaÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿ€ÿdÿ€ÿ€ÿ€ÿÿÿcÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ"€ÿÿÿeÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€ÿÿÿeÿ€ÿ€ÿÿÿfÿ€ÿ€ÿÿ€ÿfÿ€ÿ€ÿ€ÿÿÿfÿ€ÿ€ÿÿ€ÿfÿ€ÿ€ÿ‚ ‰€ÿÿÿfÿ€ÿ€ÿÿ€ÿeÿ€ÿ€ÿ€€ÿÿ€ÿfÿ€ÿ€ÿ€€€€€ÿÿ€ÿeÿ€ÿ€ÿ€€€€€ÿÿ€ÿeÿ€ÿ€ÿ€€€€€ÿÿ€ÿcÿ€ÿ€ÿ€€€€€ÿÿ€ÿaÿ€ÿ€ÿ€€€€€ÿÿÿ`ÿ€ÿ€ÿÿÿgÿ€ÿ€ÿÿ€ÿgÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ&€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿiÿ€ÿ€ÿ€ÿÿÿiÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€€ÿÿ€ÿiÿ€ÿ€ÿ€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€€ÿÿÿ`ÿ€ÿ€ÿÿÿjÿ€ÿ€ÿÿ€ÿjÿ€ÿ€ÿ€ÿÿÿ`ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ`ÿ€ÿ€ÿ€€€€ÿÿ€ÿ`ÿ€ÿ€ÿ€€€€€€ÿÿÿ`ÿ€ÿ€ÿÿ€ÿ`ÿ€ÿ€ÿ€ÿÿ€ÿ`ÿ€ÿ€ÿ€€€€€€€€ÿÿÿÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿÿhÿ2ÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€€€€ÿÿÿhÿ€ÿ€ÿÿÿkÿ€ÿ€ÿÿ€ÿkÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ6€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€€ÿÿÿhÿ€ÿ€ÿÿÿkÿ€ÿ€ÿÿ€ÿkÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿÿmÿ€ÿ€ÿÿ€ÿmÿ€ÿ€ÿ€ÿÿÿlÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€€€€ÿÿÿlÿ€ÿ€ÿÿÿnÿ€ÿ€ÿÿ€ÿnÿ€ÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿY€€ÿÿ€ÿlÿ€ÿ€ÿ€€€€€€ÿÿÿlÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€ÿÿ€ÿlÿ€ÿ€ÿ€€€€€€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€€ÿÿÿhÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€ÿÿ€ÿhÿ€ÿ€ÿ€€€€€ÿÿÿoÿ/ÿ
+ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿoÿ€ÿ€ÿÿÿpÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿpÿ€ÿ€ÿÿÿqÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿqÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿrÿ€ÿ€ÿÿ€ÿsÿ€ÿ€ÿ#€ÿÿÿrÿ€ÿ€ÿÿÿtÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿtÿ€ÿ€ÿÿ€ÿuÿ€ÿ€ÿ#€ÿÿÿtÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ"€ÿÿÿvÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€ÿÿÿvÿ€ÿ€ÿÿÿwÿ€ÿ€ÿÿ€ÿwÿ€ÿ€ÿ€ÿÿÿwÿ€ÿ€ÿÿ€ÿwÿ€ÿ€ÿ3€ÿÿÿwÿ€ÿ€ÿÿ€ÿvÿ€ÿ€ÿ€€ÿÿ€ÿwÿ€ÿ€ÿ€€€€€ÿÿ€ÿvÿ€ÿ€ÿ€€€€€ÿÿ€ÿvÿ€ÿ€ÿ€€€€€ÿÿ€ÿtÿ€ÿ€ÿ€€€€€ÿÿÿrÿ€ÿ€ÿÿ€ÿxÿ€ÿ€ÿ€€ÿÿ€ÿrÿ€ÿ€ÿ€€€€€€ÿÿÿqÿ€ÿ€ÿÿ€ÿyÿ€ÿ€ÿ‚€ÿÿ€ÿqÿ€ÿ€ÿ€€€€€ÿÿÿpÿ€ÿ€ÿÿÿzÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿzÿ€ÿ€ÿÿ€ÿ{ÿ€ÿ€ÿ+€ÿÿÿzÿ€ÿ€ÿÿ€ÿ|ÿ€ÿ€ÿ‚€ÿÿ€ÿzÿ€ÿ€ÿ€€€€€ÿÿÿpÿ€ÿ€ÿÿÿ}ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ}ÿ€ÿ€ÿÿ€ÿ~ÿ€ÿ€ÿ#€ÿÿÿ}ÿ€ÿ€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€ÿÿÿ}ÿ€ÿ€ÿÿÿ‚ €ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ €ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ+€ÿÿ€ÿ‚ €ÿ€ÿ€ÿ€€€€ÿÿ€ÿ}ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿpÿ€ÿ€ÿ€€€€€€ÿÿÿoÿ€ÿ€ÿÿÿ‚ ‚ÿ€ÿ€ÿÿ€ÿ‚ ‚ÿ€ÿ€ÿ€ÿÿÿ‚ ƒÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ƒÿ€ÿ€ÿÿÿ‚ ƒÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ƒÿ€ÿ€ÿÿ€ÿ‚ „ÿ€ÿ€ÿ;€ÿÿÿ‚ ƒÿ€ÿ€ÿÿÿ‚ …ÿ€ÿ€ÿÿ€ÿ‚ …ÿ€ÿ€ÿ€ÿÿÿ‚ †ÿ€ÿ€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€ÿÿÿ‚ †ÿ€ÿ€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ €ÿÿÿ‚ †ÿ€ÿ€ÿÿÿ‚ †ÿ€ÿ€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€ÿÿÿ‚ †ÿ€ÿ€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€ÿÿÿ‚ †ÿ€ÿ€ÿÿÿ‚ ‡ÿ€ÿ€ÿÿ€ÿ‚ ‡ÿ€ÿ€ÿ€ÿÿÿ‚ ‡ÿ€ÿ€ÿÿ€ÿ‚ ‡ÿ€ÿ€ÿ;€ÿÿÿ‚ ‡ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ‚ ±€ÿÿÿ‚ ˆÿ€ÿ€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ˆÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ‡ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ †ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ƒÿ€ÿ€ÿÿÿ‚ ‰ÿ€ÿ€ÿÿ€ÿ‚ ‰ÿ€ÿ€ÿ€ÿÿÿ‚ ƒÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ ƒÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ ƒÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ƒÿ€ÿ€ÿÿ€ÿ‚ ƒÿ€ÿ€ÿ€ÿÿ€ÿ‚ ƒÿ€ÿ€ÿ€€€€€€ÿÿÿoÿ€ÿ€ÿÿÿ‚ Šÿ€ÿ€ÿÿ€ÿ‚ Šÿ€ÿ€ÿ€ÿÿ€ÿ‚ ‹ÿ€ÿ€ÿ‚ ±€€ÿÿ€ÿoÿ€ÿ€ÿ€€€€€€ÿÿÿoÿ€ÿ€ÿÿ€ÿoÿ€ÿ€ÿ€ÿÿ€ÿoÿ€ÿ€ÿ€€€€€€ÿÿÿÿ€ÿ€ÿÿÿ‚ Œÿ"ÿÿÿ€ÿ‚ Œÿ€ÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ^€ÿÿÿ‚ Œÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€ÿÿÿ‚ Œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ\€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ‚á€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ"€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ‘ÿ€ÿ€ÿ‚ Á€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ’ÿ€ÿ€ÿ‚ €ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ “ÿ€ÿ€ÿ‚ ¡€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ”ÿ€ÿ€ÿ‚a€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ •ÿ€ÿ€ÿ‚á€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ –ÿ€ÿ€ÿ‚ ‘€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ —ÿ€ÿ€ÿ#€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ˜ÿ€ÿ€ÿ;€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ™ÿ€ÿ€ÿ3€ÿÿÿ‚ ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ šÿ€ÿ€ÿ+€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ›ÿ€ÿ€ÿ‚ ±€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Œÿ€ÿ€ÿ€€€€€ÿÿÿÿ€ÿ€ÿÿÿ‚ œÿÿÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ‚a€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ Ÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ Ÿÿ€ÿ€ÿÿÿ‚  ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚  ÿ€ÿ€ÿÿÿ‚ ¡ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¡ÿ€ÿ€ÿÿ€ÿ‚ ¢ÿ€ÿ€ÿE€ÿÿ€ÿ‚ ¡ÿ€ÿ€ÿ€€€€ÿÿÿ‚  ÿ€ÿ€ÿÿ€ÿ‚ £ÿ€ÿ€ÿ‚¡€ÿÿ€ÿ‚  ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ÿÿ€ÿ€ÿ€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ Ÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ Ÿÿ€ÿ€ÿÿÿ‚  ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚  ÿ€ÿ€ÿÿÿ‚ ¤ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¤ÿ€ÿ€ÿÿ€ÿ‚ ¥ÿ€ÿ€ÿu€ÿÿ€ÿ‚ ¤ÿ€ÿ€ÿ€€€€ÿÿÿ‚  ÿ€ÿ€ÿÿÿ‚ ¦ÿ€ÿ€ÿÿ€ÿ‚ ¦ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ¦ÿ€ÿ€ÿ€€ÿÿ€ÿ‚  ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ÿÿ€ÿ€ÿ€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ §ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ §ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ©ÿ€ÿ€ÿ€€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ªÿ€ÿ€ÿu€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ §ÿ€ÿ€ÿ€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ «ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚ «ÿ€ÿ€ÿÿ€ÿ‚ ¬ÿ€ÿ€ÿu€ÿÿÿ‚ «ÿ€ÿ€ÿÿÿ‚ ­ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ­ÿ€ÿ€ÿÿ€ÿ‚ ®ÿ€ÿ€ÿu€ÿÿÿ‚ ­ÿ€ÿ€ÿÿ€ÿ‚ ¯ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ­ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ «ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ Ÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ Ÿÿ€ÿ€ÿÿÿ‚  ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚  ÿ€ÿ€ÿÿ€ÿ‚ °ÿ€ÿ€ÿU€ÿÿÿ‚  ÿ€ÿ€ÿÿ€ÿ‚ ±ÿ€ÿ€ÿ‚Á€ÿÿ€ÿ‚  ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ÿÿ€ÿ€ÿ€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ §ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ §ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ²ÿ€ÿ€ÿ€€ÿÿÿ‚ ¨ÿ€ÿ€ÿÿ€ÿ‚ ³ÿ€ÿ€ÿU€ÿÿ€ÿ‚ ¨ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ §ÿ€ÿ€ÿ€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ´ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚ ´ÿ€ÿ€ÿÿ€ÿ‚ µÿ€ÿ€ÿU€ÿÿÿ‚ ´ÿ€ÿ€ÿÿÿ‚ ¶ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¶ÿ€ÿ€ÿÿ€ÿ‚ ·ÿ€ÿ€ÿU€ÿÿÿ‚ ¶ÿ€ÿ€ÿÿ€ÿ‚ ¸ÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ¶ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ´ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ ºÿ€ÿ€ÿÿ€ÿ‚ »ÿ€ÿ€ÿe€ÿÿ€ÿ‚ ºÿ€ÿ€ÿ€€€€ÿÿÿ‚ ¹ÿ€ÿ€ÿÿÿ‚ ¼ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ	€ÿÿÿ‚ ¼ÿ€ÿ€ÿÿÿ‚ ½ÿ€ÿ€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ½ÿ€ÿ€ÿ €€ÿÿÿ‚ ¼ÿ€ÿ€ÿÿÿ‚ ¾ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ¾ÿ€ÿ€ÿÿ€ÿ‚ ¿ÿ€ÿ€ÿe€ÿÿ€ÿ‚ ¾ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ ¼ÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ¹ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ Àÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ Àÿ€ÿ€ÿÿ€ÿ‚ Áÿ€ÿ€ÿe€ÿÿÿ‚ Àÿ€ÿ€ÿÿÿ‚ Âÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€ÿÿ€ÿ‚ Âÿ€ÿ€ÿ€€ÿÿÿ‚ Àÿ€ÿ€ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ €ÿÿÿ‚ Ãÿ€ÿ€ÿÿ€ÿ‚ Äÿ€ÿ€ÿu€ÿÿ€ÿ‚ Ãÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ Àÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ Åÿ€ÿ€ÿÿ€ÿ‚ Åÿ€ÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Èÿ€ÿ€ÿ8€ÿÿÿ‚ Çÿ€ÿ€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Éÿ€ÿ€ÿ‚A€ÿÿÿ‚ Çÿ€ÿ€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Çÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Æÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Ëÿ€ÿ€ÿ4€ÿÿÿ‚ Êÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Ìÿ€ÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Íÿ€ÿ€ÿ‚Á€ÿÿÿ‚ Êÿ€ÿ€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Êÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Æÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€ÿÿÿ‚ Æÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Ïÿ€ÿ€ÿ0€ÿÿÿ‚ Îÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Ğÿ€ÿ€ÿ‚€ÿÿÿ‚ Îÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€ÿÿÿ‚ Îÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ"€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€ÿÿÿ‚ Ñÿ€ÿ€ÿÿÿ‚ Òÿ€ÿ€ÿÿ€ÿ‚ Òÿ€ÿ€ÿ€ÿÿÿ‚ Òÿ€ÿ€ÿÿ€ÿ‚ Òÿ€ÿ€ÿ1€ÿÿÿ‚ Òÿ€ÿ€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Òÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ñÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Îÿ€ÿ€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Îÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Æÿ€ÿ€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Æÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿÿ‚ ÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ œÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€ÿÿ€ÿ‚ œÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Óÿ&ÿÿÿ€ÿ‚ Óÿ€ÿ€ÿ€ÿÿÿ‚ Óÿ€ÿ€ÿÿÿ‚ Ôÿ€ÿ€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€ÿÿÿ‚ Ôÿ€ÿ€ÿÿ€ÿ‚ Õÿ€ÿ€ÿ$€ÿÿÿ‚ Ôÿ€ÿ€ÿÿÿ‚ Ôÿ€ÿ€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€ÿÿÿ‚ Ôÿ€ÿ€ÿÿ€ÿ‚ Öÿ€ÿ€ÿ‚ ¡€ÿÿÿ‚ Ôÿ€ÿ€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Ôÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Óÿ€ÿ€ÿÿÿ‚ Óÿ€ÿ€ÿÿ€ÿ‚ Óÿ€ÿ€ÿ€ÿÿÿ‚ Óÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿ‚ Øÿ€ÿ€ÿ‚q€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ Ùÿ€ÿ€ÿÿ€ÿ‚ Ùÿ€ÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ Ûÿ€ÿ€ÿ4€ÿÿÿ‚ Úÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ Üÿ€ÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ İÿ€ÿ€ÿ‚q€ÿÿÿ‚ Úÿ€ÿ€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Úÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ×ÿ€ÿ€ÿÿÿ‚ Şÿ€ÿ€ÿÿ€ÿ‚ Şÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿ‚ àÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿÿ‚ áÿ€ÿ€ÿÿ€ÿ‚ áÿ€ÿ€ÿ€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€€€€ÿÿÿ‚ ßÿ€ÿ€ÿÿÿ‚ âÿ€ÿ€ÿÿ€ÿ‚ âÿ€ÿ€ÿ€ÿÿÿ‚ ãÿ€ÿ€ÿÿ€ÿ‚ ãÿ€ÿ€ÿ€ÿÿÿ‚ ãÿ€ÿ€ÿÿÿ‚ äÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€ÿÿ€ÿ‚ äÿ€ÿ€ÿ€€ÿÿÿ‚ ãÿ€ÿ€ÿÿ€ÿ‚ ãÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ãÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ßÿ€ÿ€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€ÿÿ€ÿ‚ ßÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ×ÿ€ÿ€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€ÿÿ€ÿ‚ ×ÿ€ÿ€ÿ€€€€€ÿÿÿ‚ Óÿ€ÿ€ÿÿÿ‚ Óÿ€ÿ€ÿÿ€ÿ‚ Óÿ€ÿ€ÿ€ÿÿÿ‚ Óÿ€ÿ€ÿÿÿ‚ åÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ åÿ€ÿ€ÿÿ€ÿ‚ æÿ€ÿ€ÿ‚q€ÿÿÿ‚ åÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ èÿ€ÿ€ÿ(€ÿÿÿ‚ çÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ éÿ€ÿ€ÿ‚ €ÿÿÿ‚ çÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€ÿÿÿ‚ çÿ€ÿ€ÿÿÿ‚ êÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ êÿ€ÿ€ÿÿÿ‚ ëÿ€ÿ€ÿÿ€ÿ‚ ëÿ€ÿ€ÿ€ÿÿ€ÿ‚ ëÿ€ÿ€ÿx€€ÿÿÿ‚ êÿ€ÿ€ÿÿ€ÿ‚ ìÿ€ÿ€ÿ€ÿÿ€ÿ‚ êÿ€ÿ€ÿ€€€€€ÿÿÿ‚ çÿ€ÿ€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ çÿ€ÿ€ÿ€€€€€ÿÿÿ‚ åÿ€ÿ€ÿÿÿ‚ íÿ€ÿ€ÿÿ€ÿ‚ íÿ€ÿ€ÿ€ÿÿÿ‚ íÿ€ÿ€ÿÿÿ‚ îÿ€ÿ€ÿÿ€ÿ‚ îÿ€ÿ€ÿ€ÿÿ€ÿ‚ îÿ€ÿ€ÿ€€ÿÿÿ‚ íÿ€ÿ€ÿÿ€ÿ‚ íÿ€ÿ€ÿ€€ÿÿ€ÿ‚ íÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ åÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ Óÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ ğÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ ğÿ€ÿ€ÿÿ€ÿ‚ ñÿ€ÿ€ÿ‚a€ÿÿÿ‚ ğÿ€ÿ€ÿÿ€ÿ‚ òÿ€ÿ€ÿ‚q€ÿÿ€ÿ‚ ğÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ óÿ€ÿ€ÿÿ€ÿ‚ óÿ€ÿ€ÿ€ÿÿÿ‚ ôÿ€ÿ€ÿÿ€ÿ‚ ôÿ€ÿ€ÿ€ÿÿÿ‚ ôÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿ€ÿ‚ öÿ€ÿ€ÿ4€ÿÿÿ‚ õÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿ€ÿ‚ ÷ÿ€ÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€ÿÿÿ‚ õÿ€ÿ€ÿÿÿ‚ øÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ øÿ€ÿ€ÿÿ€ÿ‚ ùÿ€ÿ€ÿ‚a€ÿÿÿ‚ øÿ€ÿ€ÿÿ€ÿ‚ úÿ€ÿ€ÿ‚q€ÿÿ€ÿ‚ øÿ€ÿ€ÿ€€€€€ÿÿÿ‚ õÿ€ÿ€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ õÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ôÿ€ÿ€ÿÿÿ‚ ôÿ€ÿ€ÿÿ€ÿ‚ ôÿ€ÿ€ÿ€ÿÿÿ‚ ôÿ€ÿ€ÿÿÿ‚ ûÿ€ÿ€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€ÿÿÿ‚ ûÿ€ÿ€ÿÿ€ÿ‚ üÿ€ÿ€ÿ(€ÿÿÿ‚ ûÿ€ÿ€ÿÿÿ‚ ûÿ€ÿ€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€ÿÿÿ‚ ûÿ€ÿ€ÿÿ€ÿ‚ ıÿ€ÿ€ÿ‚ Á€ÿÿÿ‚ ûÿ€ÿ€ÿÿÿ‚ ûÿ€ÿ€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€ÿÿÿ‚ ûÿ€ÿ€ÿÿÿ‚ şÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ şÿ€ÿ€ÿÿÿ‚ ÿÿ€ÿ€ÿÿ€ÿ‚ ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ ÿÿ€ÿ€ÿx€€ÿÿÿ‚ şÿ€ÿ€ÿÿ€ÿ‚ ÿ€ÿ€ÿ€ÿÿ€ÿ‚ şÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ûÿ€ÿ€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ûÿ€ÿ€ÿ€€€€€ÿÿÿ‚ ôÿ€ÿ€ÿÿ€ÿ‚ ôÿ€ÿ€ÿ€€ÿÿ€ÿ‚ ôÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ ôÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ïÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿÿ‚ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€ÿÿ€ÿ‚ÿ€ÿ€ÿ€€€€€€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€€€€€ÿÿÿ‚ ïÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€ÿÿ€ÿ‚ ïÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Óÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Óÿ€ÿ€ÿ€€€€€ÿÿ€ÿ‚ Óÿ€ÿ€ÿ€€€€€€€€€€€ÿÿÿÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€ÿÿ€ÿÿ€ÿ€ÿ€€€€€ÿÿ€ÿÿ€ÿ€ÿ€€€€€€
