@@ -194,9 +194,10 @@ jobs:
           path: player-archive
       - name: Assemble project site
         env:
+          RELEASE_URL: ${{ github.event.release.html_url }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          ./tools/build-pages.sh "player-archive/chia-gaming-${RELEASE_TAG}.tgz" pages
+          ./tools/build-pages.sh "player-archive/chia-gaming-${RELEASE_TAG}.tgz" pages "${RELEASE_URL:?}"
       - name: Configure Pages
         uses: actions/configure-pages@v6
       - name: Upload Pages artifact

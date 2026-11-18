@@ -200,7 +200,9 @@ the archives locally; `tools/stage-production.sh` extracts them for local
 testing, and `tools/run-production.sh` starts local player and hub servers.
 The Pages root serves the project landing page from `project-page/index.html`; the
 production player app is hosted at `player/`. `tools/build-pages.sh <player.tgz>
-<empty-output-directory>` assembles both for the release workflow or a local preview.
+<empty-output-directory> [release-url]` assembles both. The release workflow passes
+the published release URL so the landing page links to the exact build, including
+prereleases. Local previews default to the releases list.
 Neither local staging nor running servers is required for Pages publication.
 
 To test the production build under directories on another machine:
