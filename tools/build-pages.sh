@@ -13,6 +13,6 @@ fi
 mkdir "$OUTPUT/player"
 tar -xzf "$ARCHIVE" -C "$OUTPUT/player"
 rm "$OUTPUT/player/static-server.js"
-cp "$ROOT_DIR/project-page/index.html" "$OUTPUT/index.html"
+cp -R "$ROOT_DIR/project-page/." "$OUTPUT/"
 cp "$ROOT_DIR/front-end/public/favicon.svg" "$OUTPUT/favicon.svg"
 echo "Pages site ready: $OUTPUT (player app at player/)"

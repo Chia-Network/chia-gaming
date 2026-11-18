@@ -72,8 +72,6 @@
         width: 32px;
         height: 32px;
         padding: 3px;
-        background: white;
-        border-radius: 6px;
       }
       nav {
         display: flex;
@@ -160,53 +158,40 @@
         color: var(--muted);
         font-size: 17px;
       }
-      .steps {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 32px;
-      }
-      .step {
-        border-left: 2px solid var(--line);
-        padding-left: 20px;
-      }
-      .number {
-        font-family: ui-monospace, monospace;
-        color: var(--muted);
-        font-size: 13px;
-      }
       h3 {
-        font-size: 21px;
+        font-size: 24px;
         letter-spacing: -0.025em;
-        margin: 14px 0 10px;
-      }
-      .step p {
-        color: var(--muted);
-        line-height: 1.65;
-        margin: 0;
+        margin: 0 0 12px;
       }
       .games {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1px;
-        background: var(--line);
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        overflow: hidden;
+        gap: 24px;
       }
       .game {
-        padding: 28px;
+        display: grid;
+        grid-template-columns: 3fr 2fr;
+        align-items: center;
+        gap: 32px;
+        padding: 24px;
         background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
       }
-      .game .mark {
-        font-size: 30px;
-        line-height: 1;
-        font-family: ui-monospace, monospace;
-        color: var(--fg);
+      .game img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 4px;
       }
       .game p {
         margin: 0;
         color: var(--muted);
         line-height: 1.6;
+      }
+      .caption {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 18px 0 0;
       }
       .build {
         display: flex;
@@ -253,15 +238,12 @@
           padding: 52px 0;
         }
         .section-heading,
-        .steps,
+        .game,
         .games {
           grid-template-columns: 1fr;
         }
         .section-heading {
           gap: 20px;
-        }
-        .steps {
-          gap: 28px;
         }
         .build,
         footer {
@@ -288,8 +270,8 @@
           <div class="eyebrow">Two players. Shared rules. Real stakes.</div>
           <h1><span>Real Gaming.</span><span class="second">No Casino.</span></h1>
           <p class="intro">
-            Play directly with another person. Chia Gaming brings two-player games to Chia state
-            channels, with blockchain-enforced rules and no casino holding the pot.
+            Play directly with another person, for real stakes. The game rules are enforced by code,
+            with no casino holding the pot or deciding who wins.
           </p>
           <div class="actions">
             <a class="button primary" href="player/"
@@ -305,64 +287,81 @@
         </div>
         <section id="how-it-works">
           <div class="section-heading">
-            <h2>The players play.<br />The chain keeps score.</h2>
+            <h2>Game rules you can rely on.</h2>
             <p>
-              Both players fund a shared channel on the Chia blockchain. Moves travel directly
-              between the players through a hub, without waiting for a block every turn. Signed game
-              states let either player take the game on-chain when needed.
+              Each game has rules enforced by the Chia blockchain. Players can’t make an illegal
+              move or claim a payout the rules don’t allow. If an opponent stops cooperating, the
+              game can continue on-chain, with timeouts so they can’t hold it up forever.
             </p>
           </div>
-          <div class="steps">
-            <div class="step">
-              <span class="number">01 / CONNECT</span>
-              <h3>Find your opponent</h3>
-              <p>
-                Connect a wallet, join a hub, and agree on the funds each player will contribute.
-              </p>
-            </div>
-            <div class="step">
-              <span class="number">02 / PLAY</span>
-              <h3>Keep the game moving</h3>
-              <p>
-                Exchange signed moves off-chain. The hub relays messages; it doesn’t hold the
-                players’ funds.
-              </p>
-            </div>
-            <div class="step">
-              <span class="number">03 / SETTLE</span>
-              <h3>Let the rules decide</h3>
-              <p>
-                Close the channel together, or use on-chain rules and timeouts to finish without the
-                other player’s cooperation.
-              </p>
-            </div>
+          <div class="section-heading">
+            <h2>Powered by Chia state channels.</h2>
+            <p>
+              Chia is the blockchain underneath it. State channels let players exchange signed moves
+              without waiting for a block every turn, while keeping the blockchain’s rule
+              enforcement available when needed. The hub helps players find each other and relays
+              messages; it never holds their funds.
+            </p>
           </div>
         </section>
         <section>
           <div class="section-heading">
-            <h2>Three ways to play.</h2>
+            <h2>Multiple games.<br />One player app.</h2>
             <p>
-              The project includes three reference games, built on the same open-source
-              state-channel system.
+              Cards or words, each game runs on the same open-source system for enforcing the rules
+              and settling the outcome.
             </p>
           </div>
           <div class="games">
             <article class="game">
-              <div class="mark" aria-hidden="true">♠ ♣</div>
-              <h3>California Poker</h3>
-              <p>A two-player poker game using commit-and-reveal play.</p>
+              <a href="images/calpoker.png" aria-label="View California Poker screenshot"
+                ><img
+                  src="images/calpoker.png"
+                  width="960"
+                  height="620"
+                  loading="lazy"
+                  alt="California Poker showing two eight-card hands with four cards selected."
+              /></a>
+              <div>
+                <h3>California Poker</h3>
+                <p>
+                  A two-player poker game where both players commit to their choices before
+                  revealing them.
+                </p>
+              </div>
             </article>
             <article class="game">
-              <div class="mark" aria-hidden="true">♦ ♥</div>
-              <h3>Space Poker</h3>
-              <p>Texas Hold’em-style poker for two players.</p>
+              <a href="images/spacepoker.png" aria-label="View Space Poker screenshot"
+                ><img
+                  src="images/spacepoker.png"
+                  width="960"
+                  height="620"
+                  loading="lazy"
+                  alt="Space Poker showing shared cards, a player’s hand, and call, raise, and fold controls."
+              /></a>
+              <div>
+                <h3>Space Poker</h3>
+                <p>Texas Hold’em-style poker for two players.</p>
+              </div>
             </article>
             <article class="game">
-              <div class="mark" aria-hidden="true">[ A B C ]</div>
-              <h3>Krunk</h3>
-              <p>Wordle-style paired games. Take turns choosing and guessing.</p>
+              <a href="images/krunk.png" aria-label="View Krunk screenshot"
+                ><img
+                  src="images/krunk.png"
+                  width="960"
+                  height="620"
+                  loading="lazy"
+                  alt="Krunk showing two word-guessing grids with colored letter clues."
+              /></a>
+              <div>
+                <h3>Krunk</h3>
+                <p>Wordle-style paired games. Take turns choosing and guessing.</p>
+              </div>
             </article>
           </div>
+          <p class="caption">
+            Game interfaces shown with sample hands. Select a screenshot to see it full size.
+          </p>
         </section>
         <section class="build">
           <div>
