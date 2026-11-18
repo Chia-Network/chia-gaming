@@ -285,6 +285,9 @@
   .right-2 {
     right: calc(var(--spacing) * 2);
   }
+  .right-3 {
+    right: calc(var(--spacing) * 3);
+  }
   .right-4 {
     right: calc(var(--spacing) * 4);
   }
@@ -667,6 +670,9 @@
   .resize-none {
     resize: none;
   }
+  .appearance-none {
+    appearance: none;
+  }
   .auto-rows-min {
     grid-auto-rows: min-content;
   }
@@ -1023,11 +1029,17 @@
   .pt-6 {
     padding-top: calc(var(--spacing) * 6);
   }
+  .pr-8 {
+    padding-right: calc(var(--spacing) * 8);
+  }
   .pr-9 {
     padding-right: calc(var(--spacing) * 9);
   }
   .pb-2 {
     padding-bottom: calc(var(--spacing) * 2);
+  }
+  .pl-3 {
+    padding-left: calc(var(--spacing) * 3);
   }
   .text-center {
     text-align: center;
@@ -1532,6 +1544,11 @@
   }
   .disabled\:opacity-50:disabled {
     opacity: 50%;
+  }
+  @media (hover: hover) {
+    .disabled\:hover\:bg-primary-solid:disabled:hover {
+      background-color: var(--primary-solid);
+    }
   }
   .has-data-\[slot\=card-action\]\:grid-cols-\[1fr_auto\]:has([data-slot="card-action"]) {
     grid-template-columns: 1fr auto;

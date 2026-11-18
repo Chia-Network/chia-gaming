@@ -286,6 +286,17 @@ var require_bencodex = __commonJS({
 var DURABLE_APPLICATION_STATE_SCHEMA = "chia-gaming-application-state";
 var DURABLE_APPLICATION_STATE_VERSION = 5n;
 var MAX_DURABLE_REJECTION_TRANSPORTS = 8;
+function isFailedHandshakeCheckpoint(session) {
+  return session?.phase === "live" && session.live.disposition === "outbound-reject" && session.presentation.channelStatus?.state === "Failed";
+}
+function retainRejectionTransport(records, tombstone) {
+  return [
+    ...records.filter(
+      (record) => record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId
+    ),
+    structuredClone(tombstone)
+  ].sort((a, b) => a.createdAt - b.createdAt).slice(-MAX_DURABLE_REJECTION_TRANSPORTS);
+}
 function rejectionTransportKey(peerId, sessionId) {
   return JSON.stringify([peerId, sessionId]);
 }
@@ -2677,12 +2688,7 @@ var StorageRepository = class {
       const next = matchesRejectedSession ? freshSessionState(state) : state;
       return {
         ...next,
-        rejectionTransports: [
-          ...next.rejectionTransports.filter(
-            (record) => record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId
-          ),
-          structuredClone(tombstone)
-        ].sort((a, b) => a.createdAt - b.createdAt).slice(-MAX_DURABLE_REJECTION_TRANSPORTS)
+        rejectionTransports: retainRejectionTransport(next.rejectionTransports, tombstone)
       };
     });
     return this.write(snapshot);
@@ -2723,7 +2729,7 @@ var StorageRepository = class {
     return deletePromise;
   }
   async hardReset() {
-    const { hardResetStorage: hardResetStorage2, hardResetUnclaimedStorage: hardResetUnclaimedStorage2 } = await import("./saveHardReset-4K5E2WS4.js");
+    const { hardResetStorage: hardResetStorage2, hardResetUnclaimedStorage: hardResetUnclaimedStorage2 } = await import("./saveHardReset-3265ZKOE.js");
     if (!this.hasAuthority()) {
       this.root = newApplicationState();
       this.activeRuntime = null;
@@ -6207,6 +6213,8 @@ export {
   diagNote,
   diagStack,
   MAX_DURABLE_REJECTION_TRANSPORTS,
+  isFailedHandshakeCheckpoint,
+  retainRejectionTransport,
   rejectionTransportKey,
   PRODUCTION_PACKAGE_KEYS,
   PRESET_FILES,

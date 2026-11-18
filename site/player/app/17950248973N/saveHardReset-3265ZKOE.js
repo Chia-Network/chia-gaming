@@ -4,7 +4,7 @@ import {
   hardResetUnclaimedStorage,
   reloadAfterSuccessfulHardReset,
   startPendingWalletConnectWipe
-} from "./chunk-PAIZEEOB.js";
+} from "./chunk-5ONENT3C.js";
 import "./chunk-3D4PUFI5.js";
 import "./chunk-RA4YWXGF.js";
 import "./chunk-2727RITZ.js";

@@ -63,6 +63,7 @@ import {
   isChannelAbandonable,
   isElectronDistribution,
   isErrorSettlementOutcome,
+  isFailedHandshakeCheckpoint,
   isFeeAttachmentCancellation,
   isLeaseConflict,
   isPreCommitmentChannelStatus,
@@ -102,6 +103,7 @@ import {
   restoreRegisteredGameHand,
   restoreRegisteredGameHandState,
   restoredFundingForSink,
+  retainRejectionTransport,
   runFundingCancellation,
   selectComposeGame,
   selectDashboardCoins,
@@ -131,7 +133,7 @@ import {
   walletProviderRegistry,
   walletRecoveryNotice,
   walletSessionKey
-} from "./chunk-PAIZEEOB.js";
+} from "./chunk-5ONENT3C.js";
 import "./chunk-3D4PUFI5.js";
 import "./chunk-RA4YWXGF.js";
 import "./chunk-2727RITZ.js";
@@ -24824,9 +24826,9 @@ var require_with_selector_development = __commonJS({
         return x7 === y6 && (0 !== x7 || 1 / x7 === 1 / y6) || x7 !== x7 && y6 !== y6;
       }
       "undefined" !== typeof __REACT_DEVTOOLS_GLOBAL_HOOK__ && "function" === typeof __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart && __REACT_DEVTOOLS_GLOBAL_HOOK__.registerInternalModuleStart(Error());
-      var React105 = require_react(), shim = require_shim(), objectIs = "function" === typeof Object.is ? Object.is : is, useSyncExternalStore4 = shim.useSyncExternalStore, useRef48 = React105.useRef, useEffect37 = React105.useEffect, useMemo31 = React105.useMemo, useDebugValue2 = React105.useDebugValue;
+      var React105 = require_react(), shim = require_shim(), objectIs = "function" === typeof Object.is ? Object.is : is, useSyncExternalStore4 = shim.useSyncExternalStore, useRef49 = React105.useRef, useEffect37 = React105.useEffect, useMemo31 = React105.useMemo, useDebugValue2 = React105.useDebugValue;
       exports.useSyncExternalStoreWithSelector = function(subscribe4, getSnapshot, getServerSnapshot, selector, isEqual3) {
-        var instRef = useRef48(null);
+        var instRef = useRef49(null);
         if (null === instRef.current) {
           var inst = { hasValue: false, value: null };
           instRef.current = inst;
@@ -33786,6 +33788,7 @@ var CloudBlockchainInterface = class {
   fundingMode = "offer-settlement";
   blockchainAddressData = { puzzleHash: "" };
   depositAddress = null;
+  walletName = null;
   auth = null;
   authEpoch = 0;
   walletOfferProvider = null;
@@ -33945,10 +33948,20 @@ var CloudBlockchainInterface = class {
   async startMonitoring(beforeReady = () => {
   }) {
     const walletId = this.requireWalletId();
+    const wallet = await this.readWallet(walletId);
+    beforeReady();
+    this.applyWallet(wallet);
+    this.monitoringReady = true;
+    this.fireConnectionChange(true);
+    log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${wallet.puzzleHash}`);
+  }
+  /** Reads a wallet through the grant without changing any state. */
+  async readWallet(walletId) {
     const data = await this.gql(
       `query($id: ID!) {
         wallet(id: $id) {
           id
+          name
           address { puzzleHash address }
         }
       }`,
@@ -33961,12 +33974,16 @@ var CloudBlockchainInterface = class {
     if (!ph || ph.length !== 64) {
       throw new Error(`Cloud Wallet wallet has no address puzzle hash (walletId=${walletId})`);
     }
-    beforeReady();
-    this.blockchainAddressData = { puzzleHash: ph };
-    this.depositAddress = data.wallet.address?.address || null;
-    this.monitoringReady = true;
-    this.fireConnectionChange(true);
-    log(`[cloud-blockchain] monitoring ready wallet=${walletId} ph=${ph}`);
+    return {
+      puzzleHash: ph,
+      name: data.wallet.name || null,
+      address: data.wallet.address?.address || null
+    };
+  }
+  applyWallet(wallet) {
+    this.blockchainAddressData = { puzzleHash: wallet.puzzleHash };
+    this.depositAddress = wallet.address;
+    this.walletName = wallet.name;
   }
   // spendableAmount excludes coins locked in pending offers and clawback
   // payouts that have not matured, so a purchase still settling is not
@@ -33992,6 +34009,37 @@ var CloudBlockchainInterface = class {
       buyUrl: sellsXch && walletId ? `${getCloudWalletUiUrl()}/buy-xch?walletId=${encodeURIComponent(walletId)}` : null,
       depositAddress: this.depositAddress
     };
+  }
+  // A grant can cover several wallets; this names the one the game funds from.
+  getWalletIdentity() {
+    const walletId = this.auth?.walletId;
+    if (!this.monitoringReady || !walletId) return null;
+    return { id: walletId, name: this.walletName, address: this.depositAddress };
+  }
+  async listWallets() {
+    const data = await this.gql(`query { oauthConsentedWallets { id name address { address } } }`);
+    return (data.oauthConsentedWallets ?? []).map((wallet) => ({
+      id: wallet.id,
+      name: wallet.name || null,
+      address: wallet.address?.address || null
+    }));
+  }
+  // The new wallet is read through the grant first, so one outside it fails
+  // before anything changes. Its id, address, and name then switch together,
+  // with no await between them for a render to see a mix of two wallets.
+  async selectWallet(walletId, isCurrent = () => true) {
+    if (!this.auth) {
+      throw new Error("Cloud Wallet is not signed in");
+    }
+    const generation = this.authEpoch;
+    const wallet = await this.readWallet(walletId);
+    if (generation !== this.authEpoch || !this.auth) {
+      throw new Error("Cloud Wallet was disconnected while switching wallets");
+    }
+    if (!isCurrent()) return;
+    this.persistAuth({ ...this.auth, walletId });
+    this.applyWallet(wallet);
+    log(`[cloud-blockchain] switched wallet=${walletId} ph=${wallet.puzzleHash}`);
   }
   async selectCoins(_uniqueId, amount) {
     log(`[cloud-blockchain] selectCoins ignored amount=${amount}; createOffer selects its inputs`);
@@ -34594,6 +34642,7 @@ var CloudBlockchainInterface = class {
     this.monitoringReady = false;
     this.blockchainAddressData = { puzzleHash: "" };
     this.depositAddress = null;
+    this.walletName = null;
     this.fireConnectionChange(false);
   }
   isConnected() {
@@ -46100,6 +46149,7 @@ function WalletTopUp(props) {
   const depositAddress = options?.depositAddress ?? null;
   const buyUrl = options?.buyUrl ?? null;
   const [buyResult, setBuyResult] = (0, import_react37.useState)(null);
+  const buyRequest = (0, import_react37.useRef)(0);
   const buyState = buyResult && buyResult.url === buyUrl ? buyResult.state : "idle";
   (0, import_react37.useEffect)(() => {
     if (!buyUrl) return;
@@ -46134,14 +46184,16 @@ function WalletTopUp(props) {
     };
   }, [showDeposit, depositAddress]);
   const openBuy = async (url) => {
+    const request2 = ++buyRequest.current;
     const desktop = desktopCloudWalletBridge();
     if (desktop) {
       try {
         const opened2 = await desktop.openInBrowser(url);
-        setBuyResult({ state: opened2 ? "in-browser" : "browser-failed", url });
+        if (request2 === buyRequest.current)
+          setBuyResult({ state: opened2 ? "in-browser" : "browser-failed", url });
       } catch (err) {
         console.error("[WalletTopUp] opening the browser failed", err);
-        setBuyResult({ state: "browser-failed", url });
+        if (request2 === buyRequest.current) setBuyResult({ state: "browser-failed", url });
       }
       return;
     }
@@ -56384,6 +56436,10 @@ function SessionBuyIn({
     " blocks"
   ] });
 }
+function walletLabel(wallet) {
+  const name2 = wallet.name ?? "Wallet";
+  return wallet.address ? `${name2} (${wallet.address.slice(0, 8)}\u2026${wallet.address.slice(-4)})` : name2;
+}
 var TAB_DEFS = [
   { id: "wallet", label: "Wallet" },
   { id: "hub", label: "Hub" },
@@ -56619,7 +56675,9 @@ var Shell = ({ application }) => {
     coins,
     pendingAdvisory,
     consentShortfall,
+    checkingFunds,
     topUpOptions,
+    walletSwitchAllowed,
     blockchainReady,
     pendingProposal,
     activeTab,
@@ -56649,8 +56707,21 @@ var Shell = ({ application }) => {
     connecting,
     preparingConnection,
     error: connectError,
-    balance
+    balance,
+    balanceError,
+    walletIdentity,
+    grantedWallets,
+    switchingWallet,
+    switchWalletError
   } = walletView;
+  const balanceStatus = walletConnected && balance === void 0 ? /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
+    "p",
+    {
+      className: balanceError ? "text-sm text-alert-text mb-4" : "text-sm text-canvas-text mb-4",
+      role: "status",
+      children: balanceError ? `Unable to load wallet balance: ${balanceError}. Check your wallet connection; retrying automatically.` : "Checking wallet balance\u2026"
+    }
+  ) : null;
   const awaitingTopUp = consentShortfall > 0n;
   const [showTransactionPublishControl, setShowTransactionPublishControl] = (0, import_react41.useState)(false);
   (0, import_react41.useEffect)(() => {
@@ -56959,15 +57030,16 @@ var Shell = ({ application }) => {
         }
       )
     ] }),
+    balanceStatus,
     awaitingTopUp && /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("div", { className: "mb-4", children: /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(WalletTopUp, { options: topUpOptions, shortfall: consentShortfall }) }),
     /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("div", { className: "flex gap-3 justify-center", children: [
       /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
         "button",
         {
           onClick: () => dispatch({ type: "accept-session" }),
-          disabled: !walletConnected || !blockchainReady || awaitingTopUp,
-          className: "px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors",
-          children: "Accept"
+          disabled: !walletConnected || !blockchainReady || balance === void 0 || awaitingTopUp || switchingWallet || checkingFunds,
+          className: "px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-default disabled:hover:bg-primary-solid",
+          children: checkingFunds ? "Checking funds\u2026" : "Accept"
         }
       ),
       /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
@@ -56994,15 +57066,16 @@ var Shell = ({ application }) => {
         }
       )
     ] }),
+    balanceStatus,
     awaitingTopUp && /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("div", { className: "mb-4", children: /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(WalletTopUp, { options: topUpOptions, shortfall: consentShortfall }) }),
     /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("div", { className: "flex gap-3 justify-center", children: [
       /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
         "button",
         {
           onClick: () => dispatch({ type: "accept-session" }),
-          disabled: !walletConnected || !blockchainReady || awaitingTopUp,
-          className: "px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors",
-          children: "Accept"
+          disabled: !walletConnected || !blockchainReady || balance === void 0 || awaitingTopUp || switchingWallet || checkingFunds,
+          className: "px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-default disabled:hover:bg-primary-solid",
+          children: checkingFunds ? "Checking funds\u2026" : "Accept"
         }
       ),
       /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
@@ -57203,6 +57276,42 @@ var Shell = ({ application }) => {
                           /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("span", { className: "inline-block w-3 h-3 rounded-full bg-success-solid" }),
                           /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("span", { className: "text-lg font-semibold text-canvas-text-contrast", children: "Connected" })
                         ] }),
+                        walletIdentity && grantedWallets.length > 1 ? /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("label", { className: "flex flex-col gap-1 w-full max-w-xs text-sm text-canvas-text", children: [
+                          /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("span", { children: "Play with" }),
+                          /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("div", { className: "relative", children: [
+                            /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
+                              "select",
+                              {
+                                value: walletIdentity.id,
+                                disabled: !walletSwitchAllowed,
+                                onChange: (event) => dispatch({ type: "wallet-switch", walletId: event.target.value }),
+                                className: "w-full appearance-none pl-3 pr-8 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border outline-none disabled:opacity-50 disabled:cursor-not-allowed",
+                                children: grantedWallets.map((wallet) => /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("option", { value: wallet.id, children: walletLabel(wallet) }, wallet.id))
+                              }
+                            ),
+                            /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
+                              "span",
+                              {
+                                "aria-hidden": "true",
+                                className: "pointer-events-none absolute inset-y-0 right-3 flex items-center text-canvas-text",
+                                children: "\u25BE"
+                              }
+                            )
+                          ] }),
+                          !walletSwitchAllowed && /* @__PURE__ */ (0, import_jsx_runtime58.jsx)("span", { className: "text-xs", children: switchingWallet ? "Switching wallets\u2026" : "Finish the session to switch wallets." }),
+                          switchWalletError && /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("span", { className: "text-xs text-alert-text break-words", children: [
+                            "Could not switch wallets: ",
+                            switchWalletError
+                          ] })
+                        ] }) : walletIdentity && /* @__PURE__ */ (0, import_jsx_runtime58.jsx)(
+                          "p",
+                          {
+                            className: "text-sm text-canvas-text",
+                            title: walletIdentity.address ?? void 0,
+                            children: walletLabel(walletIdentity)
+                          }
+                        ),
+                        balanceStatus,
                         balance !== void 0 && /* @__PURE__ */ (0, import_jsx_runtime58.jsxs)("p", { className: "text-2xl font-bold text-canvas-text-contrast", children: [
                           balance.toLocaleString(),
                           " ",
@@ -57742,6 +57851,15 @@ var Shell = ({ application }) => {
   ] });
 };
 var Shell_default = Shell;
+
+// src/util/walletSwitch.ts
+function canSwitchWallet(state) {
+  const phase = state.durableSession?.phase;
+  if (state.busy || state.acceptInFlight || phase === "live" || phase === "pre-handshake") {
+    return false;
+  }
+  return state.sessionPhase === "resolved" || state.sessionPhase === "none" && !state.hasPairingToken;
+}
 
 // src/services/HubConnection.ts
 var import_chia_gaming_bencodex = __toESM(require_bencodex(), 1);
@@ -58296,6 +58414,9 @@ var ReliablePeerTransport = class {
           case "message":
             this.consumer.deliver(event.msgno, Uint8Array.from(event.body));
             break;
+          case "peer-unavailable":
+            this.consumer?.peerUnavailable?.();
+            break;
           case "rejection-acknowledged":
             this.consumer?.rejectionAcknowledged?.();
             break;
@@ -58514,7 +58635,7 @@ function decodePeerAppMessage(payload) {
         network: optionalText(decoded, "network")
       };
     case "session_reject":
-      return { type };
+      return (0, import_chia_gaming_bencodex2.getText)(decoded, "phase") === "handshake" ? { type, phase: "handshake" } : { type };
     default:
       return null;
   }
@@ -63054,6 +63175,21 @@ function reduceSessionMachine(state, event, activeHand) {
 }
 
 // src/lib/session/sessionMachinePersist.ts
+function terminalRejections(root2) {
+  const session = root2.session;
+  if (session?.phase !== "live" || session.live.disposition !== "outbound-reject" || !session.live.unackedMessages.length || !session.pairing.peerId)
+    return root2.rejectionTransports;
+  const { messageNumber, remoteNumber, unackedMessages } = session.live;
+  return retainRejectionTransport(root2.rejectionTransports, {
+    kind: "outbound-reject",
+    peerId: session.pairing.peerId,
+    sessionId: session.pairing.gameSessionId,
+    messageNumber,
+    remoteNumber,
+    unackedMessages,
+    createdAt: Date.now()
+  });
+}
 function buildDurableApplicationState(root2, capture) {
   if (capture.kind === "terminal") {
     const walletProviderScope2 = capture.walletProviderScope;
@@ -63070,6 +63206,7 @@ function buildDurableApplicationState(root2, capture) {
     });
     return {
       ...root2,
+      rejectionTransports: terminalRejections(root2),
       walletContext: structuredClone(walletProviderScope2),
       session: {
         phase: "terminal",
@@ -63345,6 +63482,7 @@ var SessionController = class {
       deliver: () => {
         throw new Error("accepted session leaked a peer message to TypeScript");
       },
+      peerUnavailable: peer_conn.onPeerUnavailable,
       channelResult: (result) => this.processResult(result),
       error: (reason) => {
         this.receiveEvent({ type: "error", error: reason });
@@ -64031,10 +64169,7 @@ var SessionController = class {
       }
     }
     this.drainAndSubmitTransactions();
-    if (terminal) {
-      this.flushDeferredWork();
-      return;
-    }
+    if (terminal) this.flushDeferredWork();
     if (this.eventQueue.length > 0 || this.reliableTransport.hasPendingDurability())
       this.requestCommit();
   }
@@ -65514,7 +65649,7 @@ async function restoreSession(sc, bootstrap, wasmConnection) {
   cradle.restore_channel(cradleBytes);
   sc.iStarted = requireBoolean(session.pairing.iStarted, "iStarted");
   sc.pairingToken = requireString(session.pairing.token, "pairingToken");
-  if (session.live.disposition !== "active") {
+  if (session.live.disposition !== "active" && !isFailedHandshakeCheckpoint(session)) {
     throw new Error("restoreSession: live reliable transport is not active");
   }
   sc.wasmNotificationHistory = recentEntries(
@@ -65997,6 +66132,7 @@ var BlockchainPoller = class {
   previousPeakForCoinReport = 0n;
   registrationScopeKey;
   balanceCallbacks = null;
+  balanceInterestGeneration = 0;
   balancePollIntervalMs = BALANCE_POLL_INTERVAL_MS;
   readLane;
   mutationLane;
@@ -66333,6 +66469,7 @@ var BlockchainPoller = class {
     }
   }
   stopBalanceInterest() {
+    this.balanceInterestGeneration++;
     this.balancePollingScheduler.stop();
     this.balanceCallbacks = null;
     this.releaseConnectionListenerIfIdle();
@@ -66534,6 +66671,7 @@ var BlockchainPoller = class {
   }
   async runBalancePoll() {
     const connectionEpoch = this.connectionEpoch;
+    const interestGeneration = this.balanceInterestGeneration;
     if (!this.balanceCallbacks || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const balance = await this.runAdapterRpc(
@@ -66541,11 +66679,12 @@ var BlockchainPoller = class {
         "getBalance",
         () => this.adapter.getBalance()
       );
-      if (this.isConnectionEpochActive(connectionEpoch) && this.balancePollingScheduler.isInterested()) {
+      if (this.isConnectionEpochActive(connectionEpoch) && interestGeneration === this.balanceInterestGeneration && this.balancePollingScheduler.isInterested()) {
         this.balanceCallbacks?.onBalance(balance);
       }
     } catch (e2) {
-      if (!this.isConnectionEpochActive(connectionEpoch)) return;
+      if (!this.isConnectionEpochActive(connectionEpoch) || interestGeneration !== this.balanceInterestGeneration)
+        return;
       this.balanceCallbacks?.onError?.(e2);
     }
   }
@@ -86601,7 +86740,7 @@ function collectErrorText(err) {
   };
   visit(err);
   for (const part of [...parts]) {
-    const match = part.match(/\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/);
+    const match = part.match(WC_ENCODED_ERROR);
     if (!match || typeof atob !== "function") continue;
     try {
       parts.push(atob(match[1]));
@@ -86614,6 +86753,50 @@ function collectErrorText(err) {
       (other, otherIdx) => otherIdx !== idx && other.length > part.length && other.includes(part)
     )
   ).join(" ");
+}
+var WC_USER_REJECTED = 5e3;
+var WC_ENCODED_ERROR = /\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/;
+function walletRpcError(err) {
+  const cause = err instanceof Error ? err.cause : err;
+  return typeof cause === "object" && cause !== null ? cause : null;
+}
+function walletUserRejection(err) {
+  if (Number(walletRpcError(err)?.code) !== WC_USER_REJECTED) return null;
+  return walletRpcMessage(err) ?? "Request rejected in the wallet";
+}
+function walletRpcMessage(err) {
+  const message = walletRpcError(err)?.message;
+  if (typeof message !== "string" || !message || WC_ENCODED_ERROR.test(message)) return null;
+  return message;
+}
+async function describeOfferShortfall(needed) {
+  if (needed <= 0n) return null;
+  let balance;
+  try {
+    balance = await rpc.getWalletBalance({ walletId: 1n });
+  } catch (e2) {
+    log(`[wc-blockchain] balance read for funding diagnosis failed: ${collectErrorText(e2)}`);
+    return null;
+  }
+  const confirmed = balance?.confirmedWalletBalance;
+  const spendable = balance?.spendableBalance;
+  const maxSend = balance?.maxSendAmount;
+  const { mojos } = getCurrencyLabels();
+  if (typeof confirmed === "bigint" && confirmed < needed) {
+    return `Not enough funds in the wallet: ${needed} ${mojos} needed, ${confirmed} available.`;
+  }
+  if (typeof spendable === "bigint" && spendable < needed) {
+    return `Wallet funds are held by a pending transaction or an open offer: ${needed} ${mojos} needed, ${spendable} spendable right now. Try again once the transaction confirms or the offer is cancelled.`;
+  }
+  if (typeof maxSend === "bigint" && maxSend < needed) {
+    return `Wallet funds are split across too many small coins to spend ${needed} ${mojos} at once. Combine coins in the wallet and try again.`;
+  }
+  return null;
+}
+async function offerFailureReason(err, needed, detail) {
+  const rejection = walletUserRejection(err);
+  if (rejection) return rejection;
+  return await describeOfferShortfall(needed) ?? walletRpcMessage(err) ?? detail;
 }
 function boundedCancellationError(value) {
   const detail = collectErrorText(value) || "wallet returned success=false without details";
@@ -86949,8 +87132,11 @@ var RealBlockchainInterface = class _RealBlockchainInterface {
       if (e2 instanceof WalletConnectTransportError) {
         return { kind: "unavailable", reason: text };
       }
-      return { kind: "failure", reason: text };
+      return { kind: "failure", reason: await offerFailureReason(e2, fee, text) };
     }
+  }
+  spendShortfall(amount) {
+    return describeOfferShortfall(amount);
   }
   async getBalance() {
     const result = await rpc.getWalletBalance({ walletId: 1n });
@@ -87141,7 +87327,9 @@ var RealBlockchainInterface = class _RealBlockchainInterface {
       if (e2 instanceof WalletConnectRequestNotStartedError) {
         return { kind: "unavailable", mutation: "not-started", reason };
       }
-      return e2 instanceof WalletConnectTransportError ? { kind: "unavailable", reason } : { kind: "failure", reason };
+      if (e2 instanceof WalletConnectTransportError) return { kind: "unavailable", reason };
+      const offered = offer["1"] ?? 0n;
+      return { kind: "failure", reason: await offerFailureReason(e2, -offered, reason) };
     }
   }
   async beginWalletOfferCancellation(tradeId) {
@@ -87891,6 +88079,10 @@ var WalletConnection = class {
   }
   emit;
   view = {
+    walletIdentity: null,
+    grantedWallets: [],
+    switchingWallet: false,
+    switchWalletError: null,
     recoveryNotice: this.readRecoveryNotice(),
     walletType: storageRepository.query("blockchainType"),
     connected: false,
@@ -87901,7 +88093,8 @@ var WalletConnection = class {
     setup: null,
     showSetup: false,
     error: null,
-    balance: void 0
+    balance: void 0,
+    balanceError: null
   };
   provider = null;
   setup = null;
@@ -87938,7 +88131,7 @@ var WalletConnection = class {
     if (active) this.poller?.start();
     else this.poller?.pauseChainPolling();
   }
-  setAwaitingTopUp(active) {
+  setFundingBalancePolling(active) {
     this.poller?.setBalanceInterval(
       active ? TOP_UP_BALANCE_POLL_INTERVAL_MS : BALANCE_POLL_INTERVAL_MS
     );
@@ -87951,6 +88144,10 @@ var WalletConnection = class {
   }
   ready() {
     return this.poller?.rpc.isReadyForPlay() ?? false;
+  }
+  /** Why the wallet cannot spend `amount` right now, or null when it can or cannot tell. */
+  async spendShortfall(amount) {
+    return await this.provider?.spendShortfall?.(amount) ?? null;
   }
   update(change) {
     this.view = { ...this.view, ...change };
@@ -87982,18 +88179,26 @@ var WalletConnection = class {
     this.setup = null;
     this.update({
       hasProvider: true,
+      walletIdentity: provider.getWalletIdentity?.() ?? null,
+      grantedWallets: [],
+      balance: void 0,
+      balanceError: null,
       connected: true,
       recovering: false,
       connecting: false,
       preparingConnection: false,
       setup: null
     });
+    void this.loadGrantedWallets(provider);
     this.emit({ type: "connected" });
     this.watchBalance();
     this.detachConnection = provider.onConnectionChange((connected, recovering = false) => {
       this.update({ connected, recovering });
       this.emit({ type: "connection", connected, recovering });
-      if (connected) this.watchBalance();
+      if (connected) {
+        this.watchBalance();
+        void this.loadGrantedWallets(provider);
+      }
     });
     this.detachReadiness = this.poller.rpc.onPlayReadinessChange(
       (ready) => this.emit({ type: "readiness", ready })
@@ -88001,16 +88206,63 @@ var WalletConnection = class {
     this.emit({ type: "readiness", ready: this.ready() });
     log(`${type} wallet connected`);
   }
+  async loadGrantedWallets(provider) {
+    if (!provider.listWallets) return;
+    const attempt = this.connectionAttempt;
+    try {
+      const grantedWallets = await provider.listWallets();
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ grantedWallets, walletIdentity: provider.getWalletIdentity?.() ?? null });
+    } catch (error2) {
+      console.error("[wallet] listing granted wallets failed", error2);
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ grantedWallets: [] });
+    }
+  }
+  async selectWallet(walletId) {
+    const provider = this.provider;
+    if (!provider?.selectWallet || this.view.connecting || this.view.switchingWallet) return;
+    const attempt = this.connectionAttempt;
+    this.poller?.stopBalanceInterest();
+    this.update({
+      switchingWallet: true,
+      switchWalletError: null,
+      balance: void 0,
+      balanceError: null
+    });
+    try {
+      await provider.selectWallet(walletId, () => attempt === this.connectionAttempt);
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ walletIdentity: provider.getWalletIdentity?.() ?? null });
+    } catch (error2) {
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ switchWalletError: error2 instanceof Error ? error2.message : String(error2) });
+    } finally {
+      if (attempt === this.connectionAttempt && this.provider === provider) {
+        this.watchBalance();
+        this.update({ switchingWallet: false });
+      }
+    }
+  }
   watchBalance() {
     this.poller?.stopBalanceInterest();
     this.poller?.startBalanceInterest(BALANCE_POLL_INTERVAL_MS, {
-      onBalance: (balance) => this.update({ balance }),
-      onError: () => {
-      }
+      onBalance: (balance) => this.update({ balance, balanceError: null }),
+      onError: (error2) => this.update({
+        balance: void 0,
+        balanceError: error2 instanceof Error ? error2.message : String(error2)
+      })
     });
+    this.update({ balance: void 0, balanceError: null });
+  }
+  beginConnectionAttempt() {
+    const attempt = ++this.connectionAttempt;
+    if (this.view.switchingWallet) this.watchBalance();
+    this.update({ switchingWallet: false, switchWalletError: null });
+    return attempt;
   }
   async connect(type, silent = false, fresh = false) {
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     if (!silent) this.update({ error: null });
     const { provider, interval } = providerFor(type);
     try {
@@ -88066,7 +88318,7 @@ var WalletConnection = class {
     const type = this.view.walletType;
     if (!this.setup || !type) return false;
     const { provider, interval } = providerFor(type);
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     this.update({ error: null, connecting: true });
     try {
       await this.setup.finalize(values, () => {
@@ -88087,7 +88339,7 @@ var WalletConnection = class {
     return false;
   }
   async resume(type) {
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     const { provider, interval } = providerFor(type);
     this.provider = provider;
     this.update({
@@ -88149,7 +88401,8 @@ var WalletConnection = class {
       connecting: false,
       preparingConnection: false,
       showSetup: false,
-      balance: void 0
+      balance: void 0,
+      balanceError: null
     });
     try {
       await provider?.disconnect();
@@ -88171,7 +88424,16 @@ var WalletConnection = class {
     this.detachReadiness = null;
     this.stopPoller();
     this.provider = null;
-    this.update({ hasProvider: false, recovering: false });
+    this.update({
+      hasProvider: false,
+      recovering: false,
+      walletIdentity: null,
+      grantedWallets: [],
+      balance: void 0,
+      balanceError: null,
+      switchingWallet: false,
+      switchWalletError: null
+    });
   }
   leavePage() {
     if (this.view.walletType === "simulator") void this.provider?.disconnect().catch(() => {
@@ -88779,6 +89041,7 @@ function createApplication() {
     walletView: walletOwner.view,
     terminalFinalizationBlocker: null,
     blockchainReady: false,
+    checkingFunds: false,
     hubLiveness: null,
     peerLiveness: null,
     confirmDialog: null,
@@ -88845,7 +89108,9 @@ function createApplication() {
     try {
       do {
         dirty = false;
-        walletOwner.setAwaitingTopUp(consentShortfall() > 0n);
+        walletOwner.setFundingBalancePolling(
+          consentShortfall() > 0n || (sessions.state.pendingAdvisory !== null || sessions.state.pendingProposal !== null) && walletOwner.view.balance === void 0
+        );
         updateAbandonTimer();
         updateRecovery();
         if (shouldMountGameSession(
@@ -88895,7 +89160,6 @@ function createApplication() {
   };
   let peerSession = null;
   let sessionBootstrap = void 0;
-  let bootRejectionDescriptors = [];
   let inboundSessionRejectHandler = () => {
   };
   const {
@@ -88959,6 +89223,10 @@ function createApplication() {
     get reliableTransport() {
       return peerSession?.reliableTransport;
     },
+    onPeerUnavailable: () => {
+      peerSession?.markDegraded();
+      syncPeerLiveness();
+    },
     persistInboundSessionReject: (sessionId, remoteNumber) => {
       const peer = peerSession;
       if (!peer || peer.sessionId !== sessionId) {
@@ -89012,7 +89280,6 @@ function createApplication() {
       onSessionId: (value) => update2("sessionId", value),
       onRestore: async (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
-        bootRejectionDescriptors = bootstrap.state.rejectionTransports;
         const resumeTab = save.session !== null ? "game" : null;
         if (resumeTab) setActiveTab(resumeTab);
         const hasLiveSession = save.session?.phase === "live" || save.session?.phase === "pre-handshake";
@@ -89034,8 +89301,6 @@ function createApplication() {
         };
       },
       onFreshClaim: (save, source) => {
-        const bootstrap = rehydrateDurableApplicationState(save);
-        bootRejectionDescriptors = bootstrap.state.rejectionTransports;
         if (source !== "takeover") return;
         const bcType = save?.preferences.blockchainType ?? storageRepository.query("blockchainType");
         if (bcType) void handleConnect(bcType, true);
@@ -89411,6 +89676,28 @@ function createApplication() {
       }
     });
   };
+  const acceptWhenFundable = async (myAmount, stillPending, accept2) => {
+    if (state.checkingFunds) return;
+    let shortfall = null;
+    update2("checkingFunds", true);
+    try {
+      shortfall = await walletOwner.spendShortfall(parseSessionAmount(myAmount) + state.defaultFee);
+    } catch (error2) {
+      log(
+        `[Shell] funding check failed: ${error2 instanceof Error ? error2.message : String(error2)}`
+      );
+    } finally {
+      update2("checkingFunds", false);
+    }
+    if (!stillPending()) return;
+    if (shortfall === null) return batch(accept2);
+    update2("confirmDialog", {
+      title: "Wallet cannot fund this session",
+      body: shortfall,
+      confirmLabel: "OK",
+      onConfirm: () => update2("confirmDialog", null)
+    });
+  };
   const declinePendingAdvisory = (advisory) => {
     setPendingAdvisoryState(null);
     sendSessionReject(advisory.peer_id);
@@ -89755,7 +90042,7 @@ function createApplication() {
                     disposition: save.session.live.disposition
                   } : save?.session?.phase === "pre-handshake" ? structuredClone(save.session.transport) : void 0)
                 );
-                if (peerSession.reliableState.disposition === "outbound-reject") {
+                if (peerSession.reliableState.disposition === "outbound-reject" && !isFailedHandshakeCheckpoint(save?.session ?? null)) {
                   bindOutboundRejectRetirement(peerSession);
                 }
                 conn.setBusy(restoreBusy);
@@ -89830,9 +90117,11 @@ function createApplication() {
     hubConn = conn;
     storageRepository.updatePreference({ key: "lastHubUrl", value: origin });
     peerSession?.attachCarrier(conn);
-    void restoreRejections(conn, bootRejectionDescriptors).catch((error2) => {
-      console.error("[Shell] failed to restore rejection tombstones", error2);
-    });
+    void restoreRejections(conn, storageRepository.loadState().rejectionTransports).catch(
+      (error2) => {
+        console.error("[Shell] failed to restore rejection tombstones", error2);
+      }
+    );
   };
   const requestHubConnect = async (origin) => {
     const trust = await requestHubTrust(origin);
@@ -89996,6 +90285,7 @@ function createApplication() {
       opponentName: sessions.state.sessionConfig?.opponentAlias ?? savedOpponentAlias(durableState),
       iStarted: sessions.state.sessionConfig?.iStarted ?? (durableState.session?.phase === "live" || durableState.session?.phase === "pre-handshake" ? durableState.session.pairing.iStarted : false)
     };
+    const pairing = durableState.session?.phase === "live" ? durableState.session.pairing : null;
     let terminal;
     try {
       terminal = await finalizeTerminalSession(
@@ -90037,6 +90327,10 @@ function createApplication() {
       setSessionError(hasError);
       hubConn?.setBusy(presenceBusy("resolved"));
       resetPeerRelayState({ persistSession: false });
+      const rejection = storageRepository.loadState().rejectionTransports.find(
+        (record2) => record2.sessionId === pairing?.gameSessionId && record2.peerId === pairing.peerId && record2.kind === "outbound-reject"
+      );
+      if (hubConn && rejection) void restoreRejections(hubConn, [rejection]);
       sessionBootstrap = void 0;
       clearSessionTimers();
       const restoreGate = restoreGateAfterTerminalFinalization();
@@ -90163,7 +90457,7 @@ function createApplication() {
     const theirContribution = BigInt(save.session.pairing.theirContribution);
     const perGame = BigInt(save.session.pairing.perGameAmount);
     const transportDisposition = save.session?.phase === "live" ? save.session.live.disposition : save.session?.phase === "pre-handshake" ? save.session.transport.disposition : null;
-    if ((save.session?.phase === "live" || save.session?.phase === "pre-handshake") && transportDisposition === "active") {
+    if ((save.session?.phase === "live" || save.session?.phase === "pre-handshake") && (transportDisposition === "active" || isFailedHandshakeCheckpoint(save.session))) {
       const pairing = save.session.pairing;
       setSessionConfig({
         iStarted: pairing.iStarted,
@@ -90707,6 +91001,15 @@ function createApplication() {
     }
     publish();
   }
+  function walletSwitchAllowed() {
+    return canSwitchWallet({
+      sessionPhase: sessions.state.sessionPhase,
+      durableSession: storageRepository.loadState().session,
+      hasPairingToken: !!sessions.state.sessionConfig?.pairingToken,
+      acceptInFlight: state.checkingFunds || isAcceptSessionTransition(sessions.state.transition) || accept.persisting,
+      busy: state.walletView.connecting || state.walletView.switchingWallet
+    });
+  }
   function consentShortfall() {
     const buyIn = sessions.state.pendingAdvisory?.my_amount ?? sessions.state.pendingProposal?.responder_amount;
     return buyIn === void 0 ? 0n : fundingShortfall(state.walletView.balance, buyIn, state.defaultFee);
@@ -90718,6 +91021,7 @@ function createApplication() {
       ...presentation,
       consentShortfall: consentShortfall(),
       topUpOptions: walletOwner.topUpOptions(),
+      walletSwitchAllowed: walletSwitchAllowed(),
       ...sessionState,
       alias: storageRepository.query("alias"),
       theme: storageRepository.query("theme"),
@@ -90761,6 +91065,9 @@ function createApplication() {
         return handleCloseTab();
       case "wallet-connect":
         return handleConnect(intent.wallet, false, intent.fresh ?? false);
+      case "wallet-switch":
+        if (walletSwitchAllowed()) return walletOwner.selectWallet(intent.walletId);
+        return;
       case "wallet-finalize":
         return walletOwner.finalize(intent.values).then((connected) => {
           if (connected) setActiveTab("hub");
@@ -90778,13 +91085,24 @@ function createApplication() {
         return;
       case "hub-disconnect":
         return handleDisconnectHub();
-      case "accept-session":
-        if (consentShortfall() > 0n) return;
-        if (sessions.state.pendingAdvisory)
-          return acceptPendingAdvisory(sessions.state.pendingAdvisory);
-        if (sessions.state.pendingProposal)
-          return acceptPendingProposal(sessions.state.pendingProposal);
+      case "accept-session": {
+        if (state.walletView.balance === void 0 || consentShortfall() > 0n || state.walletView.switchingWallet)
+          return;
+        const { pendingAdvisory: advisory, pendingProposal: proposal } = sessions.state;
+        if (advisory)
+          return acceptWhenFundable(
+            advisory.my_amount,
+            () => sessions.state.pendingAdvisory === advisory,
+            () => acceptPendingAdvisory(advisory)
+          );
+        if (proposal)
+          return acceptWhenFundable(
+            proposal.responder_amount,
+            () => sessions.state.pendingProposal === proposal,
+            () => acceptPendingProposal(proposal)
+          );
         return;
+      }
       case "decline-session":
         if (sessions.state.pendingAdvisory)
           return declinePendingAdvisory(sessions.state.pendingAdvisory);
