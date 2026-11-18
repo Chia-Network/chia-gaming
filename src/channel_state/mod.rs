@@ -2067,7 +2067,7 @@ impl ChannelState {
                     OnChainGameState {
                         game_id: pending.game_id,
                         puzzle_hash: coin_ph.clone(),
-                        our_turn: true,
+                        our_turn: pending.is_my_turn(),
                         state_number: self.state_number,
                         timeout_claim: TimeoutClaimState::Waiting,
                         pending_slash_amount: None,
