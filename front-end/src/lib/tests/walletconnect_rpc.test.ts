@@ -186,7 +186,10 @@ describe('WalletConnect RPC adapter', () => {
           expect(requestMock).toHaveBeenCalledTimes(1);
           expect(result).toMatchObject({ kind: 'unavailable', mutation: 'not-started' });
         } else {
-          expect(requestMock).toHaveBeenCalledTimes(2);
+          // A wallet rejection is followed by one balance read that names the wallet state.
+          expect(requestMock.mock.calls.slice(2).map(([call]) => call.request.method)).toEqual(
+            scenario === 'rejected' ? [ChiaMethod.GetWalletBalance] : [],
+          );
           expect(result.kind).toBe(scenario === 'transport-loss' ? 'unavailable' : 'failure');
           expect(result).not.toHaveProperty('mutation');
         }

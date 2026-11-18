@@ -380,6 +380,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     coins,
     pendingAdvisory,
     consentShortfall,
+    checkingFunds,
     topUpOptions,
     walletSwitchAllowed,
     blockchainReady,
@@ -753,11 +754,12 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               !blockchainReady ||
               balance === undefined ||
               awaitingTopUp ||
-              switchingWallet
+              switchingWallet ||
+              checkingFunds
             }
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-default disabled:hover:bg-primary-solid"
           >
-            Accept
+            {checkingFunds ? 'Checking funds…' : 'Accept'}
           </button>
           <button
             onClick={() => dispatch({ type: 'decline-session' })}
@@ -795,11 +797,12 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               !blockchainReady ||
               balance === undefined ||
               awaitingTopUp ||
-              switchingWallet
+              switchingWallet ||
+              checkingFunds
             }
-            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+            className="px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors disabled:opacity-50 disabled:cursor-default disabled:hover:bg-primary-solid"
           >
-            Accept
+            {checkingFunds ? 'Checking funds…' : 'Accept'}
           </button>
           <button
             onClick={() => dispatch({ type: 'decline-session' })}

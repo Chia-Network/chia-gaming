@@ -129,6 +129,27 @@ describe('Cloud vault selection through the wallet owner', () => {
     },
   );
 
+  it('retires a pending switch when reconnecting to the same provider', async () => {
+    const finish = deferred<void>();
+    const select = jest.spyOn(cloudBlockchainInfo, 'selectWallet').mockReturnValue(finish.promise);
+    const wallet = new WalletConnection(() => {});
+    try {
+      await wallet.connect('cloud');
+      const switching = wallet.selectWallet(second.id);
+      const isCurrent = select.mock.calls[0][1]!;
+      expect(isCurrent()).toBe(true);
+      const connecting = wallet.connect('cloud');
+      expect(isCurrent()).toBe(false);
+      expect(wallet.view.switchingWallet).toBe(false);
+      await connecting;
+      finish.resolve();
+      await switching;
+      expect(wallet.view.walletIdentity).toEqual(first);
+    } finally {
+      wallet.stopLocalActivity();
+    }
+  });
+
   it('discards a granted-vault list that arrives after retirement', async () => {
     const list = deferred<(typeof first)[]>();
     jest.mocked(cloudBlockchainInfo.listWallets).mockReturnValue(list.promise);

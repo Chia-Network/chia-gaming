@@ -149,6 +149,21 @@ describe('WalletTopUp Buy', () => {
     expect(text(r)).toContain('Purchase placed.');
   });
 
+  it('asks for bank verification when the purchase waits on a microdeposit', async () => {
+    const popup = { closed: false, focus: jest.fn() };
+    win.open = jest.fn(() => popup);
+    const r = render();
+    await clickBuy(r);
+
+    postMessage('https://vault.chia.net', popup, {
+      type: 'chia-cloud-wallet/buy-order',
+      status: 'submitted',
+      requiresVerification: true,
+    });
+    expect(text(r)).toContain('Enter its code in Cloud Wallet');
+    expect(text(r)).not.toContain('Purchase placed');
+  });
+
   it('shares one buy window between the Wallet tab and the New Session dialog', async () => {
     const popup = { closed: false, focus: jest.fn() };
     const open = jest.fn(() => popup);

@@ -893,6 +893,20 @@ describe('CloudBlockchainInterface stored-session finalize', () => {
       storageRepository._resetForTests();
     });
 
+    it('keeps the active and saved vault when the owner supersedes a pending switch', async () => {
+      mockGrant('Wallet_other');
+      const iface = new CloudBlockchainInterface();
+      await (await iface.beginConnect('uid')).finalize();
+      let current = true;
+      const switching = iface.selectWallet('Wallet_other', () => current);
+      await heldReadStarted;
+      current = false;
+      releaseHeldRead();
+      await switching;
+      expect(iface.getWalletIdentity()).toEqual(main);
+      expect(loadCloudWalletAuth()?.walletId).toBe(main.id);
+    });
+
     it('drops the switch when the wallet disconnects during the read', async () => {
       mockGrant('Wallet_other');
       const iface = new CloudBlockchainInterface();

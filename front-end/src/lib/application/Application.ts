@@ -224,6 +224,8 @@ export function createApplication() {
     walletView: WalletView;
     terminalFinalizationBlocker: string | null;
     blockchainReady: boolean;
+    /** True while Accept waits for the wallet to say whether it can fund the buy-in. */
+    checkingFunds: boolean;
     hubLiveness: HubLiveness | null;
     peerLiveness: PeerLiveness;
     confirmDialog: {
@@ -260,6 +262,7 @@ export function createApplication() {
     walletView: walletOwner.view,
     terminalFinalizationBlocker: null,
     blockchainReady: false,
+    checkingFunds: false,
     hubLiveness: null,
     peerLiveness: null,
     confirmDialog: null,
@@ -958,6 +961,35 @@ export function createApplication() {
         sendSessionReject(advisory.peer_id);
         abandonFailedStartAttempt({ error: true });
       }
+    });
+  };
+  // Asks the wallet before any peer or durable state changes, so a wallet that
+  // cannot fund the buy-in leaves the prompt open for another try.
+  const acceptWhenFundable = async (
+    myAmount: string,
+    stillPending: () => boolean,
+    accept: () => void,
+  ) => {
+    if (state.checkingFunds) return;
+    let shortfall: string | null = null;
+    update('checkingFunds', true);
+    try {
+      shortfall = await walletOwner.spendShortfall(parseSessionAmount(myAmount) + state.defaultFee);
+    } catch (error) {
+      // The check is advisory: the handshake reports a funding failure itself.
+      log(
+        `[Shell] funding check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      update('checkingFunds', false);
+    }
+    if (!stillPending()) return;
+    if (shortfall === null) return batch(accept);
+    update('confirmDialog', {
+      title: 'Wallet cannot fund this session',
+      body: shortfall,
+      confirmLabel: 'OK',
+      onConfirm: () => update('confirmDialog', null),
     });
   };
   const declinePendingAdvisory = (advisory: AdvisoryStartParams) => {
@@ -2495,7 +2527,10 @@ export function createApplication() {
       sessionPhase: sessions.state.sessionPhase,
       durableSession: storageRepository.loadState().session,
       hasPairingToken: !!sessions.state.sessionConfig?.pairingToken,
-      acceptInFlight: isAcceptSessionTransition(sessions.state.transition) || accept.persisting,
+      acceptInFlight:
+        state.checkingFunds ||
+        isAcceptSessionTransition(sessions.state.transition) ||
+        accept.persisting,
       busy: state.walletView.connecting || state.walletView.switchingWallet,
     });
   }
@@ -2582,18 +2617,28 @@ export function createApplication() {
         return;
       case 'hub-disconnect':
         return handleDisconnectHub();
-      case 'accept-session':
+      case 'accept-session': {
         if (
           state.walletView.balance === undefined ||
           consentShortfall() > 0n ||
           state.walletView.switchingWallet
         )
           return;
-        if (sessions.state.pendingAdvisory)
-          return acceptPendingAdvisory(sessions.state.pendingAdvisory);
-        if (sessions.state.pendingProposal)
-          return acceptPendingProposal(sessions.state.pendingProposal);
+        const { pendingAdvisory: advisory, pendingProposal: proposal } = sessions.state;
+        if (advisory)
+          return acceptWhenFundable(
+            advisory.my_amount,
+            () => sessions.state.pendingAdvisory === advisory,
+            () => acceptPendingAdvisory(advisory),
+          );
+        if (proposal)
+          return acceptWhenFundable(
+            proposal.responder_amount,
+            () => sessions.state.pendingProposal === proposal,
+            () => acceptPendingProposal(proposal),
+          );
         return;
+      }
       case 'decline-session':
         if (sessions.state.pendingAdvisory)
           return declinePendingAdvisory(sessions.state.pendingAdvisory);

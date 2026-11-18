@@ -135,6 +135,10 @@ export class WalletConnection {
   ready(): boolean {
     return this.poller?.rpc.isReadyForPlay() ?? false;
   }
+  /** Why the wallet cannot spend `amount` right now, or null when it can or cannot tell. */
+  async spendShortfall(amount: bigint): Promise<string | null> {
+    return (await this.provider?.spendShortfall?.(amount)) ?? null;
+  }
 
   private update(change: Partial<WalletView>): void {
     this.view = { ...this.view, ...change };
@@ -223,7 +227,7 @@ export class WalletConnection {
       balanceError: null,
     });
     try {
-      await provider.selectWallet(walletId);
+      await provider.selectWallet(walletId, () => attempt === this.connectionAttempt);
       if (attempt === this.connectionAttempt && this.provider === provider)
         this.update({ walletIdentity: provider.getWalletIdentity?.() ?? null });
     } catch (error) {
@@ -250,8 +254,15 @@ export class WalletConnection {
     this.update({ balance: undefined, balanceError: null });
   }
 
-  async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
+  private beginConnectionAttempt(): number {
     const attempt = ++this.connectionAttempt;
+    if (this.view.switchingWallet) this.watchBalance();
+    this.update({ switchingWallet: false, switchWalletError: null });
+    return attempt;
+  }
+
+  async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
+    const attempt = this.beginConnectionAttempt();
     if (!silent) this.update({ error: null });
     const { provider, interval } = providerFor(type);
     try {
@@ -306,7 +317,7 @@ export class WalletConnection {
     const type = this.view.walletType;
     if (!this.setup || !type) return false;
     const { provider, interval } = providerFor(type);
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     this.update({ error: null, connecting: true });
     try {
       await this.setup.finalize(values, () => {
@@ -328,7 +339,7 @@ export class WalletConnection {
   }
 
   async resume(type: BlockchainType): Promise<void> {
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     const { provider, interval } = providerFor(type);
     this.provider = provider;
     this.update({

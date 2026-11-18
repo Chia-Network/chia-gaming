@@ -440,7 +440,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
   // The new wallet is read through the grant first, so one outside it fails
   // before anything changes. Its id, address, and name then switch together,
   // with no await between them for a render to see a mix of two wallets.
-  async selectWallet(walletId: string): Promise<void> {
+  async selectWallet(walletId: string, isCurrent = () => true): Promise<void> {
     if (!this.auth) {
       throw new Error('Cloud Wallet is not signed in');
     }
@@ -450,6 +450,7 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
     if (generation !== this.authEpoch || !this.auth) {
       throw new Error('Cloud Wallet was disconnected while switching wallets');
     }
+    if (!isCurrent()) return;
     this.persistAuth({ ...this.auth, walletId });
     this.applyWallet(wallet);
     log(`[cloud-blockchain] switched wallet=${walletId} ph=${wallet.puzzleHash}`);

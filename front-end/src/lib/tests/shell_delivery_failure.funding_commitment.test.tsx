@@ -494,7 +494,8 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     expect(mockGameProps!.params).toEqual(params);
   });
 
-  it('updates pending consent when only wallet readiness changes', async () => {
+  // Restores a received session proposal and waits for its consent prompt.
+  async function mountPendingProposal(): Promise<(ready: boolean) => void> {
     let readinessChange: ((ready: boolean) => void) | undefined;
     jest.spyOn(realBlockchainInfo, 'onPlayReadinessChange').mockImplementation((callback) => {
       readinessChange = callback;
@@ -545,12 +546,48 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     expect(readinessChange).toBeDefined();
     expect(mockHub).not.toBeNull();
     expect(application.snapshot().walletView.balance).toBe(1_000_000_000_000n);
+    return readinessChange!;
+  }
+
+  it('updates pending consent when only wallet readiness changes', async () => {
+    const readinessChange = await mountPendingProposal();
     const accept = () => renderer!.root.findByProps({ children: 'Accept' });
     expect(accept().props.disabled).toBe(true);
-    act(() => readinessChange!(true));
+    act(() => readinessChange(true));
     expect(accept().props.disabled).toBe(false);
-    act(() => readinessChange!(false));
+    act(() => readinessChange(false));
     expect(accept().props.disabled).toBe(true);
+  });
+
+  it('keeps the consent prompt open when the wallet cannot fund the buy-in', async () => {
+    const readinessChange = await mountPendingProposal();
+    act(() => readinessChange(true));
+    const shortfall = 'Not enough funds in the wallet: 100 mojos needed, 40 available.';
+    let answer!: (shortfall: string) => void;
+    const spendShortfall = jest.spyOn(realBlockchainInfo, 'spendShortfall').mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const accept = () => renderer!.root.findByProps({ children: 'Accept' });
+
+    await act(async () => {
+      accept().props.onClick();
+    });
+    await waitForText(renderer!, 'Checking funds…');
+    expect(renderer!.root.findByProps({ children: 'Checking funds…' }).props.disabled).toBe(true);
+    await act(async () => answer(shortfall));
+    await waitForText(renderer!, shortfall);
+    expect(spendShortfall).toHaveBeenCalledWith(
+      BigInt(storageRepository.loadState().session!.pairing.myContribution) +
+        storageRepository.query('defaultFee'),
+    );
+    expect(mockSendToPeer).not.toHaveBeenCalled();
+    expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'OK' }).props.onClick();
+    });
+    expect(accept().props.disabled).toBe(false);
   });
 
   it('preserves a sent offer when delivery fails before the UI projects OfferSent', async () => {

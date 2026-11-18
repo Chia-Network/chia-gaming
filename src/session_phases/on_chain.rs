@@ -28,6 +28,8 @@ use crate::session_phases::types::{validate_new_move_action, GameAction, PotatoS
 
 use std::borrow::Borrow;
 
+const ACCEPT_SETTLEMENT_WRONG_TURN: &str = "cannot accept settlement on the opponent's turn";
+
 #[derive(Serialize, Deserialize)]
 pub enum PendingMoveKind {
     OurMove {
@@ -444,7 +446,7 @@ impl OnChainPhase {
     fn game_coin_spent(
         &mut self,
         env: &mut ChannelEnv<'_>,
-        game_id: &GameID,
+        game: &OnChainGameState,
         coin_string: &CoinString,
         conditions: &[CoinCondition],
         parsed_solution: &ParsedRefereeSolution,
@@ -470,7 +472,7 @@ impl OnChainPhase {
             return Ok(CoinSpentInformation::OurReward(ph.clone(), amt.clone()));
         }
 
-        let live_game_idx = self.get_game_by_id(game_id)?;
+        let live_game_idx = self.get_game_by_id(&game.game_id)?;
         let state_number = self.state_number;
 
         let our_on_chain_ph = self.live_games[live_game_idx].current_puzzle_hash(env.allocator)?;
@@ -486,7 +488,8 @@ impl OnChainPhase {
             }
         }
 
-        if self.live_games[live_game_idx].is_game_over()
+        if (!game.timeout_claim_armed || game.our_turn)
+            && self.live_games[live_game_idx].is_game_over()
             && !matches!(
                 parsed_solution,
                 ParsedRefereeSolution::Timeout | ParsedRefereeSolution::Slash
@@ -882,7 +885,7 @@ impl OnChainPhase {
             }
         }
 
-        let old_definition = if let Some(old_definition) = self.game_map.remove(coin_id) {
+        let mut old_definition = if let Some(old_definition) = self.game_map.remove(coin_id) {
             self.have_potato = PotatoState::Present;
             old_definition
         } else {
@@ -977,125 +980,61 @@ impl OnChainPhase {
 
         let conditions = CoinCondition::from_puzzle_and_solution(env.allocator, puzzle, solution)?;
 
-        if old_definition.timeout_claim_armed {
-            let reward_ph = self.reward_puzzle_hash.clone();
-            let their_reward_ph = self.their_reward_puzzle_hash.clone();
-
-            let our_reward_coin = conditions.iter().find_map(|c| match c {
-                CoinCondition::CreateCoin(ph, amt) if *ph == reward_ph => {
-                    Some((ph.clone(), amt.clone()))
-                }
-                _ => None,
-            });
-
-            if let Some((ph, amt)) = our_reward_coin {
-                let reward_coin = if amt > Amount::default() {
-                    Some(CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt))
-                } else {
-                    None
-                };
-                let outcome = if old_definition.game_finished {
-                    SettlementOutcome::SettledCleanly
-                } else {
-                    SettlementOutcome::WeAccepted
-                };
-                effects.push(self.emit_terminal(
-                    &old_definition.game_id,
-                    GameNotification::game_settled(
-                        old_definition.game_id,
-                        outcome,
-                        amt,
-                        reward_coin,
-                    ),
-                ));
-            } else {
-                let is_timeout = conditions.iter().any(
-                    |c| matches!(c, CoinCondition::CreateCoin(ph, _) if *ph == their_reward_ph),
-                );
-
-                if is_timeout {
-                    let outcome = if old_definition.game_finished {
-                        SettlementOutcome::SettledCleanly
-                    } else {
-                        SettlementOutcome::WeAccepted
-                    };
-                    effects.push(self.emit_terminal(
-                        &old_definition.game_id,
-                        GameNotification::game_settled(
-                            old_definition.game_id,
-                            outcome,
-                            Amount::default(),
-                            None,
-                        ),
-                    ));
-                } else {
-                    let created = conditions.iter().find_map(|c| match c {
-                        CoinCondition::CreateCoin(ph, amt) => Some((ph.clone(), amt.clone())),
-                        _ => None,
-                    });
-                    if let Some((ph, amt)) = created {
-                        let new_coin = CoinString::from_parts(&coin_id.to_coin_id(), &ph, &amt);
-                        let gt = old_definition.game_timeout.clone();
-                        self.game_map.insert(
-                            new_coin.clone(),
-                            OnChainGameState {
-                                puzzle_hash: ph,
-                                our_turn: !old_definition.our_turn,
-                                timeout_claim_armed: true,
-                                ..old_definition
-                            },
-                        );
-                        effects.push(Effect::Notify(GameNotification::GameStatus {
-                            id: old_definition.game_id,
-                            status: Self::on_chain_turn_status(
-                                !old_definition.our_turn,
-                                old_definition.game_finished,
-                            ),
-                            my_reward: None,
-                            coin_id: Some(new_coin.clone()),
-                            reason: None,
-                            other_params: None,
-                        }));
-                        let claim =
-                            self.build_timeout_claim(env, &old_definition.game_id, &new_coin)?;
-                        let semantic = Self::timeout_claim_semantic(
-                            old_definition.game_id,
-                            !old_definition.our_turn,
-                            old_definition.game_finished,
-                            claim.is_some(),
-                        );
-                        effects.push(Effect::RegisterCoin {
-                            coin: new_coin.clone(),
-                            timeout: gt,
-                            name: Some("timeout-claim-armed game coin advanced by redo"),
-                            spend: claim.map(|bundle| {
-                                crate::session_phases::effects::TransactionSubmission::attach_to(
-                                    bundle, None, &new_coin,
-                                )
-                            }),
-                            semantic,
-                        });
-                    }
-                }
-            }
-
-            effects.extend(self.process_queued_action(env)?);
-            return Ok(effects);
-        }
-
-        if !self.has_live_game(&old_definition.game_id) {
+        let has_live_game = self.has_live_game(&old_definition.game_id);
+        if !has_live_game && !old_definition.timeout_claim_armed {
             effects.extend(self.process_queued_action(env)?);
             return Ok(effects);
         }
 
         let parsed_solution = ParsedRefereeSolution::parse(env.allocator, solution)?;
-        let result = self.game_coin_spent(
-            env,
-            &old_definition.game_id,
-            coin_id,
-            &conditions,
-            &parsed_solution,
-        );
+        if old_definition.timeout_claim_armed
+            && matches!(parsed_solution, ParsedRefereeSolution::Timeout)
+        {
+            let reward_coin = conditions.iter().find_map(|condition| match condition {
+                CoinCondition::CreateCoin(ph, amount)
+                    if ph == &self.reward_puzzle_hash && amount > &Amount::default() =>
+                {
+                    Some(CoinString::from_parts(&coin_id.to_coin_id(), ph, amount))
+                }
+                _ => None,
+            });
+            let our_share = reward_coin
+                .as_ref()
+                .and_then(CoinString::amount)
+                .unwrap_or_default();
+            let outcome = if old_definition.game_finished {
+                SettlementOutcome::SettledCleanly
+            } else {
+                SettlementOutcome::WeAccepted
+            };
+            effects.push(self.emit_terminal(
+                &old_definition.game_id,
+                GameNotification::game_settled(
+                    old_definition.game_id,
+                    outcome,
+                    our_share,
+                    reward_coin,
+                ),
+            ));
+            effects.extend(self.process_queued_action(env)?);
+            return Ok(effects);
+        }
+
+        // An off-chain acceptance can leave the referee in pending settlements.
+        // A non-timeout spend still needs that referee to follow the chain.
+        if !has_live_game {
+            if let Some(index) = self
+                .pending_settlements
+                .iter()
+                .position(|game| game.game_id == old_definition.game_id)
+            {
+                let game = self.pending_settlements.remove(index);
+                old_definition.our_turn = game.is_my_turn();
+                self.live_games.push(game);
+            }
+        }
+        let result =
+            self.game_coin_spent(env, &old_definition, coin_id, &conditions, &parsed_solution);
 
         let their_turn_result = if let Ok(result) = result {
             result
@@ -1548,13 +1487,25 @@ impl OnChainPhase {
         &mut self,
         env: &mut ChannelEnv<'_>,
     ) -> Result<Vec<Effect>, Error> {
+        let mut effects = Vec::new();
         while let Some(action) = self.game_action_queue.pop_front() {
+            if let GameAction::AcceptSettlement(id) = action {
+                if self.my_move_in_game(&id) == Some(false) {
+                    effects.push(Effect::Notify(GameNotification::ActionFailed {
+                        id: Some(id),
+                        action: Some(FailedGameAction::AcceptSettlement),
+                        reason: ACCEPT_SETTLEMENT_WRONG_TURN.to_string(),
+                    }));
+                    continue;
+                }
+            }
             let result = self.do_on_chain_action(env, action)?;
             if !result.is_empty() {
-                return Ok(result);
+                effects.extend(result);
+                break;
             }
         }
-        Ok(Vec::new())
+        Ok(effects)
     }
 
     pub fn do_on_chain_move(
@@ -1745,26 +1696,26 @@ impl OnChainPhase {
             },
             GameAction::AcceptSettlement(game_id) => {
                 let current_coin = get_current_coin(&game_id)?;
-                let my_turn = self.my_move_in_game(&game_id);
-                if my_turn == Some(true) {
-                    let our_share = self.get_game_our_current_share(&game_id);
-                    if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                        return Ok(vec![
-                            Effect::Notify(GameNotification::LocalActionApplied {
-                                id: game_id,
-                                action: LocalActionKind::AcceptSettlement,
-                            }),
-                            self.emit_terminal(
-                                &game_id,
-                                GameNotification::game_settled(
-                                    game_id,
-                                    SettlementOutcome::ForfeitedWeAccepted,
-                                    Amount::default(),
-                                    None,
-                                ),
+                if self.my_move_in_game(&game_id) != Some(true) {
+                    return Err(Error::Channel(ACCEPT_SETTLEMENT_WRONG_TURN.to_string()));
+                }
+                let our_share = self.get_game_our_current_share(&game_id);
+                if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
+                    return Ok(vec![
+                        Effect::Notify(GameNotification::LocalActionApplied {
+                            id: game_id,
+                            action: LocalActionKind::AcceptSettlement,
+                        }),
+                        self.emit_terminal(
+                            &game_id,
+                            GameNotification::game_settled(
+                                game_id,
+                                SettlementOutcome::ForfeitedWeAccepted,
+                                Amount::default(),
+                                None,
                             ),
-                        ]);
-                    }
+                        ),
+                    ]);
                 }
                 let gt = self
                     .game_map
@@ -2427,6 +2378,104 @@ mod tests {
             effects.as_slice(),
             [Effect::RegisterCoin { spend: Some(_), .. }]
         ));
+    }
+
+    #[cfg(feature = "sim-tests")]
+    #[test]
+    fn armed_game_coin_validates_a_confirmed_opponent_move() {
+        use crate::common::standard_coin::ChiaIdentity;
+        use crate::simulator::Simulator;
+        use rand::{RngExt, SeedableRng};
+
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (mut debug_games, [mover, waiter], puzzle_hash) =
+            crate::games::debug::make_real_debug_referees(&mut allocator);
+        let mut rng = rand_chacha::ChaCha8Rng::from_seed([0x25; 32]);
+        let identity = ChiaIdentity::new(&mut allocator, rng.random()).unwrap();
+        let sim = Simulator::new_strict();
+        sim.farm_block(&identity.puzzle_hash);
+        let funding = sim.get_my_coins(&identity.puzzle_hash).unwrap();
+        let (coin, _) = sim
+            .transfer_coin_amount(
+                &mut allocator,
+                &puzzle_hash,
+                &identity,
+                &funding[0],
+                mover.get_amount(),
+            )
+            .unwrap();
+        sim.farm_block(&identity.puzzle_hash);
+        let coin = &coin;
+        let game_id = GameID(7);
+        let waiter = Rc::new(waiter);
+        let mut phase = phase_with_referee(waiter.clone(), coin);
+        assert_eq!(phase.my_move_in_game(&game_id), Some(false));
+        let mut env = ChannelEnv::new(&mut allocator).unwrap();
+        let error = phase.accept_settlement(&mut env, &game_id).unwrap_err();
+        assert!(error.to_string().contains("opponent's turn"));
+        assert!(!phase.game_map[coin].timeout_claim_armed);
+
+        phase
+            .game_action_queue
+            .push_back(GameAction::AcceptSettlement(game_id));
+        let effects = phase.process_queued_action(&mut env).unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Notify(GameNotification::ActionFailed {
+                id: Some(GameID(7)),
+                action: Some(FailedGameAction::AcceptSettlement),
+                ..
+            })]
+        ));
+        assert!(!phase.game_map[coin].timeout_claim_armed);
+
+        let mut pending_phase = phase_with_referee(waiter, coin);
+        pending_phase.pending_settlements = std::mem::take(&mut pending_phase.live_games);
+        let readable = debug_games[0]
+            .get_move_inputs(&mut allocator, Amount::new(100), 0)
+            .unwrap()
+            .get_ui_move(&mut allocator)
+            .unwrap();
+        let prepared = mover
+            .prepare_my_turn_move(&mut allocator, &readable, Hash::from_bytes([0x31; 32]))
+            .unwrap();
+        let (mover_after_move, _) = mover
+            .apply_prepared_move(&mut allocator, prepared, 2)
+            .unwrap();
+        let spend = mover_after_move
+            .get_transaction_for_move(&mut allocator, coin)
+            .unwrap();
+        let tx = CoinSpend {
+            coin: coin.clone(),
+            bundle: spend,
+        };
+        let result = sim.push_transactions(&mut allocator, &[tx]).unwrap();
+        assert_eq!(result.code, 1, "{}", result.diagnostic);
+        sim.farm_block(&identity.puzzle_hash);
+
+        let (puzzle, solution) = sim
+            .get_puzzle_and_solution(&coin.to_coin_id())
+            .unwrap()
+            .unwrap();
+        let mut env = ChannelEnv::new(&mut allocator).unwrap();
+        for phase in [&mut phase, &mut pending_phase] {
+            // Model a game coin already armed in a saved session.
+            phase.game_map.get_mut(coin).unwrap().timeout_claim_armed = true;
+            let effects = phase
+                .handle_game_coin_spent(&mut env, coin, &puzzle, &solution)
+                .unwrap();
+            let successor = phase.get_game_coin(&game_id).unwrap();
+            assert!(sim.is_coin_spendable(&successor));
+            assert!(phase.game_map[&successor].timeout_claim_armed);
+            assert_eq!(phase.game_is_my_turn(&game_id), Some(true));
+            assert!(effects.iter().any(|effect| matches!(effect,
+                Effect::Notify(GameNotification::GameStatus {
+                    id,
+                    other_params: Some(GameStatusOtherParams { readable: Some(_), .. }),
+                    ..
+                }) if *id == game_id
+            )));
+        }
     }
 
     #[test]
