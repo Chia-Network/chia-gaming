@@ -1334,6 +1334,17 @@ impl GameSession {
         Ok(())
     }
 
+    /// Once the signed local funding offer is on the wire, the channel can form
+    /// even if our peer stops participating.
+    pub fn handshake_offer_sent(&self) -> bool {
+        matches!(
+            self.last_channel_status
+                .as_ref()
+                .map(|status| &status.state),
+            Some(ChannelStatus::OfferSent | ChannelStatus::TransactionPending)
+        )
+    }
+
     pub fn handshake_finished(&self) -> bool {
         self.peer.handshake_finished()
     }

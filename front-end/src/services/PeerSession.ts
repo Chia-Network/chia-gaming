@@ -42,7 +42,7 @@ export type PeerAppMessage =
       unroll_timeout?: string;
       network?: string;
     }
-  | { type: 'session_reject' };
+  | { type: 'session_reject'; phase?: 'handshake' };
 
 export interface ReliableTransportState {
   readonly sessionId: string;
@@ -66,6 +66,7 @@ export interface ReliableMessageConsumer {
   failure: (reason: string) => void;
   acknowledged?: (ack: bigint) => void;
   rejectionAcknowledged?: () => void;
+  peerUnavailable?: () => void;
   channelResult?: (result: WasmResult) => void;
   error?: (reason: string) => void;
   keepalive?: () => void;
@@ -107,6 +108,9 @@ export class ReliablePeerTransport {
             break;
           case 'message':
             this.consumer!.deliver(event.msgno, Uint8Array.from(event.body));
+            break;
+          case 'peer-unavailable':
+            this.consumer?.peerUnavailable?.();
             break;
           case 'rejection-acknowledged':
             this.consumer?.rejectionAcknowledged?.();
@@ -359,7 +363,7 @@ export function decodePeerAppMessage(payload: Uint8Array): PeerAppMessage | null
         network: optionalText(decoded, 'network'),
       };
     case 'session_reject':
-      return { type };
+      return getText(decoded, 'phase') === 'handshake' ? { type, phase: 'handshake' } : { type };
     default:
       return null;
   }

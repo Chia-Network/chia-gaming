@@ -154,14 +154,14 @@ const model = createSessionModel({
   },
 });
 
-function makeController(events: string[]): SessionController {
+function makeController(events: string[], terminalModel = model): SessionController {
   return {
     handState: { ...handState, state: { ...handState.state, moveNumber: 99n } },
     getWalletProviderScope: () => walletProviderScope,
     quiesceAndSealForTerminalFinalization: async () => {
       events.push('controller-quiesce-and-seal');
       return {
-        model: structuredClone(model),
+        model: structuredClone(terminalModel),
         coinsOfInterest: [{ label: 'Reward coin', id: 'coin-1' }],
       };
     },
@@ -219,6 +219,47 @@ function finalizationArgs(controller: SessionController) {
     },
   };
 }
+
+it.each([true, false])(
+  'retains only unacknowledged handshake rejection frames on reload (pending=%s)',
+  async (pending) => {
+    const rejection = {
+      msgno: 2n,
+      msg: new TextEncoder().encode('du5:phaseu9:handshakeu4:typeu14:session_rejecte'),
+    };
+    await storageRepository.write(
+      storageRepository.patchApplicationState((root) => {
+        if (root.session?.phase !== 'live') throw new Error('expected live fixture');
+        root.session.live.disposition = 'outbound-reject';
+        root.session.live.messageNumber = 3n;
+        root.session.live.unackedMessages = pending ? [rejection] : [];
+        return root;
+      }),
+    );
+    const failed = structuredClone(model);
+    failed.channel.status.state = 'Failed';
+    await finalizeTerminalSession(finalizationArgs(makeController([], failed)), {
+      teardown: jest.fn(),
+    });
+    storageRepository._resetForTests();
+    const restored = await storageRepository.readCurrentState();
+    expect(restored?.session?.phase).toBe('terminal');
+    expect(restored?.rejectionTransports).toEqual(
+      pending
+        ? [
+            expect.objectContaining({
+              kind: 'outbound-reject',
+              peerId: 'peer',
+              sessionId: '10'.repeat(16),
+              messageNumber: 3n,
+              remoteNumber: 1n,
+              unackedMessages: [rejection],
+            }),
+          ]
+        : [],
+    );
+  },
+);
 
 it('blocks teardown on a deferred IndexedDB write and coalesces duplicate finalization', async () => {
   const events: string[] = [];

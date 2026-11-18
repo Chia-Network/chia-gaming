@@ -10,6 +10,7 @@ import {
   WASM_NOTIFICATION_HISTORY_LIMIT,
 } from './historyLimits';
 import { type RehydratedDurableApplicationState } from './persistence';
+import { isFailedHandshakeCheckpoint } from './saveEnvelope';
 import { SessionController } from './SessionController';
 
 function requireBoolean(value: unknown, label: string): boolean {
@@ -88,7 +89,7 @@ export async function restoreSession(
   cradle.restore_channel(cradleBytes);
   sc.iStarted = requireBoolean(session.pairing.iStarted, 'iStarted');
   sc.pairingToken = requireString(session.pairing.token, 'pairingToken');
-  if (session.live.disposition !== 'active') {
+  if (session.live.disposition !== 'active' && !isFailedHandshakeCheckpoint(session)) {
     throw new Error('restoreSession: live reliable transport is not active');
   }
   sc.wasmNotificationHistory = recentEntries(

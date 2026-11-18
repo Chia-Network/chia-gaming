@@ -82,10 +82,10 @@ import {
   markSavedSession,
   releaseLeaseIfOwner,
 } from '../session/saveCoordination';
-import type { ChiaNetwork } from '../session/saveEnvelope';
 import {
+  isFailedHandshakeCheckpoint,
+  type ChiaNetwork,
   type DurableApplicationState,
-  type DurableRejectionTransport,
 } from '../session/saveEnvelope';
 import { selectGameSessionView } from '../session/selectors';
 import { SessionController, RestoreStatus } from '../session/SessionController';
@@ -395,7 +395,6 @@ export function createApplication() {
   };
   let peerSession: PeerSession | null = null;
   let sessionBootstrap: RehydratedDurableApplicationState | undefined = undefined;
-  let bootRejectionDescriptors: DurableRejectionTransport[] = [];
   let inboundSessionRejectHandler: (sessionId: string, remoteNumber: bigint) => void = () => {};
   const {
     dispose: disposeRejections,
@@ -460,6 +459,10 @@ export function createApplication() {
     get reliableTransport() {
       return peerSession?.reliableTransport;
     },
+    onPeerUnavailable: () => {
+      peerSession?.markDegraded();
+      syncPeerLiveness();
+    },
     persistInboundSessionReject: (sessionId, remoteNumber) => {
       const peer = peerSession;
       if (!peer || peer.sessionId !== sessionId) {
@@ -516,7 +519,6 @@ export function createApplication() {
       onSessionId: (value) => update('sessionId', value),
       onRestore: async (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
-        bootRejectionDescriptors = bootstrap.state.rejectionTransports;
         const resumeTab = save.session !== null ? 'game' : null;
         if (resumeTab) setActiveTab(resumeTab);
         const hasLiveSession =
@@ -547,8 +549,6 @@ export function createApplication() {
         };
       },
       onFreshClaim: (save, source) => {
-        const bootstrap = rehydrateDurableApplicationState(save);
-        bootRejectionDescriptors = bootstrap.state.rejectionTransports;
         if (source !== 'takeover') return;
         const bcType =
           save?.preferences.blockchainType ?? storageRepository.query('blockchainType');
@@ -1404,7 +1404,10 @@ export function createApplication() {
                           ? structuredClone(save.session.transport)
                           : undefined),
                   );
-                  if (peerSession.reliableState.disposition === 'outbound-reject') {
+                  if (
+                    peerSession.reliableState.disposition === 'outbound-reject' &&
+                    !isFailedHandshakeCheckpoint(save?.session ?? null)
+                  ) {
                     bindOutboundRejectRetirement(peerSession);
                   }
                   // Restore does not pass through the fresh-session busy update.
@@ -1497,9 +1500,11 @@ export function createApplication() {
     // Remember every attached hub, including a connection restored at boot.
     storageRepository.updatePreference({ key: 'lastHubUrl', value: origin });
     peerSession?.attachCarrier(conn);
-    void restoreRejections(conn, bootRejectionDescriptors).catch((error) => {
-      console.error('[Shell] failed to restore rejection tombstones', error);
-    });
+    void restoreRejections(conn, storageRepository.loadState().rejectionTransports).catch(
+      (error) => {
+        console.error('[Shell] failed to restore rejection tombstones', error);
+      },
+    );
   };
   const requestHubConnect = async (origin: string) => {
     const trust = await requestHubTrust(origin);
@@ -1685,6 +1690,7 @@ export function createApplication() {
           ? durableState.session.pairing.iStarted
           : false),
     };
+    const pairing = durableState.session?.phase === 'live' ? durableState.session.pairing : null;
     let terminal;
     try {
       terminal = await finalizeTerminalSession(
@@ -1728,9 +1734,18 @@ export function createApplication() {
       setSessionPhase('resolved');
       setSessionError(hasError);
       hubConn?.setBusy(presenceBusy('resolved'));
-      // Stop the live peer route and cradle; do not send session_reject and do
-      // not wipe the dashboard model (that would flash "No Session").
+      // Retire the live route. Any handshake rejection now replays independently
+      // of the finished dashboard and its retired channel.
       resetPeerRelayState({ persistSession: false });
+      const rejection = storageRepository
+        .loadState()
+        .rejectionTransports.find(
+          (record) =>
+            record.sessionId === pairing?.gameSessionId &&
+            record.peerId === pairing.peerId &&
+            record.kind === 'outbound-reject',
+        );
+      if (hubConn && rejection) void restoreRejections(hubConn, [rejection]);
       sessionBootstrap = undefined;
       clearSessionTimers();
       // Drop the restore mount flag before resetting status. A resumed
@@ -1881,7 +1896,7 @@ export function createApplication() {
           : null;
     if (
       (save.session?.phase === 'live' || save.session?.phase === 'pre-handshake') &&
-      transportDisposition === 'active'
+      (transportDisposition === 'active' || isFailedHandshakeCheckpoint(save.session))
     ) {
       const pairing = save.session.pairing;
       setSessionConfig({

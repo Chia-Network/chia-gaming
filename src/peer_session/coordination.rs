@@ -37,7 +37,13 @@ pub struct TerminalCommand {
     pub message: Vec<u8>,
 }
 
-pub fn application_message(body: &[u8]) -> Option<String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ApplicationMessage {
+    Proposal,
+    Rejection { handshake_failed: bool },
+}
+
+pub fn application_message(body: &[u8]) -> Option<ApplicationMessage> {
     let bencodex::Value::Dictionary(fields) = bencodex::parse(body).ok()? else {
         return None;
     };
@@ -50,16 +56,20 @@ pub fn application_message(body: &[u8]) -> Option<String> {
     let bencodex::Value::Text(kind) = field("type")? else {
         return None;
     };
-    // Proposal validation used to happen in decodePeerAppMessage, including
-    // required amount fields, even when the caller only inspected its type.
-    if kind == "session_proposal" {
-        for key in ["proposer_amount", "responder_amount"] {
-            if !matches!(field(key), Some(bencodex::Value::Text(_))) {
-                return None;
+    match kind.as_str() {
+        "session_proposal" => {
+            for key in ["proposer_amount", "responder_amount"] {
+                if !matches!(field(key), Some(bencodex::Value::Text(_))) {
+                    return None;
+                }
             }
+            Some(ApplicationMessage::Proposal)
         }
+        "session_reject" => Some(ApplicationMessage::Rejection {
+            handshake_failed: matches!(field("phase"), Some(bencodex::Value::Text(phase)) if phase == "handshake"),
+        }),
+        _ => None,
     }
-    Some(kind.clone())
 }
 
 impl SessionState {
@@ -74,12 +84,18 @@ impl SessionState {
     pub fn deliverable(&self, msgno: u64, body: &[u8]) -> bool {
         self.receive_mode != ReceiveMode::Proposal
             || msgno == 1
-            || application_message(body).as_deref() == Some("session_reject")
+            || matches!(
+                application_message(body),
+                Some(ApplicationMessage::Rejection { .. })
+            )
     }
 
     pub fn terminal_message(&self, body: &[u8]) -> bool {
         self.receive_mode == ReceiveMode::Proposal
-            && application_message(body).as_deref() == Some("session_reject")
+            && matches!(
+                application_message(body),
+                Some(ApplicationMessage::Rejection { .. })
+            )
     }
 
     pub fn reject_inbound(&mut self) {

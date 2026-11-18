@@ -535,7 +535,7 @@ name a wallet coin.
 Each side runs its own handler: `HandshakeInitiatorPhase` (the player who
 starts the channel) and `HandshakeReceiverPhase`. The A-D labels are the
 wire/message protocol labels. A and B include a text-to-`u32` capabilities map;
-`peer_protocol = 1` is required and unknown capability keys are ignored.
+`peer_protocol = 2` is required and unknown capability keys are ignored.
 Handshake messages are not sent via `Batch`:
 
 | Step | Sender    | Message      | Payload type                                               |

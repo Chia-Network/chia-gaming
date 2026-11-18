@@ -1,4 +1,6 @@
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
+import type { PeerHost } from '../../../../wasm/contract';
+import { decodePeerAppMessage } from '../../services/PeerSession';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SessionController } from '../session/SessionController';
@@ -30,6 +32,49 @@ function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
   const save = liveSave(fields);
   if (save.session?.phase !== 'live') throw new Error('expected live save');
   return storageRepository.write(storageRepository.patchApplicationState(() => save));
+}
+
+// Exercise failure on restored copies so the same real A/B/C exchange can
+// continue and prove the commitment boundary on both sides.
+function checkHandshakeFailure(
+  sender: SessionController,
+  receiver: SessionController,
+  offerSent: boolean,
+) {
+  const failed = restoreTestSession(sender, sender.getPeerProtocol().serialize(), 'failed-peer');
+  const other = restoreTestSession(
+    receiver,
+    receiver.getPeerProtocol().serialize(),
+    'remaining-peer',
+  );
+  const notify = jest.fn();
+  const host: PeerHost = { status: () => ({ available: true }), send: () => true, notify };
+  try {
+    const result = failed.wallet_callback_failed('wallet declined funding');
+    expect(result.disposition.kind).toBe('terminal');
+    const rejection = failed.snapshot().unackedMessages.at(-1)!;
+    expect(decodePeerAppMessage(Uint8Array.from(rejection.msg))).toEqual({
+      type: 'session_reject',
+      phase: 'handshake',
+    });
+    const before = other.serialize();
+    other.consumer_ready('channel', host);
+    expect(
+      other.receive(
+        { type: 'data', msgno: rejection.msgno, body: Uint8Array.from(rejection.msg) },
+        host,
+      ),
+    ).toBe(true);
+    expect(other.snapshot().remoteNumber).toBe(rejection.msgno);
+    expect(other.snapshot().disposition).toBe(offerSent ? 'active' : 'inbound-reject');
+    if (offerSent) {
+      expect(notify).toHaveBeenCalledWith({ type: 'peer-unavailable' });
+      expect(other.serialize()).toEqual(before);
+    }
+  } finally {
+    failed.free();
+    other.free();
+  }
 }
 
 it(
@@ -84,6 +129,7 @@ it(
       await flushWrapperDrain([cradle1, cradle2]);
       assertCradleRoundTrip('initiator-sent-a', wasm_blob1);
       assertCradleRoundTrip('receiver-waiting-for-a', wasm_blob2);
+      checkHandshakeFailure(wasm_blob2, wasm_blob1, false);
 
       const sentA = cradle1.outbound_messages();
       assert.equal(sentA.length, 1, 'initiator should have one HandshakeA message');
@@ -97,6 +143,7 @@ it(
       wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
+      checkHandshakeFailure(wasm_blob1, wasm_blob2, true);
       const receiverCoins = wasm_blob2.getCoinsOfInterest();
       assert.deepEqual(
         receiverCoins.map((coin) => coin.label),
@@ -116,6 +163,7 @@ it(
       wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
+      checkHandshakeFailure(wasm_blob2, wasm_blob1, true);
       const initiatorCoins = wasm_blob1.getCoinsOfInterest();
       assert.deepEqual(
         initiatorCoins.map((coin) => coin.label),
