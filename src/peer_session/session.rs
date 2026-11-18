@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 
 use super::coordination::{
-    application_message, HostStatus, ReceiveMode, TerminalCommand, TerminalHandoff,
+    application_message, ApplicationMessage, HostStatus, ReceiveMode, TerminalCommand,
+    TerminalHandoff,
 };
 use super::{
     PreparedCommit, ReceiveAction, ReceivePolicy, ReliableState, SessionState, SessionTerms,
@@ -73,6 +74,7 @@ pub enum PeerEvent {
         msgno: u64,
     },
     RejectionAcknowledged,
+    PeerUnavailable,
     #[serde(skip)]
     ChannelResult(ChannelOutput),
     Error {
@@ -96,12 +98,14 @@ pub struct ChannelOutput {
     pub drain: ManagerDrain,
     pub command: Option<TerminalHandoffCommand>,
     pub terminal: bool,
+    pub handshake_failed: bool,
     pub on_chain: bool,
     pub action_succeeded: bool,
 }
 
 pub trait Channel {
     fn status(&self) -> (bool, bool);
+    fn handshake_offer_sent(&self) -> bool;
     fn deliver(&mut self, body: &[u8]) -> Result<ChannelOutput, String>;
     fn complete_terminal(&mut self) -> Result<ChannelOutput, String>;
 }
@@ -217,9 +221,16 @@ impl<C> Session<C> {
         let mut session = self.state.borrow_mut();
         if output.terminal {
             session.terminal_handoff = None;
-            session.state.unacked_messages.clear();
             session.reorder_queue.clear();
-            session.discard_outbound();
+            if output.handshake_failed {
+                // The peer may need earlier numbered frames to reach the rejection.
+                // Repeated terminal drains and restored failures reuse the journal entry.
+                if session.state.disposition == "active" {
+                    session.queue_session_rejection(true)?;
+                }
+            } else {
+                session.discard_outbound();
+            }
         }
         if let Some(command) = output.command.take() {
             if session.terminal_handoff.is_none() {
@@ -370,7 +381,7 @@ impl<C: Channel> Session<C> {
             }
             ReceiveMode::Retiring => {}
             ReceiveMode::Rejection => {
-                if msgno == 1 && kind.as_deref() == Some("session_proposal") {
+                if msgno == 1 && kind == Some(ApplicationMessage::Proposal) {
                     self.state.borrow_mut().proposal_received()?;
                     self.request_commit(host)?;
                 }
@@ -379,18 +390,27 @@ impl<C: Channel> Session<C> {
                 let status = self.status(host)?;
                 if mode == ReceiveMode::Channel && status.discarding {
                     // The old channel consumer acknowledged but ignored these messages.
-                } else if kind.as_deref() == Some("session_reject") {
-                    if mode == ReceiveMode::Channel && status.established {
+                } else if let Some(ApplicationMessage::Rejection { handshake_failed }) = kind {
+                    if mode == ReceiveMode::Channel && status.established && !handshake_failed {
                         self.failure(
                             "session_reject received after channel establishment".into(),
                             host,
                         )?;
+                    } else if mode == ReceiveMode::Channel
+                        && (status.established
+                            || self
+                                .channel
+                                .borrow()
+                                .as_ref()
+                                .is_some_and(Channel::handshake_offer_sent))
+                    {
+                        host.notify(PeerEvent::PeerUnavailable)?;
                     } else {
                         self.state.borrow_mut().reject_inbound();
                         self.request_commit(host)?;
                     }
                 } else if mode == ReceiveMode::Proposal {
-                    if msgno != 1 || kind.as_deref() != Some("session_proposal") {
+                    if msgno != 1 || kind != Some(ApplicationMessage::Proposal) {
                         return Err("initial reliable message is not a session proposal".into());
                     }
                     self.state.borrow_mut().proposal_received()?;

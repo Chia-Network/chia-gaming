@@ -182,15 +182,17 @@ impl SessionState {
     }
 
     pub fn reject_session(&mut self) -> Result<(), String> {
-        let body = bencodex::encode(&bencodex::Value::Dictionary(
-            [(
-                bencodex::Value::Text("type".into()),
-                bencodex::Value::Text("session_reject".into()),
-            )]
-            .into_iter()
-            .collect(),
-        ))
-        .map_err(|e| e.to_string())?;
+        self.queue_session_rejection(false)
+    }
+
+    fn queue_session_rejection(&mut self, handshake_failed: bool) -> Result<(), String> {
+        use bencodex::Value::{Dictionary, Text};
+        let mut fields = vec![(Text("type".into()), Text("session_reject".into()))];
+        if handshake_failed {
+            fields.push((Text("phase".into()), Text("handshake".into())));
+        }
+        let body = bencodex::encode(&Dictionary(fields.into_iter().collect()))
+            .map_err(|e| e.to_string())?;
         self.allocate(body, "outbound-reject".into())?;
         Ok(())
     }

@@ -136,6 +136,16 @@ export interface TerminalSessionSave {
 
 export type DurableSessionPhase = PreHandshakeSessionSave | LiveSessionSave | TerminalSessionSave;
 
+// A failed handshake still owns its cradle until terminal finalization moves
+// its unacknowledged rejection into a standalone replay record.
+export function isFailedHandshakeCheckpoint(session: DurableSessionPhase | null): boolean {
+  return (
+    session?.phase === 'live' &&
+    session.live.disposition === 'outbound-reject' &&
+    session.presentation.channelStatus?.state === 'Failed'
+  );
+}
+
 export interface DurableRejectionTransport {
   kind: 'outbound-reject' | 'inbound-receipt';
   peerId: string;
@@ -144,6 +154,20 @@ export interface DurableRejectionTransport {
   remoteNumber: bigint;
   unackedMessages: Array<{ msgno: bigint; msg: Uint8Array }>;
   createdAt: number;
+}
+
+export function retainRejectionTransport(
+  records: DurableRejectionTransport[],
+  tombstone: DurableRejectionTransport,
+): DurableRejectionTransport[] {
+  return [
+    ...records.filter(
+      (record) => record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
+    ),
+    structuredClone(tombstone),
+  ]
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(-MAX_DURABLE_REJECTION_TRANSPORTS);
 }
 
 export function rejectionTransportKey(peerId: string, sessionId: string): string {

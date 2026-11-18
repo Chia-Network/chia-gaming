@@ -321,8 +321,14 @@ Declines or aborts the proposed session:
 ```
 
 `session_reject` is an ordinary numbered reliable data message under the
-proposed session ID. Receiving it durably cancels the matching pre-active
-attempt before sending the acknowledgement. Sending it cancels the local
+proposed session ID. Either participant also sends it on local handshake
+failure with the additional field `"phase": Text("handshake")`, retaining earlier numbered frames and the rejection for replay until
+acknowledged. Before the receiving participant has sent its signed funding
+offer (receiver: B, initiator: C), it durably cancels the attempt before
+acknowledging. Once its own offer is sent, a handshaking recipient acknowledges
+the rejection and treats the peer as unavailable. It retains its funding state
+and watches for channel creation or expiry, just as on connection loss. A marked
+failure arriving after activation likewise reports connection loss. Sending it cancels the local
 application attempt immediately, but the sender retains the terminal
 unacknowledged transport record until the peer acknowledges the rejection or
 the local bounded-retention policy expires it.
@@ -343,7 +349,7 @@ outbound rejection records and inbound receipts in total and expires them after
 seven days.
 
 `session_reject` is not a way to terminate an established channel. Receiving
-one after channel establishment is a peer protocol failure and takes the
+an unmarked rejection after channel establishment is a peer protocol failure and takes the
 existing obligation on-chain. A different session ID from the selected peer
 during a live channel likewise indicates that the peer has restarted without
 that channel state and causes on-chain resolution.
