@@ -14,7 +14,7 @@ describe('canSwitchWallet', () => {
     expect(canSwitchWallet(idle)).toBe(true);
   });
 
-  it.each<SessionPhase>(['off-chain', 'on-chain', 'resolved'])(
+  it.each<SessionPhase>(['off-chain', 'on-chain'])(
     'refuses while a %s session is live, since its funds belong to the current wallet',
     (sessionPhase) => {
       expect(canSwitchWallet({ ...idle, sessionPhase })).toBe(false);
@@ -36,6 +36,20 @@ describe('canSwitchWallet', () => {
   it('allows a switch when the saved session is terminal', () => {
     expect(canSwitchWallet({ ...idle, durableSession: { phase: 'terminal' } })).toBe(true);
   });
+
+  it.each([true, false])(
+    'allows a finalized channel to switch with its display pairing token retained=%s',
+    (hasPairingToken) => {
+      expect(
+        canSwitchWallet({
+          ...idle,
+          sessionPhase: 'resolved',
+          durableSession: { phase: 'terminal' },
+          hasPairingToken,
+        }),
+      ).toBe(true);
+    },
+  );
 
   it('refuses during a pending pairing or while a connect or switch runs', () => {
     expect(canSwitchWallet({ ...idle, hasPairingToken: true })).toBe(false);

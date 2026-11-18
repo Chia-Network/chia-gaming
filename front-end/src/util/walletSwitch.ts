@@ -24,12 +24,11 @@ export type WalletSwitchState = {
  */
 export function canSwitchWallet(state: WalletSwitchState): boolean {
   const phase = state.durableSession?.phase;
+  if (state.busy || state.acceptInFlight || phase === 'live' || phase === 'pre-handshake') {
+    return false;
+  }
+  // Finalization can retain the old pairing token for the finished-session display.
   return (
-    !state.busy &&
-    !state.acceptInFlight &&
-    state.sessionPhase === 'none' &&
-    phase !== 'live' &&
-    phase !== 'pre-handshake' &&
-    !state.hasPairingToken
+    state.sessionPhase === 'resolved' || (state.sessionPhase === 'none' && !state.hasPairingToken)
   );
 }

@@ -16,6 +16,7 @@ import * as sessionHost from '../session/sessionHost';
 import { storageRepository } from '../session/storageRepository';
 import * as wasmInit from '../session/wasmLoader';
 import { BlockchainPoller, TOP_UP_BALANCE_POLL_INTERVAL_MS } from '../wallet/BlockchainPoller';
+import { cloudBlockchainInfo } from '../wallet/CloudBlockchainInterface';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { calpokerStateCodec } from './game_state_helpers';
 import {
@@ -543,6 +544,48 @@ describe('Shell production restore composition', () => {
     expect(application.snapshot().bootState).toEqual({ kind: 'ready' });
     expect(hubConnection).toHaveBeenCalledTimes(1);
     expect(hubConnection.mock.results[0].value.disconnect).not.toHaveBeenCalled();
+  });
+
+  it('can select another Cloud vault after reloading a resolved channel', async () => {
+    const first = { id: 'first', name: 'First vault', address: null };
+    const second = { id: 'second', name: 'Second vault', address: null };
+    jest.spyOn(cloudBlockchainInfo, 'beginConnect').mockResolvedValue({
+      qrUri: '',
+      skipQr: true,
+      finalize: async () => {},
+    });
+    jest.spyOn(cloudBlockchainInfo, 'listWallets').mockResolvedValue([first, second]);
+    const identity = jest.spyOn(cloudBlockchainInfo, 'getWalletIdentity').mockReturnValue(first);
+    const select = jest.spyOn(cloudBlockchainInfo, 'selectWallet').mockImplementation(async () => {
+      identity.mockReturnValue(second);
+    });
+
+    await storageRepository.claimApplicationState();
+    const save = baseSave({
+      blockchainType: 'cloud',
+      channelStatus: { state: 'ResolvedClean' },
+      coinsOfInterest: [],
+      terminalIStarted: true,
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Resolved Clean');
+    expect(application.snapshot().walletView.walletIdentity).toEqual(first);
+    expect(application.snapshot().walletSwitchAllowed).toBe(true);
+    await act(async () => {
+      await application.dispatch({ type: 'wallet-switch', walletId: second.id });
+    });
+    expect(select).toHaveBeenCalledTimes(1);
+    expect(application.snapshot().walletView.walletIdentity).toEqual(second);
+    expect(storageRepository.loadState().session?.phase).toBe('terminal');
   });
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
