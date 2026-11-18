@@ -16,7 +16,7 @@ use crate::common::types::{
 use serde::{Deserialize, Serialize};
 
 const PEER_PROTOCOL_CAPABILITY: &str = "p";
-const PEER_PROTOCOL_VERSION: u32 = 1;
+const PEER_PROTOCOL_VERSION: u32 = 2;
 pub(crate) const MAX_PEER_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_QUEUED_PEER_MESSAGES: usize = 1024;
 pub(crate) const MAX_QUEUED_PEER_BYTES: usize = 64 * 1024 * 1024;
@@ -373,7 +373,7 @@ mod tests {
     }
 
     #[test]
-    fn local_capabilities_advertise_peer_protocol_one() {
+    fn local_capabilities_advertise_peer_protocol_two() {
         assert_eq!(
             local_capabilities().get(PEER_PROTOCOL_CAPABILITY),
             Some(&PEER_PROTOCOL_VERSION)
@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn peer_capabilities_require_peer_protocol_one_and_ignore_unknown_keys() {
+    fn peer_capabilities_require_peer_protocol_two_and_ignore_unknown_keys() {
         let mut capabilities = local_capabilities();
         capabilities.insert("future_feature".to_string(), 99);
         validate_peer_capabilities(&capabilities).expect("unknown capabilities are ignored");
@@ -453,7 +453,7 @@ mod tests {
         capabilities.remove(PEER_PROTOCOL_CAPABILITY);
         assert!(validate_peer_capabilities(&capabilities).is_err());
 
-        capabilities.insert(PEER_PROTOCOL_CAPABILITY.to_string(), 2);
+        capabilities.insert(PEER_PROTOCOL_CAPABILITY.to_string(), 1);
         assert!(validate_peer_capabilities(&capabilities).is_err());
     }
 

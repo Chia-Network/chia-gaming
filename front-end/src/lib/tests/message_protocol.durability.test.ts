@@ -103,6 +103,26 @@ describe('WASM command persistence', () => {
     expect(save).toHaveBeenCalledTimes(1);
   });
 
+  it.each([true, false])(
+    'checkpoints and sends a handshake rejection with a terminal presentation event=%s',
+    async (hasEvent) => {
+      const { blob, cradle, sentMessages } = await createAcceptedBlob();
+      const result = cradle.wallet_callback_failed('wallet declined');
+      expect(result.disposition.kind).toBe('terminal');
+      const rejection = blob.unackedMessages.at(-1)!;
+      // A repeated terminal drain has no new presentation events.
+      blob.processResult(hasEvent ? result : cradle.wallet_callback_failed('wallet declined'));
+      expect(sentMessages).toEqual([]);
+      await blob.flush();
+      const saved = (await storageRepository.inspect()).applicationState?.session;
+      expect(saved).toMatchObject({
+        phase: 'live',
+        live: { disposition: 'outbound-reject', unackedMessages: [rejection] },
+      });
+      expect(sentMessages).toEqual([{ msgno: Number(rejection.msgno), msg: rejection.msg }]);
+    },
+  );
+
   it('keeps outbound delivery behind one immediate durability flush', async () => {
     const { blob, sentMessages, sentAcks } = await createAcceptedBlob(true);
     const save = jest.fn(() => {

@@ -7,6 +7,7 @@ use crate::peer_session::coordination::TerminalHandoff;
 use crate::peer_session::Message;
 
 struct TestChannel {
+    offer_sent: bool,
     established: Rc<Cell<bool>>,
     discarding: Rc<Cell<bool>>,
     completion_ok: Rc<Cell<bool>>,
@@ -16,6 +17,9 @@ struct TestChannel {
 impl Channel for TestChannel {
     fn status(&self) -> (bool, bool) {
         (self.established.get(), self.discarding.get())
+    }
+    fn handshake_offer_sent(&self) -> bool {
+        self.offer_sent
     }
     fn deliver(&mut self, _body: &[u8]) -> Result<ChannelOutput, String> {
         Ok(ChannelOutput::default())
@@ -47,6 +51,7 @@ struct Harness {
     acks: RefCell<Vec<u64>>,
     delivered: RefCell<Vec<(u64, Vec<u8>)>>,
     failures: RefCell<Vec<String>>,
+    unavailable: Cell<usize>,
 }
 
 impl Harness {
@@ -78,6 +83,7 @@ impl Harness {
         let completion_ok = Rc::new(Cell::new(true));
         let completion_attempts = Rc::new(Cell::new(0));
         *peer.channel.borrow_mut() = Some(TestChannel {
+            offer_sent: false,
             established: established.clone(),
             discarding: discarding.clone(),
             completion_ok: completion_ok.clone(),
@@ -97,6 +103,7 @@ impl Harness {
             acks: RefCell::new(vec![]),
             delivered: RefCell::new(vec![]),
             failures: RefCell::new(vec![]),
+            unavailable: Cell::new(0),
         }
     }
     fn data(&self, number: u64, body: &[u8]) -> bool {
@@ -169,6 +176,7 @@ impl PeerHost for Harness {
                     self.peer.send_message(b"reply".to_vec(), self)?;
                 }
             }
+            PeerEvent::PeerUnavailable => self.unavailable.set(self.unavailable.get() + 1),
             PeerEvent::Failure { reason } => self.failures.borrow_mut().push(reason),
             _ => {}
         }
@@ -605,6 +613,84 @@ fn channel_output_stays_in_rust_and_close_precedes_ordinary_output() {
         })
         .collect();
     assert_eq!(logs, vec!["before", "after"]);
+}
+
+#[test]
+fn failed_handshake_replays_one_ordered_rejection_and_committed_peer_keeps_its_offer() {
+    let sender = Harness::new();
+    sender
+        .peer
+        .send_message(b"setup".to_vec(), &sender)
+        .unwrap();
+    let mut failure = ChannelOutput {
+        terminal: true,
+        handshake_failed: true,
+        ..Default::default()
+    };
+    sender.peer.collect_output(&mut failure).unwrap();
+    sender.peer.collect_output(&mut failure).unwrap();
+    sender.commit(true);
+    let sent = sender.sent.borrow();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0], (1, b"setup".to_vec()));
+    assert_eq!(
+        sent[1],
+        (
+            2,
+            b"du5:phaseu9:handshakeu4:typeu14:session_rejecte".to_vec()
+        )
+    );
+    let restored = sender.restored();
+    assert!(restored
+        .peer
+        .connectivity("registered", 10000.0, true, &restored)
+        .unwrap());
+    assert_eq!(*restored.sent.borrow(), *sent);
+
+    for committed in [false, true] {
+        let receiver = Harness::new();
+        receiver
+            .peer
+            .channel
+            .borrow_mut()
+            .as_mut()
+            .unwrap()
+            .offer_sent = committed;
+        receiver
+            .peer
+            .consumer_ready(ReceiveMode::Channel, &receiver)
+            .unwrap();
+        receiver
+            .peer
+            .send_message(b"local".to_vec(), &receiver)
+            .unwrap();
+        for (n, body) in sent.iter() {
+            assert!(receiver.data(*n, body));
+        }
+        receiver.commit(true);
+        assert_eq!(receiver.unavailable.get(), usize::from(committed));
+        assert!(receiver.failures.borrow().is_empty());
+        let session = receiver.peer.state.borrow();
+        assert_eq!(
+            session.state.disposition,
+            if committed {
+                "active"
+            } else {
+                "inbound-reject"
+            }
+        );
+        assert_eq!(session.state.unacked_messages.len(), usize::from(committed));
+        assert!(receiver.acks.borrow().contains(&2));
+    }
+    let active = Harness::new();
+    active.established.set(true);
+    active
+        .peer
+        .consumer_ready(ReceiveMode::Channel, &active)
+        .unwrap();
+    assert!(active.data(1, &sent[1].1));
+    assert!(active.failures.borrow().is_empty());
+    assert_eq!(active.unavailable.get(), 1);
 }
 
 #[test]

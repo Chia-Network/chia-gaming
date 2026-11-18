@@ -453,6 +453,7 @@ mod gaming_wasm {
                 drain: self.cradle.flush_and_collect(&mut self.allocator)?,
                 command: self.cradle.pending_terminal_handoff(),
                 terminal: self.cradle.is_fully_resolved(),
+                handshake_failed: self.cradle.is_failed() && !self.cradle.handshake_finished(),
                 on_chain: self.cradle.is_on_chain(),
                 action_succeeded,
             })
@@ -487,6 +488,9 @@ mod gaming_wasm {
                 self.cradle.handshake_finished(),
                 self.cradle.is_fully_resolved() || self.cradle.is_on_chain(),
             )
+        }
+        fn handshake_offer_sent(&self) -> bool {
+            self.cradle.handshake_offer_sent()
         }
         fn deliver(&mut self, body: &[u8]) -> Result<ChannelOutput, String> {
             call_releasing_allocator(self, |channel| {

@@ -5,7 +5,11 @@ import {
   channelStatusPayloadFromModel,
   normalizeSessionPresentation,
 } from './normalization';
-import { type DurableApplicationState, type TerminalSessionSave } from './saveEnvelope';
+import {
+  retainRejectionTransport,
+  type DurableApplicationState,
+  type TerminalSessionSave,
+} from './saveEnvelope';
 import type { RestoreStatus, WasmFields } from './SessionController';
 import { snapshotFromSessionModel } from './sessionSnapshot';
 import type { SessionModel } from './types';
@@ -31,6 +35,29 @@ export interface TerminalCapture {
   coinsOfInterest: CoinOfInterestEntry[];
 }
 
+// Move an unacknowledged handshake failure into the replay inventory in the
+// same checkpoint that retires its live channel.
+function terminalRejections(root: DurableApplicationState) {
+  const session = root.session;
+  if (
+    session?.phase !== 'live' ||
+    session.live.disposition !== 'outbound-reject' ||
+    !session.live.unackedMessages.length ||
+    !session.pairing.peerId
+  )
+    return root.rejectionTransports;
+  const { messageNumber, remoteNumber, unackedMessages } = session.live;
+  return retainRejectionTransport(root.rejectionTransports, {
+    kind: 'outbound-reject',
+    peerId: session.pairing.peerId,
+    sessionId: session.pairing.gameSessionId,
+    messageNumber,
+    remoteNumber,
+    unackedMessages,
+    createdAt: Date.now(),
+  });
+}
+
 /**
  * Freeze one complete fixed-point boundary synchronously. Reducer/controller
  * work and generated durable obligations must drain before this call.
@@ -54,6 +81,7 @@ export function buildDurableApplicationState(
     });
     return {
       ...root,
+      rejectionTransports: terminalRejections(root),
       walletContext: structuredClone(walletProviderScope),
       session: {
         phase: 'terminal',

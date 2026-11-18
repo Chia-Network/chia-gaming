@@ -26,7 +26,7 @@ import {
 import {
   DURABLE_APPLICATION_STATE_SCHEMA,
   DURABLE_APPLICATION_STATE_VERSION,
-  MAX_DURABLE_REJECTION_TRANSPORTS,
+  retainRejectionTransport,
   type DurableApplicationState,
   type DurableRejectionTransport,
   type SessionTransportSave,
@@ -595,15 +595,7 @@ class StorageRepository {
       const next = matchesRejectedSession ? sessionState.freshSessionState(state) : state;
       return {
         ...next,
-        rejectionTransports: [
-          ...next.rejectionTransports.filter(
-            (record) =>
-              record.peerId !== tombstone.peerId || record.sessionId !== tombstone.sessionId,
-          ),
-          structuredClone(tombstone),
-        ]
-          .sort((a, b) => a.createdAt - b.createdAt)
-          .slice(-MAX_DURABLE_REJECTION_TRANSPORTS),
+        rejectionTransports: retainRejectionTransport(next.rejectionTransports, tombstone),
       };
     });
     return this.write(snapshot);

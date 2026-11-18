@@ -40,7 +40,7 @@ export type PeerInput =
   | { type: 'ack'; msgno: bigint }
   | { type: 'keepalive' };
 export type PeerEvent =
-  | { type: 'commit-requested' | 'keepalive' | 'committed' | 'rejection-acknowledged' }
+  | { type: 'commit-requested' | 'keepalive' | 'committed' | 'rejection-acknowledged' | 'peer-unavailable' }
   | { type: 'message'; msgno: bigint; body: Uint8Array }
   | { type: 'acknowledged'; msgno: bigint }
   | { type: 'failure' | 'error'; reason: string }
