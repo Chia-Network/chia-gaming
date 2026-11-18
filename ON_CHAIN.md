@@ -558,8 +558,8 @@ The `AcceptSettlement` handler covers three cases:
   **timeout claim** via `build_timeout_spend` and registers it with the wallet
   (via `RegisterCoin`) for submission at maturity.  When the claim confirms,
   `GameSettled` arrives with `we_accepted` or `settled_cleanly`.
-3. **Not our turn:** The handler marks `timeout_claim_armed = true` (the
-  timeout claim was already registered eagerly at coin registration time).
+3. **Not our turn:** The handler rejects the action. The ordinary timeout
+   claim remains registered if it pays us.
 
 ### Already handled (no new code)
 
@@ -967,11 +967,10 @@ terminal.  The real chain coin might still represent the version captured by
 the unroll, which can be one step behind the local potato state, so an armed
 coin may still advance to another game coin before timeout finality.
 
-When that happens, `handle_game_coin_spent` keeps tracking the created coin and
-registers the next timeout claim under `"timeout-claim-armed game coin advanced by redo"`.
-The `timeout_claim_armed` flag is carried forward: once the actual chain state
-reaches a reward-coin spend, the terminal `GameSettled` notification is emitted
-from the observed conditions.
+When the coin advances, `handle_game_coin_spent` uses the normal referee path,
+including move validation and the slash check. It carries `timeout_claim_armed`
+forward on the tracked successor. A confirmed timeout emits the terminal
+`GameSettled` notification using the observed payout conditions.
 
 ### Moves for Finished Games Are Discarded
 

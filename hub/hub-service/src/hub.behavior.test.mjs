@@ -379,6 +379,28 @@ test('malformed upgrade Host cannot kill the hub', async () => {
   }
 });
 
+test('malformed hub messages are dropped and the hub still accepts a valid join', async () => {
+  const hub = await startHub();
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const response = nextJson(ws, (msg) => msg.type !== 'keepalive');
+    sendJson(ws, {
+      type: 'challenge',
+      target_id: { id: 'invalid' },
+      challenger_amount: '100',
+      target_amount: '100',
+    });
+    sendJson(ws, { type: 'join', session_id: sessionKey('valid-after-malformed'), alias: 'Alice' });
+
+    const joined = await response;
+    assert.equal(joined.type, 'joined');
+    assert.equal(joined.alias, 'Alice');
+    await closeWs(ws);
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('hub-owned aliases update the game channel and cannot be set there', async () => {
   const hub = await startHub();
   try {

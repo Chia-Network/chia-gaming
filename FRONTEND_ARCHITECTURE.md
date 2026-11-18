@@ -1754,6 +1754,15 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   never counts as funds: only the balance enables Accept. The desktop app opens
   the page in the system browser through `openInBrowser`, as it does for
   signature approval, so there the balance poll alone reports the result.
+  A grant can cover several wallets and the game funds from one of them, so
+  `getWalletIdentity()` gives the Wallet tab that wallet's name and address.
+  When the grant covers more than one, the tab lists them (`listWallets()`)
+  and requests a switch through Application, which permits it only while no
+  session or acceptance is live: channel funding and fee reservations belong
+  to the wallet that made them. WalletConnection owns the pending switch,
+  refreshes balance on completion, and ignores results after retirement. The
+  provider keeps the previous wallet if reading the requested wallet fails.
+
 
   **Fee rates.** When its mempool is full, the node rejects fees below 5 mojos
   per cost unit with `INVALID_FEE_TOO_CLOSE_TO_ZERO`, including zero fees.

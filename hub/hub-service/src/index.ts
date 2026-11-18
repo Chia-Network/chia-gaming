@@ -1536,13 +1536,93 @@ function onSetBusy(ws: WebSocket, msg: Extract<GameInboundMessage, { type: 'set_
 
 // --- Message parsing ---
 
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string';
+}
+
 function parseHubInbound(raw: string): HubInboundMessage | null {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as HubInboundMessage;
-    if (!parsed || typeof parsed !== 'object' || !('type' in parsed)) return null;
-    return parsed;
+    parsed = JSON.parse(raw);
   } catch {
     return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+  const msg = parsed as Record<string, unknown>;
+  const { type } = msg;
+  switch (type) {
+    case 'join': {
+      const { id, alias, session_id } = msg;
+      if (!isOptionalString(id) || !isOptionalString(alias) || !isOptionalString(session_id)) {
+        return null;
+      }
+      return { type, id, alias, session_id };
+    }
+    case 'leave':
+      if (!isOptionalString(msg.id)) return null;
+      return { type, id: msg.id };
+    case 'challenge': {
+      const {
+        from_id,
+        target_id,
+        challenger_amount,
+        target_amount,
+        channel_timeout,
+        unroll_timeout,
+      } = msg;
+      if (
+        !isOptionalString(from_id) ||
+        typeof target_id !== 'string' ||
+        typeof challenger_amount !== 'string' ||
+        typeof target_amount !== 'string' ||
+        !isOptionalString(channel_timeout) ||
+        !isOptionalString(unroll_timeout)
+      ) {
+        return null;
+      }
+      return {
+        type,
+        from_id,
+        target_id,
+        challenger_amount,
+        target_amount,
+        channel_timeout,
+        unroll_timeout,
+      };
+    }
+    case 'challenge_accept': {
+      const { challenge_id, accepter_id } = msg;
+      if (typeof challenge_id !== 'string' || !isOptionalString(accepter_id)) return null;
+      return { type, challenge_id, accepter_id };
+    }
+    case 'challenge_decline':
+      if (typeof msg.challenge_id !== 'string') return null;
+      return { type, challenge_id: msg.challenge_id };
+    case 'challenge_cancel':
+      if (!isOptionalString(msg.from_id)) return null;
+      return { type, from_id: msg.from_id };
+    case 'change_alias': {
+      const { id, newAlias } = msg;
+      if (!isOptionalString(id) || typeof newAlias !== 'string') return null;
+      return { type, id, newAlias };
+    }
+    case 'get_alias': {
+      const { id, session_id } = msg;
+      if (!isOptionalString(id) || !isOptionalString(session_id)) return null;
+      return { type, id, session_id };
+    }
+    case 'set_alias': {
+      const { id, session_id, alias } = msg;
+      if (!isOptionalString(id) || !isOptionalString(session_id) || typeof alias !== 'string') {
+        return null;
+      }
+      return { type, id, session_id, alias };
+    }
+    case 'keepalive':
+      return { type };
+    default:
+      return null;
   }
 }
 
@@ -1628,48 +1708,60 @@ hubWsServer.on('connection', (ws) => {
   setupHubKeepalive(ws);
 
   ws.on('message', (message) => {
-    wsLastActivity.set(ws, Date.now());
-    if (closeIfRateLimited(ws, rawDataByteLength(message), HUB_RATE_LIMIT, 'hub')) return;
-    const text = typeof message === 'string' ? message : message.toString();
-    const parsed = parseHubInbound(text);
-    if (!parsed) {
-      logHub('hub_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
-      return;
-    }
-    logHubVerbose('hub_ws_message', { ws_id: currentWsId, type: parsed.type, bytes: text.length });
+    try {
+      wsLastActivity.set(ws, Date.now());
+      if (closeIfRateLimited(ws, rawDataByteLength(message), HUB_RATE_LIMIT, 'hub')) return;
+      const text = typeof message === 'string' ? message : message.toString();
+      const parsed = parseHubInbound(text);
+      if (!parsed) {
+        logHub('hub_ws_message_parse_drop', { ws_id: currentWsId, bytes: text.length });
+        return;
+      }
+      logHubVerbose('hub_ws_message', {
+        ws_id: currentWsId,
+        type: parsed.type,
+        bytes: text.length,
+      });
 
-    switch (parsed.type) {
-      case 'join':
-        onHubJoin(ws, parsed);
-        break;
-      case 'leave':
-        onHubLeave(ws, parsed);
-        break;
-      case 'challenge':
-        onChallenge(ws, parsed);
-        break;
-      case 'challenge_accept':
-        onChallengeAccept(ws, parsed);
-        break;
-      case 'challenge_decline':
-        onChallengeDecline(ws, parsed);
-        break;
-      case 'challenge_cancel':
-        onChallengeCancel(ws, parsed);
-        break;
-      case 'change_alias':
-        onChangeAlias(ws, parsed);
-        break;
-      case 'get_alias':
-        onGetAlias(ws, parsed);
-        break;
-      case 'set_alias':
-        onSetAlias(ws, parsed);
-        break;
-      case 'keepalive':
-        break;
-      default:
-        break;
+      switch (parsed.type) {
+        case 'join':
+          onHubJoin(ws, parsed);
+          break;
+        case 'leave':
+          onHubLeave(ws, parsed);
+          break;
+        case 'challenge':
+          onChallenge(ws, parsed);
+          break;
+        case 'challenge_accept':
+          onChallengeAccept(ws, parsed);
+          break;
+        case 'challenge_decline':
+          onChallengeDecline(ws, parsed);
+          break;
+        case 'challenge_cancel':
+          onChallengeCancel(ws, parsed);
+          break;
+        case 'change_alias':
+          onChangeAlias(ws, parsed);
+          break;
+        case 'get_alias':
+          onGetAlias(ws, parsed);
+          break;
+        case 'set_alias':
+          onSetAlias(ws, parsed);
+          break;
+        case 'keepalive':
+          break;
+        default:
+          break;
+      }
+    } catch (error) {
+      logHub('hub_ws_message_error', {
+        ws_id: currentWsId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      ws.terminate();
     }
   });
 
@@ -1708,44 +1800,52 @@ gameWsServer.on('connection', (ws) => {
   setupGameKeepalive(ws);
 
   ws.on('message', (message, isBinary) => {
-    wsLastActivity.set(ws, Date.now());
-    if (closeIfRateLimited(ws, rawDataByteLength(message), GAME_RATE_LIMIT, 'game')) return;
-    const buf = rawDataToBuffer(message);
+    try {
+      wsLastActivity.set(ws, Date.now());
+      if (closeIfRateLimited(ws, rawDataByteLength(message), GAME_RATE_LIMIT, 'game')) return;
+      const buf = rawDataToBuffer(message);
 
-    if (!isBinary) {
-      const text = typeof message === 'string' ? message : message.toString();
-      logHub('game_ws_text_frame_drop', { ws_id: currentWsId, bytes: text.length });
-      return;
-    }
+      if (!isBinary) {
+        const text = typeof message === 'string' ? message : message.toString();
+        logHub('game_ws_text_frame_drop', { ws_id: currentWsId, bytes: text.length });
+        return;
+      }
 
-    const parsed = parseGameInbound(buf);
-    if (!parsed) {
-      logHub('game_ws_message_parse_drop', { ws_id: currentWsId, bytes: buf.byteLength });
-      return;
-    }
-    logHubVerbose('game_ws_message', {
-      ws_id: currentWsId,
-      type: parsed.type,
-      bytes: buf.byteLength,
-    });
+      const parsed = parseGameInbound(buf);
+      if (!parsed) {
+        logHub('game_ws_message_parse_drop', { ws_id: currentWsId, bytes: buf.byteLength });
+        return;
+      }
+      logHubVerbose('game_ws_message', {
+        ws_id: currentWsId,
+        type: parsed.type,
+        bytes: buf.byteLength,
+      });
 
-    switch (parsed.type) {
-      case 'identify':
-        onIdentify(ws, parsed);
-        break;
-      case 'close':
-        onGameClose(ws);
-        break;
-      case 'set_busy':
-        onSetBusy(ws, parsed);
-        break;
-      case 'relay':
-        onGameRelay(ws, parsed.to, parsed.payload);
-        break;
-      case 'keepalive':
-        break;
-      default:
-        break;
+      switch (parsed.type) {
+        case 'identify':
+          onIdentify(ws, parsed);
+          break;
+        case 'close':
+          onGameClose(ws);
+          break;
+        case 'set_busy':
+          onSetBusy(ws, parsed);
+          break;
+        case 'relay':
+          onGameRelay(ws, parsed.to, parsed.payload);
+          break;
+        case 'keepalive':
+          break;
+        default:
+          break;
+      }
+    } catch (error) {
+      logHub('game_ws_message_error', {
+        ws_id: currentWsId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      ws.terminate();
     }
   });
 

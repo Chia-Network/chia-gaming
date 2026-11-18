@@ -4675,10 +4675,8 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     res.push(("test_notification_accept_finished", &|| {
         let mut allocator = AllocEncoder::new();
 
-        // Use 4 moves (remove only alice_accept) so the game is mid-play.
-        // After redo of bob's discard it's player 0's turn, so Accept(0)
-        // fires.  Go on-chain first so Accept goes through the on-chain
-        // handler (off-chain Accept immediately finishes the game).
+        // Stop before Alice's last move and let Bob's discard confirm on-chain.
+        // Alice accepts once the tracked coin gives her the turn.
         let mut moves = vec![
             SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
             SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
@@ -4686,6 +4684,7 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         moves.extend(prefix_test_moves(&mut allocator, ScriptGameRef::accepted(1, 0)));
         moves.pop();
         moves.push(SimScriptAction::GoOnChain(0));
+        moves.push(SimScriptAction::WaitBlocks(6, 0));
         moves.push(SimScriptAction::AcceptSettlement(
             0,
             ScriptGameRef::accepted(1, 0),
@@ -4747,11 +4746,13 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
                     ChannelStatus::Unrolling,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
-                ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
                 ExpectedEvent::Notification(ExpectedNotification::ChannelStatus(
                     ChannelStatus::ResolvedUnrolled,
                 )),
                 ExpectedEvent::Notification(ExpectedNotification::GameStatusOnChainTurn),
+                ExpectedEvent::OpponentMoved {
+                    mover_share: Amount::new(0),
+                },
                 ExpectedEvent::Notification(ExpectedNotification::GameSettledOurSide),
             ],
             "accept_finished p0",
