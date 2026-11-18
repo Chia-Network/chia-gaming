@@ -5,6 +5,7 @@ import type {
   ConnectionFieldValues,
   ConnectionSetup,
   InternalBlockchainInterface,
+  WalletIdentity,
 } from '../../types/ChiaGaming';
 import { needsConnectionSetupPrompt, needsWalletPairing } from '../../util/connectionSetup';
 import { markSavedSession } from '../session/saveCoordination';
@@ -23,6 +24,10 @@ import { sageBlockchainInfo } from './SageBlockchainInterface';
 import type { SessionWallet } from './sessionWallet';
 
 export interface WalletView {
+  walletIdentity: WalletIdentity | null;
+  grantedWallets: WalletIdentity[];
+  switchingWallet: boolean;
+  switchWalletError: string | null;
   recoveryNotice: ReturnType<typeof walletRecoveryNotice>;
   walletType: BlockchainType | undefined;
   connected: boolean;
@@ -35,6 +40,7 @@ export interface WalletView {
   showSetup: boolean;
   error: string | null;
   balance: bigint | undefined;
+  balanceError: string | null;
 }
 export type WalletEvent =
   | { type: 'view'; view: WalletView }
@@ -56,6 +62,10 @@ function providerFor(type: BlockchainType) {
 /** Provider lifetime and normalization. Session and hub policy belongs to the host. */
 export class WalletConnection {
   view: WalletView = {
+    walletIdentity: null,
+    grantedWallets: [],
+    switchingWallet: false,
+    switchWalletError: null,
     recoveryNotice: this.readRecoveryNotice(),
     walletType: storageRepository.query('blockchainType'),
     connected: false,
@@ -67,6 +77,7 @@ export class WalletConnection {
     showSetup: false,
     error: null,
     balance: undefined,
+    balanceError: null,
   };
   private provider: InternalBlockchainInterface | null = null;
   private setup: ConnectionSetup | null = null;
@@ -110,7 +121,7 @@ export class WalletConnection {
     if (active) this.poller?.start();
     else this.poller?.pauseChainPolling();
   }
-  setAwaitingTopUp(active: boolean): void {
+  setFundingBalancePolling(active: boolean): void {
     this.poller?.setBalanceInterval(
       active ? TOP_UP_BALANCE_POLL_INTERVAL_MS : BALANCE_POLL_INTERVAL_MS,
     );
@@ -163,18 +174,26 @@ export class WalletConnection {
     this.setup = null;
     this.update({
       hasProvider: true,
+      walletIdentity: provider.getWalletIdentity?.() ?? null,
+      grantedWallets: [],
+      balance: undefined,
+      balanceError: null,
       connected: true,
       recovering: false,
       connecting: false,
       preparingConnection: false,
       setup: null,
     });
+    void this.loadGrantedWallets(provider);
     this.emit({ type: 'connected' });
     this.watchBalance();
     this.detachConnection = provider.onConnectionChange((connected, recovering = false) => {
       this.update({ connected, recovering });
       this.emit({ type: 'connection', connected, recovering });
-      if (connected) this.watchBalance();
+      if (connected) {
+        this.watchBalance();
+        void this.loadGrantedWallets(provider);
+      }
     });
     this.detachReadiness = this.poller.rpc.onPlayReadinessChange((ready) =>
       this.emit({ type: 'readiness', ready }),
@@ -182,16 +201,68 @@ export class WalletConnection {
     this.emit({ type: 'readiness', ready: this.ready() });
     log(`${type} wallet connected`);
   }
+  private async loadGrantedWallets(provider: InternalBlockchainInterface): Promise<void> {
+    if (!provider.listWallets) return;
+    const attempt = this.connectionAttempt;
+    try {
+      const grantedWallets = await provider.listWallets();
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ grantedWallets, walletIdentity: provider.getWalletIdentity?.() ?? null });
+    } catch (error) {
+      console.error('[wallet] listing granted wallets failed', error);
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ grantedWallets: [] });
+    }
+  }
+
+  async selectWallet(walletId: string): Promise<void> {
+    const provider = this.provider;
+    if (!provider?.selectWallet || this.view.connecting || this.view.switchingWallet) return;
+    const attempt = this.connectionAttempt;
+    this.poller?.stopBalanceInterest();
+    this.update({
+      switchingWallet: true,
+      switchWalletError: null,
+      balance: undefined,
+      balanceError: null,
+    });
+    try {
+      await provider.selectWallet(walletId, () => attempt === this.connectionAttempt);
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ walletIdentity: provider.getWalletIdentity?.() ?? null });
+    } catch (error) {
+      if (attempt === this.connectionAttempt && this.provider === provider)
+        this.update({ switchWalletError: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (attempt === this.connectionAttempt && this.provider === provider) {
+        this.watchBalance();
+        this.update({ switchingWallet: false });
+      }
+    }
+  }
+
   watchBalance(): void {
     this.poller?.stopBalanceInterest();
     this.poller?.startBalanceInterest(BALANCE_POLL_INTERVAL_MS, {
-      onBalance: (balance) => this.update({ balance }),
-      onError: () => {},
+      onBalance: (balance) => this.update({ balance, balanceError: null }),
+      onError: (error) =>
+        this.update({
+          balance: undefined,
+          balanceError: error instanceof Error ? error.message : String(error),
+        }),
     });
+    this.update({ balance: undefined, balanceError: null });
+  }
+
+  private beginConnectionAttempt(): number {
+    const attempt = ++this.connectionAttempt;
+    if (this.view.switchingWallet) this.watchBalance();
+    this.update({ switchingWallet: false, switchWalletError: null });
+    return attempt;
   }
 
   async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     if (!silent) this.update({ error: null });
     const { provider, interval } = providerFor(type);
     try {
@@ -246,7 +317,7 @@ export class WalletConnection {
     const type = this.view.walletType;
     if (!this.setup || !type) return false;
     const { provider, interval } = providerFor(type);
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     this.update({ error: null, connecting: true });
     try {
       await this.setup.finalize(values, () => {
@@ -268,7 +339,7 @@ export class WalletConnection {
   }
 
   async resume(type: BlockchainType): Promise<void> {
-    const attempt = ++this.connectionAttempt;
+    const attempt = this.beginConnectionAttempt();
     const { provider, interval } = providerFor(type);
     this.provider = provider;
     this.update({
@@ -334,6 +405,7 @@ export class WalletConnection {
       preparingConnection: false,
       showSetup: false,
       balance: undefined,
+      balanceError: null,
     });
     try {
       await provider?.disconnect();
@@ -358,7 +430,16 @@ export class WalletConnection {
     this.detachReadiness = null;
     this.stopPoller();
     this.provider = null;
-    this.update({ hasProvider: false, recovering: false });
+    this.update({
+      hasProvider: false,
+      recovering: false,
+      walletIdentity: null,
+      grantedWallets: [],
+      balance: undefined,
+      balanceError: null,
+      switchingWallet: false,
+      switchWalletError: null,
+    });
   }
   leavePage(): void {
     if (this.view.walletType === 'simulator') void this.provider?.disconnect().catch(() => {});
