@@ -7,6 +7,7 @@ import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 import { cloudBlockchainInfo } from '../wallet/CloudBlockchainInterface';
 import { realBlockchainInfo } from '../wallet/RealBlockchainInterface';
 import { sageBlockchainInfo } from '../wallet/SageBlockchainInterface';
+import { WalletConnectProposalExpiredError } from '../wallet/WalletConnectClient';
 import { WalletConnection } from '../wallet/WalletConnection';
 import { BlockchainPoller, type PollingGameSession } from '../wallet/BlockchainPoller';
 import type { ConnectionSetup, WalletSubmitOutcome } from '../../types/ChiaGaming';
@@ -640,3 +641,35 @@ it('connects Sage through the wallet owner and publishes the selected provider',
     wallet.stopLocalActivity();
   }
 });
+
+it.each(['walletconnect', 'sage'] as const)(
+  'offers a fresh QR after %s expires and clears it on cancel',
+  async (type) => {
+    const provider = type === 'sage' ? sageBlockchainInfo : realBlockchainInfo;
+    const begin = jest.spyOn(provider, 'beginConnect').mockResolvedValue({
+      qrUri: 'wc:expired',
+      finalize: async () => {
+        throw new WalletConnectProposalExpiredError();
+      },
+    });
+    jest.spyOn(provider, 'disconnect').mockResolvedValue();
+    const wallet = new WalletConnection(jest.fn());
+    await wallet.connect(type);
+    expect(wallet.view).toMatchObject({
+      expiredQrWallet: type,
+      setup: null,
+      connecting: false,
+      error: null,
+    });
+    const next = deferred<ConnectionSetup>();
+    begin.mockReturnValueOnce(next.promise);
+    const retry = wallet.connect(type, false, true);
+    expect(wallet.view.expiredQrWallet).toBeUndefined();
+    expect(begin.mock.calls.at(-1)?.[1]).toBe(true);
+    await wallet.cancel();
+    next.resolve({ qrUri: 'wc:cancelled', finalize: jest.fn() });
+    await retry;
+    expect(wallet.view.expiredQrWallet).toBeUndefined();
+    expect(wallet.view.setup).toBeNull();
+  },
+);

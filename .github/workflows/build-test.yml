@@ -170,6 +170,44 @@ jobs:
             SHA256SUMS-web.txt \
             --clobber
 
+  pages:
+    name: Publish project site and player app to GitHub Pages
+    if: github.event_name == 'release'
+    needs: [release]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download verified player archive
+        uses: actions/download-artifact@v7
+        with:
+          name: chia-gaming-${{ github.event.release.tag_name }}
+          path: player-archive
+      - name: Assemble project site
+        env:
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          ./tools/build-pages.sh "player-archive/chia-gaming-${RELEASE_TAG}.tgz" pages "${RELEASE_URL:?}"
+      - name: Configure Pages
+        uses: actions/configure-pages@v6
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: pages
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
   coverage:
     needs: [fmt, clippy]
     runs-on: ubuntu-latest

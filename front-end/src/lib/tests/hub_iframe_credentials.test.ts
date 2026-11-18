@@ -4,7 +4,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { hubSessionFromParentMessage } from '../../../../hub/hub-frontend/src/iframeAuth';
 import { HubIframe } from '../../components/HubIframe';
 import { installHubIframeAuthentication } from '../../services/hubIframeAuthentication';
-import { canonicalHubOrigin, deriveHubSessionId } from '../../services/hubSessionCredential';
+import { canonicalHubUrl, deriveHubSessionId } from '../../services/hubSessionCredential';
 
 type MessageHandler = (event: MessageEvent) => void;
 
@@ -185,16 +185,32 @@ describe('hub iframe credentials', () => {
     const master = '01'.repeat(16);
     const subtle = webcrypto.subtle as unknown as SubtleCrypto;
 
-    const hubA = await deriveHubSessionId(master, 'https://hub.example/path?ignored=1', subtle);
-    const canonicalHubA = await deriveHubSessionId(master, 'https://hub.example:443/', subtle);
+    const hubA = await deriveHubSessionId(master, 'https://hub.example/?ignored=1#lobby', subtle);
+    const canonicalHubA = await deriveHubSessionId(master, 'https://hub.example:443', subtle);
     const hubB = await deriveHubSessionId(master, 'https://other.example/', subtle);
 
-    expect(canonicalHubOrigin('https://HUB.example:443/path')).toBe('https://hub.example');
+    expect(canonicalHubUrl('https://HUB.example:443/')).toBe('https://hub.example');
+    expect(canonicalHubUrl('https://HUB.example:443/hubs/beta/?x=1#y')).toBe(
+      'https://hub.example/hubs/beta',
+    );
     expect(hubA).toBe(canonicalHubA);
     expect(hubA).toMatch(/^[0-9a-f]{32}$/);
     expect(hubA).not.toBe(hubB);
     await expect(deriveHubSessionId(hubA, 'https://other.example/', subtle)).resolves.not.toBe(
       hubB,
     );
+  });
+
+  it('gives hubs mounted under different directories of one origin distinct credentials', async () => {
+    const master = '01'.repeat(16);
+    const subtle = webcrypto.subtle as unknown as SubtleCrypto;
+
+    const root = await deriveHubSessionId(master, 'https://hub.example', subtle);
+    const beta = await deriveHubSessionId(master, 'https://hub.example/hubs/beta', subtle);
+    const betaSlash = await deriveHubSessionId(master, 'https://hub.example/hubs/beta/', subtle);
+    const gamma = await deriveHubSessionId(master, 'https://hub.example/hubs/gamma', subtle);
+
+    expect(beta).toBe(betaSlash);
+    expect(new Set([root, beta, gamma]).size).toBe(3);
   });
 });

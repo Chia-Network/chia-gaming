@@ -263,6 +263,15 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('connection setup', () => {
+  it.each(['https://example.org/hubs/beta', 'https://example.org/hubs/beta/'])(
+    'preserves the hub directory for %s',
+    async (url) => {
+      makeConnection(url, 's1', makeObserver());
+      await Promise.resolve();
+      expect(MockWebSocket.instance!.url).toBe('wss://example.org/hubs/beta/ws/game');
+    },
+  );
+
   it('sends identify with busy=false over ws on open', async () => {
     const cb = makeObserver();
     makeConnection('http://t', 's1', cb);

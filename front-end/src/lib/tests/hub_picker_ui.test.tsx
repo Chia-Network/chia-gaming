@@ -91,7 +91,7 @@ describe('hub picker', () => {
     expect(picker.errorText()).toEqual([]);
   });
 
-  it('connects to the normalized origin of a typed URL', () => {
+  it('connects to the normalized directory URL', () => {
     const picker = renderPicker();
 
     picker.type(' hub.example.com/lobby ');
@@ -99,7 +99,7 @@ describe('hub picker', () => {
       picker.connectButton().props.onClick();
     });
 
-    expect(picker.onConnect).toHaveBeenCalledWith('https://hub.example.com');
+    expect(picker.onConnect).toHaveBeenCalledWith('https://hub.example.com/lobby');
   });
 
   it('connects to the suggestion committed by Enter instead of the previous input', () => {
@@ -119,7 +119,7 @@ describe('hub picker', () => {
     picker.pressEnter();
 
     expect(picker.onConnect).toHaveBeenCalledTimes(1);
-    expect(picker.onConnect).toHaveBeenCalledWith('https://my-hub.test');
+    expect(picker.onConnect).toHaveBeenCalledWith('https://my-hub.test/lobby');
   });
 
   it('prefills the last used hub and keeps the known hubs as suggestions', () => {

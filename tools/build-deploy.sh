@@ -112,7 +112,8 @@ cp -r "$FE_DIR/dist/app/." "$NONCE_DIR/"
 
 # Framing files at the staging root (small, fixed, structural set).
 cp "$FE_DIR/public/index.html" "$GAME_STAGE/index.html"
-[ -f "$FE_DIR/public/favicon.svg" ] && cp "$FE_DIR/public/favicon.svg" "$GAME_STAGE/favicon.svg"
+mkdir -p "$GAME_STAGE/oauth/callback"
+cp "$FE_DIR/public/index.html" "$GAME_STAGE/oauth/callback/index.html"
 cp "$ROOT_DIR/static-server.js" "$GAME_STAGE/static-server.js"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$GAME_STAGE/build-meta.json"
 
@@ -137,6 +138,7 @@ cp -r "$HUB_FRONTEND_DIR/dist/app/." "$HUB_NONCE_DIR/"
 
 # Framing/root files: page shell, generated nonce, and the node service.
 cp "$HUB_FRONTEND_DIR/public/index.html" "$HUB_STAGE/index.html"
+cp "$FE_DIR/public/favicon.svg" "$HUB_NONCE_DIR/favicon.svg"
 echo "{\"basePath\":\"/app/$BUILD_NONCE/\"}" > "$HUB_STAGE/build-meta.json"
 cp "$HUB_SERVICE_DIR/dist/index-rollup.cjs"  "$HUB_STAGE/service.js"
 

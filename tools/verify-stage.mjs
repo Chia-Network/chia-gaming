@@ -4,7 +4,7 @@
 //
 // Parses the staged index.html, extracts every asset-looking reference, and
 // asserts each one resolves to a file in the stage. Absolute refs (e.g.
-// /favicon.svg, /build-meta.json) resolve under the stage root; relative refs
+// /build-meta.json) resolve under the stage root; relative refs
 // (index.js, index.css, ./chia_gaming_wasm.js) resolve under the runtime
 // basePath read from build-meta.json. Exits non-zero if anything is missing.
 //
@@ -53,7 +53,7 @@ for (const ref of refs) {
     continue; // external / inline; not our file
   }
   let filePath;
-  if (ref.startsWith("/")) {
+  if (ref.startsWith("/") || ref === "build-meta.json") {
     filePath = join(STAGE, stripBase(ref));
   } else {
     const rel = ref.replace(/^\.\//, "");

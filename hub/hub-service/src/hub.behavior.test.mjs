@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -31,11 +31,18 @@ function playerId(bytes) {
   return `p_${Buffer.from(bytes).toString('hex')}`;
 }
 
-async function startHub(env = {}) {
+async function startHub(env = {}, selfPath = '', extraArgs = []) {
   const dir = mkdtempSync(path.join(tmpdir(), 'hub-behavior-'));
   const child = spawn(
     process.execPath,
-    ['dist/index-rollup.cjs', '--self', 'http://127.0.0.1:0', '--dir', dir],
+    [
+      'dist/index-rollup.cjs',
+      '--self',
+      'http://127.0.0.1:0' + selfPath,
+      '--dir',
+      dir,
+      ...extraArgs,
+    ],
     {
       cwd: path.resolve(import.meta.dirname, '..'),
       env: {
@@ -86,6 +93,7 @@ async function startHub(env = {}) {
   });
   return {
     origin: `http://127.0.0.1:${port}`,
+    dir,
     stop: async () => {
       if (child.exitCode !== null) return;
       child.kill('SIGTERM');
@@ -300,6 +308,53 @@ async function identifyGameRegistered(origin, sessionId) {
   const registered = await nextGame(game, (msg) => msg.type === 'registered');
   return { game, playerId: playerId(registered.player_id) };
 }
+
+test('directory mount serves assets, favicon, redirects and both WebSocket endpoints', async () => {
+  const hub = await startHub({}, '/hubs/beta/', [
+    '--redirect-html-to',
+    'https://player.example/play/',
+  ]);
+  const base = hub.origin + '/hubs/beta';
+  const sockets = [];
+  try {
+    mkdirSync(path.join(hub.dir, 'app/build'), { recursive: true });
+    for (const [file, contents] of Object.entries({
+      'index.html': '<html>hub</html>',
+      'app/build/favicon.svg': '<svg/>',
+      'build-meta.json': '{"basePath":"/app/build/"}',
+      'app/build/index.js': '// hub bundle',
+    }))
+      writeFileSync(path.join(hub.dir, file), contents);
+
+    const slash = await fetch(base + '?test=1', { redirect: 'manual' });
+    assert.equal(slash.headers.get('location'), '/hubs/beta/?test=1');
+    const frame = await fetch(base + '/', { headers: { 'Sec-Fetch-Dest': 'iframe' } });
+    assert.equal(await frame.text(), '<html>hub</html>');
+    assert.equal(frame.headers.get('cache-control'), 'no-cache');
+    const meta = await fetch(base + '/build-meta.json');
+    assert.equal(meta.headers.get('cache-control'), 'no-store');
+    assert.equal((await meta.json()).basePath, '/app/build/');
+    const asset = await fetch(base + '/app/build/index.js');
+    assert.equal(await asset.text(), '// hub bundle');
+    assert.match(asset.headers.get('cache-control'), /immutable/);
+    assert.equal(await (await fetch(base + '/app/build/favicon.svg')).text(), '<svg/>');
+    assert.equal((await fetch(hub.origin + '/build-meta.json')).status, 404);
+    const navigation = await fetch(base + '/', {
+      headers: { 'Sec-Fetch-Dest': 'document' },
+      redirect: 'manual',
+    });
+    assert.equal(navigation.headers.get('location'), 'https://player.example/play/');
+
+    const lobby = await joinHub(base, 'mounted-session', 'Mounted');
+    sockets.push(lobby.ws);
+    const game = await identifyGameRegistered(base, 'mounted-session');
+    sockets.push(game.game);
+    assert.equal(game.playerId, lobby.id);
+  } finally {
+    sockets.forEach((ws) => ws.close());
+    await hub.stop();
+  }
+});
 
 test('HTTP responses prohibit referrer disclosure and permit arbitrary framing', async () => {
   const hub = await startHub();

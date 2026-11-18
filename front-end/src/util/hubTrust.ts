@@ -12,7 +12,13 @@ export async function requestHubTrust(origin: string): Promise<HubTrustOutcome> 
   if (bridge === undefined) {
     return 'trusted';
   }
-  return bridge.requestTrust(origin);
+  let trustOrigin: string;
+  try {
+    trustOrigin = new URL(origin).origin;
+  } catch {
+    return 'invalid';
+  }
+  return bridge.requestTrust(trustOrigin);
 }
 
 /** Message for an outcome that stops the connection attempt, or null to proceed. */

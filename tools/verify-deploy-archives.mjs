@@ -16,7 +16,7 @@ import {
   mkdirSync,
   rmSync,
 } from "node:fs";
-import { join, resolve, relative, dirname } from "node:path";
+import { join, resolve, relative, dirname, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -142,7 +142,7 @@ function dirIsNonempty(dir) {
 
 function floorCheckPlayer(stageDir) {
   const errors = [];
-  for (const f of ["index.html", "build-meta.json", "static-server.js"]) {
+  for (const f of ["index.html", "oauth/callback/index.html", "build-meta.json", "static-server.js"]) {
     if (!existsSync(join(stageDir, f))) {
       errors.push(`missing ${f}`);
     }
@@ -151,6 +151,7 @@ function floorCheckPlayer(stageDir) {
   for (const f of [
     "index.js",
     "index.css",
+    "favicon.svg",
     "chia_gaming_wasm.js",
     "chia_gaming_wasm_bg.wasm",
   ]) {
@@ -180,7 +181,7 @@ function floorCheckHub(stageDir) {
     }
   }
   const nonceDir = resolveNonceDir(stageDir);
-  for (const f of ["index.js", "index.css"]) {
+  for (const f of ["index.js", "index.css", "favicon.svg"]) {
     if (!existsSync(join(nonceDir, f))) {
       errors.push(`missing app bundle file: ${f}`);
     }
@@ -261,17 +262,17 @@ async function killServer(child) {
   }
 }
 
-async function smokeTestPlayer(stageDir) {
+async function smokeTestPlayer(stageDir, subdirectory = false) {
   const port = await freePort();
   const host = "127.0.0.1";
   const serverJs = join(stageDir, "static-server.js");
-  const child = spawn(process.execPath, [serverJs, ".", String(port), host], {
+  const child = spawn(process.execPath, [serverJs, subdirectory ? dirname(stageDir) : stageDir, String(port), host], {
     cwd: stageDir,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
   try {
-    const base = `http://${host}:${port}`;
+    const base = `http://${host}:${port}${subdirectory ? "/" + basename(stageDir) : ""}`;
     await waitForHttp(`${base}/`);
 
     const indexRes = await fetch(`${base}/`);
@@ -281,12 +282,20 @@ async function smokeTestPlayer(stageDir) {
       fail(`player GET / content-type: ${ct}`);
     }
 
+    const callback = await fetch(`${base}/oauth/callback?code=test&state=test`);
+    if (!callback.ok || new URL(callback.url).search !== "?code=test&state=test") {
+      fail("player OAuth callback did not preserve its query through directory redirect");
+    }
+    if ((await callback.text()) !== readFileSync(join(stageDir, "index.html"), "utf8")) {
+      fail("player OAuth callback did not serve the player entrypoint");
+    }
+
     const metaRes = await fetch(`${base}/build-meta.json`);
     if (!metaRes.ok) fail(`player GET /build-meta.json -> ${metaRes.status}`);
     const meta = await metaRes.json();
     const basePath = meta.basePath || "/";
 
-    for (const asset of ["index.js", "index.css", "chia_gaming_wasm_bg.wasm"]) {
+    for (const asset of ["index.js", "index.css", "favicon.svg", "chia_gaming_wasm_bg.wasm"]) {
       const url = `${base}${basePath}${asset}`;
       const res = await fetch(url);
       if (!res.ok) fail(`player GET ${url} -> ${res.status}`);
@@ -303,12 +312,12 @@ async function smokeTestPlayer(stageDir) {
   }
 }
 
-async function smokeTestHub(stageDir) {
+async function smokeTestHub(stageDir, mountPath = "") {
   const port = await freePort();
   const host = "127.0.0.1";
   const child = spawn(
     process.execPath,
-    ["service.js", "--self", `http://${host}:${port}`, "--dir", "."],
+    ["service.js", "--self", `http://${host}:${port}${mountPath}`, "--dir", "."],
     {
       cwd: stageDir,
       env: { ...process.env, PORT: String(port) },
@@ -317,7 +326,7 @@ async function smokeTestHub(stageDir) {
   );
 
   try {
-    const base = `http://${host}:${port}`;
+    const base = `http://${host}:${port}${mountPath}`;
     await waitForHttp(`${base}/`);
 
     const indexRes = await fetch(`${base}/`);
@@ -328,7 +337,7 @@ async function smokeTestHub(stageDir) {
     const meta = await metaRes.json();
     const basePath = meta.basePath || "/";
 
-    for (const asset of ["index.js", "index.css"]) {
+    for (const asset of ["index.js", "index.css", "favicon.svg"]) {
       const url = `${base}${basePath}${asset}`;
       const res = await fetch(url);
       if (!res.ok) fail(`hub GET ${url} -> ${res.status}`);
@@ -365,13 +374,83 @@ async function verifyArtifactPair({ label, kind, tgz, zip }) {
 
     if (kind === "player") {
       await smokeTestPlayer(tgzDir);
+      await smokeTestPlayer(tgzDir, true);
     } else {
       await smokeTestHub(tgzDir);
+      await smokeTestHub(tgzDir, "/hubs/beta");
     }
 
     console.log(`verify-deploy-archives: ${label} ok`);
   } finally {
     rmSync(tmpBase, { recursive: true, force: true });
+  }
+}
+
+async function smokeTestProductionRunner(playerStage, hubStage, playerPath, hubPath) {
+  const gamePort = await freePort();
+  const hubPort = await freePort();
+  const child = spawn("bash", [join(ROOT, "tools", "run-production.sh")], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PUBLIC_HOST: "localhost",
+      GAME_PORT: String(gamePort),
+      HUB_PORT: String(hubPort),
+      PLAYER_STAGE: playerStage,
+      HUB_STAGE: hubStage,
+      PLAYER_PATH: playerPath,
+      HUB_PATH: hubPath,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const player = `http://127.0.0.1:${gamePort}${playerPath}`;
+  const hub = `http://127.0.0.1:${hubPort}${hubPath}`;
+  try {
+    await waitForHttp(player + "/");
+    await waitForHttp(hub + "/");
+    for (const [url, stage] of [[player, playerStage], [hub, hubStage]]) {
+      const metaResponse = await fetch(url + "/build-meta.json");
+      if (metaResponse.headers.get("cache-control") !== "no-store") fail("metadata must not be cached");
+      const meta = await metaResponse.json();
+      for (const asset of ["index.js", "index.css", "favicon.svg"]) {
+        const response = await fetch(url + meta.basePath + asset);
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (!response.ok || !bytes.equals(readFileSync(join(stage, meta.basePath, asset)))) {
+          fail(`production runner asset mismatch: ${url}/${asset}`);
+        }
+        if (!response.headers.get("cache-control")?.includes("immutable")) {
+          fail("nonce assets must be immutable under a mount");
+        }
+      }
+    }
+    const callback = await fetch(player + "/oauth/callback?code=test", { redirect: "manual" });
+    if (callback.headers.get("location") !== playerPath + "/oauth/callback/?code=test") {
+      fail("mounted OAuth callback redirect lost its path or query");
+    }
+    const redirect = await fetch(hub + "/", {
+      headers: { "Sec-Fetch-Dest": "document" },
+      redirect: "manual",
+    });
+    if (redirect.headers.get("location") !== `http://localhost:${gamePort}${playerPath}/`) {
+      fail("hub redirect must use PUBLIC_HOST and PLAYER_PATH");
+    }
+    if (playerPath) {
+      const slash = await fetch(player + "?test=1", { redirect: "manual" });
+      if (slash.headers.get("location") !== playerPath + "/?test=1") fail("missing mount slash redirect");
+      if ((await fetch(player + "-other/index.html")).status !== 404) fail("player mount leaked");
+      if ((await fetch(`http://127.0.0.1:${gamePort}/build-meta.json`)).status !== 404) {
+        fail("player must not serve outside its mount");
+      }
+    }
+    console.log(`verify-deploy-archives: run-production ok (${playerPath || "/"}, ${hubPath || "/"})`);
+  } finally {
+    await new Promise((resolveExit, reject) => {
+      if (child.exitCode !== null) return resolveExit();
+      const timer = setTimeout(() => reject(new Error("run-production did not shut down")), 15000);
+      child.once("exit", () => { clearTimeout(timer); resolveExit(); });
+      child.kill("SIGTERM");
+    });
   }
 }
 
@@ -402,6 +481,27 @@ async function main() {
     tgz: hubTgz,
     zip: hubZip,
   });
+
+  const runnerStage = mkdtempSync(join(tmpdir(), "verify-production-runner-"));
+  try {
+    const player = join(runnerStage, "player");
+    const hub = join(runnerStage, "hub");
+    mkdirSync(player);
+    mkdirSync(hub);
+    extractArchive(playerTgz, player);
+    extractArchive(hubTgz, hub);
+    await smokeTestProductionRunner(player, hub, "", "");
+    await smokeTestProductionRunner(player, hub, "/testing/player", "/testing/hub");
+    const invalid = spawnSync("bash", [join(ROOT, "tools", "run-production.sh")], {
+      env: { ...process.env, PLAYER_PATH: "../player" },
+      encoding: "utf8",
+    });
+    if (invalid.status === 0 || !invalid.stderr.includes("Mount paths must")) {
+      fail("run-production must reject a relative mount path");
+    }
+  } finally {
+    rmSync(runnerStage, { recursive: true, force: true });
+  }
 
   console.log("verify-deploy-archives: all checks passed");
 }

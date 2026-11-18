@@ -27,7 +27,8 @@ Blockchain, wallet, and chain-observation protocols are also out of scope.
 Given a selected hub HTTP URL, the player application:
 
 1. changes `http:` to `ws:` or `https:` to `wss:`;
-2. replaces the path with `/ws/game`; and
+2. appends `ws/game` to the selected hub directory (for example,
+   `https://hub.example/hubs/beta/` becomes `wss://hub.example/hubs/beta/ws/game`); and
 3. removes the query string and fragment.
 
 All application frames on `/ws/game` are WebSocket binary messages. Text
@@ -115,7 +116,7 @@ dictionaries are ignored. Implementations do not accept the old descriptive
 The following named wire types are used below:
 
 - `PlayerID`: exactly 16 opaque bytes;
-- `SessionID`: exactly 16 secret bytes, scoped to one canonical hub origin;
+- `SessionID`: exactly 16 secret bytes, scoped to one canonical hub URL;
 - `Alias`: non-empty UTF-8 text of at most 128 bytes.
 
 ## 5. Addressed relay messages
@@ -173,10 +174,12 @@ Sent once whenever a game WebSocket opens.
 currently unavailable for matchmaking. `busy_reasons` optionally explains a
 busy report; see [6.2](#62-set_busy).
 
-The player derives a distinct `SessionID` for each canonical HTTP(S) hub origin.
-The URL path, query, fragment, host casing, and default port do not create new
+The player derives a distinct `SessionID` for each canonical HTTP(S) hub URL:
+the origin plus the hub's directory mount without trailing slashes. Hubs under
+different directories of one origin are separate credential scopes. The query,
+fragment, host casing, default port, and trailing slashes do not create new
 credential scopes. A hub that learns its own bearer credential cannot replay it
-at a different origin.
+at a different origin or directory.
 
 The hub assigns or recovers the player ID, binds this connection, and replies
 with `registered`. Alias ownership remains on the hub's internal interface.
@@ -389,12 +392,12 @@ It proves only that this WebSocket path recently carried a hub frame.
 ### 8.1 Hub session ID
 
 A new player application generates and persists a 16-byte random master secret.
-For each canonical hub origin, it derives a 16-byte session ID using
-HMAC-SHA256 over a domain separator and that origin. It reuses the derived value
-only for reconnects to the same origin. `identify.session_id` sends those
+For each canonical hub URL (origin plus directory mount), it derives a 16-byte
+session ID using HMAC-SHA256 over a domain separator and that URL. It reuses the
+derived value only for reconnects to the same hub URL. `identify.session_id` sends those
 derived bytes.
 
-The hub HTML is opened at `<hub-origin>/` without credentials in the URL. Once
+The hub HTML is opened at the selected hub directory URL without credentials in the URL. Once
 loaded, it requests the hub session ID from the embedding player application
 with `postMessage`. The player verifies the requesting iframe window and origin,
 then addresses the credential response only to that hub origin. The same hub
@@ -580,8 +583,9 @@ the relay envelope around that body.
 - **Hub**: a third-party service that assigns public player IDs and relays
   addressed payloads.
 - **Hub session ID**: a secret bearer value derived by a player application for
-  one canonical hub origin. It is sent as `session_id` and identifies the same
-  player application across reconnects to that origin.
+  one canonical hub URL (origin plus directory mount). It is sent as
+  `session_id` and identifies the same player application across reconnects to
+  that hub.
 - **Player ID**: a public routing identifier assigned by the hub. Current hubs
   send it as 16 opaque bytes. The reference hub represents the same bytes
   internally as `p_` followed by 32 lowercase hexadecimal characters.

@@ -1,5 +1,5 @@
 // Zero-dependency static file server for the player app.
-// Usage: node static-server.js <serve-directory> [port] [host]
+// Usage: node static-server.js <serve-directory> [port] [host] [mount-path]
 
 const http = require('http');
 const fs = require('fs');
@@ -8,9 +8,10 @@ const path = require('path');
 const SERVE_DIR = process.argv[2];
 const PORT = parseInt(process.argv[3] || '3002', 10);
 const HOST = process.argv[4] || '127.0.0.1';
+const MOUNT_PATH = (process.argv[5] || '/').replace(/\/+$/, '');
 
 if (!SERVE_DIR) {
-  console.error('Usage: node static-server.js <serve-directory> [port]');
+  console.error('Usage: node static-server.js <serve-directory> [port] [host] [mount-path]');
   process.exit(1);
 }
 
@@ -54,7 +55,7 @@ function cacheControlForPath(pathname) {
   if (pathname === '/' || pathname === '/index.html' || pathname.endsWith('.html')) {
     return 'no-cache';
   }
-  // favicon and other stable root static
+  // Other static files outside the nonce tree
   return 'public, max-age=86400';
 }
 
@@ -108,7 +109,19 @@ function sendFile(res, filePath, pathname, gzip = false) {
 }
 
 const server = http.createServer((req, res) => {
-  let pathname = new URL(req.url, 'http://localhost').pathname;
+  const requestUrl = new URL(req.url, 'http://localhost');
+  let pathname = requestUrl.pathname;
+  if (MOUNT_PATH) {
+    if (pathname === MOUNT_PATH) {
+      res.writeHead(308, { Location: MOUNT_PATH + '/' + requestUrl.search });
+      return res.end();
+    }
+    if (!pathname.startsWith(MOUNT_PATH + '/')) {
+      res.writeHead(404);
+      return res.end('Not found');
+    }
+    pathname = pathname.slice(MOUNT_PATH.length);
+  }
   if (pathname === '/') pathname = '/index.html';
 
   const filePath = resolveUnderRoot(pathname);
@@ -121,6 +134,18 @@ const server = http.createServer((req, res) => {
     if (!err && st.isFile()) {
       const gz = gzipPath(filePath, req);
       return sendFile(res, gz || filePath, pathname, !!gz);
+    }
+
+    // Directory entrypoints support subdirectory installs and the OAuth callback.
+    if (!err && st.isDirectory()) {
+      if (!pathname.endsWith('/')) {
+        const search = new URL(req.url, 'http://localhost').search;
+        res.writeHead(301, { Location: MOUNT_PATH + pathname + '/' + search });
+        return res.end();
+      }
+      const indexPath = path.join(filePath, 'index.html');
+      const gz = gzipPath(indexPath, req);
+      return sendFile(res, gz || indexPath, pathname + 'index.html', !!gz);
     }
 
     // SPA fallback: serve index.html for missing extensionless paths
@@ -146,7 +171,7 @@ server.keepAliveTimeout = 60_000;
 server.headersTimeout = 61_000;
 
 server.listen(PORT, HOST, () => {
-  console.log(`Static server: http://${HOST}:${PORT} -> ${ROOT}`);
+  console.log(`Static server: http://${HOST}:${PORT}${MOUNT_PATH}/ -> ${ROOT}`);
 });
 
 server.on('error', (e) => {

@@ -1062,7 +1062,7 @@ export function createApplication() {
     update('sessionId', hubSessionId);
     setHubOrigin(origin);
     storageRepository.updatePreference({ key: 'hubUrl', value: origin });
-    update('iframeUrl', new URL('/', origin).toString());
+    update('iframeUrl', origin.replace(/\/+$/, '') + '/');
     update('hubLiveness', 'reconnecting');
     let conn: HubConnection;
     try {

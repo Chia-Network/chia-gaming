@@ -16,12 +16,17 @@ function hexFromBytes(value: Uint8Array): string {
   return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export function canonicalHubOrigin(hubUrl: string): string {
+/**
+ * Credential scope of a hub: its origin plus directory mount. Hubs mounted
+ * under different directories of one origin are separate installations and
+ * must not receive each other's bearer credential.
+ */
+export function canonicalHubUrl(hubUrl: string): string {
   const url = new URL(hubUrl);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`unsupported hub URL protocol: ${url.protocol}`);
   }
-  return url.origin;
+  return url.origin + url.pathname.replace(/\/+$/, '');
 }
 
 export async function deriveHubSessionId(
@@ -36,7 +41,7 @@ export async function deriveHubSessionId(
     false,
     ['sign'],
   );
-  const origin = canonicalHubOrigin(hubUrl);
-  const signature = await subtle.sign('HMAC', key, encoder.encode(`${CONTEXT}${origin}`));
+  const scope = canonicalHubUrl(hubUrl);
+  const signature = await subtle.sign('HMAC', key, encoder.encode(`${CONTEXT}${scope}`));
   return hexFromBytes(new Uint8Array(signature).subarray(0, 16));
 }

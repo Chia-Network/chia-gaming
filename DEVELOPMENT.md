@@ -168,8 +168,59 @@ as the web archive name and Electron application version.
    - Windows x64 NSIS `.exe`
    - Linux x64 `.AppImage` and `.deb`
    - SHA-256 checksum files
-4. Confirm every asset uses the tag version and smoke-test the native packages
+4. The Linux release workflow deploys the verified player archive to
+   https://Chia-Network.github.io/chia-gaming/. Each published release (including
+   prereleases) replaces the hosted site. No hub or Node server is started.
+5. Confirm every asset uses the tag version and smoke-test the native packages
    on clean target systems.
+
+Before the first Pages deployment, select **GitHub Actions** in repository
+**Settings → Pages → Build and deployment**. The `github-pages` environment
+must allow deployments from release tags. Cloud Wallet OAuth client settings
+must allow `https://chia-network.github.io/chia-gaming/player/oauth/callback`.
+The player archive can also be served at any directory URL ending in `/`;
+its assets and OAuth callback resolve within that installation.
+
+For a hub installed under a directory, include that directory in its public
+`--self` URL, for example:
+
+```bash
+node service.js --self https://example.com/hubs/beta/ --dir .
+```
+
+The hub mounts its HTML, favicon, metadata, assets, and both WebSocket endpoints
+under `/hubs/beta/`. Enter that full URL in the player's hub picker. A reverse
+proxy must forward the prefix unchanged, including WebSocket upgrades. If
+`--redirect-html-to` is used, give the full player installation URL, including
+its directory. Both archives work at the domain root as well.
+
+There is no separate publish-release script: the tag and `gh release create`
+commands below trigger the release workflows. `tools/build-deploy.sh` builds
+the archives locally; `tools/stage-production.sh` extracts them for local
+testing, and `tools/run-production.sh` starts local player and hub servers.
+The Pages root serves the project landing page from `project-page/index.html`; the
+production player app is hosted at `player/`. `tools/build-pages.sh <player.tgz>
+<empty-output-directory> [release-url]` assembles both. The release workflow passes
+the published release URL so the landing page links to the exact build, including
+prereleases. Local previews default to the releases list.
+Neither local staging nor running servers is required for Pages publication.
+
+To test the production build under directories on another machine:
+
+```bash
+./tools/stage-production.sh
+HOST=0.0.0.0 PUBLIC_HOST=192.168.1.50 \
+  PLAYER_PATH=/gaming/player/ HUB_PATH=/gaming/hub/ \
+  ./tools/run-production.sh
+```
+
+Replace `192.168.1.50` with the server's reachable hostname or IP. This serves
+the player at `http://192.168.1.50:3002/gaming/player/` and the hub at
+`http://192.168.1.50:3003/gaming/hub/`. The separate ports preserve separate
+origins. Enter the printed hub URL in the player. `GAME_PORT` and `HUB_PORT`
+remain configurable. Both paths default to `/`; `PUBLIC_HOST` defaults to
+`HOST`. Mounts are chosen when starting the servers and require no rebuild.
+
 
 Apple and Windows signing are automatic when their complete credential sets are
 available. Complete Apple credentials produce Developer ID signed, notarized,
@@ -285,9 +336,9 @@ built assets into `app/NONCE/` (same layout production tarballs use).
 index.html              ← front-end/public/index.html
 static-server.js        ← static-server.js
 build-meta.json         ← {"basePath":"/app/NONCE/"}
-favicon.svg             ← front-end/public/favicon.svg (if present)
 app/
   NONCE/
+    favicon.svg         ← front-end/public/favicon.svg
     index.js            ← front-end/dist/js/index-rollup.js
     index.css           ← front-end/dist/css/index.css
     chia_gaming_wasm.js ← front-end/dist/chia_gaming_wasm.js
@@ -304,6 +355,7 @@ build-meta.json         ← {"basePath":"/app/NONCE/"}
 service.js              ← hub/hub-service/dist/index-rollup.cjs
 app/
   NONCE/
+    favicon.svg         ← front-end/public/favicon.svg
     index.js            ← hub/hub-frontend/public/index.js
     index.css           ← hub/hub-frontend/dist/css/index.css
 ```
@@ -351,7 +403,7 @@ PORT=3003 node hub/hub-service/dist/index-rollup.cjs \
 
 | Flag / env                   | Required | Purpose                                                                                                |
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
-| `--self`                     | yes      | Public HTTP origin of this hub (used for WebSocket URL derivation)                                     |
+| `--self`                     | yes      | Public HTTP URL of this hub, including its directory mount                                     |
 | `--dir`                      | yes      | Root directory to serve static hub files from                                                          |
 | `--verbose`                  | no       | Verbose logging                                                                                        |
 | `PORT`                       | no       | Listen port (default `5801`; the local demo overrides it with `HUB_PORT`)                              |
@@ -426,8 +478,8 @@ under the same `basePath` as `index.js`. The player app prefetches the
 WASM module and binary game/factory presets at page
 load — not when a session is accepted — via relative paths under
 `basePath`.
-- `**--self` must match the public URL.** The hub uses it to derive
-WebSocket URLs. Mismatches cause connection failures.
+- **`--self` must match the public URL.** Its path mounts the hub HTTP and
+WebSocket endpoints. Proxies must preserve that path when forwarding requests.
 - **Connection limits.** Tune `HUB_MAX_TOTAL_CONNECTIONS` and
 `HUB_MAX_CONNECTIONS_PER_IP` for the deployment. When the hub is reachable only
 through a trusted reverse proxy, set `HUB_TRUST_PROXY=1` and configure the proxy
@@ -445,8 +497,8 @@ largest valid frame expected by the deployment.
   `GAME_MAX_OUTBOUND_BYTES_PER_CONNECTION` or aggregate outstanding sends
   exceed `GAME_MAX_TOTAL_OUTBOUND_BYTES`. Keep the per-connection limit above
   the largest encoded relay frame.
-- **Caching rules.** Only root URLs (`index.html`, `build-meta.json`,
-favicon, etc.) stay stable across rebuilds; each deploy mints a new
+- **Caching rules.** The root URLs `index.html` and `build-meta.json`
+stay stable across rebuilds; each deploy mints a new
 `/app/<nonce>/` tree. Configure your production web server (nginx,
 Caddy, CloudFront, etc.) with these headers. The dev servers
 (`static-server.js` and the hub service) already apply them
@@ -455,7 +507,6 @@ automatically.
   fresh so the app picks up new nonces).
   - `index.html`: `**Cache-Control: no-cache**` (revalidate; entry shell
   must pick up the new `basePath`).
-  - Other root static (e.g. favicon): `**Cache-Control: public, max-age=86400**`.
   - Everything under `/app/`: `**Cache-Control: public, max-age=31536000, immutable**`
   (content-addressed by nonce within a deploy; repeat visits hit cache).
 - **No simulator.** In production there is no simulator. Players connect
