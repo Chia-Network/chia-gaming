@@ -98,7 +98,8 @@ impl SessionState {
             )
     }
 
-    pub fn reject_inbound(&mut self) {
+    pub fn reject_inbound(&mut self, handshake_failed: bool) {
+        self.inbound_handshake_failed = handshake_failed;
         self.state.disposition = "inbound-reject".into();
         self.discard_outbound();
     }
