@@ -1256,10 +1256,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     // submissions (for example a mature timeout claim). Actual abandonment
     // clears that queue in Rust before it reaches this boundary.
     this.drainAndSubmitTransactions();
-    if (terminal) {
-      this.flushDeferredWork();
-      return;
-    }
+    if (terminal) this.flushDeferredWork();
     if (this.eventQueue.length > 0 || this.reliableTransport.hasPendingDurability())
       this.requestCommit();
   }
