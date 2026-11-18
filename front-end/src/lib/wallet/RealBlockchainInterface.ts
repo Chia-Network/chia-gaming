@@ -21,6 +21,7 @@ import {
   WC_INTER_REQUEST_MS,
 } from './WalletConnectRpc';
 
+import { getCurrencyLabels } from '../../constants/currency';
 import { ChiaMethod, getChainId } from '../../constants/wallet-connect';
 import { log } from '../../services/log';
 import {
@@ -181,7 +182,7 @@ function collectErrorText(err: unknown): string {
   // Chia GUI IPC may encode the daemon error as [wc:<code>|<base64-json>] ....
   // Decode that payload when present so "Coin ID ... not found" is visible here.
   for (const part of [...parts]) {
-    const match = part.match(/\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/);
+    const match = part.match(WC_ENCODED_ERROR);
     if (!match || typeof atob !== 'function') continue;
     try {
       parts.push(atob(match[1]));
@@ -200,6 +201,73 @@ function collectErrorText(err: unknown): string {
         ),
     )
     .join(' ');
+}
+
+const WC_USER_REJECTED = 5000;
+const WC_ENCODED_ERROR = /\[wc:-?\d+\|([A-Za-z0-9+/=]+)\]/;
+
+/** The JSON-RPC error object the wallet answered with, when there is one. */
+function walletRpcError(err: unknown): { code?: unknown; message?: unknown } | null {
+  const cause = err instanceof Error ? (err as Error & { cause?: unknown }).cause : err;
+  return typeof cause === 'object' && cause !== null ? cause : null;
+}
+
+/** The wallet's own message when the user declined the request there. */
+function walletUserRejection(err: unknown): string | null {
+  if (Number(walletRpcError(err)?.code) !== WC_USER_REJECTED) return null;
+  return walletRpcMessage(err) ?? 'Request rejected in the wallet';
+}
+
+/**
+ * The message of the wallet's JSON-RPC error, without the transport framing.
+ * Null when the message carries the Chia GUI's encoded payload, which only
+ * collectErrorText decodes.
+ */
+function walletRpcMessage(err: unknown): string | null {
+  const message = walletRpcError(err)?.message;
+  if (typeof message !== 'string' || !message || WC_ENCODED_ERROR.test(message)) return null;
+  return message;
+}
+
+/**
+ * The reference wallet reports coin-selection failures as free text, so its
+ * balance, not the message, says which state keeps it from spending `needed`.
+ * Returns null when the balance covers the amount or cannot be read.
+ */
+async function describeOfferShortfall(needed: bigint): Promise<string | null> {
+  if (needed <= 0n) return null;
+  let balance: Partial<Awaited<ReturnType<typeof rpc.getWalletBalance>>> | null | undefined;
+  try {
+    balance = await rpc.getWalletBalance({ walletId: 1n });
+  } catch (e) {
+    log(`[wc-blockchain] balance read for funding diagnosis failed: ${collectErrorText(e)}`);
+    return null;
+  }
+  const confirmed = balance?.confirmedWalletBalance;
+  const spendable = balance?.spendableBalance;
+  const maxSend = balance?.maxSendAmount;
+  const { mojos } = getCurrencyLabels();
+  if (typeof confirmed === 'bigint' && confirmed < needed) {
+    return `Not enough funds in the wallet: ${needed} ${mojos} needed, ${confirmed} available.`;
+  }
+  if (typeof spendable === 'bigint' && spendable < needed) {
+    return `Wallet funds are held by a pending transaction or an open offer: ${needed} ${mojos} needed, ${spendable} spendable right now. Try again once the transaction confirms or the offer is cancelled.`;
+  }
+  if (typeof maxSend === 'bigint' && maxSend < needed) {
+    return `Wallet funds are split across too many small coins to spend ${needed} ${mojos} at once. Combine coins in the wallet and try again.`;
+  }
+  return null;
+}
+
+/**
+ * Reason shown to the user when the wallet refused to create an offer. A
+ * balance diagnosis replaces the wallet's own answer, which callers have
+ * already logged and which is often no more than "Internal error".
+ */
+async function offerFailureReason(err: unknown, needed: bigint, detail: string): Promise<string> {
+  const rejection = walletUserRejection(err);
+  if (rejection) return rejection;
+  return (await describeOfferShortfall(needed)) ?? walletRpcMessage(err) ?? detail;
 }
 
 function boundedCancellationError(value: unknown): string {
@@ -611,8 +679,12 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (e instanceof WalletConnectTransportError) {
         return { kind: 'unavailable', reason: text };
       }
-      return { kind: 'failure', reason: text };
+      return { kind: 'failure', reason: await offerFailureReason(e, fee, text) };
     }
+  }
+
+  spendShortfall(amount: bigint): Promise<string | null> {
+    return describeOfferShortfall(amount);
   }
 
   async getBalance(): Promise<bigint> {
@@ -817,9 +889,9 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
       if (e instanceof WalletConnectRequestNotStartedError) {
         return { kind: 'unavailable', mutation: 'not-started', reason };
       }
-      return e instanceof WalletConnectTransportError
-        ? { kind: 'unavailable', reason }
-        : { kind: 'failure', reason };
+      if (e instanceof WalletConnectTransportError) return { kind: 'unavailable', reason };
+      const offered = offer['1'] ?? 0n;
+      return { kind: 'failure', reason: await offerFailureReason(e, -offered, reason) };
     }
   }
 
