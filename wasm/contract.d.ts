@@ -125,6 +125,7 @@ export interface SubmissionDrainFailure {
 export interface SubmissionDrain {
   submissions: TransactionSubmission[];
   retired_submission_ids: string[];
+  fee_retirements: Array<{ id: string; fee_spent: boolean }>;
   failures: SubmissionDrainFailure[];
 }
 

@@ -276,7 +276,9 @@ describe('submission pump delivery and lifecycle', () => {
       blockchain.detachProvider();
       replacement.refreshProviderReadiness();
       controller.setWallet(replacement);
-      (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(submissionDrain([], ['old-fee']));
+      (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
+        submissionDrain([], ['old-fee'], [], [{ id: 'old-fee', fee_spent: false }]),
+      );
       controller.processResult(wasmResult());
       submit({ ...submission('new-fee'), fee_request: { target: '33'.repeat(32), amount: '10' } });
       await lease.launch('submission:new-fee');
@@ -789,9 +791,13 @@ describe('submission pump delivery and lifecycle', () => {
     }
   });
 
-  it.each(['opponent-variant', 'base-variant'])(
-    'cancels the exact fee reservation once when Rust retires after %s lands',
-    async (landedVariant) => {
+  it.each([
+    ['opponent-variant', false],
+    ['base-variant', false],
+    ['fee-variant', true],
+  ] as const)(
+    'retains the fee until final retirement after %s lands',
+    async (landedVariant, feeSpent) => {
       const spend = jest.fn().mockResolvedValue({ status: 'acknowledged' });
       const beginWalletOffer = jest.fn().mockResolvedValue({
         kind: 'created-reserved',
@@ -816,13 +822,21 @@ describe('submission pump delivery and lifecycle', () => {
           submissionDrain([], [`retired-${landedVariant}`]),
         );
         controller.processResult(wasmResult());
+        (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(submissionDrain());
+        controller.processResult(wasmResult());
+        expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+        expect(storageRepository.feeAttachments()[0]?.stage).toBe('retained-for-replay');
         (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-          submissionDrain([], [`retired-${landedVariant}`]),
+          submissionDrain([], [], [], [{ id: `retired-${landedVariant}`, fee_spent: feeSpent }]),
         );
         controller.processResult(wasmResult());
-        await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
-        expect(beginWalletOfferCancellation).toHaveBeenCalledTimes(1);
-        expect(beginWalletOfferCancellation).toHaveBeenCalledWith(`trade-${landedVariant}`);
+        if (feeSpent) {
+          expect(beginWalletOfferCancellation).not.toHaveBeenCalled();
+          expect(storageRepository.feeAttachments()).toEqual([]);
+        } else {
+          await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
+          expect(beginWalletOfferCancellation).toHaveBeenCalledWith(`trade-${landedVariant}`);
+        }
       } finally {
         controller.cleanup();
       }
@@ -854,7 +868,12 @@ describe('submission pump delivery and lifecycle', () => {
       await lease.launch('submission:reconnect-cancel');
       await controller.flushPendingWork();
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-        submissionDrain([], ['reconnect-cancel']),
+        submissionDrain(
+          [],
+          ['reconnect-cancel'],
+          [],
+          [{ id: 'reconnect-cancel', fee_spent: false }],
+        ),
       );
       controller.processResult(wasmResult());
       await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
@@ -900,7 +919,12 @@ describe('submission pump delivery and lifecycle', () => {
         storageRepository.feeAttachments().some((entry) => entry.stage === 'retained-for-replay'),
       );
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-        submissionDrain([], ['terminal-nonblocking']),
+        submissionDrain(
+          [],
+          ['terminal-nonblocking'],
+          [],
+          [{ id: 'terminal-nonblocking', fee_spent: false }],
+        ),
       );
       controller.processResult(wasmResult());
       await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);
@@ -1350,7 +1374,12 @@ describe('submission pump delivery and lifecycle', () => {
     try {
       commitRuntime(controller, lease);
       (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-        submissionDrain([], ['network-rejected-cleanup-fails']),
+        submissionDrain(
+          [],
+          ['network-rejected-cleanup-fails'],
+          [],
+          [{ id: 'network-rejected-cleanup-fails', fee_spent: false }],
+        ),
       );
       submit({
         ...submission('network-rejected-cleanup-fails'),

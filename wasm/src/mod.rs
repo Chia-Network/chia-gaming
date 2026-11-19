@@ -112,7 +112,14 @@ mod gaming_wasm {
     struct JsSubmissionDrain {
         submissions: Vec<JsTransactionSubmission>,
         retired_submission_ids: Vec<String>,
+        fee_retirements: Vec<JsFeeRetirement>,
         failures: Vec<JsSubmissionDrainFailure>,
+    }
+
+    #[derive(Serialize)]
+    struct JsFeeRetirement {
+        id: String,
+        fee_spent: bool,
     }
 
     #[derive(Serialize)]
@@ -1614,6 +1621,14 @@ mod gaming_wasm {
                             .into_iter()
                             .map(|id| id.to_string())
                             .collect();
+                        let fee_retirements = working
+                            .drain_fee_retirements()
+                            .into_iter()
+                            .map(|retirement| JsFeeRetirement {
+                                id: retirement.id.to_string(),
+                                fee_spent: retirement.fee_spent,
+                            })
+                            .collect();
                         let failures = drained
                             .failures
                             .into_iter()
@@ -1643,6 +1658,7 @@ mod gaming_wasm {
                         serde_wasm_bindgen::to_value(&JsSubmissionDrain {
                             submissions,
                             retired_submission_ids,
+                            fee_retirements,
                             failures,
                         })
                         .map_err(|error| {

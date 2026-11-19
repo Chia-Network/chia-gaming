@@ -1209,6 +1209,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       this.submitTransaction(submission);
     }
     this.handleRetiredSubmissionIds(drained.retired_submission_ids);
+    for (const retirement of drained.fee_retirements) {
+      this.submissionPump.retireFee(retirement.id, retirement.fee_spent);
+    }
+    if (drained.fee_retirements.length) this.blockchain?.updateCoinInterest(this);
     this.handleSubmissionDrainFailures(drained.failures);
   }
 

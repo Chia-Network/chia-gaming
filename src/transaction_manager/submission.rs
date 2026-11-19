@@ -51,6 +51,13 @@ pub enum SubmissionAttemptStatus {
     Stale,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeeRetirement {
+    pub id: u64,
+    /// Every external fee input is confirmed spent in the final chain snapshot.
+    pub fee_spent: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PendingDelivery {
     pub(super) intent: PendingSubmissionIntent,
@@ -87,6 +94,7 @@ pub(super) struct SubmissionBook {
     replay_epoch: ReplayEpoch,
     submitted: Vec<SubmittedTx>,
     retired_submission_ids: Vec<u64>,
+    fee_retirements: Vec<FeeRetirement>,
     next_submission_id: u64,
 }
 
@@ -97,6 +105,7 @@ struct UncheckedSubmissionBook {
     replay_epoch: ReplayEpoch,
     submitted: Vec<SubmittedTx>,
     retired_submission_ids: Vec<u64>,
+    fee_retirements: Vec<FeeRetirement>,
     next_submission_id: u64,
 }
 
@@ -110,6 +119,7 @@ impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
             replay_epoch: value.replay_epoch,
             submitted: value.submitted,
             retired_submission_ids: value.retired_submission_ids,
+            fee_retirements: value.fee_retirements,
             next_submission_id: value.next_submission_id,
         };
         book.validate_restored_state()?;
@@ -291,6 +301,18 @@ impl SubmissionBook {
                 ));
             }
         }
+        let mut fee_retirement_ids = HashSet::new();
+        for retirement in &self.fee_retirements {
+            if retirement.id >= self.next_submission_id
+                || !fee_retirement_ids.insert(retirement.id)
+                || ids.contains(&retirement.id)
+            {
+                return Err(format!(
+                    "invalid fee retirement for submission {}",
+                    retirement.id
+                ));
+            }
+        }
         self.replay_epoch.validate(&ids)?;
         for id in self.replay_epoch.replayed_ids() {
             let submission = self
@@ -455,16 +477,31 @@ impl SubmissionBook {
         Ok(drained)
     }
 
-    pub(super) fn retain_submitted(
+    pub(super) fn retain_submitted(&mut self, keep: impl FnMut(&SubmittedTx) -> bool) -> Vec<u64> {
+        self.retain_submitted_with_spent_fee_inputs(keep, &HashSet::new())
+    }
+
+    pub(super) fn retain_submitted_with_spent_fee_inputs(
         &mut self,
         mut keep: impl FnMut(&SubmittedTx) -> bool,
+        spent_fee_inputs: &HashSet<CoinID>,
     ) -> Vec<u64> {
-        let removed_ids = self
+        let removed = self
             .submitted
             .iter()
             .filter(|tx| !keep(tx))
-            .map(|tx| tx.id)
-            .collect::<HashSet<_>>();
+            .map(|tx| {
+                let fee_inputs = tx.fee_input_coins();
+                FeeRetirement {
+                    id: tx.id,
+                    fee_spent: !fee_inputs.is_empty()
+                        && fee_inputs
+                            .iter()
+                            .all(|coin| spent_fee_inputs.contains(&coin.to_coin_id())),
+                }
+            })
+            .collect::<Vec<_>>();
+        let removed_ids = removed.iter().map(|item| item.id).collect::<HashSet<_>>();
         if removed_ids.is_empty() {
             return Vec::new();
         }
@@ -482,6 +519,7 @@ impl SubmissionBook {
         for id in &sorted {
             self.emit_retirement(*id);
         }
+        self.fee_retirements.extend(removed);
         sorted
     }
 
@@ -495,11 +533,16 @@ impl SubmissionBook {
         std::mem::take(&mut self.retired_submission_ids)
     }
 
+    pub(super) fn drain_fee_retirements(&mut self) -> Vec<FeeRetirement> {
+        std::mem::take(&mut self.fee_retirements)
+    }
+
     pub(super) fn reconciliation_input_coins(
         &self,
         mut retain_landed_output: impl FnMut(&CoinString) -> bool,
     ) -> BTreeSet<CoinString> {
-        self.submitted
+        let protocol_inputs = self
+            .submitted
             .iter()
             .filter(|tx| {
                 tx.chain_terminality != SubmissionChainTerminality::Landed
@@ -510,6 +553,10 @@ impl SubmissionBook {
                         .any(&mut retain_landed_output)
             })
             .flat_map(|tx| tx.base_bundle.spends.iter().map(|spend| spend.coin.clone()))
+            .collect::<BTreeSet<_>>();
+        protocol_inputs
+            .into_iter()
+            .chain(self.submitted.iter().flat_map(SubmittedTx::fee_input_coins))
             .collect()
     }
 
@@ -784,10 +831,13 @@ impl SubmissionBook {
         )))
     }
 
-    pub(super) fn active_ids(&self) -> Vec<u64> {
+    pub(super) fn active_ids(&self, height: u64) -> Vec<u64> {
         self.submitted
             .iter()
-            .filter(|tx| tx.chain_terminality == SubmissionChainTerminality::Active)
+            .filter(|tx| {
+                tx.chain_terminality == SubmissionChainTerminality::Active
+                    && !matches!(tx.expiry, Some(expiry) if height >= expiry)
+            })
             .map(|tx| tx.id)
             .collect()
     }
