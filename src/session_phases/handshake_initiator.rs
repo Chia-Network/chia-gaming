@@ -754,12 +754,18 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         _env: &mut ChannelEnv<'_>,
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
-        self.failed = true;
+        // A peer can still submit the signed funding offer while we wait for
+        // the channel coin. Keep the state needed to unroll it if it appears.
+        if !matches!(self.state, InitiatorState::Finished(_)) {
+            self.failed = true;
+        }
         self.incoming_messages.clear();
         Ok(vec![])
     }
     fn wallet_callback_failed(&mut self, reason: String) {
-        self.failed = true;
+        if !matches!(self.state, InitiatorState::Finished(_)) {
+            self.failed = true;
+        }
         self.failure_advisory = Some(reason);
     }
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error> {
@@ -1372,5 +1378,29 @@ mod finished_message_tests {
             .expect_err("silent D");
         assert!(format!("{err:?}").contains("spend bundle consensus validation failed"));
         assert!(!phase.transaction_pushed);
+    }
+
+    #[test]
+    fn failure_after_funding_offer_keeps_handshake_recoverable() {
+        let mut phase = finished_phase(
+            SpendBundle {
+                name: None,
+                spends: vec![],
+            },
+            Hash::default(),
+        );
+        let mut allocator = AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+
+        PeerLifecyclePhase::go_on_chain(&mut phase, &mut env, true).expect("peer failure");
+        assert!(!phase.failed);
+        assert_eq!(
+            phase.channel_status_snapshot().unwrap().state,
+            ChannelStatus::OfferSent
+        );
+
+        phase.wallet_callback_failed("late wallet failure".to_string());
+        assert!(!phase.failed);
+        assert!(matches!(phase.state, InitiatorState::Finished(_)));
     }
 }

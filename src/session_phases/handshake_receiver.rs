@@ -619,12 +619,24 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         _env: &mut ChannelEnv<'_>,
         _got_error: bool,
     ) -> Result<Vec<Effect>, Error> {
-        self.failed = true;
+        // Once our funding offer is out, the channel coin may still be created.
+        // Keep the handshake state so coin_created can promote it and unroll.
+        if !matches!(
+            self.state,
+            ReceiverState::SentB(_) | ReceiverState::Finished(_)
+        ) {
+            self.failed = true;
+        }
         self.incoming_messages.clear();
         Ok(vec![])
     }
     fn wallet_callback_failed(&mut self, reason: String) {
-        self.failed = true;
+        if !matches!(
+            self.state,
+            ReceiverState::SentB(_) | ReceiverState::Finished(_)
+        ) {
+            self.failed = true;
+        }
         self.failure_advisory = Some(reason);
     }
     fn new_block(&mut self, env: &mut ChannelEnv<'_>, height: u64) -> Result<Vec<Effect>, Error> {
@@ -1269,5 +1281,23 @@ mod queued_message_tests {
 
         PeerLifecyclePhase::go_on_chain(&mut phase, &mut env, true).expect("failure escalation");
         assert!(phase.incoming_messages.is_empty());
+    }
+
+    #[test]
+    fn failure_after_funding_offer_keeps_handshake_recoverable() {
+        let mut phase = finished_phase();
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let mut env = ChannelEnv::new(&mut allocator).expect("env");
+
+        PeerLifecyclePhase::go_on_chain(&mut phase, &mut env, true).expect("peer failure");
+        assert!(!phase.failed);
+        assert_eq!(
+            phase.channel_status_snapshot().unwrap().state,
+            ChannelStatus::TransactionPending
+        );
+
+        phase.wallet_callback_failed("late wallet failure".to_string());
+        assert!(!phase.failed);
+        assert!(matches!(phase.state, ReceiverState::Finished(_)));
     }
 }

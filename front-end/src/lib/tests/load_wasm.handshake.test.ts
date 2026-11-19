@@ -39,7 +39,8 @@ function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
 function checkHandshakeFailure(
   sender: SessionController,
   receiver: SessionController,
-  offerSent: boolean,
+  recipientOfferSent: boolean,
+  ownOfferSent = false,
 ) {
   const failed = restoreTestSession(sender, sender.getPeerProtocol().serialize(), 'failed-peer');
   const other = restoreTestSession(
@@ -50,7 +51,14 @@ function checkHandshakeFailure(
   const notify = jest.fn();
   const host: PeerHost = { status: () => ({ available: true }), send: () => true, notify };
   try {
+    const unackedBefore = failed.snapshot().unackedMessages;
     const result = failed.wallet_callback_failed('wallet declined funding');
+    if (ownOfferSent) {
+      expect(result.disposition.kind).toBe('active');
+      expect(failed.snapshot().disposition).toBe('active');
+      expect(failed.snapshot().unackedMessages).toEqual(unackedBefore);
+      return;
+    }
     expect(result.disposition.kind).toBe('terminal');
     const rejection = failed.snapshot().unackedMessages.at(-1)!;
     expect(decodePeerAppMessage(Uint8Array.from(rejection.msg))).toEqual({
@@ -66,8 +74,8 @@ function checkHandshakeFailure(
       ),
     ).toBe(true);
     expect(other.snapshot().remoteNumber).toBe(rejection.msgno);
-    expect(other.snapshot().disposition).toBe(offerSent ? 'active' : 'inbound-reject');
-    if (offerSent) {
+    expect(other.snapshot().disposition).toBe(recipientOfferSent ? 'active' : 'inbound-reject');
+    if (recipientOfferSent) {
       expect(notify).toHaveBeenCalledWith({ type: 'peer-unavailable' });
       expect(other.serialize()).toEqual(before);
     }
@@ -163,7 +171,7 @@ it(
       wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
-      checkHandshakeFailure(wasm_blob2, wasm_blob1, true);
+      checkHandshakeFailure(wasm_blob2, wasm_blob1, true, true);
       const initiatorCoins = wasm_blob1.getCoinsOfInterest();
       assert.deepEqual(
         initiatorCoins.map((coin) => coin.label),

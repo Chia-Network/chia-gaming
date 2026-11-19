@@ -621,11 +621,16 @@ impl GameSession {
 
     pub fn wallet_callback_failed(
         &mut self,
-        _allocator: &mut AllocEncoder,
+        allocator: &mut AllocEncoder,
         reason: String,
     ) -> Result<(), Error> {
+        let funding_offer_sent = self.handshake_offer_sent();
         self.peer.wallet_callback_failed(reason);
-        self.detect_phase_transition();
+        if funding_offer_sent {
+            self.go_on_chain(allocator, true)?;
+        } else {
+            self.detect_phase_transition();
+        }
         Ok(())
     }
 
@@ -741,10 +746,11 @@ impl GameSession {
             self.peer = next;
         }
         self.state.is_on_chain = self.peer.is_on_chain();
-        self.state.is_failed = self
-            .peer
-            .channel_status_snapshot()
-            .is_some_and(|s| s.state == ChannelStatus::Failed);
+        self.state.is_failed = self.state.channel_expired
+            || self
+                .peer
+                .channel_status_snapshot()
+                .is_some_and(|s| s.state == ChannelStatus::Failed);
 
         self.emit_channel_status_if_changed();
     }
@@ -959,6 +965,11 @@ impl GameSession {
                 self.state.pending_outbound_terminal = Some(command);
                 self.state.session_disposition = Some(SessionDisposition::AwaitOutboundTerminal);
             } else if let Effect::NeedCoinSpend(req) = effect {
+                // The peer may submit the completed funding offer even if we
+                // never submit a transaction locally. Retain its own deadline.
+                if req.max_height.is_some() {
+                    self.state.channel_creation_expiry = req.max_height;
+                }
                 self.state
                     .events
                     .push_back(GameSessionEvent::NeedCoinSpend(req));
@@ -1702,6 +1713,54 @@ mod sequencing_tests {
             expiry + CHANNEL_EXPIRY_BUFFER,
             expiry,
         ));
+    }
+
+    #[test]
+    fn funding_request_deadline_is_retained_before_local_submission() {
+        let mut allocator = AllocEncoder::new();
+        let mut rng = ChaCha8Rng::from_seed([0x50; 32]);
+        let identity =
+            ChiaIdentity::new(&mut allocator, rng.random::<PrivateKey>()).expect("identity");
+        let mut session = GameSession::new_with_keys(
+            GameSessionConfig {
+                game_types: BTreeMap::new(),
+                is_initiator: true,
+                identity,
+                my_contribution: Amount::new(100),
+                their_contribution: Amount::new(100),
+                channel_timeout: Timeout::new(5),
+                unroll_timeout: Timeout::new(15),
+                reward_puzzle_hash: PuzzleHash::from_bytes([0x50; 32]),
+                agg_sig_me_additional_data: Hash::from_bytes([0x51; 32]),
+            },
+            rng.random(),
+        );
+
+        session
+            .process_effects(
+                vec![Effect::NeedCoinSpend(
+                    crate::session_phases::handshake::CoinSpendRequest {
+                        amount: Amount::new(100),
+                        fee: Amount::default(),
+                        conditions: vec![],
+                        coin_id: None,
+                        max_height: Some(100),
+                    },
+                )],
+                &mut allocator,
+            )
+            .expect("funding request");
+
+        assert_eq!(session.state.channel_creation_expiry, Some(100));
+        assert!(!session.channel_status_terminal());
+        session
+            .new_block(&mut allocator, 100 + CHANNEL_EXPIRY_BUFFER - 1, &[])
+            .expect("height before expiry buffer");
+        assert!(!session.channel_status_terminal());
+        session
+            .new_block(&mut allocator, 100 + CHANNEL_EXPIRY_BUFFER, &[])
+            .expect("height after expiry buffer");
+        assert!(session.channel_status_terminal());
     }
 
     #[test]
