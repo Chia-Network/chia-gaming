@@ -305,9 +305,17 @@ describe('Shell production restore composition', () => {
           });
           peer.destroy();
         }
+        expect(mockHub!.getPresence().busy).toBe(true);
+        expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
+      const presence = {
+        busy: true,
+        reasons: kind === 'proposal' ? ['restoring', 'starting'] : ['starting'],
+      };
+      expect(mockHub!.getPresence()).toEqual(presence);
+      expect(mockSetBusy).toHaveBeenLastCalledWith(presence);
       expect(application.snapshot().walletView.balance).toBeUndefined();
       await waitForText(renderer!, 'Checking wallet balance');
       expect(interval).toHaveBeenLastCalledWith(TOP_UP_BALANCE_POLL_INTERVAL_MS);
@@ -898,7 +906,7 @@ describe('Shell production restore composition', () => {
       peerId: 'p_' + '22'.repeat(16),
       ready: true,
       busy: true,
-      presence: { busy: true, reasons: ['restoring'] },
+      presence: { busy: true, reasons: ['restoring', 'starting'] },
     },
     {
       peerId: undefined,

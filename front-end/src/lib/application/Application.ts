@@ -62,6 +62,7 @@ import {
   DEFAULT_UNROLL_TIMEOUT_BLOCKS,
   PRE_ACTIVE_CHANNEL_STATES,
   isChannelAbandonable,
+  isPreCommitmentChannelStatus,
   type GameDashboardActionKind,
   type SessionModel,
 } from '../session/model';
@@ -389,9 +390,11 @@ export function createApplication() {
   let waitingState: SessionModel['channel']['status']['state'] | null = null;
   const setPendingAdvisoryState = (next: AdvisoryStartParams | null) => {
     shellDispatch({ type: 'setPendingAdvisory', value: next });
+    hubConn?.setBusy(hubPresenceNow());
   };
   const setPendingProposalState = (next: PendingSessionProposal | null) => {
     shellDispatch({ type: 'setPendingProposal', value: next });
+    hubConn?.setBusy(hubPresenceNow());
   };
   let peerSession: PeerSession | null = null;
   let sessionBootstrap: RehydratedDurableApplicationState | undefined = undefined;
@@ -596,24 +599,23 @@ export function createApplication() {
     update('hubAlert', v);
     storageRepository.updatePreference({ key: 'hubAlert', value: v });
   };
-  const presenceBusy = (phase: SessionPhase, connected?: boolean): HubPresence =>
-    computeHubPresence({
-      sessionPhase: phase,
-      walletConnected: connected ?? state.walletView.connected,
-      blockchainReady: state.blockchainReady,
-    });
   const hubPresenceNow = (phase?: SessionPhase, connected?: boolean): HubPresence => {
     const save = storageRepository.loadState();
+    const hasCradle =
+      save?.session?.phase === 'live' ||
+      (save?.session?.phase === 'pre-handshake' && !!save.session.pairing.peerId);
     return computeHubPresence({
       sessionPhase: phase ?? sessions.state.sessionPhase,
       walletConnected: connected ?? state.walletView.connected,
       blockchainReady: state.blockchainReady,
       terminalSave: save?.session?.phase === 'terminal',
       // A peerless pre-handshake record no longer reserves the lobby.
-      hasCradle:
-        save?.session?.phase === 'live' ||
-        (save?.session?.phase === 'pre-handshake' && !!save.session.pairing.peerId),
-      pending: isAcceptSessionTransition(sessions.state.transition),
+      hasCradle,
+      pending:
+        isAcceptSessionTransition(sessions.state.transition) ||
+        sessions.state.pendingAdvisory !== null ||
+        sessions.state.pendingProposal !== null ||
+        (peerSession !== null && !peerSession.isDestroyed() && !hasCradle),
       persistInFlight: accept.persisting,
     });
   };
@@ -737,7 +739,7 @@ export function createApplication() {
     setRestoreStatus('idle');
     setRestoreError(null);
     shellDispatch({ type: 'acceptAborted', error: !!options?.error });
-    hubConn?.setBusy(presenceBusy('none'));
+    hubConn?.setBusy(hubPresenceNow('none'));
   };
   const abandonFailedStartAttempt = (options?: { error?: boolean }) => {
     bumpStartEpoch();
@@ -747,9 +749,7 @@ export function createApplication() {
     // Stay busy while the aborted start may still be inside storageRepository.replaceSession.bind(storageRepository) /
     // restore — otherwise a new Accept can race checkpoint cleanup.
     hubConn?.setBusy(
-      accept.persisting
-        ? { busy: true, reasons: ['starting'] as const }
-        : presenceBusy(sessions.state.sessionPhase),
+      accept.persisting ? { busy: true, reasons: ['starting'] as const } : hubPresenceNow(),
     );
   };
   const acceptAbortHandlers = {
@@ -929,7 +929,7 @@ export function createApplication() {
       endPersistFlight();
       // Abandon kept the hub busy while this callback drained; release now.
       if (epoch !== accept.epoch) {
-        hubConn?.setBusy(presenceBusy(sessions.state.sessionPhase));
+        hubConn?.setBusy(hubPresenceNow());
       }
     }
   };
@@ -1150,6 +1150,7 @@ export function createApplication() {
                 const pairingToken = `peer_${fromId}_${Date.now()}`;
                 const provisional = new PeerSession(fromId, frame.sessionId, conn);
                 peerSession = provisional;
+                conn.setBusy(hubPresenceNow());
                 bindInboundProposal({
                   conn,
                   peer: provisional,
@@ -1371,7 +1372,7 @@ export function createApplication() {
                         identity: { myHubPlayerId: playerId },
                       });
                       setSessionPhase('on-chain');
-                      conn.setBusy(presenceBusy('on-chain'));
+                      conn.setBusy(hubPresenceNow('on-chain'));
                     } else {
                       pendingHubRemapEscalation = null;
                       setSessionError(true);
@@ -1472,9 +1473,9 @@ export function createApplication() {
         () => {
           // A leftover cradle must not keep us busy after the session resolved
           // (wallet/handshake failures often leave Failed + persisted cradle).
-          // Backend not ready for play also stays busy. Accept-pending + persist-drain
-          // must also stay busy: identify/reconnect re-applies getPresence and would
-          // otherwise undo explicit setBusy.
+          // Backend not ready for play also stays busy. Pending consent, Accept,
+          // and persist-drain must stay busy: identify/reconnect re-applies
+          // getPresence and would otherwise undo explicit setBusy.
           return hubPresenceNow();
         },
         // A saved session needs its hub back however long that takes; otherwise
@@ -1565,7 +1566,7 @@ export function createApplication() {
           hubConn?.setBusy(hubPresenceNow(sessions.state.sessionPhase, true));
         } else {
           if (!event.recovering && state.activeTab !== 'wallet') setWalletAlert(true);
-          hubConn?.setBusy(presenceBusy(sessions.state.sessionPhase, false));
+          hubConn?.setBusy(hubPresenceNow(sessions.state.sessionPhase, false));
         }
         break;
       case 'readiness': {
@@ -1647,7 +1648,7 @@ export function createApplication() {
       setPendingAdvisoryState(null);
       setPendingProposalState(null);
       cancelTransition();
-      hubConn?.setBusy(presenceBusy('none'));
+      hubConn?.setBusy(hubPresenceNow('none'));
     };
     if (retainRejectTransport) {
       void sendSessionReject(peerId);
@@ -1733,7 +1734,7 @@ export function createApplication() {
       sessionFinishedCleanup = true;
       setSessionPhase('resolved');
       setSessionError(hasError);
-      hubConn?.setBusy(presenceBusy('resolved'));
+      hubConn?.setBusy(hubPresenceNow('resolved'));
       // Retire the live route. Any handshake rejection now replays independently
       // of the finished dashboard and its retired channel.
       resetPeerRelayState({ persistSession: false });
@@ -1779,7 +1780,7 @@ export function createApplication() {
     }
     setSessionPhase(phase);
     setSessionError(!!hasError);
-    hubConn?.setBusy(presenceBusy(phase));
+    hubConn?.setBusy(hubPresenceNow(phase));
   };
   const handleRestoreStatusChange = (status: RestoreStatus, error: string | null) => {
     setRestoreStatus(status);
@@ -1819,7 +1820,7 @@ export function createApplication() {
         identity: { myHubPlayerId: pending.registeredPlayerId },
       });
       setSessionPhase('on-chain');
-      hubConn?.setBusy(presenceBusy('on-chain'));
+      hubConn?.setBusy(hubPresenceNow('on-chain'));
       markPeerDead();
     }
   };
@@ -1866,7 +1867,7 @@ export function createApplication() {
     setPeerConn(null);
     setRestoreStatus('idle');
     setRestoreError(null);
-    hubConn?.setBusy(presenceBusy('resolved'));
+    hubConn?.setBusy(hubPresenceNow('resolved'));
   };
   const performResume = (bootstrap: RehydratedDurableApplicationState) => {
     const save = bootstrap.state;
@@ -2083,7 +2084,7 @@ export function createApplication() {
     storageRepository.updateCommon({ preferences: { blockchainType: undefined } });
     // A wallet connection does not own the session or its pending consent.
     // Keep the handshake and peer transport; funding resumes when a wallet returns.
-    hubConn?.setBusy(presenceBusy(sessions.state.sessionPhase, false));
+    hubConn?.setBusy(hubPresenceNow(sessions.state.sessionPhase, false));
   };
   const handleDisconnectWallet = () => {
     // Wallet disconnect no longer cascades to the hub or peer: the session
@@ -2153,7 +2154,7 @@ export function createApplication() {
   const performDashboardGoOnChain = () => {
     if (!sessionController?.goOnChain('dashboard')) return;
     setSessionPhase('on-chain');
-    hubConn?.setBusy(presenceBusy('on-chain'));
+    hubConn?.setBusy(hubPresenceNow('on-chain'));
     peerSession?.markDead();
     syncPeerLiveness();
   };
@@ -2188,6 +2189,14 @@ export function createApplication() {
           // abortAccept owns reject for Accept Cancel.
           if (abortAcceptIfActive(peerId ? { peerId } : undefined)) break;
         }
+        const projectedState = sessions.state.dashboardSessionModel?.channel.status.state;
+        const savedState = savedChannelStatus(storageRepository.loadState());
+        if (
+          !isPreCommitmentChannelStatus(projectedState) ||
+          !isPreCommitmentChannelStatus(savedState)
+        ) {
+          break;
+        }
         cancelDashboardSession();
         break;
       }
@@ -2204,7 +2213,11 @@ export function createApplication() {
         }
         update('confirmDialog', {
           title: 'Abandon session?',
-          body: 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation.',
+          body:
+            sessions.state.dashboardSessionModel?.channel.status.state === 'OfferSent' ||
+            sessions.state.dashboardSessionModel?.channel.status.state === 'TransactionPending'
+              ? 'A funding offer has been sent and the channel may still form on-chain. Abandoning stops watching and protecting your funds. Check the chain and be prepared to recover the channel manually before you abandon this session. Are you sure?'
+              : 'This will end the session immediately. Abandoning may result in a loss of funds if the on-chain resolution requires your participation.',
           confirmLabel: 'Abandon',
           onConfirm: () => {
             update('confirmDialog', null);

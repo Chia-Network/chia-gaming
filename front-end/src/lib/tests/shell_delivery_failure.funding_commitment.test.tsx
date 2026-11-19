@@ -64,7 +64,9 @@ jest.mock('../../services/HubConnection', () => {
   };
 });
 
-function channelModel(state: 'OurWalletMakingOfferAcceptance' | 'OfferSent') {
+function channelModel(
+  state: 'OurWalletMakingOfferAcceptance' | 'OfferSent' | 'TransactionPending',
+) {
   return createSessionModel({
     channel: { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } },
     restore: { status: 'restored', error: null },
@@ -434,6 +436,36 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
       phase: 'live',
       presentation: { channelStatus: { state: 'OfferSent' } },
     });
+  });
+
+  it('blocks Cancel after an offer and requires a warned Abandon after waiting', async () => {
+    await mountHandshake();
+    await act(async () => {
+      await sendFundingOffer();
+    });
+    expect(renderer!.root.findByProps({ children: 'Waiting' }).props.disabled).toBe(true);
+    act(() => {
+      application.dispatch({ type: 'session-action', action: 'cancel' });
+    });
+    expect(storageRepository.loadState().session?.phase).toBe('live');
+    expect(application.snapshot().dashboardSessionModel?.channel.status.state).toBe('OfferSent');
+
+    mockSession.controller.abandon = jest.fn();
+    jest.useFakeTimers();
+    try {
+      act(() => mockSession.publish(channelModel('TransactionPending')));
+      act(() => jest.advanceTimersByTime(119_999));
+      expect(renderer!.root.findByProps({ children: 'Waiting' }).props.disabled).toBe(true);
+      act(() => jest.advanceTimersByTime(1));
+      const abandon = renderer!.root.findByProps({ children: 'Abandon' });
+      expect(abandon.props.disabled).toBe(false);
+      expect(storageRepository.loadState().session?.phase).toBe('live');
+      act(() => abandon.props.onClick());
+      expect(application.snapshot().confirmDialog?.body).toMatch(/funding offer.*on-chain.*funds/i);
+      expect(mockSession.controller.abandon).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('preserves the accepted handshake and peer when the wallet disconnects and reconnects', async () => {
