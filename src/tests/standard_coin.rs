@@ -155,6 +155,101 @@ fn test_standard_puzzle() {
 }
 
 #[test]
+fn test_synthetic_channel_key_rejects_rogue_hidden_opening() {
+    let mut allocator = AllocEncoder::new();
+    let alice_private_key = PrivateKey::from_bytes(&[1; 32]).expect("Alice's key");
+    let alice_public_key = private_to_public_key(&alice_private_key);
+
+    let payout_puzzle_hash = PuzzleHash::from_bytes([7; 32]);
+    let conditions = ((51, (payout_puzzle_hash, (42, ()))), ())
+        .to_clvm(&mut allocator)
+        .expect("payout conditions");
+    let hidden_puzzle = conditions
+        .to_quoted_program(&mut allocator)
+        .expect("hidden payout puzzle");
+    let hidden_puzzle_hash = hidden_puzzle.sha256tree(&mut allocator);
+
+    // Bob can calculate this scalar from Alice's public key and his chosen puzzle.
+    let offset = calculate_synthetic_offset(&alice_public_key, &hidden_puzzle_hash);
+    let (_, offset_bytes) = offset.to_bytes_be();
+    let mut bob_private_key_bytes = [0; 32];
+    bob_private_key_bytes[32 - offset_bytes.len()..].copy_from_slice(&offset_bytes);
+    let bob_private_key = PrivateKey::from_bytes(&bob_private_key_bytes).expect("Bob's key");
+    let bob_public_key = private_to_public_key(&bob_private_key);
+    let proof_of_possession = bob_private_key.sign(bob_public_key.bytes());
+    assert!(proof_of_possession.verify(&bob_public_key, &bob_public_key.bytes()));
+
+    let aggregate_public_key = alice_public_key.clone() + bob_public_key;
+    assert_eq!(
+        aggregate_public_key,
+        calculate_synthetic_public_key(&alice_public_key, &hidden_puzzle_hash)
+            .expect("synthetic key")
+    );
+
+    let standard_puzzle = get_standard_coin_puzzle(&mut allocator).expect("standard puzzle");
+    let channel_puzzle =
+        puzzle_for_synthetic_public_key(&mut allocator, &standard_puzzle, &aggregate_public_key)
+            .expect("channel puzzle");
+    let solution = (
+        alice_public_key,
+        (hidden_puzzle, (Node(allocator.allocator().nil()), ())),
+    )
+        .to_clvm(&mut allocator)
+        .expect("hidden-branch solution");
+    let channel_puzzle_node = channel_puzzle.to_clvm(&mut allocator).expect("puzzle node");
+    let result = run_program(
+        allocator.allocator(),
+        &ChiaDialect::default(),
+        channel_puzzle_node,
+        solution,
+        0,
+    )
+    .expect("hidden branch accepts Bob's spend");
+    assert_eq!(
+        Node(result.1).to_hex(&mut allocator).expect("result hex"),
+        Node(conditions)
+            .to_hex(&mut allocator)
+            .expect("conditions hex")
+    );
+
+    let hardened_puzzle = puzzle_for_pk(&mut allocator, &aggregate_public_key)
+        .expect("channel puzzle with default hidden puzzle");
+    let hardened_puzzle_node = hardened_puzzle
+        .to_clvm(&mut allocator)
+        .expect("puzzle node");
+    assert!(run_program(
+        allocator.allocator(),
+        &ChiaDialect::default(),
+        hardened_puzzle_node,
+        solution,
+        0,
+    )
+    .is_err());
+
+    let puzzle_hash = channel_puzzle.sha256tree(&mut allocator);
+    let bundle = SpendBundle {
+        name: None,
+        spends: vec![CoinSpend {
+            coin: CoinString::from_parts(
+                &CoinID::new(Hash::from_bytes([3; 32])),
+                &puzzle_hash,
+                &Amount::new(42),
+            ),
+            bundle: Spend {
+                puzzle: channel_puzzle,
+                solution: Program::from_nodeptr(&allocator, solution)
+                    .expect("solution program")
+                    .into(),
+                signature: Aggsig::default(),
+            },
+        }],
+    };
+    bundle
+        .validate_consensus(&Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA), 5_000_000)
+        .expect("signature-free spend passes consensus validation");
+}
+
+#[test]
 fn test_public_key_add() {
     let mut rng = ChaCha8Rng::from_seed([0; 32]);
     let private_key_1: PrivateKey = rng.random();

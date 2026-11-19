@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::channel_state::game_handler::PreparedMove;
 use crate::channel_state::types::{ChannelCoinSpendInfo, ChannelEnv};
 use crate::channel_state::ChannelState;
-use crate::common::standard_coin::puzzle_for_synthetic_public_key;
+use crate::common::standard_coin::puzzle_for_pk;
 use crate::common::types::{
     Amount, CoinSpend, CoinString, Error, GameID, Hash, PuzzleHash, Spend, SpendBundle, Timeout,
 };
@@ -61,8 +61,7 @@ pub fn build_channel_to_unroll_bundle(
     name: &str,
 ) -> Result<SpendBundle, Error> {
     let channel_public_key = ch.get_aggregate_channel_public_key();
-    let channel_coin_puzzle =
-        puzzle_for_synthetic_public_key(env.allocator, &env.standard_puzzle, &channel_public_key)?;
+    let channel_coin_puzzle = puzzle_for_pk(env.allocator, &channel_public_key)?;
     Ok(SpendBundle {
         name: Some(name.to_string()),
         spends: vec![CoinSpend {

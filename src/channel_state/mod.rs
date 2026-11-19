@@ -27,11 +27,11 @@ use crate::channel_state::types::{
     UnrollCoinConditionInputs,
 };
 
-use crate::common::constants::CREATE_COIN;
+use crate::common::constants::{CREATE_COIN, DEFAULT_HIDDEN_PUZZLE_HASH};
 use crate::common::standard_coin::{
-    private_to_public_key, puzzle_for_pk, puzzle_for_synthetic_public_key,
-    puzzle_hash_for_synthetic_public_key, standard_solution_partial,
-    verify_reward_payout_signature, ChiaIdentity,
+    calculate_synthetic_public_key, private_to_public_key, puzzle_for_pk, puzzle_hash_for_pk,
+    standard_solution_partial, synthetic_offset_private_key, verify_reward_payout_signature,
+    ChiaIdentity,
 };
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, BrokenOutCoinSpendInfo, CoinCondition, CoinID, CoinSpend,
@@ -721,11 +721,7 @@ impl ChannelState {
 
         let aggregate_public_key = self.get_aggregate_channel_public_key();
         self.channel_coin_spend.bundle = Spend {
-            puzzle: puzzle_for_synthetic_public_key(
-                env.allocator,
-                &env.standard_puzzle,
-                &aggregate_public_key,
-            )?,
+            puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
             solution: verified_spend.solution.clone(),
             signature: verified_spend.signature.clone(),
         };
@@ -830,8 +826,8 @@ impl ChannelState {
         self.get_solution_and_signature(
             &unroll_coin_parent.to_coin_id(),
             env,
-            &self.private_keys.my_channel_coin_private_key,
-            &self.get_aggregate_channel_public_key(),
+            &self.get_channel_signing_private_key()?,
+            &self.get_synthetic_channel_public_key()?,
             &self.get_aggregate_unroll_public_key(),
             &self.channel_coin_spend.coin.amount().ok_or_else(|| {
                 debug_assert!(false, "state channel coin has no amount");
@@ -849,6 +845,25 @@ impl ChannelState {
     pub fn get_aggregate_channel_public_key(&self) -> PublicKey {
         let public_key = private_to_public_key(&self.private_keys.my_channel_coin_private_key);
         public_key + self.their_channel_coin_public_key.clone()
+    }
+
+    fn get_synthetic_channel_public_key(&self) -> Result<PublicKey, Error> {
+        calculate_synthetic_public_key(
+            &self.get_aggregate_channel_public_key(),
+            &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH),
+        )
+    }
+
+    fn get_channel_signing_private_key(&self) -> Result<PrivateKey, Error> {
+        let mut private_key = self.private_keys.my_channel_coin_private_key.clone();
+        let my_public_key = private_to_public_key(&private_key);
+        if my_public_key.bytes() < self.their_channel_coin_public_key.bytes() {
+            private_key += synthetic_offset_private_key(
+                &self.get_aggregate_channel_public_key(),
+                &PuzzleHash::from_bytes(DEFAULT_HIDDEN_PUZZLE_HASH),
+            )?;
+        }
+        Ok(private_key)
     }
 
     pub fn new(
@@ -885,8 +900,7 @@ impl ChannelState {
         let our_channel_pubkey = private_to_public_key(&private_keys.my_channel_coin_private_key);
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
 
-        let channel_coin_puzzle_hash =
-            puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_public_key)?;
+        let channel_coin_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
         let amount = my_contribution.clone() + their_contribution.clone();
         let channel_coin_parent =
             CoinString::from_parts(&launcher_coin_id, &channel_coin_puzzle_hash, &amount);
@@ -970,11 +984,7 @@ impl ChannelState {
         )?;
 
         myself.channel_coin_spend.bundle = Spend {
-            puzzle: puzzle_for_synthetic_public_key(
-                env.allocator,
-                &env.standard_puzzle,
-                &aggregate_public_key,
-            )?,
+            puzzle: puzzle_for_pk(env.allocator, &aggregate_public_key)?,
             solution: channel_coin_spend.solution.clone(),
             signature: channel_coin_spend.signature.clone(),
         };
@@ -1001,11 +1011,7 @@ impl ChannelState {
         let combined_signature =
             channel_coin_spend.signature.clone() + their_initial_channel_half_signature.clone();
 
-        let channel_coin_puzzle = puzzle_for_synthetic_public_key(
-            env.allocator,
-            &env.standard_puzzle,
-            &aggregate_public_key,
-        )?;
+        let channel_coin_puzzle = puzzle_for_pk(env.allocator, &aggregate_public_key)?;
 
         Ok(HandshakeResult {
             channel_puzzle_reveal: channel_coin_puzzle,
@@ -1126,12 +1132,12 @@ impl ChannelState {
         their_channel_half_signature: &Aggsig,
         conditions: Rc<Program>,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        let aggregate_public_key = self.get_aggregate_channel_public_key();
+        let aggregate_public_key = self.get_synthetic_channel_public_key()?;
         let spend = self.channel_coin_spend.coin.clone();
         let channel_coin_spend = self.get_solution_and_signature_from_conditions(
             &spend.to_coin_id(),
             env,
-            &self.private_keys.my_channel_coin_private_key,
+            &self.get_channel_signing_private_key()?,
             &aggregate_public_key,
             conditions,
         )?;
@@ -1670,14 +1676,15 @@ impl ChannelState {
         conditions: NodePtr,
     ) -> Result<Spend, Error> {
         let aggregate_public_key = self.get_aggregate_channel_public_key();
+        let synthetic_public_key = self.get_synthetic_channel_public_key()?;
         let spend = self.channel_coin();
 
         let conditions_program = Program::from_nodeptr(env.allocator, conditions)?;
         let channel_coin_spend = self.get_solution_and_signature_from_conditions(
             &spend.to_coin_id(),
             env,
-            &self.private_keys.my_channel_coin_private_key,
-            &aggregate_public_key,
+            &self.get_channel_signing_private_key()?,
+            &synthetic_public_key,
             Rc::new(conditions_program),
         )?;
 

@@ -590,9 +590,9 @@ Handshake payload field keys are:
 - `b` means `bundle` in Handshakes C and D.
 
 `capabilities` is a text-keyed version map. Both A and B must contain
-`"p": 2`, where `p` means `peer_protocol`. Any missing or different value is
+`"p": 3`, where `p` means `peer_protocol`. Any missing or different value is
 rejected. Unknown keys are ignored so independently introduced capabilities do
-not change protocol-2 behavior.
+not change protocol-3 behavior.
 
 Contribution names are from the sender's perspective. A receiver requires:
 

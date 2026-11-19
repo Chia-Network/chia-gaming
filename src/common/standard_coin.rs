@@ -73,25 +73,34 @@ pub fn calculate_synthetic_secret_key(
         .into_gen()
 }
 
-pub fn calculate_synthetic_public_key(
+pub(crate) fn synthetic_offset_private_key(
     public_key: &PublicKey,
     hidden_puzzle_hash: &PuzzleHash,
-) -> Result<PublicKey, types::Error> {
+) -> Result<PrivateKey, types::Error> {
     let private_key_int = calculate_synthetic_offset(public_key, hidden_puzzle_hash);
     let (_, private_key_bytes_right) = private_key_int.to_bytes_be();
     let mut private_key_bytes: [u8; 32] = [0; 32];
     for (i, b) in private_key_bytes_right.iter().enumerate() {
         private_key_bytes[i + 32 - private_key_bytes_right.len()] = *b;
     }
-    let synthetic_offset = PrivateKey::from_bytes(&private_key_bytes)
+    PrivateKey::from_bytes(&private_key_bytes)
         .map(Ok)
         .unwrap_or_else(|e| {
             Err(format!(
                 "calculate_synthetic_public_key failed on {private_key_bytes:?}: {e:?}"
             ))
         })
-        .into_gen()?;
-    let public_of_synthetic = private_to_public_key(&synthetic_offset);
+        .into_gen()
+}
+
+pub fn calculate_synthetic_public_key(
+    public_key: &PublicKey,
+    hidden_puzzle_hash: &PuzzleHash,
+) -> Result<PublicKey, types::Error> {
+    let public_of_synthetic = private_to_public_key(&synthetic_offset_private_key(
+        public_key,
+        hidden_puzzle_hash,
+    )?);
     Ok(public_key.clone() + public_of_synthetic)
 }
 
