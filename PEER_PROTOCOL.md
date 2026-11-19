@@ -609,6 +609,15 @@ public keys may equal any of the local endpoint's three corresponding keys, and
 the two reward puzzle hashes must differ. Any of these nine cross-peer key
 collisions, or equal reward puzzle hashes, rejects the handshake.
 
+The channel coin uses the synthetic public key derived from the completed
+`channel_public_key` sum and Chia's default hidden puzzle hash
+`711d6c4e32c92e53179b199484cf8c897542bc57f2b22582799f9d657eec4699`.
+Both parties sign under that synthetic key. The signer whose channel public key
+sorts first adds the offset scalar to its private share. Deriving after
+aggregation keeps a later key choice from turning the raw sum into a spendable
+hidden-puzzle commitment.
+The default hidden puzzle `(=)` fails if revealed.
+
 ### 7.2 Handshake A
 
 ```text
