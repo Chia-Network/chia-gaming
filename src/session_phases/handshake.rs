@@ -10,8 +10,8 @@ use crate::common::constants::{
 };
 use crate::common::standard_coin::verify_reward_payout_signature;
 use crate::common::types::{
-    Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Error, Hash, IntoErr, Node, PublicKey,
-    PuzzleHash, SpendBundle,
+    is_reserved_agg_sig_unsafe_suffix, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Error,
+    Hash, IntoErr, Node, PublicKey, PuzzleHash, SpendBundle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -55,6 +55,7 @@ pub fn validate_ab_payload(
     payload: &HandshakePayloadB,
     private_keys: &ChannelPrivateKeys,
     reward_puzzle_hash: &PuzzleHash,
+    agg_sig_me_additional_data: &Hash,
     my_contribution: &Amount,
     their_contribution: &Amount,
 ) -> Result<(), Error> {
@@ -71,6 +72,12 @@ pub fn validate_ab_payload(
             "Handshake contribution mismatch: peer claims their_contribution={:?} but we expect my_contribution={:?}",
             payload.their_contribution, my_contribution
         )));
+    }
+
+    if is_reserved_agg_sig_unsafe_suffix(agg_sig_me_additional_data, &payload.reward_puzzle_hash) {
+        return Err(Error::Channel(
+            "Peer reward puzzle hash is reserved by consensus".to_string(),
+        ));
     }
 
     if !verify_reward_payout_signature(
@@ -480,6 +487,7 @@ mod tests {
                     &payload,
                     &local,
                     &PuzzleHash::from_bytes([7; 32]),
+                    &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
                     &Amount::new(100),
                     &Amount::new(200),
                 )
@@ -501,6 +509,7 @@ mod tests {
             &valid,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200),
         )
@@ -512,6 +521,7 @@ mod tests {
             &invalid,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200)
         )
@@ -523,6 +533,7 @@ mod tests {
             &invalid,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200)
         )
@@ -534,6 +545,7 @@ mod tests {
             &invalid,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200)
         )
@@ -545,6 +557,7 @@ mod tests {
             &invalid,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200)
         )
@@ -556,6 +569,7 @@ mod tests {
             &invalid,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200)
         )
@@ -566,10 +580,93 @@ mod tests {
             &same_reward_peer,
             &local,
             &local_reward,
+            &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
             &Amount::new(100),
             &Amount::new(200)
         )
         .is_err());
+    }
+
+    #[test]
+    fn ab_payload_rejects_all_consensus_reserved_peer_reward_hashes() {
+        let local = private_keys([1, 2, 3]);
+        let peer = private_keys([4, 5, 6]);
+        let local_reward = PuzzleHash::from_bytes([7; 32]);
+        let additional_data = Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
+        let reserved = [
+            "ccd5bb71183532bff220ba46c268991a3ff07eb358e8255a65c30a2dce0e5fbb",
+            "baf5d69c647c91966170302d18521b0a85663433d161e72c826ed08677b53a74",
+            "284fa2ef486c7a41cc29fc99c9d08376161e93dd37817edb8219f42dca7592c4",
+            "cda186a9cd030f7a130fae45005e81cae7a90e0fa205b75f6aebc0d598e0348e",
+            "0f7d90dff0613e6901e24dae59f1e690f18b8f5fbdcf1bb192ac9deaf7de22ad",
+            "585796bd90bb553c0430b87027ffee08d88aba0162c6e1abbbcc6b583f2ae7f9",
+            "2ebfdae17b29d83bae476a25ea06f0c4bd57298faddbbc3ec5ad29b9b86ce5df",
+        ];
+
+        for value in reserved {
+            let reward_puzzle_hash =
+                PuzzleHash::from_bytes(hex::decode(value).unwrap().try_into().unwrap());
+            let mut payload = payload_for(&peer, 8);
+            payload.reward_payout_signature =
+                sign_reward_payout(&peer.my_referee_private_key, &reward_puzzle_hash);
+            payload.reward_puzzle_hash = reward_puzzle_hash;
+
+            let error = validate_ab_payload(
+                &payload,
+                &local,
+                &local_reward,
+                &additional_data,
+                &Amount::new(100),
+                &Amount::new(200),
+            )
+            .expect_err("reserved peer reward hash");
+            assert!(format!("{error:?}").contains("reserved by consensus"));
+        }
+
+        // The local reward hash comes from the trusted wallet, so peer validation
+        // must not reject it when the peer's reward hash is valid.
+        let local_reward = PuzzleHash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
+        validate_ab_payload(
+            &payload_for(&peer, 8),
+            &local,
+            &local_reward,
+            &additional_data,
+            &Amount::new(100),
+            &Amount::new(200),
+        )
+        .expect("valid peer reward hash");
+    }
+
+    #[test]
+    fn ab_payload_uses_network_specific_reserved_reward_hashes() {
+        let local = private_keys([1, 2, 3]);
+        let peer = private_keys([4, 5, 6]);
+        let additional_data = Hash::from_bytes([9; 32]);
+
+        for opcode in 43..=48 {
+            let reward_puzzle_hash = PuzzleHash::from_hash(
+                Sha256Input::Array(vec![
+                    Sha256Input::Bytes(additional_data.bytes()),
+                    Sha256Input::Bytes(&[opcode]),
+                ])
+                .hash(),
+            );
+            let mut payload = payload_for(&peer, 8);
+            payload.reward_payout_signature =
+                sign_reward_payout(&peer.my_referee_private_key, &reward_puzzle_hash);
+            payload.reward_puzzle_hash = reward_puzzle_hash;
+
+            let error = validate_ab_payload(
+                &payload,
+                &local,
+                &PuzzleHash::from_bytes([7; 32]),
+                &additional_data,
+                &Amount::new(100),
+                &Amount::new(200),
+            )
+            .expect_err("network reserved peer reward hash");
+            assert!(format!("{error:?}").contains("reserved by consensus"));
+        }
     }
 
     #[test]
