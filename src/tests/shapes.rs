@@ -166,7 +166,7 @@ fn test_shapes_reject_ambiguous_or_incorrect_templates() {
         let opts = Rc::new(DefaultCompilerOpts::new("shape-errors.clsp"))
             .set_search_paths(&["clsp".to_string(), ".".to_string()]);
         let result = compile_file(
-            &mut Default::default(),
+            &mut chialisp::clvmr::Allocator::new(),
             Rc::new(DefaultProgramRunner::new()),
             opts,
             &source,
@@ -277,6 +277,280 @@ fn test_make() {
     );
 }
 
+fn shape_program_bytes(body: &str) -> Vec<u8> {
+    use chialisp::classic::clvm::sexp::sexp_as_bin;
+    use chialisp::compiler::clvm::convert_to_clvm_rs;
+
+    let mut allocator = chialisp::clvmr::Allocator::new();
+    let program = convert_to_clvm_rs(&mut allocator, compile_shape_program(body)).unwrap();
+    sexp_as_bin(&mut allocator, program).raw()
+}
+
+fn shape_cost(program: &[u8], input: &str) -> (u64, Vec<u8>) {
+    use chialisp::classic::clvm::sexp::sexp_as_bin;
+    use chialisp::compiler::{clvm::convert_to_clvm_rs, sexp::parse_sexp, srcloc::Srcloc};
+
+    let mut allocator = chialisp::clvmr::Allocator::new();
+    let input = parse_sexp(Srcloc::start("input"), input.bytes()).unwrap()[0].clone();
+    let input = convert_to_clvm_rs(&mut allocator, input).unwrap();
+    let input = sexp_as_bin(&mut allocator, input).raw();
+    let mut runtime = AllocEncoder::new();
+    let allocator = runtime.allocator();
+    let program = clvmr::serde::node_from_bytes(allocator, program).unwrap();
+    let input = clvmr::serde::node_from_bytes(allocator, &input).unwrap();
+    let result = run_program(allocator, &chia_dialect(), program, input, 1_000_000).unwrap();
+    (
+        result.0,
+        clvmr::serde::node_to_bytes(allocator, result.1).unwrap(),
+    )
+}
+
+#[test]
+fn shape_dispatch_avoids_unneeded_bindings() {
+    for (name, body, input, max_bytes, max_cost) in [
+        ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 45, 386),
+        ("four-way singleton splits", "(if-shape VALUE (#((a . x) (atom b) (atom c)) 1) (#((atom a) (b . y) (atom c)) 2) (#((atom a) (atom b) (c . z)) 3) (#((atom a) (atom b) (atom c)) 4))", "(4 . (4 . 4))", 45, 394),
+        ("four-way bodies", "(if-shape VALUE (((atom a) . (atom b)) (+ a b)) (((a . b) . (atom c)) (+ a b c)) (((atom a) . (b . c)) (- a b c)) (((a . b) . (c . d)) (+ a b c d)))", "((2 . 3) . (4 . 5))", 83, 2131),
+        ("two-way", "(if-shape VALUE (((a . b) . (atom c)) (+ a b c)) (((atom d) . (e . f)) (+ d e f)))", "((2 . 3) . 4)", 48, 1650),
+        ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 13, 118),
+    ] {
+        let program = shape_program_bytes(&format!("(export VALUE {body})"));
+        let (cost, _) = shape_cost(&program, input);
+        assert!(program.len() <= max_bytes, "{name}: {} bytes exceed {max_bytes}", program.len());
+        assert!(cost <= max_cost, "{name}: cost {cost} exceeds {max_cost}");
+    }
+}
+
+#[test]
+fn shape_dispatch_balances_splits_reproducibly() {
+    // The first position isolates one case. The other two each split 2:2.
+    let body = "(export VALUE (if-shape VALUE
+        (#((atom a) (atom b) (atom c)) 1)
+        (#((a . x) (atom b) (c . z)) 2)
+        (#((a . x) (b . y) (atom c)) 3)
+        (#((a . x) (b . y) (c . z)) 4)))";
+    let program = shape_program_bytes(body);
+    assert_eq!(program, shape_program_bytes(body));
+    for (input, expected) in [
+        ("(1 . (2 . 3))", 1),
+        ("((1 . 1) . (2 . (3 . 3)))", 2),
+        ("((1 . 1) . ((2 . 2) . 3))", 3),
+        ("((1 . 1) . ((2 . 2) . (3 . 3)))", 4),
+    ] {
+        let (cost, result) = shape_cost(&program, input);
+        assert_eq!(result, [expected]);
+        assert!(cost <= 427, "cost {cost} for {input}");
+    }
+}
+
+#[test]
+fn shape_dispatch_selects_the_cheaper_split_policy() {
+    // b isolates the third case. Testing a first splits the same six cases 2:4.
+    // Changing only the third body flips which tree has the cheaper mean.
+    let inputs = [
+        "((4 . (4 . 5)) . (4 . 4))",
+        "(((4 . 5) . (4 . 5)) . ((4 . 5) . (4 . 5)))",
+        "((4 . 4) . ((4 . 5) . 4))",
+        "(((4 . 5) . (4 . 5)) . (4 . 4))",
+        "((4 . (4 . 5)) . ((4 . 5) . (4 . 5)))",
+        "((4 . (4 . 5)) . (4 . (4 . 5)))",
+    ];
+    for (third_body, third_result, max_total) in [("(+ a 3)", 7, 4378), ("3", 3, 3318)] {
+        let program = shape_program_bytes(&format!(
+            "(export VALUE (if-shape VALUE
+                (#((atom a) (b . tb) (atom c) (atom d)) 1)
+                (#((a . ta) (b . tb) (c . tc) (d . td)) 2)
+                (#((atom a) (atom b) (c . tc) (atom d)) {third_body})
+                (#((a . ta) (b . tb) (atom c) (atom d)) 4)
+                (#((atom a) (b . tb) (c . tc) (d . td)) 5)
+                (#((atom a) (b . tb) (atom c) (d . td)) 6)))"
+        ));
+        let mut total = 0;
+        for (input, expected) in inputs.iter().zip([1, 2, third_result, 4, 5, 6]) {
+            let (cost, result) = shape_cost(&program, input);
+            assert_eq!(result, [expected]);
+            total += cost;
+        }
+        assert!(total <= max_total, "{third_body}: total cost {total}");
+    }
+}
+
+#[test]
+fn shape_dispatch_fuses_three_safe_cases() {
+    // Changing the third corner puts the singleton on opposite sides of the
+    // first test. Some unselected arithmetic arms would read an atom as a pair.
+    for (third_shape, third_input) in [
+        ("((a . x) . (b . y))", "((5 . 6) . (7 . 8))"),
+        ("((atom a) . (atom b))", "(5 . 7)"),
+    ] {
+        for (bodies, expected, max_bytes, max_total) in [
+            (["(+ a 1)", "(+ b 2)", "(+ a b)"], [6, 9, 12], 59, 3713),
+            (["1", "2", "3"], [1, 2, 3], 31, 792),
+        ] {
+            let [first, second, third] = bodies;
+            let program = shape_program_bytes(&format!(
+                "(export VALUE (if-shape VALUE
+                    (((a . x) . (atom b)) {first})
+                    (((atom a) . (b . y)) {second})
+                    ({third_shape} {third})))"
+            ));
+            let mut total = 0;
+            for (input, value) in ["((5 . 6) . 7)", "(5 . (7 . 8))", third_input]
+                .iter()
+                .zip(expected)
+            {
+                let (cost, result) = shape_cost(&program, input);
+                assert_eq!(result, [value]);
+                total += cost;
+            }
+            assert!(
+                program.len() <= max_bytes,
+                "{third_shape}: {} bytes",
+                program.len()
+            );
+            assert!(total <= max_total, "{third_shape}: total cost {total}");
+        }
+    }
+}
+
+#[test]
+fn shape_dispatch_keeps_guarded_or_costly_tests_lazy() {
+    // The two literal leaves already share an eager selector. Speculating
+    // their test on the arithmetic path would only add cost.
+    let program = shape_program_bytes(
+        "(export VALUE (if-shape VALUE
+        (((atom a) . (atom b)) (+ a b))
+        (((a . b) . (atom c)) 2)
+        (((a . b) . (c . d)) 3)))",
+    );
+    for (input, expected, ceiling) in [
+        ("(4 . 5)", 9, 1129),
+        ("((4 . 5) . 6)", 2, 419),
+        ("((4 . 5) . (6 . 7))", 3, 419),
+    ] {
+        let (cost, result) = shape_cost(&program, input);
+        assert_eq!(result, [expected]);
+        assert!(cost <= ceiling, "{input}: cost {cost}");
+    }
+
+    // Only the pair arm may inspect the left child. The atom input would
+    // abort if the second test were evaluated eagerly.
+    assert_shape_program(
+        "(export VALUE (if-shape VALUE
+            ((atom v) (+ v 1))
+            (((atom x) . y) (+ x 2))
+            (((x . z) . y) (+ z 3))))",
+        &[
+            ("4".into(), 5),
+            ("(5 . 7)".into(), 7),
+            ("((5 . 6) . 7)".into(), 9),
+        ],
+    );
+
+    // On (9 . 99) both halves exist. A later test in the nested selector
+    // would descend into 9, so the selector must stay inside its guard.
+    assert_shape_program(
+        "(export V (if-shape V
+            (((atom a) . tail) (+ a 1))
+            (((x . tail) . (atom b)) (+ b 2))
+            ((((atom a) . tail) . (b . y)) (+ a 3))
+            ((((a . x) . tail) . (b . y)) (+ x 4))))",
+        &[
+            ("(9 . 99)".into(), 10),
+            ("((3 . 4) . 5)".into(), 7),
+            ("((3 . 4) . (5 . 6))".into(), 6),
+            ("(((1 . 5) . 4) . (5 . 6))".into(), 9),
+        ],
+    );
+}
+
+#[test]
+fn shape_dispatch_declines_costly_three_way_fusion() {
+    // Both predicates are safe, but fifty edges down. The flat selector
+    // costs 5665 over these inputs, eight more than the nested tree.
+    let fields = (0..49)
+        .map(|i| format!("pad{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let prefix = "0 ".repeat(49);
+    let program = shape_program_bytes(&format!(
+        "(export VALUE (if-shape VALUE
+            (({fields} . ((a . x) . (atom b))) (+ a 1))
+            (({fields} . ((atom a) . (b . y))) (+ b 2))
+            (({fields} . ((atom a) . (atom b))) (+ a b))))"
+    ));
+    let mut total = 0;
+    for (tail, expected) in [("((5 . 6) . 7)", 6), ("(5 . (7 . 8))", 9), ("(5 . 7)", 12)] {
+        let (cost, result) = shape_cost(&program, &format!("({prefix}. {tail})"));
+        assert_eq!(result, [expected]);
+        total += cost;
+    }
+    assert!(total <= 5657, "total cost {total}");
+}
+
+#[test]
+fn shape_dispatch_keeps_a_deep_repeated_test_lazy() {
+    // The second test is twelve edges down. Repeating it for eager fusion
+    // costs 474 per input. The lazy outer split reads the path once for 463.
+    let mut branches = Vec::new();
+    let mut inputs = Vec::new();
+    for (left, left_value) in [("(atom a)", "1"), ("(a . x)", "(1 . 2)")] {
+        for (right, right_value) in [("(atom b)", "3"), ("(b . y)", "(3 . 4)")] {
+            let mut tail = right.to_owned();
+            let mut value = right_value.to_owned();
+            for depth in 1..12 {
+                tail = format!("(pad{depth} . {tail})");
+                value = format!("(0 . {value})");
+            }
+            branches.push(format!("(({left} . {tail}) {})", branches.len() + 1));
+            inputs.push(format!("({left_value} . {value})"));
+        }
+    }
+    let program = shape_program_bytes(&format!(
+        "(export VALUE (if-shape VALUE {}))",
+        branches.join(" ")
+    ));
+    for (input, expected) in inputs.iter().zip(1u8..) {
+        let (cost, result) = shape_cost(&program, input);
+        assert_eq!(result, [expected]);
+        assert!(cost <= 463, "{input}: cost {cost}");
+    }
+}
+
+#[test]
+fn shape_dispatch_fields_can_shadow_a_function_argument() {
+    let cases = "(if-shape value
+        ((item) (+ value tail shapes-value))
+        ((atom value) value))";
+    let shape = "(defun-shape item ((atom value) . tail))";
+    let examples = [("((11 . 22) 100)".into(), 133), ("(44 100)".into(), 44)];
+    assert_shape_program(
+        &format!(
+            "{shape} (defun pick (value shapes-value) {cases}) (export args (pick &rest args))"
+        ),
+        &examples,
+    );
+    // Chialisp 0.7.0 needs distinct field names directly in a module export.
+    assert_shape_program(
+        &format!(
+            "{shape} (export (value shapes-value)
+                (if-shape value
+                    ((item item-value tail) (+ item-value tail shapes-value))
+                    ((atom leaf) leaf)))"
+        ),
+        &examples,
+    );
+}
+
+#[test]
+fn shape_dispatch_keeps_variable_reads_lazy() {
+    // Reading the outer variable right would abort on a nil input.
+    assert_shape_program(
+        "(export (@ VALUE (left . right)) (if-shape VALUE (nil 7) ((a . b) right)))",
+        &[("()".into(), 7), ("(3 . 4)".into(), 4)],
+    );
+}
+
 /// Use the same compiler entry point/options as build.rs, including modern
 /// optimization. Compile once per union, then run every example against it.
 fn assert_dispatch(branches: &[String], examples: &[(String, usize)]) {
@@ -286,11 +560,10 @@ fn assert_dispatch(branches: &[String], examples: &[(String, usize)]) {
     );
 }
 
-fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
+fn compile_shape_program(body: &str) -> std::rc::Rc<chialisp::compiler::sexp::SExp> {
     use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
     use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
     use chialisp::classic::platform::argparse::ArgumentValue;
-    use chialisp::compiler::{clvm::run, sexp::parse_sexp, srcloc::Srcloc};
     use std::{collections::HashMap, rc::Rc};
     let source = format!("(include *standard-cl-26*) (import std.shapes) {body}");
     let arguments = HashMap::from([
@@ -306,7 +579,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             ]),
         ),
     ]);
-    let mut allocator = Default::default();
+    let mut allocator = chialisp::clvmr::Allocator::new();
     let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).unwrap();
     let compiled = chialisp::compiler::compiler::compile_file(
         &mut allocator,
@@ -318,7 +591,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
     .unwrap_or_else(|error| panic!("{source}\n{error:?}"));
     // An import/export source produces a module containing named components;
     // execute its program component, not its module/hash summary.
-    let program = match compiled {
+    match compiled {
         chialisp::compiler::comptypes::CompilerOutput::Program(_, program) => Rc::new(program),
         chialisp::compiler::comptypes::CompilerOutput::Module(module) => module
             .components
@@ -327,7 +600,16 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             .expect("exported program")
             .content
             .clone(),
-    };
+    }
+}
+
+fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
+    use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
+    use chialisp::compiler::{clvm::run, sexp::parse_sexp, srcloc::Srcloc};
+    use std::{collections::HashMap, rc::Rc};
+
+    let program = compile_shape_program(body);
+    let mut allocator = chialisp::clvmr::Allocator::new();
     for (input, expected) in examples {
         let args = parse_sexp(Srcloc::start("shape-input"), input.bytes()).unwrap()[0].clone();
         let result = run(
@@ -339,7 +621,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             None,
             Some(1_000_000),
         )
-        .unwrap_or_else(|error| panic!("{source}\ninput {input}: {error:?}"));
+        .unwrap_or_else(|error| panic!("{body}\ninput {input}: {error:?}"));
         assert_eq!(
             result.to_string(),
             if *expected == 0 {
@@ -347,7 +629,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             } else {
                 expected.to_string()
             },
-            "{source}\ninput {input}"
+            "{body}\ninput {input}"
         );
     }
 }
@@ -424,7 +706,16 @@ fn test_shapes_eight_way_dispatch_needs_three_checks() {
     }
     // Every alternative appears first and last, in both forward and reverse order.
     for _ in 0..8 {
-        assert_dispatch(&branches, &examples);
+        let program = shape_program_bytes(&format!(
+            "(export VALUE (if-shape VALUE {}))",
+            branches.join(" ")
+        ));
+        assert!(program.len() <= 111, "{} bytes", program.len());
+        for (input, expected) in &examples {
+            let (cost, result) = shape_cost(&program, input);
+            assert_eq!(result, [*expected as u8]);
+            assert!(cost <= 675, "{input}: cost {cost}");
+        }
         let reverse = branches.iter().rev().cloned().collect::<Vec<_>>();
         assert_dispatch(&reverse, &examples);
         branches.rotate_left(1);

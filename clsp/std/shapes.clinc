@@ -170,27 +170,32 @@
                         (x (q . "unknown shape field") FIELD)))
                 (x (q . "shape field names must be unique"))))))
 
-(defun shapes-cases (CASES)
+; Prepare (facts . branch expression) once per declaration. Only bodies that
+; can read fields need an assign in the generated program.
+(defun shapes-cases (VALUE CASES)
     (if CASES
         (assign
             (TREE BODY) (f CASES)
             (FACTS PATTERN NAMES) (shapes-parse (shapes-check TREE 1) 1 0)
             (if (shapes-unique NAMES)
-                (c (list FACTS PATTERN BODY) (shapes-cases (r CASES)))
+                (c (c FACTS
+                       (if (if (l BODY) 1 (shapes-contains BODY PATTERN))
+                           (shapes-bind-case PATTERN VALUE BODY) BODY))
+                   (shapes-cases VALUE (r CASES)))
                 (x (q . "shape field names must be unique"))))
         ()))
 
 ; Common guarantees are usable under the closed-union contract. Optional paths
 ; contribute none. Facts learned by actual tests refine each surviving case.
-(defun shapes-common-pair (PATH CASES)
+(defun shapes-excludes (PATH CASES MASK)
     (if CASES
-        (if (= (shapes-lookup PATH (f (f CASES)) 7) 1)
-            (shapes-common-pair PATH (r CASES)) 0)
+        (if (logand (shapes-lookup PATH (f (f CASES)) 7) MASK) 0
+            (shapes-excludes PATH (r CASES) MASK))
         1))
 
 (defun shapes-safe (PATH CASES)
     (if (= PATH 1) 1
-        (if (shapes-common-pair (/ PATH 2) CASES)
+        (if (shapes-excludes (/ PATH 2) CASES 6)
             (shapes-safe (/ PATH 2) CASES) 0)))
 
 (defun shapes-tests-for (FACTS)
@@ -204,53 +209,157 @@
 (defun shapes-tests (CASES)
     (if CASES (shapes-append (shapes-tests-for (f (f CASES))) (shapes-tests (r CASES))) ()))
 
+; Keep the first occurrence of each (path, test) in declaration order.
+(defun shapes-distinct-tests (TESTS SEEN)
+    (if TESTS
+        (assign
+            (PATH MASK) (f TESTS)
+            KNOWN (shapes-lookup PATH SEEN 0)
+            (if (logand KNOWN MASK)
+                (shapes-distinct-tests (r TESTS) SEEN)
+                (c (f TESTS) (shapes-distinct-tests (r TESTS)
+                    (c (list PATH (logior KNOWN MASK)) SEEN)))))
+        ()))
+
 (defun shapes-refine (CASES PATH MASK)
     (if CASES
         (assign
-            (FACTS PATTERN BODY) (f CASES)
+            (FACTS . BODY) (f CASES)
             NARROW (logand (shapes-lookup PATH FACTS 7) MASK)
             REST (shapes-refine (r CASES) PATH MASK)
-            (if NARROW (c (list (c (list PATH NARROW) FACTS) PATTERN BODY) REST) REST))
+            (if NARROW (c (c (c (list PATH NARROW) FACTS) BODY) REST) REST))
         ()))
 
 (defun shapes-length (XS)
     (if XS (+ 1 (shapes-length (r XS))) 0))
 
-; Prefer a singleton split first, then the split with the smallest worst side.
-; If no separating test is safe, allow a parent guard whose pair outcome keeps
-; every candidate but makes a deeper test safe. At least one outcome must remove
-; a candidate; refining facts prevents the same guard being selected again.
-(defun shapes-best (TESTS CASES COUNT BEST SCORE)
+; Count both sides without building refined cases until a test is selected.
+(defun shapes-side-counts (CASES PATH MASK)
+    (if CASES
+        (assign
+            KIND (shapes-lookup PATH (f (f CASES)) 7)
+            (YES . NO) (shapes-side-counts (r CASES) PATH MASK)
+            (c (+ YES (if (logand KIND MASK) 1 0))
+               (+ NO (if (logand KIND (logxor 7 MASK)) 1 0))))
+        (c 0 0)))
+
+; Both policies prefer a split over a guard. Tied tests retain declaration order.
+(defun shapes-rank (SINGLETONS COUNT YES NO WORST)
+    (if SINGLETONS
+        (if (= WORST COUNT) (* COUNT 2) (if (any (= YES 1) (= NO 1)) 0 WORST))
+        (+ (* WORST (+ COUNT 1)) YES)))
+
+(defun shapes-best (TESTS CASES COUNT SINGLETONS BEST SCORE)
     (if TESTS
         (assign
             (PATH MASK) (f TESTS)
-            YES (shapes-length (shapes-refine CASES PATH MASK))
-            NO (shapes-length (shapes-refine CASES PATH (logxor 7 MASK)))
-            WORST (if (> YES NO) YES NO)
-            BEST-SIDE (if (> YES NO) NO YES)
-            RANK (if (> COUNT WORST)
-                (if (if (= YES 1) 1 (= NO 1)) 0 WORST)
-                (* COUNT 2))
-            USE (if (shapes-safe PATH CASES)
-                (if YES (if NO (if (> COUNT BEST-SIDE) (> SCORE RANK) 0) 0) 0) 0)
-            (shapes-best (r TESTS) CASES COUNT
+            (YES . NO) (shapes-side-counts CASES PATH MASK)
+            RANK (shapes-rank SINGLETONS COUNT YES NO (if (> YES NO) YES NO))
+            ; Proving every ancestor safe is costly for deep paths. Check only
+            ; candidates that separate cases and improve the current score.
+            USE (if (all YES NO (> (* 2 COUNT) (+ YES NO)) (if BEST (> SCORE RANK) 1))
+                (shapes-safe PATH CASES) 0)
+            (shapes-best (r TESTS) CASES COUNT SINGLETONS
                 (if USE (f TESTS) BEST) (if USE RANK SCORE)))
         BEST))
 
-(defun shapes-dispatch (VALUE CASES)
+(defun shapes-literal-body (BODY)
+    (any (number? BODY) (string? BODY)))
+
+(defun shapes-bind-case (PATTERN VALUE BODY)
+    ; assign resolves dependencies among its bindings. Read the outer value
+    ; under a fresh name if a field would make the binding depend on itself.
+    (if (all (symbol? VALUE) (shapes-contains VALUE PATTERN))
+        (assign NAME (shapes-fresh (q . shapes-value) (list VALUE PATTERN BODY))
+            (list (q . assign) NAME VALUE (list (q . assign) PATTERN NAME BODY)))
+        (list (q . assign) PATTERN VALUE BODY)))
+
+; A root path costs 44 and each additional edge costs 4. The caller's
+; environment prefix is unknown during expansion. Ignore sign padding.
+(defun shapes-path-cost (PATH)
+    (if (= PATH 1) 44 (+ 4 (shapes-path-cost (/ PATH 2)))))
+
+; An arm is (paths eager-cost deferred-cost expression). Charge its eager
+; instructions on every route, and its deferred instructions only on routes
+; that enter the selected branch. Deferred cost is already summed over them.
+(defun shapes-arm-cost (ROUTES (_ EAGER DEFERRED _))
+    (+ (* ROUTES EAGER) DEFERRED))
+
+; A plan is (routes apply-cost arm). Applying a selected program to @ costs
+; 135. A selector that returns a literal directly has an apply cost of zero.
+(defun shapes-total ((ROUTES APPLY ARM))
+    (+ (* ROUTES APPLY) (shapes-arm-cost ROUTES ARM)))
+
+(defun shapes-result ((_ APPLY (_ _ _ EXPR)))
+    (if APPLY (list 2 EXPR (q . @)) EXPR))
+
+(defun shapes-safe-tests (PATHS CASES)
+    (if PATHS (if (shapes-safe (f PATHS) CASES) (shapes-safe-tests (r PATHS) CASES) 0) 1))
+
+; Compare running this selector at the parent with quoting the entire child.
+; Opening it makes every path it reads eager on the parent's routes.
+(defun shapes-program-arm (CASES ROUTES (@ PLAN (_ APPLY (@ ARM (PATHS _ _ _)))))
+    (assign QUOTED (list () 20 (shapes-total PLAN) (list (q . com) (shapes-result PLAN)))
+        (if (if (all APPLY (> (shapes-arm-cost ROUTES QUOTED) (shapes-arm-cost ROUTES ARM)))
+                (shapes-safe-tests PATHS CASES) 0)
+            ARM QUOTED)))
+
+(defun shapes-join-choice (PATH CONDITION TEST ROUTES APPLY
+        (YES-PATHS YES-COST YES-DEFERRED YES) (NO-PATHS NO-COST NO-DEFERRED NO))
+    (list ROUTES APPLY (list (c PATH (shapes-append YES-PATHS NO-PATHS))
+        (+ 34 TEST YES-COST NO-COST) (+ YES-DEFERRED NO-DEFERRED) (list 3 CONDITION YES NO))))
+
+(defun shapes-safe-literals (CASES (_ APPLY (PATHS . _)))
+    (if APPLY 0 (shapes-safe-tests PATHS CASES)))
+
+(defun shapes-choice (CASES PATH CONDITION TEST
+        (@ YES (YES-ROUTES _ YES-ARM)) (@ NO (NO-ROUTES _ NO-ARM)))
+    (assign
+        ROUTES (+ YES-ROUTES NO-ROUTES)
+        PROGRAM (shapes-join-choice PATH CONDITION TEST ROUTES 135
+            (shapes-program-arm CASES ROUTES YES) (shapes-program-arm CASES ROUTES NO))
+        (if (all (shapes-safe-literals CASES YES) (shapes-safe-literals CASES NO))
+            (shapes-cheaper PROGRAM (shapes-join-choice PATH CONDITION TEST ROUTES 0 YES-ARM NO-ARM))
+            PROGRAM)))
+
+(defun shapes-leaf (BODY)
+    (if (shapes-literal-body BODY)
+        (list 1 0 (list () 20 0 BODY))
+        (list 1 135 (list () 20 0 (list (q . com) BODY)))))
+
+(defun shapes-dispatch-split (VALUE CASES (PATH MASK) SINGLETONS)
+    (assign
+        ACCESS (shapes-access PATH VALUE)
+        ; Nil is the only false value. Its complement is mask 3.
+        TRUE-MASK (if (= MASK 4) 3 MASK)
+        DIRECT (if (= MASK 4) 1 (shapes-excludes PATH CASES 2))
+        (shapes-choice CASES PATH (if DIRECT ACCESS (list 7 ACCESS))
+            (+ (shapes-path-cost PATH) (if DIRECT 0 20))
+            (shapes-dispatch-node VALUE (shapes-refine CASES PATH TRUE-MASK) SINGLETONS)
+            (shapes-dispatch-node VALUE (shapes-refine CASES PATH (logxor 7 TRUE-MASK)) SINGLETONS))))
+
+(defun shapes-dispatch-node (VALUE CASES SINGLETONS)
     (if (r CASES)
         (assign
-            TEST (shapes-best (shapes-tests CASES) CASES (shapes-length CASES) () 0x7fffffff)
-            (if TEST
-                (assign
-                    (PATH MASK) TEST
-                    ACCESS (shapes-access PATH VALUE)
-                    (list (q . if) (list (if (= MASK 1) 7 32) ACCESS)
-                        (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
-                        (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
+            TESTS (shapes-distinct-tests (shapes-tests CASES) ())
+            TEST (shapes-best TESTS CASES (shapes-length CASES) SINGLETONS () 0)
+            (if TEST (shapes-dispatch-split VALUE CASES TEST SINGLETONS)
                 (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
-        (assign (_ PATTERN BODY) (f CASES)
-            (list (q . assign) PATTERN VALUE BODY))))
+        (shapes-leaf (r (f CASES)))))
+
+; Compare mean dispatch cost without rounding. A guard can leave one case
+; reachable along multiple routes, so the route counts can differ.
+(defun shapes-cheaper ((@ FIRST (FIRST-ROUTES . _)) (@ SECOND (SECOND-ROUTES . _)))
+    (if (> (* (shapes-total FIRST) SECOND-ROUTES) (* (shapes-total SECOND) FIRST-ROUTES))
+        SECOND FIRST))
+
+; Separate preparation and planning so the compiler can optimize their macro
+; programs independently on first use. Only the selected expression is emitted.
+(defmac shapes-dispatch-expanded (VALUE . CASES)
+    (shapes-result (shapes-cheaper (shapes-dispatch-node VALUE CASES 0) (shapes-dispatch-node VALUE CASES 1))))
+
+(defun shapes-dispatch (VALUE CASES)
+    (c (q . shapes-dispatch-expanded) (c VALUE (shapes-cases VALUE CASES))))
 
 ; Pick a binding name absent from the entire input, including nested dispatches.
 ; Preserve its symbol type: concat yields a numeric atom, not a variable name.
@@ -280,6 +389,8 @@
 
 (defmac shapes-if-expanded (VALUE . CASES)
     (if CASES
-        (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
-            (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+        (if (l VALUE)
+            (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
+                (list (q . assign) NAME VALUE (shapes-dispatch NAME CASES)))
+            (shapes-dispatch VALUE CASES))
         (x (q . "if-shape needs at least one alternative"))))

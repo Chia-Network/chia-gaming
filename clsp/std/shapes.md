@@ -112,18 +112,51 @@ alternative depends on the generated decision tree, not textual branch order.
 Overlapping or indistinguishable alternatives produce a compilation error.
 There is no catch-all clause.
 
-The planner first prefers a safe atom/pair or nil test that singles out one
-alternative. Otherwise it prefers a split with the smallest worst-case group,
-then recurses. If those tests are all too deep to read safely, it first checks a
-parent pair, even when that outcome does not eliminate any alternatives. This is
-a greedy heuristic, not a globally optimal search.
+The macro compares two decision trees. One favors a safe test that isolates a
+single alternative. The other minimizes the number of alternatives on the
+larger side, breaking ties in favor of fewer on the true side. Both consider
+tests in declaration and template order, and use a parent guard when a deeper
+path needs one. A nil/pair split tests the value directly. A split between
+pairs and arbitrary atoms uses a pair test.
+
+The planner estimates **mean CLVM dispatch cost**, giving each route to a leaf
+equal weight. A guard can make a single alternative reachable by multiple
+routes. The estimate includes path depth, pair checks, conditionals, quotes,
+and applies. It omits the cost of executing nonliteral bodies and the final location of the
+scrutinee in the compiled environment. Only the cheaper tree is emitted, with
+the balanced tree winning a tie. The choice is deterministic for a given source.
+
+At each split the planner compares keeping a child's tests inside that branch
+with evaluating them in the parent's selector. Combining selectors can save
+a dispatch apply on routes through the child. Other routes then pay for the
+child's tests too. The planner combines them when that lowers estimated cost
+and every path the child selector reads is safe on all of the parent's inputs.
+This rule applies at every depth and for any number of alternatives.
+
+CLVM's eager `i` selects the branch program, and one apply runs it. When
+both sides can return literals directly, the planner also prices an eager
+`i` that returns the selected value without an apply.
+
 Accesses are only generated when every ancestor is known to be a pair, from the
 remaining shapes or earlier tests. Optional structure never supplies that fact.
 
-The selected branch uses `assign` to destructure the value. Generated temporary
-names avoid names occurring in the input and branch bodies. Constraints are
-consumed by `make` and `if-shape`; an ordinary `defun` parameter pattern can use
-an unannotated named shape, as in `point` above.
+The selected branch uses `assign` to destructure the value. Inside a `defun`,
+a field can shadow the input variable. In a direct module `export`, Chialisp
+0.7.0 can read the outer argument when a branch field shadows it.
+Give the field a distinct name in that pattern,
+as in the example below. [Upstream compiler fix](https://github.com/Chia-Network/chialisp/pull/609)
+
+```
+(defun-shape item ((atom value) . tail))
+(export value
+    (if-shape value
+        ((item item-value tail) (+ item-value tail))
+        ((atom leaf) leaf)))
+```
+
+Generated temporaries avoid capturing names in their scope. Constraints are
+consumed by `make` and `if-shape`. An ordinary `defun` parameter pattern can
+use an unannotated named shape, as in `point` above.
 
 ## Reading one field
 
@@ -154,8 +187,10 @@ slash:   ((previous_state previous_validation_program . evidence) . mover_payout
 ```
 
 Timeout is two atoms, move is two pairs, slash is a pair followed by an atom.
-The classifier needs two pair tests and never inspects evidence. Rust's encoder,
-signature hashing, decoder, and validator argument builders use the same layouts.
+The classifier tests both sides for a pair, selects the timeout, move, or slash
+program, and applies it once. It can read both sides on every legal solution.
+The classifier never inspects evidence. Rust's encoder, signature hashing,
+decoder, and validator argument builders use the same layouts.
 
 ## On-chain game records
 
