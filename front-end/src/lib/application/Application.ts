@@ -761,11 +761,25 @@ export function createApplication() {
   const abortAcceptIfActive = (options?: { error?: boolean; peerId?: string }): boolean => {
     return abortAccept(acceptAbortHandlers, options);
   };
+  const finishPeerRejection = (peer: PeerSession) => {
+    const { inboundHandshakeFailed } = peer.reliableTransport.state;
+    log(`[Shell] session_reject from=${peer.peerId}: durably cancelled`);
+    markPeerDead();
+    if (!abortAcceptIfActive({ error: true })) cancelAttemptedSession({ error: true });
+    if (inboundHandshakeFailed) {
+      update('confirmDialog', {
+        title: 'Session setup failed',
+        body: 'The other player reported a failure while opening the channel.',
+        confirmLabel: 'OK',
+        onConfirm: () => update('confirmDialog', null),
+      });
+    }
+  };
   inboundSessionRejectHandler = (sessionId, remoteNumber) => {
     const selected = peerSession;
-    const peerId = selected?.peerId ?? 'unknown';
+    if (selected?.sessionId !== sessionId) return;
     const conn = hubConn;
-    if (selected && conn && selected.sessionId === sessionId) {
+    if (conn) {
       installInboundRejectionReceipt(
         conn,
         selected.peerId,
@@ -774,10 +788,7 @@ export function createApplication() {
         remoteNumber,
       );
     }
-    log(`[Shell] session_reject from=${peerId}: durably cancelled`);
-    markPeerDead();
-    if (abortAcceptIfActive({ error: true })) return;
-    cancelAttemptedSession({ error: true });
+    finishPeerRejection(selected);
   };
   const startFreshSessionWithPeer = async (
     request: SessionStartRequest & {
@@ -1195,12 +1206,7 @@ export function createApplication() {
                     setActiveTab('game');
                     syncPeerLiveness();
                   },
-                  rejected: () => {
-                    log(`[Shell] session_reject from=${fromId}: durably cancelled`);
-                    markPeerDead();
-                    if (abortAcceptIfActive({ error: true })) return;
-                    cancelAttemptedSession({ error: true });
-                  },
+                  rejected: () => finishPeerRejection(provisional),
                   failed: (reason) => {
                     console.error('[Shell] invalid provisional reliable session', reason);
                     if (peerSession === provisional) {

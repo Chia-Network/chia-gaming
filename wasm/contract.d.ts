@@ -33,6 +33,7 @@ export interface PeerTerminalHandoff {
 export interface PeerProtocolSnapshot extends PeerProtocolState {
   terminalHandoff: PeerTerminalHandoff | null;
   rejectionComplete: boolean;
+  inboundHandshakeFailed: boolean;
 }
 export type PeerReceiveMode = 'raw' | 'proposal' | 'channel' | 'rejection' | 'retiring';
 export type PeerInput =

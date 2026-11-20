@@ -131,12 +131,14 @@ impl<C> Session<C> {
             state: &'a ReliableState,
             terminal_handoff: &'a Option<TerminalHandoff>,
             rejection_complete: bool,
+            inbound_handshake_failed: bool,
         }
         let session = self.state.borrow();
         Snapshot {
             state: &session.state,
             terminal_handoff: &session.terminal_handoff,
             rejection_complete: session.rejection_complete(),
+            inbound_handshake_failed: session.inbound_handshake_failed,
         }
         .serialize(serializer)
     }
@@ -148,6 +150,7 @@ impl<C> Session<C> {
     ) -> Result<(), String> {
         let mut session = self.state.borrow_mut();
         session.state = state;
+        session.inbound_handshake_failed = false;
         session.restore_terminal(terminal)
     }
 
@@ -406,7 +409,7 @@ impl<C: Channel> Session<C> {
                     {
                         host.notify(PeerEvent::PeerUnavailable)?;
                     } else {
-                        self.state.borrow_mut().reject_inbound();
+                        self.state.borrow_mut().reject_inbound(handshake_failed);
                         self.request_commit(host)?;
                     }
                 } else if mode == ReceiveMode::Proposal {
