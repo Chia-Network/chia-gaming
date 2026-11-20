@@ -535,7 +535,7 @@ name a wallet coin.
 Each side runs its own handler: `HandshakeInitiatorPhase` (the player who
 starts the channel) and `HandshakeReceiverPhase`. The A-D labels are the
 wire/message protocol labels. A and B include a text-to-`u32` capabilities map;
-`peer_protocol = 2` is required and unknown capability keys are ignored.
+`peer_protocol = 3` is required and unknown capability keys are ignored.
 Handshake messages are not sent via `Batch`:
 
 | Step | Sender    | Message      | Payload type                                               |
@@ -630,6 +630,11 @@ handler no longer reports channel status.
    message includes a PoP for both the channel key and the unroll key:
    `Sign(sk, pk.bytes())`. The receiver verifies these before proceeding.
    (The referee key already has an implicit PoP via `reward_payout_signature`.)
+   When an aggregate key controls a Chia standard puzzle, derive the synthetic
+   key from the completed aggregate, not from either share. The channel uses
+   Chia's default hidden puzzle hash for this step. Its hidden puzzle `(=)`
+   always fails, while hashing the completed aggregate prevents a peer who
+   chooses its share second from making the raw sum a spendable hidden opening.
 5. **Locally assembled funding transaction:** Handshake D is the receiver's
    acceptance only. Both endpoints combine their exact C and D halves and run
    Chia consensus validation over the result. Duplicate spends, signatures,

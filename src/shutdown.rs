@@ -4,7 +4,7 @@ use clvmr::NodePtr;
 use crate::channel_state::types::ChannelEnv;
 use crate::channel_state::ChannelState;
 use crate::common::constants::CREATE_COIN;
-use crate::common::standard_coin::puzzle_for_synthetic_public_key;
+use crate::common::standard_coin::puzzle_for_pk;
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinSpend, Error, IntoErr, Node, PuzzleHash, Spend,
 };
@@ -71,11 +71,7 @@ pub fn complete_shutdown_spend(
     let conditions = get_conditions_with_channel_state(env, ch)?;
     let local_spend = ch.send_potato_clean_shutdown(env, conditions)?;
     let full_spend = ch.received_potato_clean_shutdown(env, peer_channel_half_sig, conditions)?;
-    let puzzle = puzzle_for_synthetic_public_key(
-        env.allocator,
-        &env.standard_puzzle,
-        &ch.get_aggregate_channel_public_key(),
-    )?;
+    let puzzle = puzzle_for_pk(env.allocator, &ch.get_aggregate_channel_public_key())?;
 
     Ok((
         CoinSpend {

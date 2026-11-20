@@ -11,9 +11,7 @@ use crate::channel_state::types::{
 };
 use crate::channel_state::ChannelState;
 use crate::clvm_execution::run_clvm_with_runtime_prints;
-use crate::common::standard_coin::{
-    private_to_public_key, puzzle_hash_for_synthetic_public_key, sign_reward_payout,
-};
+use crate::common::standard_coin::{private_to_public_key, puzzle_hash_for_pk, sign_reward_payout};
 use crate::common::types::{
     Aggsig, AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType,
     GetCoinStringParts, Hash, IntoErr, LocalProposalId, Node, Program, ProgramRef, Puzzle,
@@ -449,8 +447,7 @@ impl HandshakeInitiatorPhase {
                 let our_channel_pk =
                     private_to_public_key(&self.private_keys.my_channel_coin_private_key);
                 let aggregate_pk = our_channel_pk + msg.identity.channel_public_key.clone();
-                let channel_puzzle_hash =
-                    puzzle_hash_for_synthetic_public_key(env.allocator, &aggregate_pk)?;
+                let channel_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_pk)?;
                 let launcher_coin = CoinString::from_parts(
                     &msg.channel_coin_grandparent,
                     &PuzzleHash::from_bytes(crate::common::constants::SINGLETON_LAUNCHER_HASH),

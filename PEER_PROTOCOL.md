@@ -590,9 +590,9 @@ Handshake payload field keys are:
 - `b` means `bundle` in Handshakes C and D.
 
 `capabilities` is a text-keyed version map. Both A and B must contain
-`"p": 2`, where `p` means `peer_protocol`. Any missing or different value is
+`"p": 3`, where `p` means `peer_protocol`. Any missing or different value is
 rejected. Unknown keys are ignored so independently introduced capabilities do
-not change protocol-2 behavior.
+not change protocol-3 behavior.
 
 Contribution names are from the sender's perspective. A receiver requires:
 
@@ -608,6 +608,15 @@ requires identity separation: none of the peer's channel, unroll, or referee
 public keys may equal any of the local endpoint's three corresponding keys, and
 the two reward puzzle hashes must differ. Any of these nine cross-peer key
 collisions, or equal reward puzzle hashes, rejects the handshake.
+
+The channel coin uses the synthetic public key derived from the completed
+`channel_public_key` sum and Chia's default hidden puzzle hash
+`711d6c4e32c92e53179b199484cf8c897542bc57f2b22582799f9d657eec4699`.
+Both parties sign under that synthetic key. The signer whose channel public key
+sorts first adds the offset scalar to its private share. Deriving after
+aggregation keeps a later key choice from turning the raw sum into a spendable
+hidden-puzzle commitment.
+The default hidden puzzle `(=)` fails if revealed.
 
 ### 7.2 Handshake A
 
