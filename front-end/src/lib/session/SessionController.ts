@@ -1360,6 +1360,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   private stopProtocolWork(): void {
     this.protocolStopped = true;
     this.blockchain?.detachGameSession(this);
+    this.blockchain?.pauseChainPolling();
     this.stopKeepaliveTimer();
     // A terminal drain is a replacement boundary, not an append-only update:
     // stale status/protocol work must not render after it. Per-game terminal
