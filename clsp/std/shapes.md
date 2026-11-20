@@ -112,11 +112,13 @@ alternative depends on the generated decision tree, not textual branch order.
 Overlapping or indistinguishable alternatives produce a compilation error.
 There is no catch-all clause.
 
-The planner first prefers a safe atom/pair or nil test that singles out one
-alternative. Otherwise it prefers a split with the smallest worst-case group,
-then recurses. If those tests are all too deep to read safely, it first checks a
-parent pair, even when that outcome does not eliminate any alternatives. This is
-a greedy heuristic, not a globally optimal search.
+The planner chooses the safe test with the fewest alternatives on its larger
+side. Ties favor fewer alternatives on the true side, then the first test
+encountered in declaration and template order. For the same source these rules
+produce the same tree. If separating tests are too deep to read safely, the
+planner first checks a parent pair. When both arms return literal numbers or
+strings, dispatch uses CLVM's eager `i`. Field accesses and compound bodies
+stay behind the branch that selects them.
 Accesses are only generated when every ancestor is known to be a pair, from the
 remaining shapes or earlier tests. Optional structure never supplies that fact.
 
@@ -154,7 +156,8 @@ slash:   ((previous_state previous_validation_program . evidence) . mover_payout
 ```
 
 Timeout is two atoms, move is two pairs, slash is a pair followed by an atom.
-The classifier needs two pair tests and never inspects evidence. Rust's encoder,
+The classifier tests the right side first, identifying a move in one pair test.
+Timeout and slash take two tests. The classifier never inspects evidence. Rust's encoder,
 signature hashing, decoder, and validator argument builders use the same layouts.
 
 ## On-chain game records

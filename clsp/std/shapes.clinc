@@ -204,6 +204,18 @@
 (defun shapes-tests (CASES)
     (if CASES (shapes-append (shapes-tests-for (f (f CASES))) (shapes-tests (r CASES))) ()))
 
+; Keep the first occurrence of each (path, test) in declaration order.
+(defun shapes-distinct-tests (TESTS SEEN)
+    (if TESTS
+        (assign
+            (PATH MASK) (f TESTS)
+            KNOWN (shapes-lookup PATH SEEN 0)
+            (if (logand KNOWN MASK)
+                (shapes-distinct-tests (r TESTS) SEEN)
+                (c (f TESTS) (shapes-distinct-tests (r TESTS)
+                    (c (list PATH (logior KNOWN MASK)) SEEN)))))
+        ()))
+
 (defun shapes-refine (CASES PATH MASK)
     (if CASES
         (assign
@@ -216,38 +228,47 @@
 (defun shapes-length (XS)
     (if XS (+ 1 (shapes-length (r XS))) 0))
 
-; Prefer a singleton split first, then the split with the smallest worst side.
-; If no separating test is safe, allow a parent guard whose pair outcome keeps
-; every candidate but makes a deeper test safe. At least one outcome must remove
-; a candidate; refining facts prevents the same guard being selected again.
+; Count both sides without building refined cases until a test is selected.
+(defun shapes-side-counts (CASES PATH MASK)
+    (if CASES
+        (assign
+            KIND (shapes-lookup PATH (f (f CASES)) 7)
+            (YES . NO) (shapes-side-counts (r CASES) PATH MASK)
+            (c (+ YES (if (logand KIND MASK) 1 0))
+               (+ NO (if (logand KIND (logxor 7 MASK)) 1 0))))
+        (c 0 0)))
+
+; Minimize the larger side, then the true side. Equal scores keep the first
+; test. A guard that opens a deeper path can win only if no split is safe.
 (defun shapes-best (TESTS CASES COUNT BEST SCORE)
     (if TESTS
         (assign
             (PATH MASK) (f TESTS)
-            YES (shapes-length (shapes-refine CASES PATH MASK))
-            NO (shapes-length (shapes-refine CASES PATH (logxor 7 MASK)))
+            (YES . NO) (shapes-side-counts CASES PATH MASK)
             WORST (if (> YES NO) YES NO)
-            BEST-SIDE (if (> YES NO) NO YES)
-            RANK (if (> COUNT WORST)
-                (if (if (= YES 1) 1 (= NO 1)) 0 WORST)
-                (* COUNT 2))
-            USE (if (shapes-safe PATH CASES)
-                (if YES (if NO (if (> COUNT BEST-SIDE) (> SCORE RANK) 0) 0) 0) 0)
+            RANK (+ (* WORST (+ COUNT 1)) YES)
+            USE (all YES NO (> (* 2 COUNT) (+ YES NO))
+                     (if BEST (> SCORE RANK) 1) (shapes-safe PATH CASES))
             (shapes-best (r TESTS) CASES COUNT
                 (if USE (f TESTS) BEST) (if USE RANK SCORE)))
         BEST))
 
+(defun shapes-literal-body (BODY)
+    (any (number? BODY) (string? BODY)))
+
 (defun shapes-dispatch (VALUE CASES)
     (if (r CASES)
         (assign
-            TEST (shapes-best (shapes-tests CASES) CASES (shapes-length CASES) () 0x7fffffff)
+            TEST (shapes-best (shapes-distinct-tests (shapes-tests CASES) ()) CASES (shapes-length CASES) () 0)
             (if TEST
                 (assign
                     (PATH MASK) TEST
                     ACCESS (shapes-access PATH VALUE)
-                    (list (q . if) (list (if (= MASK 1) 7 32) ACCESS)
-                        (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
-                        (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
+                    YES (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
+                    NO (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))
+                    ; Eager i is safe only when neither arm can read a path or run code.
+                    (list (if (all (shapes-literal-body YES) (shapes-literal-body NO)) 3 (q . if))
+                        (list (if (= MASK 1) 7 32) ACCESS) YES NO))
                 (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
         (assign (_ PATTERN BODY) (f CASES)
             ; An atomic body that does not name a field needs no destructuring.

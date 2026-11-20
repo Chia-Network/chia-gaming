@@ -277,51 +277,77 @@ fn test_make() {
     );
 }
 
+fn shape_program_bytes(body: &str) -> Vec<u8> {
+    use chialisp::classic::clvm::sexp::sexp_as_bin;
+    use chialisp::compiler::clvm::convert_to_clvm_rs;
+
+    let mut allocator = Default::default();
+    let program = convert_to_clvm_rs(&mut allocator, compile_shape_program(body)).unwrap();
+    sexp_as_bin(&mut allocator, program).raw()
+}
+
+fn shape_cost(program: &[u8], input: &str) -> (u64, Vec<u8>) {
+    use chialisp::classic::clvm::sexp::sexp_as_bin;
+    use chialisp::compiler::{clvm::convert_to_clvm_rs, sexp::parse_sexp, srcloc::Srcloc};
+
+    let mut allocator = Default::default();
+    let input = parse_sexp(Srcloc::start("input"), input.bytes()).unwrap()[0].clone();
+    let input = convert_to_clvm_rs(&mut allocator, input).unwrap();
+    let input = sexp_as_bin(&mut allocator, input).raw();
+    let mut runtime = AllocEncoder::new();
+    let allocator = runtime.allocator();
+    let program = clvmr::serde::node_from_bytes(allocator, program).unwrap();
+    let input = clvmr::serde::node_from_bytes(allocator, &input).unwrap();
+    let result = run_program(allocator, &chia_dialect(), program, input, 1_000_000).unwrap();
+    (
+        result.0,
+        clvmr::serde::node_to_bytes(allocator, result.1).unwrap(),
+    )
+}
+
 #[test]
 fn shape_dispatch_avoids_unneeded_bindings() {
-    use chialisp::classic::clvm::sexp::sexp_as_bin;
-    use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
-    use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
-    use chialisp::classic::platform::argparse::ArgumentValue;
-    use chialisp::compiler::compiler::compile_file;
-    use chialisp::compiler::comptypes::CompilerOutput;
-    use chialisp::compiler::sexp::parse_sexp;
-    use chialisp::compiler::srcloc::Srcloc;
-    use std::{collections::HashMap, rc::Rc};
-
-    // These ceilings catch reintroducing the binding call around every leaf
-    // and around an atomic scrutinee. Costs include the entire compiled program.
     for (name, body, input, max_bytes, max_cost) in [
-        ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 85, 650),
+        ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 55, 419),
         ("two-way", "(if-shape VALUE (((a . b) . (atom c)) (+ a b c)) (((atom d) . (e . f)) (+ d e f)))", "((2 . 3) . 4)", 48, 1650),
-        ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 35, 400),
+        ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 17, 138),
     ] {
-        let source = format!("(include *standard-cl-26*) (import std.shapes) (export VALUE {body})");
-        let arguments = HashMap::from([
-            ("path_or_code".into(), ArgumentValue::ArgString(None, source.clone())),
-            ("include".into(), ArgumentValue::ArgArray(vec![
-                ArgumentValue::ArgString(None, "clsp".into()),
-            ])),
-        ]);
-        let mut allocator = chialisp::clvmr::Allocator::new();
-        let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).unwrap();
-        let compiled = compile_file(&mut allocator, Rc::new(DefaultProgramRunner::new()), parsed.opts, &source, &mut HashMap::new()).unwrap();
-        let program = match compiled {
-            CompilerOutput::Program(_, program) => Rc::new(program),
-            CompilerOutput::Module(module) => module.components.iter().find(|component| component.shortname == b"program").unwrap().content.clone(),
-        };
-        let program = chialisp::compiler::clvm::convert_to_clvm_rs(&mut allocator, program).unwrap();
-        let program = sexp_as_bin(&mut allocator, program).raw();
-        let input = parse_sexp(Srcloc::start("input"), input.bytes()).unwrap()[0].clone();
-        let input = chialisp::compiler::clvm::convert_to_clvm_rs(&mut allocator, input).unwrap();
-        let input = sexp_as_bin(&mut allocator, input).raw();
-        let mut runtime = AllocEncoder::new();
-        let program_node = clvmr::serde::node_from_bytes(runtime.allocator(), &program).unwrap();
-        let input_node = clvmr::serde::node_from_bytes(runtime.allocator(), &input).unwrap();
-        let cost = run_program(runtime.allocator(), &chia_dialect(), program_node, input_node, 1_000_000).unwrap().0;
+        let program = shape_program_bytes(&format!("(export VALUE {body})"));
+        let (cost, _) = shape_cost(&program, input);
         assert!(program.len() <= max_bytes, "{name}: {} bytes exceed {max_bytes}", program.len());
         assert!(cost <= max_cost, "{name}: cost {cost} exceeds {max_cost}");
     }
+}
+
+#[test]
+fn shape_dispatch_balances_splits_reproducibly() {
+    // The first position isolates one case. The other two each split 2:2.
+    let body = "(export VALUE (if-shape VALUE
+        (#((atom a) (atom b) (atom c)) 1)
+        (#((a . x) (atom b) (c . z)) 2)
+        (#((a . x) (b . y) (atom c)) 3)
+        (#((a . x) (b . y) (c . z)) 4)))";
+    let program = shape_program_bytes(body);
+    assert_eq!(program, shape_program_bytes(body));
+    for (input, expected) in [
+        ("(1 . (2 . 3))", 1),
+        ("((1 . 1) . (2 . (3 . 3)))", 2),
+        ("((1 . 1) . ((2 . 2) . 3))", 3),
+        ("((1 . 1) . ((2 . 2) . (3 . 3)))", 4),
+    ] {
+        let (cost, result) = shape_cost(&program, input);
+        assert_eq!(result, [expected]);
+        assert!(cost <= 427, "cost {cost} for {input}");
+    }
+}
+
+#[test]
+fn shape_dispatch_keeps_variable_reads_lazy() {
+    // Reading the outer variable right would abort on a nil input.
+    assert_shape_program(
+        "(export (@ VALUE (left . right)) (if-shape VALUE (nil 7) ((a . b) right)))",
+        &[("()".into(), 7), ("(3 . 4)".into(), 4)],
+    );
 }
 
 /// Use the same compiler entry point/options as build.rs, including modern
@@ -333,11 +359,10 @@ fn assert_dispatch(branches: &[String], examples: &[(String, usize)]) {
     );
 }
 
-fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
+fn compile_shape_program(body: &str) -> std::rc::Rc<chialisp::compiler::sexp::SExp> {
     use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
     use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
     use chialisp::classic::platform::argparse::ArgumentValue;
-    use chialisp::compiler::{clvm::run, sexp::parse_sexp, srcloc::Srcloc};
     use std::{collections::HashMap, rc::Rc};
     let source = format!("(include *standard-cl-26*) (import std.shapes) {body}");
     let arguments = HashMap::from([
@@ -365,7 +390,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
     .unwrap_or_else(|error| panic!("{source}\n{error:?}"));
     // An import/export source produces a module containing named components;
     // execute its program component, not its module/hash summary.
-    let program = match compiled {
+    match compiled {
         chialisp::compiler::comptypes::CompilerOutput::Program(_, program) => Rc::new(program),
         chialisp::compiler::comptypes::CompilerOutput::Module(module) => module
             .components
@@ -374,7 +399,16 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             .expect("exported program")
             .content
             .clone(),
-    };
+    }
+}
+
+fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
+    use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
+    use chialisp::compiler::{clvm::run, sexp::parse_sexp, srcloc::Srcloc};
+    use std::{collections::HashMap, rc::Rc};
+
+    let program = compile_shape_program(body);
+    let mut allocator = Default::default();
     for (input, expected) in examples {
         let args = parse_sexp(Srcloc::start("shape-input"), input.bytes()).unwrap()[0].clone();
         let result = run(
@@ -386,7 +420,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             None,
             Some(1_000_000),
         )
-        .unwrap_or_else(|error| panic!("{source}\ninput {input}: {error:?}"));
+        .unwrap_or_else(|error| panic!("{body}\ninput {input}: {error:?}"));
         assert_eq!(
             result.to_string(),
             if *expected == 0 {
@@ -394,7 +428,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
             } else {
                 expected.to_string()
             },
-            "{source}\ninput {input}"
+            "{body}\ninput {input}"
         );
     }
 }
