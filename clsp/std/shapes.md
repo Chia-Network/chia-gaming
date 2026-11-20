@@ -127,10 +127,13 @@ scrutinee in the compiled environment. Only the cheaper tree is emitted, with
 the balanced tree winning a tie. The choice is deterministic for a given source.
 
 When both arms return literal numbers or strings, dispatch uses CLVM's eager
-`i`. Two levels can fuse when both children test the same safe path and the
-saved apply outweighs the extra eager test. For a four-way choice among
-literals, `i` returns the result directly. For four executable branches, it
-selects a compiled program and a single apply runs it.
+`i`. For a three-way choice, the planner can test both positions, select one
+of three branch programs, and run it with one apply. The second position must
+be safe to read even on the input that the first test identifies immediately.
+That route pays for the extra test, while the other two save a dispatch apply.
+The planner fuses the tests when the estimated total saving is positive.
+It can also fuse two splits that test the same next path. When all results
+are literals, eager `i` can return the selected value directly.
 
 Accesses are only generated when every ancestor is known to be a pair, from the
 remaining shapes or earlier tests. Optional structure never supplies that fact.
@@ -182,9 +185,10 @@ slash:   ((previous_state previous_validation_program . evidence) . mover_payout
 ```
 
 Timeout is two atoms, move is two pairs, slash is a pair followed by an atom.
-The classifier tests the right side first, identifying a move in one pair test.
-Timeout and slash take two tests. The classifier never inspects evidence. Rust's encoder,
-signature hashing, decoder, and validator argument builders use the same layouts.
+The classifier tests both sides for a pair, selects the timeout, move, or slash
+program, and applies it once. It can read both sides on every legal solution.
+The classifier never inspects evidence. Rust's encoder, signature hashing,
+decoder, and validator argument builders use the same layouts.
 
 ## On-chain game records
 

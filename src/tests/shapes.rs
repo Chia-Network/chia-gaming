@@ -344,7 +344,7 @@ fn shape_dispatch_balances_splits_reproducibly() {
 
 #[test]
 fn shape_dispatch_selects_the_cheaper_split_policy() {
-    // b isolates the third case. Testing a first splits the same five cases 2:3.
+    // b isolates the third case. Testing a first splits the same six cases 2:4.
     // Changing only the third body flips which tree has the cheaper mean.
     let inputs = [
         "((4 . (4 . 5)) . (4 . 4))",
@@ -352,24 +352,123 @@ fn shape_dispatch_selects_the_cheaper_split_policy() {
         "((4 . 4) . ((4 . 5) . 4))",
         "(((4 . 5) . (4 . 5)) . (4 . 4))",
         "((4 . (4 . 5)) . ((4 . 5) . (4 . 5)))",
+        "((4 . (4 . 5)) . ((4 . 5) . 4))",
     ];
-    for (third_body, third_result, max_total) in [("(+ a 3)", 7, 3825), ("3", 3, 2852)] {
+    for (third_body, third_result, max_total) in [("(+ a 3)", 7, 5027), ("3", 3, 3938)] {
         let program = shape_program_bytes(&format!(
             "(export VALUE (if-shape VALUE
                 (#((atom a) (b . tb) (atom c) (atom d)) 1)
                 (#((a . ta) (b . tb) (c . tc) (d . td)) 2)
                 (#((atom a) (atom b) (c . tc) (atom d)) {third_body})
                 (#((a . ta) (b . tb) (atom c) (atom d)) 4)
-                (#((atom a) (b . tb) (c . tc) (d . td)) 5)))"
+                (#((atom a) (b . tb) (c . tc) (d . td)) 5)
+                (#((atom a) (b . tb) (c . tc) (atom d)) 6)))"
         ));
         let mut total = 0;
-        for (input, expected) in inputs.iter().zip([1, 2, third_result, 4, 5]) {
+        for (input, expected) in inputs.iter().zip([1, 2, third_result, 4, 5, 6]) {
             let (cost, result) = shape_cost(&program, input);
             assert_eq!(result, [expected]);
             total += cost;
         }
         assert!(total <= max_total, "{third_body}: total cost {total}");
     }
+}
+
+#[test]
+fn shape_dispatch_fuses_three_safe_cases() {
+    // Changing the third corner puts the singleton on opposite sides of the
+    // first test. Some unselected arithmetic arms would read an atom as a pair.
+    for (third_shape, third_input) in [
+        ("((a . x) . (b . y))", "((5 . 6) . (7 . 8))"),
+        ("((atom a) . (atom b))", "(5 . 7)"),
+    ] {
+        for (bodies, expected, max_bytes, max_total) in [
+            (["(+ a 1)", "(+ b 2)", "(+ a b)"], [6, 9, 12], 59, 3713),
+            (["1", "2", "3"], [1, 2, 3], 31, 792),
+        ] {
+            let [first, second, third] = bodies;
+            let program = shape_program_bytes(&format!(
+                "(export VALUE (if-shape VALUE
+                    (((a . x) . (atom b)) {first})
+                    (((atom a) . (b . y)) {second})
+                    ({third_shape} {third})))"
+            ));
+            let mut total = 0;
+            for (input, value) in ["((5 . 6) . 7)", "(5 . (7 . 8))", third_input]
+                .iter()
+                .zip(expected)
+            {
+                let (cost, result) = shape_cost(&program, input);
+                assert_eq!(result, [value]);
+                total += cost;
+            }
+            assert!(
+                program.len() <= max_bytes,
+                "{third_shape}: {} bytes",
+                program.len()
+            );
+            assert!(total <= max_total, "{third_shape}: total cost {total}");
+        }
+    }
+}
+
+#[test]
+fn shape_dispatch_keeps_three_way_tests_lazy_when_needed() {
+    // The two literal leaves already share an eager selector. Speculating
+    // their test on the arithmetic path would only add cost.
+    let program = shape_program_bytes(
+        "(export VALUE (if-shape VALUE
+        (((atom a) . (atom b)) (+ a b))
+        (((a . b) . (atom c)) 2)
+        (((a . b) . (c . d)) 3)))",
+    );
+    for (input, expected, ceiling) in [
+        ("(4 . 5)", 9, 1129),
+        ("((4 . 5) . 6)", 2, 419),
+        ("((4 . 5) . (6 . 7))", 3, 419),
+    ] {
+        let (cost, result) = shape_cost(&program, input);
+        assert_eq!(result, [expected]);
+        assert!(cost <= ceiling, "{input}: cost {cost}");
+    }
+
+    // Only the pair arm may inspect the left child. The atom input would
+    // abort if the second test were evaluated eagerly.
+    assert_shape_program(
+        "(export VALUE (if-shape VALUE
+            ((atom v) (+ v 1))
+            (((atom x) . y) (+ x 2))
+            (((x . z) . y) (+ z 3))))",
+        &[
+            ("4".into(), 5),
+            ("(5 . 7)".into(), 7),
+            ("((5 . 6) . 7)".into(), 9),
+        ],
+    );
+}
+
+#[test]
+fn shape_dispatch_declines_costly_three_way_fusion() {
+    // Both predicates are safe, but fifty edges down. The flat selector
+    // costs 5665 over these inputs, eight more than the nested tree.
+    let fields = (0..49)
+        .map(|i| format!("pad{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let prefix = "0 ".repeat(49);
+    let program = shape_program_bytes(&format!(
+        "(export VALUE (if-shape VALUE
+            (({fields} . ((a . x) . (atom b))) (+ a 1))
+            (({fields} . ((atom a) . (b . y))) (+ b 2))
+            (({fields} . ((atom a) . (atom b))) (+ a b))))"
+    ));
+    let mut total = 0;
+    for (tail, expected) in [("((5 . 6) . 7)", 6), ("(5 . (7 . 8))", 9), ("(5 . 7)", 12)] {
+        let (cost, result) = shape_cost(&program, &format!("({prefix}. {tail})"));
+        assert_eq!(result, [expected]);
+        total += cost;
+    }
+    assert!(total <= 5657, "total cost {total}");
 }
 
 #[test]

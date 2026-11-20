@@ -255,8 +255,10 @@
             (PATH MASK) (f TESTS)
             (YES . NO) (shapes-side-counts CASES PATH MASK)
             RANK (shapes-rank SINGLETONS COUNT YES NO (if (> YES NO) YES NO))
-            USE (all YES NO (> (* 2 COUNT) (+ YES NO))
-                     (if BEST (> SCORE RANK) 1) (shapes-safe PATH CASES))
+            ; Proving every ancestor safe is costly for deep paths. Check only
+            ; candidates that separate cases and improve the current score.
+            USE (if (all YES NO (> (* 2 COUNT) (+ YES NO)) (if BEST (> SCORE RANK) 1))
+                (shapes-safe PATH CASES) 0)
             (shapes-best (r TESTS) CASES COUNT SINGLETONS
                 (if USE (f TESTS) BEST) (if USE RANK SCORE)))
         BEST))
@@ -276,6 +278,20 @@
 (defun shapes-program-choice ((_ CONDITION YES NO))
     (list 3 CONDITION (list (q . com) YES) (list (q . com) NO)))
 
+(defun shapes-program-arm (PATH ARM)
+    (if PATH (shapes-program-choice ARM) (list (q . com) ARM)))
+
+; Two routes save 155 each by merging the choices. The singleton route
+; pays the child test plus 54 for the extra i and quote: 310 - 54 = 256.
+; Three literals can use eager i throughout, saving another 155 (411).
+; If only the inner arms are literals, their choice is already eager.
+(defun shapes-three-saving (CASES PATH COST CHILD LEAF)
+    (if (shapes-safe PATH CASES)
+        (if (= (f CHILD) 3)
+            (if (shapes-literal-body LEAF) (- 411 COST) 0)
+            (- 256 COST))
+        0))
+
 ; A root path costs 44 and each additional edge costs 4. The caller's
 ; environment prefix is unknown during expansion. Ignore sign padding.
 (defun shapes-path-cost (PATH)
@@ -284,30 +300,33 @@
 ; A plan is (exposed-path test-cost routes total-dispatch-cost expression).
 ; A zero path marks a leaf or a fused node. Branch bodies are common to both
 ; plans, so the score charges only for dispatch. Each leaf route has weight one.
-(defun shapes-choice (PATH CONDITION TEST-COST
+(defun shapes-choice (CASES PATH CONDITION TEST-COST
         (YES-PATH YES-COST YES-ROUTES YES-TOTAL YES)
         (NO-PATH NO-COST NO-ROUTES NO-TOTAL NO))
-    (shapes-emit-choice PATH CONDITION TEST-COST YES NO
+    (shapes-emit-choice PATH CONDITION TEST-COST YES-PATH YES NO-PATH NO
         (+ YES-ROUTES NO-ROUTES) (+ YES-TOTAL NO-TOTAL)
-        ; At matching simple splits, fusion removes an apply and two quotes
-        ; (175) in exchange for an extra i and two quotes (74), plus the test
-        ; from the unselected child. Only the selected body may execute.
-        (if (all YES-PATH (= YES-PATH NO-PATH))
+        (if (= (+ YES-ROUTES NO-ROUTES) 3)
+            (if YES-PATH (shapes-three-saving CASES YES-PATH YES-COST YES NO)
+                (shapes-three-saving CASES NO-PATH NO-COST NO YES))
+            ; Matching child splits trade an apply and two quotes (175) for
+            ; an extra i and two quotes (74) plus the unselected child's test.
+            (all YES-PATH (= YES-PATH NO-PATH))
             (if (= (f YES) (f NO))
                 (+ (* YES-ROUTES (- 101 NO-COST)) (* NO-ROUTES (- 101 YES-COST))) 0)
             0)))
 
 ; Excluding the chosen body, eager i costs 34 + 20 for the extra literal.
 ; Lazy if costs 34 + 40 for two quotes + 135 for apply with the environment.
-(defun shapes-emit-choice (PATH CONDITION TEST-COST YES NO ROUTES CHILD-TOTAL SAVING)
+(defun shapes-emit-choice (PATH CONDITION TEST-COST YES-PATH YES NO-PATH NO ROUTES CHILD-TOTAL SAVING)
     (assign
         EAGER (all (shapes-literal-body YES) (shapes-literal-body NO))
         TOTAL (+ CHILD-TOTAL (* ROUTES (+ TEST-COST (if EAGER 54 209))))
         (if (> SAVING 0)
             (list 0 TEST-COST ROUTES (- TOTAL SAVING)
-                (if (= (f YES) 3) (list 3 CONDITION YES NO)
-                    (list 2 (list 3 CONDITION (shapes-program-choice YES) (shapes-program-choice NO))
-                        (q . @))))
+                (if (= (f (if YES-PATH YES NO)) 3)
+                    (list 3 CONDITION YES NO)
+                    (list 2 (list 3 CONDITION (shapes-program-arm YES-PATH YES)
+                                              (shapes-program-arm NO-PATH NO)) (q . @))))
             (list PATH TEST-COST ROUTES TOTAL (list (if EAGER 3 (q . if)) CONDITION YES NO)))))
 
 (defun shapes-dispatch-split (VALUE CASES (PATH MASK) SINGLETONS)
@@ -316,7 +335,7 @@
         ; Nil is the only false value. Its complement is mask 3.
         TRUE-MASK (if (= MASK 4) 3 MASK)
         DIRECT (if (= MASK 4) 1 (shapes-excludes PATH CASES 2))
-        (shapes-choice PATH (if DIRECT ACCESS (list 7 ACCESS))
+        (shapes-choice CASES PATH (if DIRECT ACCESS (list 7 ACCESS))
             (+ (shapes-path-cost PATH) (if DIRECT 0 20))
             (shapes-dispatch-node VALUE (shapes-refine CASES PATH TRUE-MASK) SINGLETONS)
             (shapes-dispatch-node VALUE (shapes-refine CASES PATH (logxor 7 TRUE-MASK)) SINGLETONS))))
