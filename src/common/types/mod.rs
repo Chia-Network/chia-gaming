@@ -46,6 +46,7 @@ pub use self::puzzle::Puzzle;
 pub use self::puzzle_hash::PuzzleHash;
 pub use self::serializable_chacha8::ChaCha8SerializationWrapper;
 pub use self::sha256input::{atom_from_clvm, Hash, Sha256Input};
+pub(crate) use self::spend::is_reserved_agg_sig_unsafe_suffix;
 pub use self::spend::{
     aggregate_wallet_fee_bundle, check_for_hex, complete_fee_offer_bundle,
     convert_coinset_org_spend_to_spend, normalize_fee_offer_bundle, BrokenOutCoinSpendInfo,
