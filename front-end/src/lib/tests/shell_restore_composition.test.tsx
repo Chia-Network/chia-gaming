@@ -1,3 +1,4 @@
+import { initializeAcceptedSessionWasm, realWasm } from './accepted_session.harness';
 import { log } from '../../services/log';
 import { mockWasmConnection } from './message_protocol.harness';
 import 'fake-indexeddb/auto';
@@ -1056,6 +1057,69 @@ describe('Shell production restore composition', () => {
     act(() => selectTab('wallet'));
     await waitForText(renderer!, 'Connection was lost');
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' }).length).toBeGreaterThan(0);
+  });
+
+  it('replaces Handshaking with a setup failure when the peer fails before our offer', async () => {
+    initializeAcceptedSessionWasm();
+    jest.mocked(sessionHost.createSessionController).mockRestore();
+    jest.mocked(sessionHost.configSessionController).mockRestore();
+    jest.mocked(wasmInit.ensureWasmLoaded).mockResolvedValue(realWasm);
+    requestTrust.mockResolvedValue('trusted');
+    jest.mocked(realBlockchainInfo.beginConnect).mockResolvedValue({
+      qrUri: '',
+      skipQr: true,
+      finalize: async () => {},
+    });
+    jest.mocked(realBlockchainInfo.isConnected).mockReturnValue(true);
+    jest.mocked(realBlockchainInfo.isReadyForPlay).mockReturnValue(true);
+    jest.replaceProperty(realBlockchainInfo, 'requestGapMs', 0);
+    jest.spyOn(realBlockchainInfo, 'getAddress').mockResolvedValue({ puzzleHash: '05'.repeat(32) });
+    jest.spyOn(realBlockchainInfo, 'getHeightInfo').mockResolvedValue(10n);
+    jest.spyOn(realBlockchainInfo, 'getBalance').mockResolvedValue(1_000_000_000n);
+    await storageRepository.claimApplicationState();
+    const peerId = 'p_' + '22'.repeat(16);
+    const gameSessionId = '33'.repeat(16);
+    const save = baseSave({
+      blockchainType: 'walletconnect',
+      hubUrl: 'https://hub.example.test',
+      activeTab: 'game',
+      pairingToken: 'pre-offer-handshake',
+      gameSessionId,
+      sessionPeerId: peerId,
+      myContribution: '1000',
+      theirContribution: '1000',
+      perGameAmount: '100',
+      iStarted: true,
+      transportDisposition: 'active',
+    });
+    await storageRepository.write(storageRepository.patchApplicationState(() => save));
+    markSavedSession();
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+    act(() => {
+      const application = createApplication();
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForText(renderer!, 'Handshaking');
+    act(() => mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) }));
+    const remote = new PeerSession(peerId, gameSessionId, {
+      sendToPeer: (_peerId, payload) => {
+        mockHub!.emit({ type: 'peer-message', fromId: peerId, fromAlias: 'Clyde', payload });
+        return true;
+      },
+    });
+    await act(async () => {
+      remote.sendMessage(1, encodePeerAppMessage({ type: 'session_reject', phase: 'handshake' }));
+      remote.destroy();
+    });
+    await waitForText(renderer!, 'Session setup failed');
+    expect(renderer!.root.findAllByProps({ children: 'Handshaking' })).toHaveLength(0);
+    expect(storageRepository.loadState().session).toBeNull();
+    expect(mockSetBusy).toHaveBeenLastCalledWith({ busy: false });
+    act(() => renderer!.root.findByProps({ children: 'OK' }).props.onClick());
+    expect(renderer!.root.findAllByProps({ children: 'Session setup failed' })).toHaveLength(0);
+    await waitForText(renderer!, 'No Session');
   });
 
   it('lets a restored handshake be cancelled when its peer remains unavailable', async () => {

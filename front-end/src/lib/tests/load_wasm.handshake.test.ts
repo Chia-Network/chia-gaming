@@ -75,6 +75,7 @@ function checkHandshakeFailure(
     ).toBe(true);
     expect(other.snapshot().remoteNumber).toBe(rejection.msgno);
     expect(other.snapshot().disposition).toBe(recipientOfferSent ? 'active' : 'inbound-reject');
+    expect(other.snapshot().inboundHandshakeFailed).toBe(!recipientOfferSent);
     if (recipientOfferSent) {
       expect(notify).toHaveBeenCalledWith({ type: 'peer-unavailable' });
       expect(other.serialize()).toEqual(before);

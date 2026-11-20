@@ -441,6 +441,7 @@ impl HandshakeInitiatorPhase {
                     &msg.identity,
                     &self.private_keys,
                     &self.reward_puzzle_hash,
+                    &env.agg_sig_me_additional_data,
                     &self.my_contribution,
                     &self.their_contribution,
                 )?;

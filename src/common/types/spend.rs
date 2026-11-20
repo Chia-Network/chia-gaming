@@ -497,6 +497,23 @@ fn validation_consensus_constants(agg_sig_me_additional_data: &Hash) -> Consensu
     }
 }
 
+pub(crate) fn is_reserved_agg_sig_unsafe_suffix(
+    agg_sig_me_additional_data: &Hash,
+    puzzle_hash: &PuzzleHash,
+) -> bool {
+    let constants = validation_consensus_constants(agg_sig_me_additional_data);
+    [
+        constants.agg_sig_me_additional_data.as_ref(),
+        constants.agg_sig_parent_additional_data.as_ref(),
+        constants.agg_sig_puzzle_additional_data.as_ref(),
+        constants.agg_sig_amount_additional_data.as_ref(),
+        constants.agg_sig_puzzle_amount_additional_data.as_ref(),
+        constants.agg_sig_parent_amount_additional_data.as_ref(),
+        constants.agg_sig_parent_puzzle_additional_data.as_ref(),
+    ]
+    .contains(&puzzle_hash.bytes())
+}
+
 /// The maker bundle must create exactly one settlement coin whose amount is
 /// `fee`, reserve that fee, and assert that `protocol_coin_id` is spent
 /// concurrently. The settlement spend creates a nil-puzzle coin of the same
