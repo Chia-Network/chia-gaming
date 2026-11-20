@@ -725,7 +725,19 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
           return;
         }
         try {
-          this.processResultNow(requireWasmResult(result));
+          const accepted = requireWasmResult(result);
+          if (
+            outcome.kind === 'created-reserved' &&
+            accepted.actionSucceeded &&
+            accepted.fundingInputs &&
+            pending.request.max_height
+          ) {
+            this.requireFundingRuntime().recordFundingInputs(
+              outcome.tradeId,
+              accepted.fundingInputs,
+            );
+          }
+          this.processResultNow(accepted);
           if (outcome.material.kind === 'offer') this.flushDeferredWork();
         } catch (error) {
           this.reportAuthoritativeCompletionError('funding material', error);
@@ -1347,7 +1359,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
 
   private stopProtocolWork(): void {
     this.protocolStopped = true;
-    this.blockchain?.pauseChainPolling();
+    this.blockchain?.detachGameSession(this);
     this.stopKeepaliveTimer();
     // A terminal drain is a replacement boundary, not an append-only update:
     // stale status/protocol work must not render after it. Per-game terminal

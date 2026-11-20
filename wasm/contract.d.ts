@@ -347,6 +347,8 @@ export interface WasmResult {
   events: GameSessionEvent[];
   watchCoins: WatchedCoinEntry[];
   unwatchCoins: WatchedCoinEntry[];
+  /** External wallet inputs of a successfully accepted funding offer. */
+  fundingInputs?: WatchedCoinEntry[];
   actionSucceeded: boolean;
   disposition: WasmDisposition;
   id?: string;

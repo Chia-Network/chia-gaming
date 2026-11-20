@@ -211,6 +211,23 @@ fn expected_output_coins(bundle: &SpendBundle) -> Result<Vec<CoinString>, Error>
     Ok(out)
 }
 
+/// Inputs supplied by a wallet offer that already exist outside this bundle.
+/// Coins created and spent within the offer cannot be polled independently.
+pub fn external_input_coins(bundle: &SpendBundle) -> Result<Vec<CoinString>, Error> {
+    let created = expected_output_coins(bundle)?
+        .into_iter()
+        .map(|coin| coin.to_coin_id())
+        .collect::<HashSet<_>>();
+    Ok(bundle
+        .spends
+        .iter()
+        .filter(|spend| !created.contains(&spend.coin.to_coin_id()))
+        .map(|spend| spend.coin.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
 /// Combine two optional expiry heights, keeping the tightest (smallest)
 /// constraint.  `None` means "no expiry" (effectively infinite), so it never
 /// wins against a concrete `Some`.
@@ -1890,6 +1907,26 @@ mod tests {
                 },
             }],
         }
+    }
+
+    #[test]
+    fn funding_offer_interest_excludes_ephemeral_inputs() {
+        let wallet = test_coin(31);
+        let child = CoinString::from_parts(
+            &wallet.to_coin_id(),
+            &PuzzleHash::from_bytes([32; 32]),
+            &Amount::new(1),
+        );
+        let output = CoinString::from_parts(
+            &child.to_coin_id(),
+            &PuzzleHash::from_bytes([33; 32]),
+            &Amount::new(1),
+        );
+        let mut bundle = test_bundle_spending_creating("wallet", &wallet, &child);
+        bundle
+            .spends
+            .extend(test_bundle_spending_creating("child", &child, &output).spends);
+        assert_eq!(external_input_coins(&bundle).unwrap(), vec![wallet]);
     }
 
     fn test_protocol_and_fee_bundles(fee: u64) -> (SpendBundle, SpendBundle, CoinString, CoinID) {

@@ -45,9 +45,9 @@ mod gaming_wasm {
     use chia_gaming::session_phases::handshake::{CoinSpendRequest, RawCoinCondition};
     use chia_gaming::session_phases::proposal::{GameProposal, ProposalParameters};
     use chia_gaming::transaction_manager::{
-        CoinStateRecord, FeeSourceDisposition, ManagerDrain, SubmissionAttemptRelationship,
-        SubmissionAttemptStatus, SubmissionDrainFailureStage, SubmissionFeeSource,
-        TransactionManager,
+        external_input_coins, CoinStateRecord, FeeSourceDisposition, ManagerDrain,
+        SubmissionAttemptRelationship, SubmissionAttemptStatus, SubmissionDrainFailureStage,
+        SubmissionFeeSource, TransactionManager,
     };
     use chia_gaming::wallet_spend::{
         build_unsigned_wallet_spends, WalletCoinCandidate, WalletSpendPurpose,
@@ -692,6 +692,18 @@ mod gaming_wasm {
                 coin_string: coin_string_to_hex(cs),
             })
             .collect()
+    }
+
+    fn attach_funding_inputs(result: &JsValue, inputs: &[CoinString]) -> Result<(), JsValue> {
+        let succeeded = js_sys::Reflect::get(result, &"actionSucceeded".into())?
+            .as_bool()
+            .unwrap_or(false);
+        if succeeded {
+            let entries = serde_wasm_bindgen::to_value(&watch_coin_entries_from_coins(inputs))
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            js_sys::Reflect::set(result, &"fundingInputs".into(), &entries)?;
+        }
+        Ok(())
     }
 
     fn attempt_status_to_js(status: SubmissionAttemptStatus) -> String {
@@ -1818,21 +1830,29 @@ mod gaming_wasm {
             let bundle = serde_wasm_bindgen::from_value::<CoinsetSpendBundle>(bundle)
                 .map_err(|e| JsValue::from_str(&format!("bad spend bundle: {e}")))?;
             let spend_bundle = coinset_spend_bundle_to_spend_bundle(&bundle).into_js()?;
-            self.with_game_drain(move |cradle: &mut Channel| {
+            let inputs = external_input_coins(&spend_bundle)
+                .map_err(|e| JsValue::from_str(&format!("invalid funding inputs: {e:?}")))?;
+            let result = self.with_game_drain(move |cradle: &mut Channel| {
                 cradle
                     .cradle
                     .provide_coin_spend_bundle(&mut cradle.allocator, spend_bundle)
-            })
+            })?;
+            attach_funding_inputs(&result, &inputs)?;
+            Ok(result)
         }
 
         pub fn provide_offer_bech32(&self, offer_bech32: &str) -> Result<JsValue, JsValue> {
             let bundle = decode_offer_to_spend_bundle(offer_bech32)
                 .map_err(|e| JsValue::from_str(&format!("offer decode error: {e}")))?;
-            self.with_game_drain(move |cradle: &mut Channel| {
+            let inputs = external_input_coins(&bundle)
+                .map_err(|e| JsValue::from_str(&format!("invalid funding inputs: {e:?}")))?;
+            let result = self.with_game_drain(move |cradle: &mut Channel| {
                 cradle
                     .cradle
                     .provide_coin_spend_bundle(&mut cradle.allocator, bundle)
-            })
+            })?;
+            attach_funding_inputs(&result, &inputs)?;
+            Ok(result)
         }
 
         pub fn wallet_callback_failed(&self, reason: &str) -> Result<JsValue, JsValue> {
