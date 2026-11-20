@@ -39,7 +39,11 @@ export function decodeChannelFundingEntry(
   const stageKeys: Record<string, string[]> = {
     creating: ['disposition', 'recoveryId', 'request'],
     'best-effort-uncertain': ['disposition', 'request', 'lastAttemptEpoch'],
-    'awaiting-channel': ['providerReservationId', 'request'],
+    'awaiting-channel': [
+      'providerReservationId',
+      'request',
+      ...(Object.hasOwn(fields, 'inputs') ? ['inputs'] : []),
+    ],
     'cancel-required': ['providerReservationId'],
     'best-effort-cancellation-uncertain': ['providerReservationId', 'lastAttemptEpoch'],
     cancelling: ['providerReservationId', 'recoveryId'],
@@ -97,13 +101,41 @@ export function decodeChannelFundingEntry(
             lastAttemptEpoch: strictU64(fields.lastAttemptEpoch, `${label}.lastAttemptEpoch`),
           };
     }
-    case 'awaiting-channel':
+    case 'awaiting-channel': {
+      if (
+        fields.inputs !== undefined &&
+        (!Array.isArray(fields.inputs) || fields.inputs.length === 0)
+      ) {
+        throw new Error(`Garbled save: invalid ${label}.inputs`);
+      }
+      const request = decodeRequest(fields.request, `${label}.request`);
+      if (fields.inputs !== undefined && !request.canonical.max_height) {
+        throw new Error(`Garbled save: missing ${label}.request.canonical.max_height`);
+      }
       return {
         ...common,
         stage: fields.stage,
         providerReservationId: reservation(),
-        request: decodeRequest(fields.request, `${label}.request`),
+        request,
+        ...(fields.inputs === undefined
+          ? {}
+          : {
+              inputs: fields.inputs.map((value: unknown, index: number) => {
+                const input = strictRecord(value, `${label}.inputs[${index}]`);
+                exactFields(input, ['coin_name', 'coin_string'], `${label}.inputs[${index}]`);
+                if (
+                  typeof input.coin_name !== 'string' ||
+                  !/^[0-9a-f]{64}$/.test(input.coin_name) ||
+                  typeof input.coin_string !== 'string' ||
+                  !/^[0-9a-f]{144}$/.test(input.coin_string)
+                ) {
+                  throw new Error(`Garbled save: invalid ${label}.inputs[${index}]`);
+                }
+                return { coin_name: input.coin_name, coin_string: input.coin_string };
+              }),
+            }),
       };
+    }
     case 'cancelling':
       return {
         ...common,

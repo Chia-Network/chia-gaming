@@ -159,6 +159,7 @@ export function submissionDrain(
   > = [],
   retired_submission_ids: string[] = [],
   failures: SubmissionDrainFailure[] = [],
+  fee_retirements: Array<{ id: string; fee_spent: boolean }> = [],
 ) {
   return {
     submissions: submissions.map((submission) => ({
@@ -168,6 +169,7 @@ export function submissionDrain(
       ...submission,
     })),
     retired_submission_ids,
+    fee_retirements,
     failures,
   };
 }

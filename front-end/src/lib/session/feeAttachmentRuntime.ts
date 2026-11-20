@@ -234,6 +234,26 @@ export class FeeAttachmentRuntime {
     }
   }
 
+  stopSubmission(submissionId: string): void {
+    if (this.authorityRetired) return;
+    this.notifySubmissionChange();
+    for (const entry of this.entries()) {
+      if (entry.submissionId === submissionId && entry.stage !== 'retained-for-replay') {
+        this.cancelEntry(entry, true);
+      }
+    }
+  }
+
+  forgetSpentSubmission(submissionId: string): void {
+    if (this.authorityRetired) return;
+    this.notifySubmissionChange();
+    for (const entry of this.entries()) {
+      if (entry.submissionId === submissionId && entry.stage === 'retained-for-replay') {
+        this.replace(entry, null);
+      }
+    }
+  }
+
   async awaitIdle(): Promise<void> {
     while (this.flights.size) {
       await Promise.allSettled([...this.flights.values()].map((flight) => flight.promise));
