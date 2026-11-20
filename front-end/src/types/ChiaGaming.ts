@@ -318,6 +318,7 @@ export interface PeerConnectionResult {
   };
   reliableTransport?: unknown;
   onPeerUnavailable?: () => void;
+  onPeerSetupEnded?: () => void;
   persistInboundSessionReject?: (sessionId: string, remoteNumber: bigint) => Promise<void>;
   onSessionReject?: (sessionId: string, remoteNumber: bigint) => void;
   /** Returns false when the hub WS is not OPEN (frame was not sent). */

@@ -131,14 +131,19 @@ pub(in super::super) fn run_script(
         .iter()
         .any(|action| action.schedule().expects_on_chain_transition);
 
-    for action in moves_input
-        .iter()
-        .take_while(|action| matches!(action, SimScriptAction::NerfTransactions(_)))
-    {
-        let SimScriptAction::NerfTransactions(player) = action else {
-            unreachable!();
-        };
-        harness.nerf_transactions(*player);
+    for action in moves_input.iter().take_while(|action| {
+        matches!(
+            action,
+            SimScriptAction::NerfTransactions(_) | SimScriptAction::BlockCoinReportsFromStart(_)
+        )
+    }) {
+        match action {
+            SimScriptAction::NerfTransactions(player) => harness.nerf_transactions(*player),
+            SimScriptAction::BlockCoinReportsFromStart(player) => {
+                harness.block_coin_reports(*player)
+            }
+            _ => unreachable!(),
+        }
     }
 
     while !matches!(ending, Some(0)) {
@@ -361,7 +366,8 @@ pub(in super::super) fn run_script(
                         harness.mutate_nerfed_shutdown_solution(allocator)?;
                         ()
                     }
-                    SimScriptAction::BlockCoinReports(who) => {
+                    SimScriptAction::BlockCoinReports(who)
+                    | SimScriptAction::BlockCoinReportsFromStart(who) => {
                         harness.block_coin_reports(*who);
                         ()
                     }

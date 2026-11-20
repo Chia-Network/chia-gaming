@@ -12,6 +12,8 @@ struct TestChannel {
     discarding: Rc<Cell<bool>>,
     completion_ok: Rc<Cell<bool>>,
     completion_attempts: Rc<Cell<usize>>,
+    setup_ended: Rc<Cell<bool>>,
+    setup_failed: Rc<Cell<bool>>,
 }
 
 impl Channel for TestChannel {
@@ -20,6 +22,11 @@ impl Channel for TestChannel {
     }
     fn handshake_offer_sent(&self) -> bool {
         self.offer_sent
+    }
+    fn peer_setup_ended(&mut self, handshake_failed: bool) -> Result<ChannelOutput, String> {
+        self.setup_ended.set(true);
+        self.setup_failed.set(handshake_failed);
+        Ok(ChannelOutput::default())
     }
     fn deliver(&mut self, _body: &[u8]) -> Result<ChannelOutput, String> {
         Ok(ChannelOutput::default())
@@ -45,6 +52,8 @@ struct Harness {
     send_ok: Cell<bool>,
     completion_ok: Rc<Cell<bool>>,
     completion_attempts: Rc<Cell<usize>>,
+    setup_ended: Rc<Cell<bool>>,
+    setup_failed: Rc<Cell<bool>>,
     reply: Cell<bool>,
     fail_delivery: Cell<bool>,
     sent: RefCell<Vec<(u64, Vec<u8>)>>,
@@ -52,6 +61,7 @@ struct Harness {
     delivered: RefCell<Vec<(u64, Vec<u8>)>>,
     failures: RefCell<Vec<String>>,
     unavailable: Cell<usize>,
+    peer_setup_ended: Cell<usize>,
 }
 
 impl Harness {
@@ -82,12 +92,16 @@ impl Harness {
         let discarding = Rc::new(Cell::new(false));
         let completion_ok = Rc::new(Cell::new(true));
         let completion_attempts = Rc::new(Cell::new(0));
+        let setup_ended = Rc::new(Cell::new(false));
+        let setup_failed = Rc::new(Cell::new(false));
         *peer.channel.borrow_mut() = Some(TestChannel {
             offer_sent: false,
             established: established.clone(),
             discarding: discarding.clone(),
             completion_ok: completion_ok.clone(),
             completion_attempts: completion_attempts.clone(),
+            setup_ended: setup_ended.clone(),
+            setup_failed: setup_failed.clone(),
         });
         Self {
             peer,
@@ -97,6 +111,8 @@ impl Harness {
             send_ok: Cell::new(true),
             completion_ok,
             completion_attempts,
+            setup_ended,
+            setup_failed,
             reply: Cell::new(false),
             fail_delivery: Cell::new(false),
             sent: RefCell::new(vec![]),
@@ -104,6 +120,7 @@ impl Harness {
             delivered: RefCell::new(vec![]),
             failures: RefCell::new(vec![]),
             unavailable: Cell::new(0),
+            peer_setup_ended: Cell::new(0),
         }
     }
     fn data(&self, number: u64, body: &[u8]) -> bool {
@@ -177,6 +194,7 @@ impl PeerHost for Harness {
                 }
             }
             PeerEvent::PeerUnavailable => self.unavailable.set(self.unavailable.get() + 1),
+            PeerEvent::PeerSetupEnded => self.peer_setup_ended.set(self.peer_setup_ended.get() + 1),
             PeerEvent::Failure { reason } => self.failures.borrow_mut().push(reason),
             _ => {}
         }
@@ -668,7 +686,10 @@ fn failed_handshake_replays_one_ordered_rejection_and_committed_peer_keeps_its_o
             assert!(receiver.data(*n, body));
         }
         receiver.commit(true);
-        assert_eq!(receiver.unavailable.get(), usize::from(committed));
+        assert_eq!(receiver.peer_setup_ended.get(), usize::from(committed));
+        assert_eq!(receiver.setup_ended.get(), committed);
+        assert_eq!(receiver.setup_failed.get(), committed);
+        assert_eq!(receiver.unavailable.get(), 0);
         assert!(receiver.failures.borrow().is_empty());
         let session = receiver.peer.state.borrow();
         assert_eq!(
@@ -691,6 +712,29 @@ fn failed_handshake_replays_one_ordered_rejection_and_committed_peer_keeps_its_o
     assert!(active.data(1, &sent[1].1));
     assert!(active.failures.borrow().is_empty());
     assert_eq!(active.unavailable.get(), 1);
+}
+
+#[test]
+fn app_cancel_notifies_an_offer_sent_peer_without_retiring_its_channel() {
+    let receiver = Harness::new();
+    receiver
+        .peer
+        .channel
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .offer_sent = true;
+    receiver
+        .peer
+        .consumer_ready(ReceiveMode::Channel, &receiver)
+        .unwrap();
+    assert!(receiver.data(1, b"du4:typeu14:session_rejecte"));
+    receiver.commit(true);
+    assert_eq!(receiver.peer_setup_ended.get(), 1);
+    assert!(receiver.setup_ended.get());
+    assert!(!receiver.setup_failed.get());
+    assert_eq!(receiver.peer.state.borrow().state.disposition, "active");
+    assert!(receiver.acks.borrow().contains(&1));
 }
 
 #[test]

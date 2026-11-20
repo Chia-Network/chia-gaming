@@ -492,6 +492,15 @@ mod gaming_wasm {
         fn handshake_offer_sent(&self) -> bool {
             self.cradle.handshake_offer_sent()
         }
+        fn peer_setup_ended(&mut self, handshake_failed: bool) -> Result<ChannelOutput, String> {
+            call_releasing_allocator(self, |channel| {
+                channel
+                    .cradle
+                    .peer_setup_ended(&mut channel.allocator, handshake_failed)?;
+                channel.collect(true)
+            })
+            .map_err(|error| format!("{error:?}"))
+        }
         fn deliver(&mut self, body: &[u8]) -> Result<ChannelOutput, String> {
             call_releasing_allocator(self, |channel| {
                 channel.action(None, |channel| channel.cradle.deliver_message(body))

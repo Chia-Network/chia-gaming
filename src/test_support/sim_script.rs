@@ -251,6 +251,8 @@ mod sim_tests {
         MutateNerfedShutdownSolution,
         /// Stop reporting watched coin state changes for a player.
         BlockCoinReports(usize),
+        /// Block reports before the script's first simulation pump.
+        BlockCoinReportsFromStart(usize),
         /// Resume coin reports. If true, replay the backlog to the player.
         UnblockCoinReports(bool),
         /// Propose a new game from the specified player.
@@ -357,6 +359,9 @@ mod sim_tests {
                     write!(formatter, "UnNerfTransactionsFor({p})")
                 }
                 SimScriptAction::BlockCoinReports(p) => write!(formatter, "BlockCoinReports({p})"),
+                SimScriptAction::BlockCoinReportsFromStart(p) => {
+                    write!(formatter, "BlockCoinReportsFromStart({p})")
+                }
                 SimScriptAction::UnblockCoinReports(r) => {
                     write!(formatter, "UnblockCoinReports({r})")
                 }
@@ -547,6 +552,7 @@ mod sim_tests {
                 | Self::NerfTransactions(_)
                 | Self::UnNerfTransactions(_)
                 | Self::BlockCoinReports(_)
+                | Self::BlockCoinReportsFromStart(_)
                 | Self::UnblockCoinReports(_)
                 | Self::WaitBlocks(_, _)
                 | Self::CorruptStateNumber(_, _)

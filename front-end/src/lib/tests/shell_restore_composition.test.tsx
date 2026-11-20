@@ -30,7 +30,12 @@ import {
 
 import { expectConsoleError } from '../../../scripts/testSetup';
 import { HubConnection } from '../../services/HubConnection';
-import { PeerSession, decodeReliableFrame, encodePeerAppMessage } from '../../services/PeerSession';
+import {
+  PeerSession,
+  decodePeerAppMessage,
+  decodeReliableFrame,
+  encodePeerAppMessage,
+} from '../../services/PeerSession';
 import {
   INITIAL_CHANNEL_STATUS_MODEL,
   INITIAL_GAME_TERMINAL_MODEL,
@@ -306,9 +311,17 @@ describe('Shell production restore composition', () => {
           });
           peer.destroy();
         }
+        expect(mockHub!.getPresence().busy).toBe(true);
+        expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
         await storageRepository.inspect();
       });
       await waitForText(renderer!, 'New Session');
+      const presence = {
+        busy: true,
+        reasons: kind === 'proposal' ? ['restoring', 'starting'] : ['starting'],
+      };
+      expect(mockHub!.getPresence()).toEqual(presence);
+      expect(mockSetBusy).toHaveBeenLastCalledWith(presence);
       expect(application.snapshot().walletView.balance).toBeUndefined();
       await waitForText(renderer!, 'Checking wallet balance');
       expect(interval).toHaveBeenLastCalledWith(TOP_UP_BALANCE_POLL_INTERVAL_MS);
@@ -899,7 +912,7 @@ describe('Shell production restore composition', () => {
       peerId: 'p_' + '22'.repeat(16),
       ready: true,
       busy: true,
-      presence: { busy: true, reasons: ['restoring'] },
+      presence: { busy: true, reasons: ['restoring', 'starting'] },
     },
     {
       peerId: undefined,
@@ -1173,6 +1186,7 @@ describe('Shell production restore composition', () => {
     });
     expect(mockSetBusy).toHaveBeenLastCalledWith(expect.objectContaining({ busy: true }));
     expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');
+    mockSendToPeer.mockClear();
     const cancel = renderer!.root.findByProps({ children: 'Cancel' });
     expect(cancel.props.disabled).toBe(false);
     await act(async () => {
@@ -1182,6 +1196,20 @@ describe('Shell production restore composition', () => {
     await waitForText(renderer!, 'No Session');
     expect(storageRepository.loadState().session).toBeNull();
     expect(storageRepository.loadState().rejectionTransports).toHaveLength(1);
+    await act(async () => {
+      mockHub!.emit({ type: 'peer-available', playerId: 'p_' + '22'.repeat(16) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (let n = 0; n < 30 && mockSendToPeer.mock.calls.length === 0; n++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      await storageRepository.inspect();
+    });
+    expect(
+      mockSendToPeer.mock.calls
+        .map(([, payload]) => decodeReliableFrame(payload))
+        .filter((frame) => frame?.tag === 0x01)
+        .map((frame) => decodePeerAppMessage(frame!.data)),
+    ).toContainEqual({ type: 'session_reject' });
     expect(mockSetBusy).toHaveBeenLastCalledWith({ busy: false });
   });
 

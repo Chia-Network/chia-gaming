@@ -75,6 +75,7 @@ pub enum PeerEvent {
     },
     RejectionAcknowledged,
     PeerUnavailable,
+    PeerSetupEnded,
     #[serde(skip)]
     ChannelResult(ChannelOutput),
     Error {
@@ -106,6 +107,7 @@ pub struct ChannelOutput {
 pub trait Channel {
     fn status(&self) -> (bool, bool);
     fn handshake_offer_sent(&self) -> bool;
+    fn peer_setup_ended(&mut self, handshake_failed: bool) -> Result<ChannelOutput, String>;
     fn deliver(&mut self, body: &[u8]) -> Result<ChannelOutput, String>;
     fn complete_terminal(&mut self) -> Result<ChannelOutput, String>;
 }
@@ -400,13 +402,22 @@ impl<C: Channel> Session<C> {
                             host,
                         )?;
                     } else if mode == ReceiveMode::Channel
-                        && (status.established
-                            || self
-                                .channel
-                                .borrow()
-                                .as_ref()
-                                .is_some_and(Channel::handshake_offer_sent))
+                        && self
+                            .channel
+                            .borrow()
+                            .as_ref()
+                            .is_some_and(Channel::handshake_offer_sent)
                     {
+                        let mut output = self
+                            .channel
+                            .borrow_mut()
+                            .as_mut()
+                            .ok_or("accepted session has no channel")?
+                            .peer_setup_ended(handshake_failed)?;
+                        self.collect_output(&mut output)?;
+                        host.notify(PeerEvent::ChannelResult(output))?;
+                        host.notify(PeerEvent::PeerSetupEnded)?;
+                    } else if mode == ReceiveMode::Channel && status.established {
                         host.notify(PeerEvent::PeerUnavailable)?;
                     } else {
                         self.state.borrow_mut().reject_inbound(handshake_failed);

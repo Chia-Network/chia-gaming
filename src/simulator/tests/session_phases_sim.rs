@@ -7416,6 +7416,98 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         },
     ));
 
+    res.push((
+        "test_pending_funding_error_unrolls_after_coin_report",
+        &|| {
+            for victim in 0..2 {
+                let mut allocator = AllocEncoder::new();
+                let saw_disconnected_handshake = std::cell::Cell::new(false);
+                let moves = vec![
+                    SimScriptAction::BlockCoinReportsFromStart(victim),
+                    SimScriptAction::WaitBlocks(2, 0),
+                    SimScriptAction::InjectRawMessage(victim, vec![0xff]),
+                    SimScriptAction::WaitBlocks(1, 0),
+                    SimScriptAction::UnblockCoinReports(true),
+                    SimScriptAction::WaitBlocks(20, 0),
+                ];
+
+                let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                    &mut allocator,
+                    &moves,
+                    Some(&|_, cradles| {
+                        if cradles[victim].is_peer_disconnected()
+                            && !cradles[victim].handshake_finished()
+                        {
+                            saw_disconnected_handshake.set(true);
+                        }
+                        cradles[victim].is_on_chain()
+                    }),
+                    None,
+                )
+                .expect("channel coin confirmation should trigger an unroll");
+
+                assert!(
+                    saw_disconnected_handshake.get(),
+                    "player {victim} should remain live after the peer error and before coin creation"
+                );
+                assert!(
+                    outcome.cradles[victim].is_on_chain(),
+                    "player {victim} should unroll after the channel coin confirms"
+                );
+                assert!(
+                    !outcome.cradles[victim].is_failed(),
+                    "player {victim} should not fail while funding can still confirm"
+                );
+            }
+        },
+    ));
+
+    res.push(("test_pending_funding_error_expires_without_coin", &|| {
+        for victim in 0..2 {
+            let mut allocator = AllocEncoder::new();
+            let saw_disconnected_handshake = std::cell::Cell::new(false);
+            let moves = vec![
+                SimScriptAction::NerfTransactions(0),
+                SimScriptAction::NerfTransactions(1),
+                SimScriptAction::WaitBlocks(1, 0),
+                SimScriptAction::InjectRawMessage(victim, vec![0xff]),
+                SimScriptAction::WaitBlocks(10, 0),
+            ];
+
+            let outcome = run_calpoker_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&|_, cradles| {
+                    if cradles[victim].is_peer_disconnected()
+                        && !cradles[victim].channel_status_terminal()
+                    {
+                        saw_disconnected_handshake.set(true);
+                    }
+                    cradles[victim].channel_status_terminal()
+                }),
+                None,
+            )
+            .expect("unfunded channel should expire");
+
+            assert!(
+                saw_disconnected_handshake.get(),
+                "player {victim} should wait after the peer error"
+            );
+            assert!(outcome.cradles[victim].is_failed());
+            assert!(!outcome.cradles[victim].is_on_chain());
+            assert!(outcome.local_uis[victim].notifications.iter().any(|n| {
+                matches!(
+                    n,
+                    GameNotification::ChannelStatus(ChannelStatusSnapshot {
+                        state: ChannelStatus::Failed,
+                        advisory: Some(reason),
+                        ..
+                    }) if reason == "channel coin not confirmed in time"
+                )
+            }));
+        }
+    }));
+
     res.push(("test_handshake_era_invalid_batch_goes_on_chain", &|| {
         let mut allocator = AllocEncoder::new();
         let queued_bad_batch =
