@@ -250,7 +250,12 @@
                         (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))))
                 (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
         (assign (_ PATTERN BODY) (f CASES)
-            (list (q . assign) PATTERN VALUE BODY))))
+            ; An atomic body that does not name a field needs no destructuring.
+            (if (l BODY)
+                (list (q . assign) PATTERN VALUE BODY)
+                (if (shapes-contains BODY PATTERN)
+                    (list (q . assign) PATTERN VALUE BODY)
+                    BODY)))))
 
 ; Pick a binding name absent from the entire input, including nested dispatches.
 ; Preserve its symbol type: concat yields a numeric atom, not a variable name.
@@ -280,6 +285,8 @@
 
 (defmac shapes-if-expanded (VALUE . CASES)
     (if CASES
-        (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
-            (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+        (if (l VALUE)
+            (assign NAME (shapes-fresh (q . shapes-value) (c VALUE CASES))
+                (list (q . assign) NAME VALUE (shapes-dispatch NAME (shapes-cases CASES))))
+            (shapes-dispatch VALUE (shapes-cases CASES)))
         (x (q . "if-shape needs at least one alternative"))))

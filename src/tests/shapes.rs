@@ -277,6 +277,53 @@ fn test_make() {
     );
 }
 
+#[test]
+fn shape_dispatch_avoids_unneeded_bindings() {
+    use chialisp::classic::clvm::sexp::sexp_as_bin;
+    use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
+    use chialisp::classic::clvm_tools::stages::stage_0::DefaultProgramRunner;
+    use chialisp::classic::platform::argparse::ArgumentValue;
+    use chialisp::compiler::compiler::compile_file;
+    use chialisp::compiler::comptypes::CompilerOutput;
+    use chialisp::compiler::sexp::parse_sexp;
+    use chialisp::compiler::srcloc::Srcloc;
+    use std::{collections::HashMap, rc::Rc};
+
+    // These ceilings catch reintroducing the binding call around every leaf
+    // and around an atomic scrutinee. Costs include the entire compiled program.
+    for (name, body, input, max_bytes, max_cost) in [
+        ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 85, 650),
+        ("two-way", "(if-shape VALUE (((a . b) . (atom c)) (+ a b c)) (((atom d) . (e . f)) (+ d e f)))", "((2 . 3) . 4)", 48, 1650),
+        ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 35, 400),
+    ] {
+        let source = format!("(include *standard-cl-26*) (import std.shapes) (export VALUE {body})");
+        let arguments = HashMap::from([
+            ("path_or_code".into(), ArgumentValue::ArgString(None, source.clone())),
+            ("include".into(), ArgumentValue::ArgArray(vec![
+                ArgumentValue::ArgString(None, "clsp".into()),
+            ])),
+        ]);
+        let mut allocator = chialisp::clvmr::Allocator::new();
+        let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).unwrap();
+        let compiled = compile_file(&mut allocator, Rc::new(DefaultProgramRunner::new()), parsed.opts, &source, &mut HashMap::new()).unwrap();
+        let program = match compiled {
+            CompilerOutput::Program(_, program) => Rc::new(program),
+            CompilerOutput::Module(module) => module.components.iter().find(|component| component.shortname == b"program").unwrap().content.clone(),
+        };
+        let program = chialisp::compiler::clvm::convert_to_clvm_rs(&mut allocator, program).unwrap();
+        let program = sexp_as_bin(&mut allocator, program).raw();
+        let input = parse_sexp(Srcloc::start("input"), input.bytes()).unwrap()[0].clone();
+        let input = chialisp::compiler::clvm::convert_to_clvm_rs(&mut allocator, input).unwrap();
+        let input = sexp_as_bin(&mut allocator, input).raw();
+        let mut runtime = AllocEncoder::new();
+        let program_node = clvmr::serde::node_from_bytes(runtime.allocator(), &program).unwrap();
+        let input_node = clvmr::serde::node_from_bytes(runtime.allocator(), &input).unwrap();
+        let cost = run_program(runtime.allocator(), &chia_dialect(), program_node, input_node, 1_000_000).unwrap().0;
+        assert!(program.len() <= max_bytes, "{name}: {} bytes exceed {max_bytes}", program.len());
+        assert!(cost <= max_cost, "{name}: cost {cost} exceeds {max_cost}");
+    }
+}
+
 /// Use the same compiler entry point/options as build.rs, including modern
 /// optimization. Compile once per union, then run every example against it.
 fn assert_dispatch(branches: &[String], examples: &[(String, usize)]) {
