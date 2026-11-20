@@ -847,18 +847,32 @@ impl GameSession {
                         PeerSetupEnd::Ended => "The other player ended setup.",
                         PeerSetupEnd::Failed => "The other player reported a setup failure.",
                     };
-                    status.advisory = Some(
-                        if let Some(expiry) = self.state.channel_creation_expiry {
+                    // Receiver SentB has not sent D, so its first offer is not
+                    // part of a complete channel funding transaction.
+                    let unmatched_first_offer =
+                        !self.state.is_initiator && status.state == ChannelStatus::OfferSent;
+                    status.advisory = Some(match self.state.channel_creation_expiry {
+                        Some(expiry) => {
                             let safe_height = expiry.saturating_add(CHANNEL_EXPIRY_BUFFER);
-                            format!(
-                            "{explanation} Your signed offer expires at block {expiry} ({} blocks remaining). Keep this session open while checking for the channel coin until block {safe_height} ({} blocks remaining).",
-                            expiry.saturating_sub(self.state.current_height),
-                            safe_height.saturating_sub(self.state.current_height),
-                        )
-                        } else {
-                            format!("{explanation} Keep this session open while checking whether your signed offer creates a channel.")
-                        },
-                    );
+                            if unmatched_first_offer {
+                                format!(
+                                    "{explanation} The first offer was not combined into a channel transaction. It expires at block {expiry} ({} blocks remaining); this session finishes after block {safe_height} ({} blocks remaining).",
+                                    expiry.saturating_sub(self.state.current_height),
+                                    safe_height.saturating_sub(self.state.current_height),
+                                )
+                            } else {
+                                format!(
+                                    "{explanation} Your signed offer expires at block {expiry} ({} blocks remaining). Keep this session open while checking for the channel coin until block {safe_height} ({} blocks remaining).",
+                                    expiry.saturating_sub(self.state.current_height),
+                                    safe_height.saturating_sub(self.state.current_height),
+                                )
+                            }
+                        }
+                        None if unmatched_first_offer => format!(
+                            "{explanation} The first offer was not combined into a channel transaction. Waiting for its expiry."
+                        ),
+                        None => format!("{explanation} Keep this session open while checking whether your signed offer creates a channel."),
+                    });
                 }
             }
         }

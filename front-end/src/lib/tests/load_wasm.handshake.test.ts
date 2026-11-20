@@ -43,6 +43,7 @@ function checkHandshakeFailure(
   receiver: SessionController,
   recipientOfferSent: boolean,
   ownOfferSent = false,
+  recipientFirstOfferOnly = false,
 ) {
   const failed = restoreTestSession(sender, sender.getPeerProtocol().serialize(), 'failed-peer');
   const other = restoreTestSession(
@@ -144,6 +145,11 @@ function checkHandshakeFailure(
           .find((item: { advisory: string }) =>
             item.advisory?.includes('other player ended setup'),
           );
+        if (recipientFirstOfferOnly) {
+          expect(status?.advisory).toContain(
+            'The first offer was not combined into a channel transaction',
+          );
+        }
         const countdown = status?.advisory.match(/block (\d+) \((\d+) blocks remaining\)/);
         expect(countdown?.length).toBeGreaterThanOrEqual(3);
         expect(BigInt(countdown![2])).toBeGreaterThan(0n);
@@ -250,7 +256,7 @@ it(
       wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
-      checkHandshakeFailure(wasm_blob1, wasm_blob2, true);
+      checkHandshakeFailure(wasm_blob1, wasm_blob2, true, false, true);
       const receiverCoins = wasm_blob2.getCoinsOfInterest();
       assert.deepEqual(
         receiverCoins.map((coin) => coin.label),
