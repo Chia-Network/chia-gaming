@@ -466,6 +466,10 @@ export function createApplication() {
       peerSession?.markDegraded();
       syncPeerLiveness();
     },
+    onPeerSetupEnded: () => {
+      peerSession?.markDead();
+      syncPeerLiveness();
+    },
     persistInboundSessionReject: (sessionId, remoteNumber) => {
       const peer = peerSession;
       if (!peer || peer.sessionId !== sessionId) {

@@ -1,6 +1,7 @@
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import type { PeerHost } from '../../../../wasm/contract';
-import { decodePeerAppMessage } from '../../services/PeerSession';
+import { decodePeerAppMessage, encodePeerAppMessage } from '../../services/PeerSession';
+import { createPeerProtocol } from '../../services/peerProtocol';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SessionController } from '../session/SessionController';
@@ -10,6 +11,7 @@ import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 import { hasSavedSessionMarker } from '../session/saveCoordination';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
 import { storageRepository } from '../session/storageRepository';
 import {
   LONG_WASM_TEST_TIMEOUT,
@@ -77,8 +79,104 @@ function checkHandshakeFailure(
     expect(other.snapshot().disposition).toBe(recipientOfferSent ? 'active' : 'inbound-reject');
     expect(other.snapshot().inboundHandshakeFailed).toBe(!recipientOfferSent);
     if (recipientOfferSent) {
-      expect(notify).toHaveBeenCalledWith({ type: 'peer-unavailable' });
-      expect(other.serialize()).toEqual(before);
+      expect(notify).toHaveBeenCalledWith({ type: 'peer-setup-ended' });
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'channel-result',
+          result: expect.objectContaining({
+            events: expect.arrayContaining([
+              expect.objectContaining({
+                Notification: expect.objectContaining({
+                  ChannelStatus: expect.objectContaining({
+                    advisory: expect.stringContaining('other player reported a setup failure'),
+                  }),
+                }),
+              }),
+            ]),
+          }),
+        }),
+      );
+      expect(other.serialize()).not.toEqual(before);
+      const generic = restoreTestSession(
+        receiver,
+        receiver.getPeerProtocol().serialize(),
+        'generic-reject-peer',
+      );
+      try {
+        notify.mockClear();
+        generic.consumer_ready('channel', host);
+        expect(
+          generic.receive(
+            {
+              type: 'data',
+              msgno: rejection.msgno,
+              body: encodePeerAppMessage({ type: 'session_reject' }),
+            },
+            host,
+          ),
+        ).toBe(true);
+        expect(notify).toHaveBeenCalledWith({ type: 'peer-setup-ended' });
+        expect(notify).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'channel-result',
+            result: expect.objectContaining({
+              events: expect.arrayContaining([
+                expect.objectContaining({
+                  Notification: expect.objectContaining({
+                    ChannelStatus: expect.objectContaining({
+                      advisory: expect.stringContaining('other player ended setup'),
+                    }),
+                  }),
+                }),
+              ]),
+            }),
+          }),
+        );
+        const status = notify.mock.calls
+          .flatMap(([event]) =>
+            event.type === 'channel-result'
+              ? event.result.events.flatMap(
+                  (item: { Notification?: { ChannelStatus?: { advisory: string } } }) =>
+                    item.Notification?.ChannelStatus ? [item.Notification.ChannelStatus] : [],
+                )
+              : [],
+          )
+          .find((item: { advisory: string }) =>
+            item.advisory?.includes('other player ended setup'),
+          );
+        const countdown = status?.advisory.match(/block (\d+) \((\d+) blocks remaining\)/);
+        expect(countdown?.length).toBeGreaterThanOrEqual(3);
+        expect(BigInt(countdown![2])).toBeGreaterThan(0n);
+        const snapshot = generic.snapshot();
+        const restored = createPeerProtocol(
+          snapshot,
+          DEFAULT_SESSION_RECEIVE_POLICY,
+          'generic-reject-reloaded',
+        );
+        try {
+          restored.restore(snapshot, snapshot.terminalHandoff);
+          restored.restore_channel(generic.serialize());
+          const nextHeight = BigInt(countdown![1]) - BigInt(countdown![2]) + 1n;
+          const nextRemaining = BigInt(countdown![2]) - 1n;
+          const progress = restored.report_height(nextHeight);
+          expect(progress.disposition.kind).toBe('active');
+          expect(progress.events).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                Notification: expect.objectContaining({
+                  ChannelStatus: expect.objectContaining({
+                    advisory: expect.stringContaining(`${nextRemaining} blocks remaining`),
+                  }),
+                }),
+              }),
+            ]),
+          );
+        } finally {
+          restored.free();
+        }
+      } finally {
+        generic.free();
+      }
     }
   } finally {
     failed.free();
