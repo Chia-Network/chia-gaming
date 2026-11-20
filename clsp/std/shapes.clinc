@@ -182,15 +182,15 @@
 
 ; Common guarantees are usable under the closed-union contract. Optional paths
 ; contribute none. Facts learned by actual tests refine each surviving case.
-(defun shapes-common-pair (PATH CASES)
+(defun shapes-excludes (PATH CASES MASK)
     (if CASES
-        (if (= (shapes-lookup PATH (f (f CASES)) 7) 1)
-            (shapes-common-pair PATH (r CASES)) 0)
+        (if (logand (shapes-lookup PATH (f (f CASES)) 7) MASK) 0
+            (shapes-excludes PATH (r CASES) MASK))
         1))
 
 (defun shapes-safe (PATH CASES)
     (if (= PATH 1) 1
-        (if (shapes-common-pair (/ PATH 2) CASES)
+        (if (shapes-excludes (/ PATH 2) CASES 6)
             (shapes-safe (/ PATH 2) CASES) 0)))
 
 (defun shapes-tests-for (FACTS)
@@ -256,27 +256,65 @@
 (defun shapes-literal-body (BODY)
     (any (number? BODY) (string? BODY)))
 
-(defun shapes-dispatch (VALUE CASES)
+(defun shapes-bind-case (PATTERN VALUE BODY)
+    ; assign resolves dependencies among its bindings. Read the outer value
+    ; under a fresh name if a field would make the binding depend on itself.
+    (if (all (symbol? VALUE) (shapes-contains VALUE PATTERN))
+        (assign NAME (shapes-fresh (q . shapes-value) (list VALUE PATTERN BODY))
+            (list (q . assign) NAME VALUE (list (q . assign) PATTERN NAME BODY)))
+        (list (q . assign) PATTERN VALUE BODY)))
+
+; A lazy if selects a branch program. Leave the apply to the caller.
+(defun shapes-program-choice (BRANCH)
+    (assign (_ CONDITION YES NO) BRANCH
+        (list 3 CONDITION (list (q . com) YES) (list (q . com) NO))))
+
+; Both alternatives test the same path, so either can read it before selection.
+; Fuse two levels at a time to bound the amount of eager evaluation.
+(defun shapes-fuse-choices (CONDITION YES NO)
+    (if (= (f YES) (f NO))
+        (if (= (f YES) 3)
+            (list 3 CONDITION YES NO)
+            (list 2 (list 3 CONDITION (shapes-program-choice YES) (shapes-program-choice NO))
+                (q . @)))
+        ()))
+
+; Nodes carry the path of a simple choice. Leaves and fused choices carry zero.
+(defun shapes-choice (PATH CONDITION LEFT RIGHT)
+    (assign
+        (LEFT-PATH . YES) LEFT
+        (RIGHT-PATH . NO) RIGHT
+        FUSED (if (if LEFT-PATH (= LEFT-PATH RIGHT-PATH) 0)
+            (shapes-fuse-choices CONDITION YES NO) ())
+        (if FUSED (c 0 FUSED)
+            (c PATH (list (if (all (shapes-literal-body YES) (shapes-literal-body NO)) 3 (q . if))
+                CONDITION YES NO)))))
+
+(defun shapes-dispatch-node (VALUE CASES)
     (if (r CASES)
         (assign
-            TEST (shapes-best (shapes-distinct-tests (shapes-tests CASES) ()) CASES (shapes-length CASES) () 0)
+            TESTS (shapes-distinct-tests (shapes-tests CASES) ())
+            TEST (shapes-best TESTS CASES (shapes-length CASES) () 0)
             (if TEST
                 (assign
                     (PATH MASK) TEST
                     ACCESS (shapes-access PATH VALUE)
-                    YES (shapes-dispatch VALUE (shapes-refine CASES PATH MASK))
-                    NO (shapes-dispatch VALUE (shapes-refine CASES PATH (logxor 7 MASK)))
-                    ; Eager i is safe only when neither arm can read a path or run code.
-                    (list (if (all (shapes-literal-body YES) (shapes-literal-body NO)) 3 (q . if))
-                        (list (if (= MASK 1) 7 32) ACCESS) YES NO))
+                    ; Nil is the only false value. Its complement is mask 3.
+                    TRUE-MASK (if (= MASK 4) 3 MASK)
+                    CONDITION (if (if (= MASK 4) 1 (shapes-excludes PATH CASES 2))
+                        ACCESS (list 7 ACCESS))
+                    YES (shapes-dispatch-node VALUE (shapes-refine CASES PATH TRUE-MASK))
+                    NO (shapes-dispatch-node VALUE (shapes-refine CASES PATH (logxor 7 TRUE-MASK)))
+                    (shapes-choice PATH CONDITION YES NO))
                 (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
         (assign (_ PATTERN BODY) (f CASES)
             ; An atomic body that does not name a field needs no destructuring.
-            (if (l BODY)
-                (list (q . assign) PATTERN VALUE BODY)
-                (if (shapes-contains BODY PATTERN)
-                    (list (q . assign) PATTERN VALUE BODY)
-                    BODY)))))
+            (c 0 (if (if (l BODY) 1 (shapes-contains BODY PATTERN))
+                (shapes-bind-case PATTERN VALUE BODY)
+                BODY)))))
+
+(defun shapes-dispatch (VALUE CASES)
+    (r (shapes-dispatch-node VALUE CASES)))
 
 ; Pick a binding name absent from the entire input, including nested dispatches.
 ; Preserve its symbol type: concat yields a numeric atom, not a variable name.

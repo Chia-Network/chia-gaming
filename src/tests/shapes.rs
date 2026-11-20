@@ -308,9 +308,10 @@ fn shape_cost(program: &[u8], input: &str) -> (u64, Vec<u8>) {
 #[test]
 fn shape_dispatch_avoids_unneeded_bindings() {
     for (name, body, input, max_bytes, max_cost) in [
-        ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 55, 419),
+        ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 45, 386),
+        ("four-way bodies", "(if-shape VALUE (((atom a) . (atom b)) (+ a b)) (((a . b) . (atom c)) (+ a b c)) (((atom a) . (b . c)) (- a b c)) (((a . b) . (c . d)) (+ a b c d)))", "((2 . 3) . (4 . 5))", 83, 2131),
         ("two-way", "(if-shape VALUE (((a . b) . (atom c)) (+ a b c)) (((atom d) . (e . f)) (+ d e f)))", "((2 . 3) . 4)", 48, 1650),
-        ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 17, 138),
+        ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 13, 118),
     ] {
         let program = shape_program_bytes(&format!("(export VALUE {body})"));
         let (cost, _) = shape_cost(&program, input);
@@ -339,6 +340,31 @@ fn shape_dispatch_balances_splits_reproducibly() {
         assert_eq!(result, [expected]);
         assert!(cost <= 427, "cost {cost} for {input}");
     }
+}
+
+#[test]
+fn shape_dispatch_fields_can_shadow_a_function_argument() {
+    let cases = "(if-shape value
+        ((item) (+ value tail shapes-value))
+        ((atom value) value))";
+    let shape = "(defun-shape item ((atom value) . tail))";
+    let examples = [("((11 . 22) 100)".into(), 133), ("(44 100)".into(), 44)];
+    assert_shape_program(
+        &format!(
+            "{shape} (defun pick (value shapes-value) {cases}) (export args (pick &rest args))"
+        ),
+        &examples,
+    );
+    // Chialisp 0.7.0 needs distinct field names directly in a module export.
+    assert_shape_program(
+        &format!(
+            "{shape} (export (value shapes-value)
+                (if-shape value
+                    ((item item-value tail) (+ item-value tail shapes-value))
+                    ((atom leaf) leaf)))"
+        ),
+        &examples,
+    );
 }
 
 #[test]

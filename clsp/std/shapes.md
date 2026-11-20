@@ -116,16 +116,37 @@ The planner chooses the safe test with the fewest alternatives on its larger
 side. Ties favor fewer alternatives on the true side, then the first test
 encountered in declaration and template order. For the same source these rules
 produce the same tree. If separating tests are too deep to read safely, the
-planner first checks a parent pair. When both arms return literal numbers or
-strings, dispatch uses CLVM's eager `i`. Field accesses and compound bodies
-stay behind the branch that selects them.
+planner first checks a parent pair. When a position can only be nil or a pair,
+its value serves as the condition because nil is false and every pair is true. A position
+that can also contain a nonempty atom still needs a pair test to distinguish it
+from a pair.
+
+When both arms return literal numbers or strings, dispatch uses CLVM's eager
+`i`. The macro can also combine two levels when both sides of the first split
+need to inspect the same next path. For a four-way choice among literals,
+`i` returns the result directly. For four executable branches, `i` selects a
+compiled program and a single apply runs it.
+
 Accesses are only generated when every ancestor is known to be a pair, from the
 remaining shapes or earlier tests. Optional structure never supplies that fact.
 
-The selected branch uses `assign` to destructure the value. Generated temporary
-names avoid names occurring in the input and branch bodies. Constraints are
-consumed by `make` and `if-shape`; an ordinary `defun` parameter pattern can use
-an unannotated named shape, as in `point` above.
+The selected branch uses `assign` to destructure the value. Inside a `defun`,
+a field can shadow the input variable. In a direct module `export`, Chialisp
+0.7.0 can read the outer argument when a branch field shadows it.
+Give the field a distinct name in that pattern,
+as in the example below. [Upstream compiler fix](https://github.com/Chia-Network/chialisp/pull/609)
+
+```
+(defun-shape item ((atom value) . tail))
+(export value
+    (if-shape value
+        ((item item-value tail) (+ item-value tail))
+        ((atom leaf) leaf)))
+```
+
+Generated temporaries avoid capturing names in their scope. Constraints are
+consumed by `make` and `if-shape`. An ordinary `defun` parameter pattern can
+use an unannotated named shape, as in `point` above.
 
 ## Reading one field
 
