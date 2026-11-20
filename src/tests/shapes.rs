@@ -309,6 +309,7 @@ fn shape_cost(program: &[u8], input: &str) -> (u64, Vec<u8>) {
 fn shape_dispatch_avoids_unneeded_bindings() {
     for (name, body, input, max_bytes, max_cost) in [
         ("four-way", "(if-shape VALUE (((atom a) . (atom b)) 1) (((a . b) . (atom c)) 2) (((atom a) . (b . c)) 3) (((a . b) . (c . d)) 4))", "((2 . 3) . (4 . 5))", 45, 386),
+        ("four-way singleton splits", "(if-shape VALUE (#((a . x) (atom b) (atom c)) 1) (#((atom a) (b . y) (atom c)) 2) (#((atom a) (atom b) (c . z)) 3) (#((atom a) (atom b) (atom c)) 4))", "(4 . (4 . 4))", 45, 394),
         ("four-way bodies", "(if-shape VALUE (((atom a) . (atom b)) (+ a b)) (((a . b) . (atom c)) (+ a b c)) (((atom a) . (b . c)) (- a b c)) (((a . b) . (c . d)) (+ a b c d)))", "((2 . 3) . (4 . 5))", 83, 2131),
         ("two-way", "(if-shape VALUE (((a . b) . (atom c)) (+ a b c)) (((atom d) . (e . f)) (+ d e f)))", "((2 . 3) . 4)", 48, 1650),
         ("nil-pair", "(if-shape VALUE (nil 1) ((a . b) 2))", "(2 . 3)", 13, 118),
@@ -352,9 +353,9 @@ fn shape_dispatch_selects_the_cheaper_split_policy() {
         "((4 . 4) . ((4 . 5) . 4))",
         "(((4 . 5) . (4 . 5)) . (4 . 4))",
         "((4 . (4 . 5)) . ((4 . 5) . (4 . 5)))",
-        "((4 . (4 . 5)) . ((4 . 5) . 4))",
+        "((4 . (4 . 5)) . (4 . (4 . 5)))",
     ];
-    for (third_body, third_result, max_total) in [("(+ a 3)", 7, 5027), ("3", 3, 3938)] {
+    for (third_body, third_result, max_total) in [("(+ a 3)", 7, 4378), ("3", 3, 3318)] {
         let program = shape_program_bytes(&format!(
             "(export VALUE (if-shape VALUE
                 (#((atom a) (b . tb) (atom c) (atom d)) 1)
@@ -362,7 +363,7 @@ fn shape_dispatch_selects_the_cheaper_split_policy() {
                 (#((atom a) (atom b) (c . tc) (atom d)) {third_body})
                 (#((a . ta) (b . tb) (atom c) (atom d)) 4)
                 (#((atom a) (b . tb) (c . tc) (d . td)) 5)
-                (#((atom a) (b . tb) (c . tc) (atom d)) 6)))"
+                (#((atom a) (b . tb) (atom c) (d . td)) 6)))"
         ));
         let mut total = 0;
         for (input, expected) in inputs.iter().zip([1, 2, third_result, 4, 5, 6]) {
@@ -413,7 +414,7 @@ fn shape_dispatch_fuses_three_safe_cases() {
 }
 
 #[test]
-fn shape_dispatch_keeps_three_way_tests_lazy_when_needed() {
+fn shape_dispatch_keeps_guarded_or_costly_tests_lazy() {
     // The two literal leaves already share an eager selector. Speculating
     // their test on the arithmetic path would only add cost.
     let program = shape_program_bytes(
@@ -443,6 +444,22 @@ fn shape_dispatch_keeps_three_way_tests_lazy_when_needed() {
             ("4".into(), 5),
             ("(5 . 7)".into(), 7),
             ("((5 . 6) . 7)".into(), 9),
+        ],
+    );
+
+    // On (9 . 99) both halves exist. A later test in the nested selector
+    // would descend into 9, so the selector must stay inside its guard.
+    assert_shape_program(
+        "(export V (if-shape V
+            (((atom a) . tail) (+ a 1))
+            (((x . tail) . (atom b)) (+ b 2))
+            ((((atom a) . tail) . (b . y)) (+ a 3))
+            ((((a . x) . tail) . (b . y)) (+ x 4))))",
+        &[
+            ("(9 . 99)".into(), 10),
+            ("((3 . 4) . 5)".into(), 7),
+            ("((3 . 4) . (5 . 6))".into(), 6),
+            ("(((1 . 5) . 4) . (5 . 6))".into(), 9),
         ],
     );
 }

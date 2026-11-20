@@ -122,18 +122,20 @@ pairs and arbitrary atoms uses a pair test.
 The planner estimates **mean CLVM dispatch cost**, giving each route to a leaf
 equal weight. A guard can make a single alternative reachable by multiple
 routes. The estimate includes path depth, pair checks, conditionals, quotes,
-and applies. It omits branch body costs and the final location of the
+and applies. It omits the cost of executing nonliteral bodies and the final location of the
 scrutinee in the compiled environment. Only the cheaper tree is emitted, with
 the balanced tree winning a tie. The choice is deterministic for a given source.
 
-When both arms return literal numbers or strings, dispatch uses CLVM's eager
-`i`. For a three-way choice, the planner can test both positions, select one
-of three branch programs, and run it with one apply. The second position must
-be safe to read even on the input that the first test identifies immediately.
-That route pays for the extra test, while the other two save a dispatch apply.
-The planner fuses the tests when the estimated total saving is positive.
-It can also fuse two splits that test the same next path. When all results
-are literals, eager `i` can return the selected value directly.
+At each split the planner compares keeping a child's tests inside that branch
+with evaluating them in the parent's selector. Combining selectors can save
+a dispatch apply on routes through the child. Other routes then pay for the
+child's tests too. The planner combines them when that lowers estimated cost
+and every path the child selector reads is safe on all of the parent's inputs.
+This rule applies at every depth and for any number of alternatives.
+
+CLVM's eager `i` selects the branch program, and one apply runs it. When
+both sides can return literals directly, the planner also prices an eager
+`i` that returns the selected value without an apply.
 
 Accesses are only generated when every ancestor is known to be a pair, from the
 remaining shapes or earlier tests. Optional structure never supplies that fact.

@@ -274,60 +274,58 @@
             (list (q . assign) NAME VALUE (list (q . assign) PATTERN NAME BODY)))
         (list (q . assign) PATTERN VALUE BODY)))
 
-; A lazy if selects a branch program. Leave the apply to the caller.
-(defun shapes-program-choice ((_ CONDITION YES NO))
-    (list 3 CONDITION (list (q . com) YES) (list (q . com) NO)))
-
-(defun shapes-program-arm (PATH ARM)
-    (if PATH (shapes-program-choice ARM) (list (q . com) ARM)))
-
-; Two routes save 155 each by merging the choices. The singleton route
-; pays the child test plus 54 for the extra i and quote: 310 - 54 = 256.
-; Three literals can use eager i throughout, saving another 155 (411).
-; If only the inner arms are literals, their choice is already eager.
-(defun shapes-three-saving (CASES PATH COST CHILD LEAF)
-    (if (shapes-safe PATH CASES)
-        (if (= (f CHILD) 3)
-            (if (shapes-literal-body LEAF) (- 411 COST) 0)
-            (- 256 COST))
-        0))
-
 ; A root path costs 44 and each additional edge costs 4. The caller's
 ; environment prefix is unknown during expansion. Ignore sign padding.
 (defun shapes-path-cost (PATH)
     (if (= PATH 1) 44 (+ 4 (shapes-path-cost (/ PATH 2)))))
 
-; A plan is (exposed-path test-cost routes total-dispatch-cost expression).
-; A zero path marks a leaf or a fused node. Branch bodies are common to both
-; plans, so the score charges only for dispatch. Each leaf route has weight one.
-(defun shapes-choice (CASES PATH CONDITION TEST-COST
-        (YES-PATH YES-COST YES-ROUTES YES-TOTAL YES)
-        (NO-PATH NO-COST NO-ROUTES NO-TOTAL NO))
-    (shapes-emit-choice PATH CONDITION TEST-COST YES-PATH YES NO-PATH NO
-        (+ YES-ROUTES NO-ROUTES) (+ YES-TOTAL NO-TOTAL)
-        (if (= (+ YES-ROUTES NO-ROUTES) 3)
-            (if YES-PATH (shapes-three-saving CASES YES-PATH YES-COST YES NO)
-                (shapes-three-saving CASES NO-PATH NO-COST NO YES))
-            ; Matching child splits trade an apply and two quotes (175) for
-            ; an extra i and two quotes (74) plus the unselected child's test.
-            (all YES-PATH (= YES-PATH NO-PATH))
-            (if (= (f YES) (f NO))
-                (+ (* YES-ROUTES (- 101 NO-COST)) (* NO-ROUTES (- 101 YES-COST))) 0)
-            0)))
+; An arm is (paths eager-cost deferred-cost expression). Charge its eager
+; instructions on every route, and its deferred instructions only on routes
+; that enter the selected branch. Deferred cost is already summed over them.
+(defun shapes-arm-cost (ROUTES (_ EAGER DEFERRED _))
+    (+ (* ROUTES EAGER) DEFERRED))
 
-; Excluding the chosen body, eager i costs 34 + 20 for the extra literal.
-; Lazy if costs 34 + 40 for two quotes + 135 for apply with the environment.
-(defun shapes-emit-choice (PATH CONDITION TEST-COST YES-PATH YES NO-PATH NO ROUTES CHILD-TOTAL SAVING)
+; A plan is (routes apply-cost arm). Applying a selected program to @ costs
+; 135. A selector that returns a literal directly has an apply cost of zero.
+(defun shapes-total ((ROUTES APPLY ARM))
+    (+ (* ROUTES APPLY) (shapes-arm-cost ROUTES ARM)))
+
+(defun shapes-result ((_ APPLY (_ _ _ EXPR)))
+    (if APPLY (list 2 EXPR (q . @)) EXPR))
+
+(defun shapes-safe-tests (PATHS CASES)
+    (if PATHS (if (shapes-safe (f PATHS) CASES) (shapes-safe-tests (r PATHS) CASES) 0) 1))
+
+; Compare running this selector at the parent with quoting the entire child.
+; Opening it makes every path it reads eager on the parent's routes.
+(defun shapes-program-arm (CASES ROUTES (@ PLAN (_ APPLY (@ ARM (PATHS _ _ _)))))
+    (assign QUOTED (list () 20 (shapes-total PLAN) (list (q . com) (shapes-result PLAN)))
+        (if (if (all APPLY (> (shapes-arm-cost ROUTES QUOTED) (shapes-arm-cost ROUTES ARM)))
+                (shapes-safe-tests PATHS CASES) 0)
+            ARM QUOTED)))
+
+(defun shapes-join-choice (PATH CONDITION TEST ROUTES APPLY
+        (YES-PATHS YES-COST YES-DEFERRED YES) (NO-PATHS NO-COST NO-DEFERRED NO))
+    (list ROUTES APPLY (list (c PATH (shapes-append YES-PATHS NO-PATHS))
+        (+ 34 TEST YES-COST NO-COST) (+ YES-DEFERRED NO-DEFERRED) (list 3 CONDITION YES NO))))
+
+(defun shapes-safe-literals (CASES (_ APPLY (PATHS . _)))
+    (if APPLY 0 (shapes-safe-tests PATHS CASES)))
+
+(defun shapes-choice (CASES PATH CONDITION TEST
+        (@ YES (YES-ROUTES _ YES-ARM)) (@ NO (NO-ROUTES _ NO-ARM)))
     (assign
-        EAGER (all (shapes-literal-body YES) (shapes-literal-body NO))
-        TOTAL (+ CHILD-TOTAL (* ROUTES (+ TEST-COST (if EAGER 54 209))))
-        (if (> SAVING 0)
-            (list 0 TEST-COST ROUTES (- TOTAL SAVING)
-                (if (= (f (if YES-PATH YES NO)) 3)
-                    (list 3 CONDITION YES NO)
-                    (list 2 (list 3 CONDITION (shapes-program-arm YES-PATH YES)
-                                              (shapes-program-arm NO-PATH NO)) (q . @))))
-            (list PATH TEST-COST ROUTES TOTAL (list (if EAGER 3 (q . if)) CONDITION YES NO)))))
+        ROUTES (+ YES-ROUTES NO-ROUTES)
+        PROGRAM (shapes-join-choice PATH CONDITION TEST ROUTES 135
+            (shapes-program-arm CASES ROUTES YES) (shapes-program-arm CASES ROUTES NO))
+        (if (all (shapes-safe-literals CASES YES) (shapes-safe-literals CASES NO))
+            (shapes-cheaper PROGRAM (shapes-join-choice PATH CONDITION TEST ROUTES 0 YES-ARM NO-ARM))
+            PROGRAM)))
+
+(defun shapes-leaf (BODY)
+    (if (shapes-literal-body BODY)
+        (list 1 0 (list () 20 0 BODY))
+        (list 1 135 (list () 20 0 (list (q . com) BODY)))))
 
 (defun shapes-dispatch-split (VALUE CASES (PATH MASK) SINGLETONS)
     (assign
@@ -347,19 +345,18 @@
             TEST (shapes-best TESTS CASES (shapes-length CASES) SINGLETONS () 0)
             (if TEST (shapes-dispatch-split VALUE CASES TEST SINGLETONS)
                 (x (q . "if-shape alternatives overlap or cannot be safely distinguished"))))
-        (list 0 0 1 0 (r (f CASES)))))
+        (shapes-leaf (r (f CASES)))))
 
 ; Compare mean dispatch cost without rounding. A guard can leave one case
 ; reachable along multiple routes, so the route counts can differ.
-(defun shapes-pick-plan ((_ _ BALANCED-ROUTES BALANCED-COST BALANCED)
-                        (_ _ SINGLETON-ROUTES SINGLETON-COST SINGLETON))
-    (if (> (* BALANCED-COST SINGLETON-ROUTES) (* SINGLETON-COST BALANCED-ROUTES))
-        SINGLETON BALANCED))
+(defun shapes-cheaper ((@ FIRST (FIRST-ROUTES . _)) (@ SECOND (SECOND-ROUTES . _)))
+    (if (> (* (shapes-total FIRST) SECOND-ROUTES) (* (shapes-total SECOND) FIRST-ROUTES))
+        SECOND FIRST))
 
 ; Separate preparation and planning so the compiler can optimize their macro
 ; programs independently on first use. Only the selected expression is emitted.
 (defmac shapes-dispatch-expanded (VALUE . CASES)
-    (shapes-pick-plan (shapes-dispatch-node VALUE CASES 0) (shapes-dispatch-node VALUE CASES 1)))
+    (shapes-result (shapes-cheaper (shapes-dispatch-node VALUE CASES 0) (shapes-dispatch-node VALUE CASES 1))))
 
 (defun shapes-dispatch (VALUE CASES)
     (c (q . shapes-dispatch-expanded) (c VALUE (shapes-cases VALUE CASES))))
