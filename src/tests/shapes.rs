@@ -166,7 +166,7 @@ fn test_shapes_reject_ambiguous_or_incorrect_templates() {
         let opts = Rc::new(DefaultCompilerOpts::new("shape-errors.clsp"))
             .set_search_paths(&["clsp".to_string(), ".".to_string()]);
         let result = compile_file(
-            &mut Default::default(),
+            &mut chialisp::clvmr::Allocator::new(),
             Rc::new(DefaultProgramRunner::new()),
             opts,
             &source,
@@ -281,7 +281,7 @@ fn shape_program_bytes(body: &str) -> Vec<u8> {
     use chialisp::classic::clvm::sexp::sexp_as_bin;
     use chialisp::compiler::clvm::convert_to_clvm_rs;
 
-    let mut allocator = Default::default();
+    let mut allocator = chialisp::clvmr::Allocator::new();
     let program = convert_to_clvm_rs(&mut allocator, compile_shape_program(body)).unwrap();
     sexp_as_bin(&mut allocator, program).raw()
 }
@@ -290,7 +290,7 @@ fn shape_cost(program: &[u8], input: &str) -> (u64, Vec<u8>) {
     use chialisp::classic::clvm::sexp::sexp_as_bin;
     use chialisp::compiler::{clvm::convert_to_clvm_rs, sexp::parse_sexp, srcloc::Srcloc};
 
-    let mut allocator = Default::default();
+    let mut allocator = chialisp::clvmr::Allocator::new();
     let input = parse_sexp(Srcloc::start("input"), input.bytes()).unwrap()[0].clone();
     let input = convert_to_clvm_rs(&mut allocator, input).unwrap();
     let input = sexp_as_bin(&mut allocator, input).raw();
@@ -378,7 +378,7 @@ fn compile_shape_program(body: &str) -> std::rc::Rc<chialisp::compiler::sexp::SE
             ]),
         ),
     ]);
-    let mut allocator = Default::default();
+    let mut allocator = chialisp::clvmr::Allocator::new();
     let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).unwrap();
     let compiled = chialisp::compiler::compiler::compile_file(
         &mut allocator,
@@ -408,7 +408,7 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
     use std::{collections::HashMap, rc::Rc};
 
     let program = compile_shape_program(body);
-    let mut allocator = Default::default();
+    let mut allocator = chialisp::clvmr::Allocator::new();
     for (input, expected) in examples {
         let args = parse_sexp(Srcloc::start("shape-input"), input.bytes()).unwrap()[0].clone();
         let result = run(
