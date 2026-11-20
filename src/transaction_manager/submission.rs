@@ -537,26 +537,16 @@ impl SubmissionBook {
         std::mem::take(&mut self.fee_retirements)
     }
 
-    pub(super) fn reconciliation_input_coins(
-        &self,
-        mut retain_landed_output: impl FnMut(&CoinString) -> bool,
-    ) -> BTreeSet<CoinString> {
-        let protocol_inputs = self
-            .submitted
+    pub(super) fn reconciliation_input_coins(&self) -> BTreeSet<CoinString> {
+        self.submitted
             .iter()
-            .filter(|tx| {
-                tx.chain_terminality != SubmissionChainTerminality::Landed
-                    || tx
-                        .expected_output_coins()
-                        .expect("validated retained base bundle must remain parseable")
-                        .iter()
-                        .any(&mut retain_landed_output)
+            .flat_map(|tx| {
+                tx.base_bundle
+                    .spends
+                    .iter()
+                    .map(|spend| spend.coin.clone())
+                    .chain(tx.fee_input_coins())
             })
-            .flat_map(|tx| tx.base_bundle.spends.iter().map(|spend| spend.coin.clone()))
-            .collect::<BTreeSet<_>>();
-        protocol_inputs
-            .into_iter()
-            .chain(self.submitted.iter().flat_map(SubmittedTx::fee_input_coins))
             .collect()
     }
 
@@ -872,7 +862,11 @@ impl SubmissionBook {
             if output_observed {
                 tx.chain_terminality = SubmissionChainTerminality::Landed;
                 stopped_ids.push(tx.id);
-            } else if tx.spent_coin_ids().any(|id| spent_inputs.contains(&id)) {
+            } else if tx
+                .current_input_ids()
+                .iter()
+                .any(|id| spent_inputs.contains(id))
+            {
                 if reorg || tx.chain_terminality != SubmissionChainTerminality::Landed {
                     tx.chain_terminality = SubmissionChainTerminality::InputSpent;
                 }
@@ -898,6 +892,7 @@ impl SubmissionBook {
         &self,
         explicitly_absent: &HashSet<CoinString>,
         explicitly_live_input_ids: &HashSet<CoinID>,
+        watched_outputs: &HashSet<CoinString>,
     ) -> HashSet<u64> {
         self.submitted
             .iter()
@@ -909,12 +904,16 @@ impl SubmissionBook {
                     && (tx.chain_terminality == SubmissionChainTerminality::InputSpent
                         || expected_output_coins
                             .iter()
-                            .any(|coin| explicitly_absent.contains(coin)))
+                            .any(|coin| explicitly_absent.contains(coin))
+                        || !expected_output_coins
+                            .iter()
+                            .any(|coin| watched_outputs.contains(coin)))
                     // Every external input must be spendable again. Coins
                     // created and consumed inside this bundle are recreated on
                     // replay, so they need not exist in the replacement chain.
                     && tx
-                        .spent_coin_ids()
+                        .current_input_ids()
+                        .into_iter()
                         .filter(|coin_id| {
                             !expected_output_coins
                                 .iter()

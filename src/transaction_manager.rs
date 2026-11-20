@@ -246,6 +246,16 @@ impl SubmittedTx {
             .map(|spend| spend.coin.to_coin_id())
     }
 
+    fn current_input_ids(&self) -> Vec<CoinID> {
+        self.spent_coin_ids()
+            .chain(
+                self.fee_input_coins()
+                    .into_iter()
+                    .map(|coin| coin.to_coin_id()),
+            )
+            .collect()
+    }
+
     /// External wallet inputs only; settlement coins created and spent inside
     /// the same bundle have no independent reservation to monitor.
     fn fee_input_coins(&self) -> Vec<CoinString> {
@@ -953,22 +963,12 @@ impl<C> TransactionManager<C> {
     }
 
     fn reconciliation_input_coins(&self) -> std::collections::BTreeSet<CoinString> {
-        self.submission_book.reconciliation_input_coins(|coin| {
-            self.watched_coins.get(coin).is_some_and(|watched| {
-                // A reorg can erase the output's birthday before input records
-                // prove recovery. Keep querying those inputs until the output
-                // reconfirms and reaches the confirmation-depth boundary.
-                watched.birthday.is_none_or(|birthday| {
-                    birthday.saturating_add(self.confirmation_depth) > self.last_height
-                })
-            })
-        })
+        self.submission_book.reconciliation_input_coins()
     }
 
     /// Durable poll-interest snapshot for seeding the host poller. In addition
-    /// to protocol-watched coins, retained protocol inputs are queried while
-    /// their outcome is unresolved, and external fee inputs are queried until
-    /// the fee reservation reaches its final disposition.
+    /// to protocol-watched coins, all retained transaction inputs are queried
+    /// until the transaction expires or its spend is buried beyond reorg depth.
     pub fn snapshot_watched_coins(&self) -> Vec<CoinString> {
         self.watched_coins
             .keys()
@@ -1516,9 +1516,11 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .filter(|rec| rec.created_height.is_some() && rec.spent_height.is_none())
             .map(|rec| rec.coin.to_coin_id())
             .collect::<HashSet<_>>();
-        let causally_rolled_back_ids = self
-            .submission_book
-            .causally_rolled_back_ids(&explicitly_absent, &explicitly_live_input_ids);
+        let causally_rolled_back_ids = self.submission_book.causally_rolled_back_ids(
+            &explicitly_absent,
+            &explicitly_live_input_ids,
+            &self.watched_coins.keys().cloned().collect(),
+        );
         for coin in self
             .submission_book
             .absent_outputs_for_ids(&causally_rolled_back_ids, &explicitly_absent)
@@ -1704,8 +1706,9 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             |tx| {
                 !matches!(tx.expiry, Some(expiry) if current_height >= expiry)
                     && !tx
-                        .spent_coin_ids()
-                        .any(|coin_id| buried_inputs.contains(&coin_id))
+                        .current_input_ids()
+                        .iter()
+                        .any(|coin_id| buried_inputs.contains(coin_id))
             },
             &spent_inputs,
         );
@@ -1778,7 +1781,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             let coin_id = coin.to_coin_id();
             let before = self.reconciliation_input_coins();
             self.submission_book.retain_submitted_with_spent_fee_inputs(
-                |tx| !tx.spent_coin_ids().any(|spent| spent == coin_id),
+                |tx| !tx.current_input_ids().contains(&coin_id),
                 spent_inputs,
             );
             self.unwatch_removed_reconciliation_inputs(&before);
@@ -2423,7 +2426,7 @@ mod tests {
 
     #[test]
     fn fee_inputs_are_watched_until_final_retirement_and_spent_fees_are_not_cancelled() {
-        for fee_spent in [false, true] {
+        for (protocol_spent, fee_spent) in [(true, false), (true, true), (false, true)] {
             let (base, fee_source, protocol_coin, target) = test_protocol_and_fee_bundles(15);
             let fee_coin = fee_source.spends[0].coin.clone();
             let mut mgr = TransactionManager::new(PersistableMockGameSession);
@@ -2455,7 +2458,7 @@ mod tests {
                 CoinStateRecord {
                     coin: protocol_coin,
                     created_height: Some(1),
-                    spent_height: Some(10),
+                    spent_height: protocol_spent.then_some(10),
                 },
                 CoinStateRecord {
                     coin: fee_coin.clone(),
@@ -2484,6 +2487,67 @@ mod tests {
                 .unwatch_coins
                 .contains(&fee_coin));
         }
+    }
+
+    #[test]
+    fn landed_protocol_input_stays_watched_for_reorg_then_unwatches_at_depth() {
+        let input = test_coin(136);
+        let output = CoinString::from_parts(
+            &input.to_coin_id(),
+            &PuzzleHash::from_bytes([137; 32]),
+            &Amount::new(1),
+        );
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
+        mgr.pending_submissions.push(PendingSubmission {
+            id: None,
+            submission: TransactionSubmission::already_paid(
+                test_bundle_spending_creating("landed-input", &input, &output),
+                None,
+            ),
+            fee_intent: SubmissionFeeIntent::AlreadyPaid,
+        });
+        let submission = mgr.drain_submissions().unwrap().submissions.remove(0);
+        let mut allocator = AllocEncoder::new();
+        let landed = [
+            CoinStateRecord {
+                coin: input.clone(),
+                created_height: Some(10),
+                spent_height: Some(12),
+            },
+            CoinStateRecord {
+                coin: output,
+                created_height: Some(12),
+                spent_height: None,
+            },
+        ];
+        mgr.report_coin_states(&mut allocator, 12, &landed).unwrap();
+        assert_eq!(mgr.drain_retired_submission_ids(), vec![submission.id]);
+        assert!(mgr.snapshot_watched_coins().contains(&input));
+
+        mgr.report_coin_states(
+            &mut allocator,
+            11,
+            &[CoinStateRecord {
+                coin: input.clone(),
+                created_height: Some(10),
+                spent_height: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            mgr.drain_submissions().unwrap().submissions[0].id,
+            submission.id
+        );
+
+        mgr.report_coin_states(&mut allocator, 12, &landed).unwrap();
+        mgr.report_coin_states(&mut allocator, 12 + mgr.confirmation_depth(), &landed)
+            .unwrap();
+        assert!(!mgr.snapshot_watched_coins().contains(&input));
+        assert!(mgr
+            .flush_and_collect(&mut allocator)
+            .unwrap()
+            .unwatch_coins
+            .contains(&input));
     }
 
     #[test]
@@ -2519,7 +2583,7 @@ mod tests {
             5,
             &[
                 CoinStateRecord {
-                    coin: protocol_coin,
+                    coin: protocol_coin.clone(),
                     created_height: Some(1),
                     spent_height: None,
                 },
@@ -2539,6 +2603,7 @@ mod tests {
             }]
         );
         assert!(!mgr.snapshot_watched_coins().contains(&fee_coin));
+        assert!(!mgr.snapshot_watched_coins().contains(&protocol_coin));
     }
 
     #[test]
