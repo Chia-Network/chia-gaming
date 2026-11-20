@@ -112,20 +112,25 @@ alternative depends on the generated decision tree, not textual branch order.
 Overlapping or indistinguishable alternatives produce a compilation error.
 There is no catch-all clause.
 
-The planner chooses the safe test with the fewest alternatives on its larger
-side. Ties favor fewer alternatives on the true side, then the first test
-encountered in declaration and template order. For the same source these rules
-produce the same tree. If separating tests are too deep to read safely, the
-planner first checks a parent pair. When a position can only be nil or a pair,
-its value serves as the condition because nil is false and every pair is true. A position
-that can also contain a nonempty atom still needs a pair test to distinguish it
-from a pair.
+The macro compares two decision trees. One favors a safe test that isolates a
+single alternative. The other minimizes the number of alternatives on the
+larger side, breaking ties in favor of fewer on the true side. Both consider
+tests in declaration and template order, and use a parent guard when a deeper
+path needs one. A nil/pair split tests the value directly. A split between
+pairs and arbitrary atoms uses a pair test.
+
+The planner estimates **mean CLVM dispatch cost**, giving each route to a leaf
+equal weight. A guard can make a single alternative reachable by multiple
+routes. The estimate includes path depth, pair checks, conditionals, quotes,
+and applies. It omits branch body costs and the final location of the
+scrutinee in the compiled environment. Only the cheaper tree is emitted, with
+the balanced tree winning a tie. The choice is deterministic for a given source.
 
 When both arms return literal numbers or strings, dispatch uses CLVM's eager
-`i`. The macro can also combine two levels when both sides of the first split
-need to inspect the same next path. For a four-way choice among literals,
-`i` returns the result directly. For four executable branches, `i` selects a
-compiled program and a single apply runs it.
+`i`. Two levels can fuse when both children test the same safe path and the
+saved apply outweighs the extra eager test. For a four-way choice among
+literals, `i` returns the result directly. For four executable branches, it
+selects a compiled program and a single apply runs it.
 
 Accesses are only generated when every ancestor is known to be a pair, from the
 remaining shapes or earlier tests. Optional structure never supplies that fact.

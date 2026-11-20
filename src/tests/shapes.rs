@@ -343,6 +343,65 @@ fn shape_dispatch_balances_splits_reproducibly() {
 }
 
 #[test]
+fn shape_dispatch_selects_the_cheaper_split_policy() {
+    // b isolates the third case. Testing a first splits the same five cases 2:3.
+    // Changing only the third body flips which tree has the cheaper mean.
+    let inputs = [
+        "((4 . (4 . 5)) . (4 . 4))",
+        "(((4 . 5) . (4 . 5)) . ((4 . 5) . (4 . 5)))",
+        "((4 . 4) . ((4 . 5) . 4))",
+        "(((4 . 5) . (4 . 5)) . (4 . 4))",
+        "((4 . (4 . 5)) . ((4 . 5) . (4 . 5)))",
+    ];
+    for (third_body, third_result, max_total) in [("(+ a 3)", 7, 3825), ("3", 3, 2852)] {
+        let program = shape_program_bytes(&format!(
+            "(export VALUE (if-shape VALUE
+                (#((atom a) (b . tb) (atom c) (atom d)) 1)
+                (#((a . ta) (b . tb) (c . tc) (d . td)) 2)
+                (#((atom a) (atom b) (c . tc) (atom d)) {third_body})
+                (#((a . ta) (b . tb) (atom c) (atom d)) 4)
+                (#((atom a) (b . tb) (c . tc) (d . td)) 5)))"
+        ));
+        let mut total = 0;
+        for (input, expected) in inputs.iter().zip([1, 2, third_result, 4, 5]) {
+            let (cost, result) = shape_cost(&program, input);
+            assert_eq!(result, [expected]);
+            total += cost;
+        }
+        assert!(total <= max_total, "{third_body}: total cost {total}");
+    }
+}
+
+#[test]
+fn shape_dispatch_keeps_a_deep_repeated_test_lazy() {
+    // The second test is twelve edges down. Repeating it for eager fusion
+    // costs 474 per input. The lazy outer split reads the path once for 463.
+    let mut branches = Vec::new();
+    let mut inputs = Vec::new();
+    for (left, left_value) in [("(atom a)", "1"), ("(a . x)", "(1 . 2)")] {
+        for (right, right_value) in [("(atom b)", "3"), ("(b . y)", "(3 . 4)")] {
+            let mut tail = right.to_owned();
+            let mut value = right_value.to_owned();
+            for depth in 1..12 {
+                tail = format!("(pad{depth} . {tail})");
+                value = format!("(0 . {value})");
+            }
+            branches.push(format!("(({left} . {tail}) {})", branches.len() + 1));
+            inputs.push(format!("({left_value} . {value})"));
+        }
+    }
+    let program = shape_program_bytes(&format!(
+        "(export VALUE (if-shape VALUE {}))",
+        branches.join(" ")
+    ));
+    for (input, expected) in inputs.iter().zip(1u8..) {
+        let (cost, result) = shape_cost(&program, input);
+        assert_eq!(result, [expected]);
+        assert!(cost <= 463, "{input}: cost {cost}");
+    }
+}
+
+#[test]
 fn shape_dispatch_fields_can_shadow_a_function_argument() {
     let cases = "(if-shape value
         ((item) (+ value tail shapes-value))
@@ -531,7 +590,16 @@ fn test_shapes_eight_way_dispatch_needs_three_checks() {
     }
     // Every alternative appears first and last, in both forward and reverse order.
     for _ in 0..8 {
-        assert_dispatch(&branches, &examples);
+        let program = shape_program_bytes(&format!(
+            "(export VALUE (if-shape VALUE {}))",
+            branches.join(" ")
+        ));
+        assert!(program.len() <= 111, "{} bytes", program.len());
+        for (input, expected) in &examples {
+            let (cost, result) = shape_cost(&program, input);
+            assert_eq!(result, [*expected as u8]);
+            assert!(cost <= 675, "{input}: cost {cost}");
+        }
         let reverse = branches.iter().rev().cloned().collect::<Vec<_>>();
         assert_dispatch(&reverse, &examples);
         branches.rotate_left(1);
