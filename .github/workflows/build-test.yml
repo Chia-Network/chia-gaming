@@ -2,7 +2,7 @@
 name: build-test.yml
 
 concurrency:
-  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  group: ${{ github.ref }}-build-test-${{ github.event_name }}-${{ inputs.source_sha != '' && github.run_id || '' }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
   cancel-in-progress: true
 
 env:
@@ -14,11 +14,17 @@ on:
     branches:
       - base
       - dev
-  release:
-    types: [published]
   pull_request:
     branches:
       - '**'
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      release_tag:
+        required: true
+        type: string
 
 permissions:
   id-token: write
@@ -33,6 +39,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          ref: ${{ inputs.source_sha || github.sha }}
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
         with:
@@ -50,6 +57,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          ref: ${{ inputs.source_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
@@ -71,6 +79,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
@@ -92,17 +101,15 @@ jobs:
           # Run simulator tests (matches local ct.sh)
           cargo test --locked --lib --features sim-tests,sim-server -- --nocapture
 
-  release:
+  archives:
     runs-on: ubuntu-22.04
     name: Build deploy tarballs (Linux)
-    if: github.event_name == 'release'
-    needs: [unit_tests]
-    permissions:
-      contents: write
+    if: inputs.release_tag != ''
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          ref: ${{ inputs.source_sha }}
 
       - name: Install rust
         uses: dtolnay/rust-toolchain@master
@@ -124,10 +131,14 @@ jobs:
           corepack prepare pnpm@10.33.0 --activate
 
       - name: Build deploy tarballs
-        run: tools/build-deploy.sh --release-version=${{ github.event.release.tag_name }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: tools/build-deploy.sh "--release-version=$RELEASE_TAG"
 
       - name: Verify deploy archives
-        run: tools/test-deploy-archives.sh --release-version=${{ github.event.release.tag_name }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: tools/test-deploy-archives.sh "--release-version=$RELEASE_TAG"
 
       - name: Generate deploy checksums
         run: |
@@ -140,81 +151,45 @@ jobs:
             sha256sum chia-gaming-hub-*
           ) >> SHA256SUMS-web.txt
 
+      - name: Record application source
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          printf 'source_sha=%s\nworkflow_sha=%s\n' "$SOURCE_SHA" "$WORKFLOW_SHA" > SOURCE-web.txt
+
+      - name: Stage flat release artifacts
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir release-player release-hub
+          cp "deploy_player_app/chia-gaming-${RELEASE_TAG}.tgz" "deploy_player_app/chia-gaming-${RELEASE_TAG}.zip" release-player/
+          cp "deploy_hub/chia-gaming-hub-${RELEASE_TAG}.tgz" "deploy_hub/chia-gaming-hub-${RELEASE_TAG}.zip" SHA256SUMS-web.txt SOURCE-web.txt release-hub/
+
       - name: Upload player app artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: chia-gaming-${{ github.event.release.tag_name }}
-          path: |
-            deploy_player_app/chia-gaming-${{ github.event.release.tag_name }}.tgz
-            deploy_player_app/chia-gaming-${{ github.event.release.tag_name }}.zip
+          name: chia-gaming-${{ inputs.release_tag }}
+          if-no-files-found: error
+          path: release-player/
 
       - name: Upload hub artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: chia-gaming-hub-${{ github.event.release.tag_name }}
-          path: |
-            deploy_hub/chia-gaming-hub-${{ github.event.release.tag_name }}.tgz
-            deploy_hub/chia-gaming-hub-${{ github.event.release.tag_name }}.zip
-            SHA256SUMS-web.txt
-
-      - name: Upload deploy archives to GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          gh release upload "$RELEASE_TAG" \
-            deploy_player_app/chia-gaming-"$RELEASE_TAG".tgz \
-            deploy_player_app/chia-gaming-"$RELEASE_TAG".zip \
-            deploy_hub/chia-gaming-hub-"$RELEASE_TAG".tgz \
-            deploy_hub/chia-gaming-hub-"$RELEASE_TAG".zip \
-            SHA256SUMS-web.txt \
-            --clobber
-
-  pages:
-    name: Publish project site and player app to GitHub Pages
-    if: github.event_name == 'release'
-    needs: [release]
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    concurrency:
-      group: github-pages
-      cancel-in-progress: false
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Download verified player archive
-        uses: actions/download-artifact@v7
-        with:
-          name: chia-gaming-${{ github.event.release.tag_name }}
-          path: player-archive
-      - name: Assemble project site
-        env:
-          RELEASE_URL: ${{ github.event.release.html_url }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          ./tools/build-pages.sh "player-archive/chia-gaming-${RELEASE_TAG}.tgz" pages "${RELEASE_URL:?}"
-      - name: Configure Pages
-        uses: actions/configure-pages@v6
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
-        with:
-          path: pages
-      - name: Deploy Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+          name: chia-gaming-hub-${{ inputs.release_tag }}
+          if-no-files-found: error
+          path: release-hub/
 
   coverage:
+    if: inputs.release_tag == ''
     needs: [fmt, clippy]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          ref: ${{ inputs.source_sha || github.sha }}
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}

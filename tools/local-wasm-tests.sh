@@ -176,7 +176,20 @@ run_wasm_shard() (
 )
 
 if [ "$FRONTEND_STATUS" -eq 0 ]; then
-    WASM_SHARD_COUNT=3
+    WASM_TEST_COUNT="$(pnpm --filter chia-gaming-fe exec jest --listTests --runInBand --testPathPatterns=load_wasm | wc -l | tr -d '[:space:]')"
+    AVAILABLE_CORES="$(node -p "require('node:os').availableParallelism()")"
+    WASM_SHARD_COUNT="${CHIA_GAMING_WASM_SHARDS:-$((AVAILABLE_CORES > 1 ? AVAILABLE_CORES - 1 : 1))}"
+    case "$WASM_SHARD_COUNT" in
+        ''|*[!0-9]*|0) echo "CHIA_GAMING_WASM_SHARDS must be a positive integer" >&2; exit 1 ;;
+    esac
+    if [ "$WASM_TEST_COUNT" -eq 0 ]; then
+        echo "No load_wasm test suites found" >&2
+        exit 1
+    fi
+    if [ "$WASM_SHARD_COUNT" -gt "$WASM_TEST_COUNT" ]; then
+        WASM_SHARD_COUNT="$WASM_TEST_COUNT"
+    fi
+    echo "=== Running $WASM_TEST_COUNT WASM test suites across $WASM_SHARD_COUNT shards ($AVAILABLE_CORES available cores) ==="
     for shard in $(seq 1 "$WASM_SHARD_COUNT"); do
         run_wasm_shard "$shard" "$WASM_SHARD_COUNT" &
         WASM_PIDS+=("$!")
