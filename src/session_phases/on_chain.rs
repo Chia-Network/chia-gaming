@@ -1548,7 +1548,13 @@ impl OnChainPhase {
         let (pre_referee, pre_last_ph) = self.save_game_state(&game_id)?;
 
         let (old_ph, new_ph, _state_number, move_result, transaction) =
-            self.on_chain_our_move(env, &game_id, prepared, current_coin)?;
+            match self.on_chain_our_move(env, &game_id, prepared, current_coin) {
+                Ok(result) => result,
+                Err(error) => {
+                    self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
+                    return Err(error);
+                }
+            };
 
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
