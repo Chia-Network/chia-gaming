@@ -88,24 +88,23 @@ fn parse_condition(
             (SExp::Atom, SExp::Atom, SExp::Atom)
         )
     {
-        let atoms: Vec<Vec<u8>> = exploded
-            .iter()
-            .take(3)
-            .map(|a| allocator.allocator_ref().atom(*a).to_vec())
-            .collect();
-        if *atoms[0] == AGG_SIG_UNSAFE_ATOM {
-            let pk = PublicKey::from_slice(&atoms[1])
+        let op = allocator.allocator_ref().atom(exploded[0]);
+        if op.as_ref() == AGG_SIG_UNSAFE_ATOM {
+            let pk = PublicKey::from_slice(&allocator.allocator_ref().atom(exploded[1]))
                 .map_err(|e| Error::StrErr(format!("AGG_SIG_UNSAFE public key: {e:?}")))?;
-            return Ok(Some(CoinCondition::AggSigUnsafe(pk, atoms[2].to_vec())));
-        } else if *atoms[0] == AGG_SIG_ME_ATOM {
-            let pk = PublicKey::from_slice(&atoms[1])
+            let message = allocator.allocator_ref().atom(exploded[2]).to_vec();
+            return Ok(Some(CoinCondition::AggSigUnsafe(pk, message)));
+        } else if op.as_ref() == AGG_SIG_ME_ATOM {
+            let pk = PublicKey::from_slice(&allocator.allocator_ref().atom(exploded[1]))
                 .map_err(|e| Error::StrErr(format!("AGG_SIG_ME public key: {e:?}")))?;
-            return Ok(Some(CoinCondition::AggSigMe(pk, atoms[2].to_vec())));
-        } else if *atoms[0] == CREATE_COIN_ATOM {
-            let amt = u64_from_atom(&atoms[2]).ok_or_else(|| {
-                Error::StrErr("CREATE_COIN amount was not a u64 atom".to_string())
-            })?;
-            let hash = Hash::from_slice(&atoms[1])
+            let message = allocator.allocator_ref().atom(exploded[2]).to_vec();
+            return Ok(Some(CoinCondition::AggSigMe(pk, message)));
+        } else if op.as_ref() == CREATE_COIN_ATOM {
+            let amt =
+                u64_from_atom(&allocator.allocator_ref().atom(exploded[2])).ok_or_else(|| {
+                    Error::StrErr("CREATE_COIN amount was not a u64 atom".to_string())
+                })?;
+            let hash = Hash::from_slice(&allocator.allocator_ref().atom(exploded[1]))
                 .map_err(|e| Error::StrErr(format!("CREATE_COIN puzzle hash: {e:?}")))?;
             return Ok(Some(CoinCondition::CreateCoin(
                 PuzzleHash::from_hash(hash),
@@ -123,32 +122,32 @@ fn parse_condition(
             (SExp::Atom, SExp::Atom)
         )
     {
-        let op = allocator.allocator_ref().atom(exploded[0]).to_vec();
-        let arg = allocator.allocator_ref().atom(exploded[1]).to_vec();
-        if *op == ASSERT_HEIGHT_RELATIVE_ATOM {
+        let op = allocator.allocator_ref().atom(exploded[0]);
+        let arg = allocator.allocator_ref().atom(exploded[1]);
+        if op.as_ref() == ASSERT_HEIGHT_RELATIVE_ATOM {
             let val = u64_from_atom(&arg).ok_or_else(|| {
                 Error::StrErr("ASSERT_HEIGHT_RELATIVE value was not a u64 atom".to_string())
             })?;
             return Ok(Some(CoinCondition::AssertHeightRelative(val)));
         }
-        if *op == ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM {
+        if op.as_ref() == ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM {
             let val = u64_from_atom(&arg).ok_or_else(|| {
                 Error::StrErr("ASSERT_BEFORE_HEIGHT_ABSOLUTE value was not a u64 atom".to_string())
             })?;
             return Ok(Some(CoinCondition::AssertBeforeHeightAbsolute(val)));
         }
-        if *op == CREATE_COIN_ANNOUNCEMENT_ATOM {
-            return Ok(Some(CoinCondition::CreateCoinAnnouncement(arg)));
+        if op.as_ref() == CREATE_COIN_ANNOUNCEMENT_ATOM {
+            return Ok(Some(CoinCondition::CreateCoinAnnouncement(arg.to_vec())));
         }
-        if *op == ASSERT_COIN_ANNOUNCEMENT_ATOM {
-            return Ok(Some(CoinCondition::AssertCoinAnnouncement(arg)));
+        if op.as_ref() == ASSERT_COIN_ANNOUNCEMENT_ATOM {
+            return Ok(Some(CoinCondition::AssertCoinAnnouncement(arg.to_vec())));
         }
-        if *op == RESERVE_FEE_ATOM {
+        if op.as_ref() == RESERVE_FEE_ATOM {
             let val = u64_from_atom(&arg)
                 .ok_or_else(|| Error::StrErr("RESERVE_FEE value was not a u64 atom".to_string()))?;
             return Ok(Some(CoinCondition::ReserveFee(Amount::new(val))));
         }
-        if *op == ASSERT_CONCURRENT_SPEND_ATOM {
+        if op.as_ref() == ASSERT_CONCURRENT_SPEND_ATOM {
             let coin_id = Hash::from_slice(&arg)
                 .map_err(|e| Error::StrErr(format!("ASSERT_CONCURRENT_SPEND coin id: {e:?}")))?;
             return Ok(Some(CoinCondition::AssertConcurrentSpend(CoinID::new(
