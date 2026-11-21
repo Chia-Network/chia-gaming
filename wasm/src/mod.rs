@@ -2030,10 +2030,16 @@ mod gaming_wasm {
         /// Labeled coin ids (hex) to show above the protocol state.
         pub fn coins_of_interest(&self) -> Result<JsValue, JsValue> {
             let (coins, transitions) = self.with_game(move |cradle: &mut Channel| {
-                Ok((
-                    cradle.cradle.coins_of_interest(),
-                    cradle.cradle.pending_coin_transitions()?,
-                ))
+                let coins = cradle.cradle.coins_of_interest();
+                // Opening offers can contain expensive ephemeral wallet spends.
+                // Their final channel output is already known to the phase.
+                let active_inputs = coins
+                    .iter()
+                    .filter(|(kind, _)| *kind != CoinOfInterest::Funding)
+                    .map(|(_, id)| id.clone())
+                    .collect::<Vec<_>>();
+                let transitions = cradle.cradle.pending_coin_transitions(&active_inputs)?;
+                Ok((coins, transitions))
             })?;
             let mut pending = BTreeMap::<String, BTreeSet<String>>::new();
             for (input, outputs) in transitions {
