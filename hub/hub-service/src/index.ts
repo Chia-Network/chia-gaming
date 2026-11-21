@@ -262,8 +262,10 @@ function trackConnection(ws: WebSocket, ip: string): void {
   connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
   ws.once('close', () => {
     totalConnections -= 1;
-    totalQueuedHubBytes -= queuedHubBytes.get(ws) ?? 0;
+    const released = queuedHubBytes.get(ws) ?? 0;
+    totalQueuedHubBytes -= released;
     queuedHubBytes.delete(ws);
+    if (released > 0) flushDeferredHubUpdates();
     const remaining = (connectionsByIp.get(ip) ?? 1) - 1;
     if (remaining === 0) {
       connectionsByIp.delete(ip);
