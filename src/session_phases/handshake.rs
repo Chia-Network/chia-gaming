@@ -172,6 +172,11 @@ pub fn contribution_bundle_asserts_funding_announcement(
     let expected = expected_announcement.bytes().to_vec();
     let mut cost_left = SpendBundle::PEER_FUNDING_MAX_COST;
     for spend in &acceptance.spends {
+        if cost_left == 0 {
+            return Err(Error::StrErr(
+                "peer funding announcement check exhausted CLVM cost budget".to_string(),
+            ));
+        }
         let puzzle = spend.bundle.puzzle.to_program();
         let solution = spend.bundle.solution.p();
         let puzzle = puzzle.to_nodeptr(allocator)?;
