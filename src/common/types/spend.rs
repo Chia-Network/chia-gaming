@@ -138,6 +138,11 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for SpendBundle {
 }
 
 impl SpendBundle {
+    /// Cost ceiling for a peer-supplied channel funding transaction. Ordinary
+    /// wallet offers need only a few spends; the full block budget is excessive
+    /// for an untrusted handshake message.
+    pub(crate) const PEER_FUNDING_MAX_COST: u64 = 200_000_000;
+
     pub fn from_clvm(allocator: &AllocEncoder, data: NodePtr) -> Result<SpendBundle, Error> {
         let lst = if let Some(lst) = proper_list(allocator.allocator_ref(), data, true) {
             lst
@@ -164,6 +169,34 @@ impl SpendBundle {
         &self,
         agg_sig_me_additional_data: &Hash,
         height: u64,
+    ) -> Result<(), Error> {
+        self.validate_consensus_with_cost(
+            agg_sig_me_additional_data,
+            height,
+            crate::common::types::MAX_BLOCK_COST_CLVM,
+            true,
+        )
+    }
+
+    pub(crate) fn validate_peer_funding_consensus(
+        &self,
+        agg_sig_me_additional_data: &Hash,
+        height: u64,
+    ) -> Result<(), Error> {
+        self.validate_consensus_with_cost(
+            agg_sig_me_additional_data,
+            height,
+            Self::PEER_FUNDING_MAX_COST,
+            false,
+        )
+    }
+
+    fn validate_consensus_with_cost(
+        &self,
+        agg_sig_me_additional_data: &Hash,
+        height: u64,
+        max_cost: u64,
+        replay_failure: bool,
     ) -> Result<(), Error> {
         if self.spends.is_empty() {
             return Err(Error::StrErr("empty spend bundle".to_string()));
@@ -206,7 +239,7 @@ impl SpendBundle {
         let consensus_result = run_spendbundle(
             &mut allocator,
             &protocol_bundle,
-            constants.max_block_cost_clvm,
+            max_cost,
             flags,
             &constants,
             None,
@@ -214,14 +247,16 @@ impl SpendBundle {
         let (_conditions, signature_pairs) = match consensus_result {
             Ok(result) => result,
             Err(err) => {
-                if let Some(clvm_error) = replay_consensus_eval_error(
-                    &protocol_bundle,
-                    constants.max_block_cost_clvm,
-                    flags,
-                    &constants,
-                    &format!("{:?}", err.error_code()),
-                ) {
-                    return Err(clvm_error);
+                if replay_failure {
+                    if let Some(clvm_error) = replay_consensus_eval_error(
+                        &protocol_bundle,
+                        max_cost,
+                        flags,
+                        &constants,
+                        &format!("{:?}", err.error_code()),
+                    ) {
+                        return Err(clvm_error);
+                    }
                 }
                 return Err(Error::StrErr(format!(
                     "spend bundle consensus validation failed: {:?}",
@@ -1032,6 +1067,41 @@ mod consensus_validation_tests {
         assert_eq!(consensus_replay_attempts(), 0);
         assert_eq!(diagnostic_registry_len(), 0);
         assert_eq!(frame_serializations_for_test(), 0);
+    }
+
+    #[test]
+    fn peer_funding_validation_caps_cost_without_replaying_failures() {
+        let mut allocator = AllocEncoder::new();
+        let output_ph = PuzzleHash::from_bytes([0x77; 32]);
+        let mut conditions = Vec::new();
+        for amount in 1..=112_u64 {
+            conditions.push(
+                (51_u8, (output_ph.clone(), (Amount::new(amount), ())))
+                    .to_clvm(&mut allocator)
+                    .expect("CREATE_COIN"),
+            );
+        }
+        let total_amount = (1..=112_u64).sum();
+        let bundle = SpendBundle {
+            name: None,
+            spends: vec![quoted_condition_spend(
+                &mut allocator,
+                0x25,
+                total_amount,
+                conditions,
+            )],
+        };
+        let additional_data = Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA);
+        bundle
+            .validate_consensus(&additional_data, 1)
+            .expect("bundle is valid under the full block budget");
+
+        reset_consensus_replay_attempts();
+        let error = bundle
+            .validate_peer_funding_consensus(&additional_data, 1)
+            .expect_err("peer funding budget must reject this bundle");
+        assert!(format!("{error:?}").contains("CostExceeded"));
+        assert_eq!(consensus_replay_attempts(), 0);
     }
 
     #[test]

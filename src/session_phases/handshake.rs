@@ -1,9 +1,11 @@
 use std::collections::BTreeMap;
 
 use clvm_traits::{ClvmEncoder, ToClvm};
+use clvmr::reduction::Reduction;
 
 use crate::channel_state::types::{ChannelPrivateKeys, StateUpdateSignatures};
 use crate::channel_state::ChannelState;
+use crate::clvm_execution::run_clvm_with_runtime_prints;
 use crate::common::constants::{
     ASSERT_BEFORE_HEIGHT_ABSOLUTE, ASSERT_COIN_ANNOUNCEMENT, CREATE_COIN, CREATE_COIN_ANNOUNCEMENT,
     RECEIVE_MESSAGE, RESERVE_FEE_ATOM, SEND_MESSAGE,
@@ -168,14 +170,16 @@ pub fn contribution_bundle_asserts_funding_announcement(
     expected_announcement: &Hash,
 ) -> Result<(), Error> {
     let expected = expected_announcement.bytes().to_vec();
+    let mut cost_left = SpendBundle::PEER_FUNDING_MAX_COST;
     for spend in &acceptance.spends {
         let puzzle = spend.bundle.puzzle.to_program();
         let solution = spend.bundle.solution.p();
-        let Ok(conditions) =
-            CoinCondition::from_puzzle_and_solution(allocator, puzzle.as_ref(), solution.as_ref())
-        else {
-            continue;
-        };
+        let puzzle = puzzle.to_nodeptr(allocator)?;
+        let solution = solution.to_nodeptr(allocator)?;
+        let Reduction(cost, output) =
+            run_clvm_with_runtime_prints(allocator, puzzle, solution, cost_left)?;
+        cost_left -= cost;
+        let conditions = CoinCondition::from_nodeptr(allocator, output)?;
         if conditions.iter().any(|condition| {
             matches!(
                 condition,
@@ -202,7 +206,7 @@ pub fn validate_assembled_channel_funding(
     require_concentrated_funding_signature(initiator_bundle, "handshake C")?;
     require_concentrated_funding_signature(receiver_acceptance, "handshake D")?;
     let combined = combine_channel_funding_bundles(initiator_bundle, receiver_acceptance)?;
-    combined.validate_consensus(agg_sig_me_additional_data, height)?;
+    combined.validate_peer_funding_consensus(agg_sig_me_additional_data, height)?;
     contribution_bundle_asserts_funding_announcement(
         allocator,
         initiator_bundle,
