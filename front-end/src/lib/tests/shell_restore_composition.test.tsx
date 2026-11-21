@@ -1538,6 +1538,11 @@ describe('Shell production restore composition', () => {
     await act(async () => {
       await application.dispatch({ type: 'reset' });
     });
+    expect(application.snapshot().confirmDialog?.confirmLabel).toBe('Erase local data');
+    expect(hardReset).not.toHaveBeenCalled();
+    await act(async () => {
+      await application.dispatch({ type: 'confirm' });
+    });
 
     expect(controller.cleanup).toHaveBeenCalledTimes(1);
     expect(hardReset).toHaveBeenCalledTimes(1);
