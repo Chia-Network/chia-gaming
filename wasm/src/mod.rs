@@ -2029,9 +2029,22 @@ mod gaming_wasm {
 
         /// Labeled coin ids (hex) to show above the protocol state.
         pub fn coins_of_interest(&self) -> Result<JsValue, JsValue> {
-            let coins =
-                self.with_game(move |cradle: &mut Channel| Ok(cradle.cradle.coins_of_interest()))?;
-            let entries: Vec<JsCoinOfInterest> = coins
+            let (coins, transitions) = self.with_game(move |cradle: &mut Channel| {
+                Ok((
+                    cradle.cradle.coins_of_interest(),
+                    cradle.cradle.pending_coin_transitions()?,
+                ))
+            })?;
+            let mut pending = BTreeMap::<String, BTreeSet<String>>::new();
+            for (input, outputs) in transitions {
+                pending
+                    .entry(input.to_coin_id().to_string())
+                    .or_default()
+                    .extend(outputs.into_iter().map(|coin| coin.to_coin_id().to_string()));
+            }
+            let opening = coins.iter().any(|(kind, _)| *kind == CoinOfInterest::Funding);
+            let mut shown_ids: BTreeSet<String> = coins.iter().map(|(_, id)| id.clone()).collect();
+            let mut entries: Vec<JsCoinOfInterest> = coins
                 .into_iter()
                 .map(|(kind, id)| {
                     let (game_id, game_coin_kind) = match kind {
@@ -2043,14 +2056,40 @@ mod gaming_wasm {
                         }
                         _ => (None, None),
                     };
+                    let label = if kind == CoinOfInterest::Funding || pending.contains_key(&id) {
+                        format!("{} (input)", kind.label())
+                    } else if opening && kind == CoinOfInterest::Channel {
+                        format!("{} (expected output)", kind.label())
+                    } else {
+                        kind.label()
+                    };
                     JsCoinOfInterest {
-                        label: kind.label(),
+                        label,
                         id,
                         game_id,
                         game_coin_kind,
                     }
                 })
                 .collect();
+            let mut expected = Vec::new();
+            for entry in &entries {
+                if let Some(outputs) = pending.get(&entry.id) {
+                    for id in outputs {
+                        if shown_ids.insert(id.clone()) {
+                            expected.push(JsCoinOfInterest {
+                                label: format!(
+                                    "Expected output from {}",
+                                    entry.label.trim_end_matches(" (input)")
+                                ),
+                                id: id.clone(),
+                                game_id: None,
+                                game_coin_kind: None,
+                            });
+                        }
+                    }
+                }
+            }
+            entries.extend(expected);
             serde_wasm_bindgen::to_value(&entries).into_js()
         }
 

@@ -40,7 +40,7 @@ function keyedTerminalGame(
 }
 
 describe('terminal session model', () => {
-  it('uses hand ordinals and removes spent terminal game coins', () => {
+  it('uses hand ordinals and preserves coins reported by the phase', () => {
     const model = {
       game: {
         activeIds: ['6'],
@@ -52,11 +52,14 @@ describe('terminal session model', () => {
       selectDashboardCoins(model, [
         { label: 'Game 6 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
         { label: 'Game 4 coin', id: 'b', game_id: '4', game_coin_kind: 'current' },
+        { label: 'Game 6 coin (input)', id: 'e', game_id: '6', game_coin_kind: 'current' },
         { label: 'Game 4 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
         { label: 'Unroll change coin', id: 'd' },
       ]),
     ).toEqual([
       { label: 'Hand 1 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
+      { label: 'Hand 2 coin', id: 'b', game_id: '4', game_coin_kind: 'current' },
+      { label: 'Hand 1 coin (input)', id: 'e', game_id: '6', game_coin_kind: 'current' },
       { label: 'Hand 2 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
       { label: 'Unroll change coin', id: 'd' },
     ]);

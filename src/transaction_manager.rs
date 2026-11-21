@@ -951,6 +951,33 @@ impl<C> TransactionManager<C> {
             .collect()
     }
 
+    /// Protocol spends still eligible to land, with the exact outputs of each
+    /// input. The dashboard uses these to describe pending coin transitions.
+    pub fn pending_coin_transitions(&self) -> Result<Vec<(CoinString, Vec<CoinString>)>, Error> {
+        let mut transitions = Vec::new();
+        for submission in self.submission_book.submitted() {
+            if submission.chain_terminality != SubmissionChainTerminality::Active {
+                continue;
+            }
+            let outputs = submission.expected_output_coins()?;
+            for spend in &submission.base_bundle.spends {
+                let input = &spend.coin;
+                let input_id = input.to_coin_id();
+                let children = outputs
+                    .iter()
+                    .filter(|output| {
+                        output
+                            .to_parts()
+                            .is_some_and(|(parent, _, _)| parent == input_id)
+                    })
+                    .cloned()
+                    .collect();
+                transitions.push((input.clone(), children));
+            }
+        }
+        Ok(transitions)
+    }
+
     /// Coin string for a watched coin, if tracked.
     pub fn watched_coin(&self, coin: &CoinString) -> Option<&WatchedCoin> {
         self.watched_coins.get(coin)
@@ -1802,6 +1829,48 @@ mod tests {
                 },
             }],
         }
+    }
+
+    #[test]
+    fn banner_transitions_follow_live_submissions() {
+        let input = test_coin(41);
+        let output_ph = PuzzleHash::from_bytes([42; 32]);
+        let output = CoinString::from_parts(&input.to_coin_id(), &output_ph, &Amount::new(1));
+        let other_input = test_coin(43);
+        let other_output = CoinString::from_parts(
+            &other_input.to_coin_id(),
+            &PuzzleHash::from_bytes([44; 32]),
+            &Amount::new(1),
+        );
+        let mut manager = TransactionManager::new(PersistableMockGameSession);
+        for (name, input, output) in [
+            ("move", &input, &output),
+            ("other move", &other_input, &other_output),
+        ] {
+            manager.pending_submissions.push(PendingSubmission {
+                id: None,
+                submission: TransactionSubmission::already_paid(
+                    test_bundle_spending_creating(name, input, output),
+                    None,
+                ),
+                fee_intent: SubmissionFeeIntent::AlreadyPaid,
+            });
+        }
+        manager.drain_submissions().unwrap();
+        assert_eq!(
+            manager.pending_coin_transitions().unwrap(),
+            vec![
+                (input, vec![output]),
+                (other_input.clone(), vec![other_output.clone()])
+            ]
+        );
+
+        manager.submission_book.test_submitted_mut()[0].chain_terminality =
+            SubmissionChainTerminality::Landed;
+        assert_eq!(
+            manager.pending_coin_transitions().unwrap(),
+            vec![(other_input, vec![other_output])]
+        );
     }
 
     fn test_protocol_and_fee_bundles(fee: u64) -> (SpendBundle, SpendBundle, CoinString, CoinID) {
