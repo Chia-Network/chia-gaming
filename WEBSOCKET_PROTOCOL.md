@@ -419,14 +419,14 @@ Deployments may override these bounds with `HUB_RETAINED_SESSION_TTL_MS` and
 
 Pending lobby challenges are also bounded retained state. A player cannot
 challenge itself, repeat an unresolved challenge to the same target, or hold
-more than 8 outgoing challenges by default. The hub retains at most 4,000
-challenges globally, and unresolved challenges expire after 5 minutes; expiry
-removes the record and sends `challenge_resolved` with `accepted: false` to
-both players. The insertion and reconnect paths prune expired entries
-immediately, and the regular liveness sweep provides reclamation when no player
-traffic occurs. Deployments may override these limits with
-`HUB_MAX_PENDING_CHALLENGES_PER_PLAYER`, `HUB_MAX_CHALLENGES`, and
-`HUB_CHALLENGE_TTL_MS`.
+more than one outgoing challenge by default. The hub retains at most 4,000
+challenges globally; with the default 1,000-player limit, the global cap cannot
+be filled by pending challenges. Challenges do not expire on a timer. They are
+removed on acceptance, decline, cancellation, or when either player leaves or
+becomes busy. For an automatic removal, the hub sends `challenge_resolved` with
+`accepted: false` to both connected players. Deployments may
+override the challenge limits with `HUB_MAX_PENDING_CHALLENGES_PER_PLAYER` and
+`HUB_MAX_CHALLENGES`.
 
 ### 8.2 Registration
 

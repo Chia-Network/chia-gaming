@@ -124,6 +124,7 @@ interface ConnectionAttemptBudget {
 }
 
 const HUB_DISCONNECT_GRACE_MS = 3000;
+const GAME_KEEPALIVE_INTERVAL_MS = readPositiveIntegerEnv('GAME_KEEPALIVE_INTERVAL_MS', 15_000);
 const CONNECTION_TTL_MS = 60_000;
 const SWEEP_INTERVAL_MS = 15_000;
 const PLAYER_ID_BYTES = 16;
@@ -139,7 +140,7 @@ const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_I
 const MAX_PLAYERS = readPositiveIntegerEnv('HUB_MAX_PLAYERS', 1000);
 const MAX_PENDING_CHALLENGES_PER_PLAYER = readPositiveIntegerEnv(
   'HUB_MAX_PENDING_CHALLENGES_PER_PLAYER',
-  8,
+  1,
 );
 const MAX_CHALLENGES = readPositiveIntegerEnv('HUB_MAX_CHALLENGES', 4000);
 const MAX_RETAINED_SESSIONS = readPositiveIntegerEnv('HUB_MAX_RETAINED_SESSIONS', 10_000);
@@ -904,13 +905,15 @@ function cancelPlayerChallenges(playerId: string): void {
     }
   }
   for (const { id, challenge } of toCancel) {
-    const otherId = challenge.from_id === playerId ? challenge.target_id : challenge.from_id;
     hub.removeChallenge(id);
-    sendHubEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
+    const resolution = { challenge_id: id, accepted: false };
+    sendHubEvent(challenge.from_id, 'challenge_resolved', resolution);
+    sendHubEvent(challenge.target_id, 'challenge_resolved', resolution);
     logHub('challenge_cancelled_on_sweep', {
       challenge_id: id,
       swept_player: playerId,
-      notified_player: otherId,
+      challenger_id: challenge.from_id,
+      target_id: challenge.target_id,
     });
   }
 }
@@ -1687,7 +1690,7 @@ function setupGameKeepalive(ws: WebSocket): void {
     if (ws.readyState === ws.OPEN) {
       sendGameWs(ws, 'keepalive', {});
     }
-  }, 15_000);
+  }, GAME_KEEPALIVE_INTERVAL_MS);
   wsKeepaliveTimers.set(ws, kaTimer);
 }
 
@@ -1779,14 +1782,16 @@ hubWsServer.on('connection', (ws) => {
         hubConnections.delete(playerId);
       }
       cancelPendingHubLeave(playerId);
-      const timer = setTimeout(() => {
-        pendingHubLeaves.delete(playerId);
-        if (!hubConnections.has(playerId)) {
-          logHub('hub_grace_timeout_leave', { player_id: playerId });
-          leaveHub(playerId);
-        }
-      }, HUB_DISCONNECT_GRACE_MS);
-      pendingHubLeaves.set(playerId, timer);
+      if (!shuttingDown) {
+        const timer = setTimeout(() => {
+          pendingHubLeaves.delete(playerId);
+          if (!hubConnections.has(playerId)) {
+            logHub('hub_grace_timeout_leave', { player_id: playerId });
+            leaveHub(playerId);
+          }
+        }, HUB_DISCONNECT_GRACE_MS);
+        pendingHubLeaves.set(playerId, timer);
+      }
     }
   });
 });
@@ -1967,6 +1972,8 @@ function shutdown(signal: string): void {
   shuttingDown = true;
   console.log(`Received ${signal}; shutting down`);
   clearInterval(sweepTimer);
+  for (const timer of pendingHubLeaves.values()) clearTimeout(timer);
+  pendingHubLeaves.clear();
 
   for (const ws of [...hubWsServer.clients, ...gameWsServer.clients]) {
     try {
