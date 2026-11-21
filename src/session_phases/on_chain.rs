@@ -264,14 +264,31 @@ impl OnChainPhase {
         false
     }
 
-    fn emit_terminal(&mut self, game_id: &GameID, notification: GameNotification) -> Effect {
+    fn emit_terminal(
+        &mut self,
+        game_id: &GameID,
+        game_coin: &CoinString,
+        notification: GameNotification,
+    ) -> Vec<Effect> {
+        let no_local_claim = matches!(
+            &notification,
+            GameNotification::GameSettled {
+                our_share,
+                coin_id: None,
+                ..
+            } if *our_share == Amount::default()
+        );
         cleanup_terminal_game(
             &mut self.game_map,
             &mut self.game_payout_coins,
             game_id,
             &notification,
         );
-        Effect::Notify(notification)
+        let mut effects = vec![Effect::Notify(notification)];
+        if no_local_claim {
+            effects.push(Effect::RetireGameCoin(game_coin.clone()));
+        }
+        effects
     }
 
     pub fn get_reward_puzzle_hash(&self) -> PuzzleHash {
@@ -524,6 +541,7 @@ impl OnChainPhase {
         &mut self,
         effects: &mut Vec<Effect>,
         game_id: &GameID,
+        game_coin: &CoinString,
         readable: Option<(ReadableMove, Amount)>,
     ) {
         if let Some((readable, mover_share)) = readable {
@@ -543,8 +561,9 @@ impl OnChainPhase {
                 }),
             }));
         }
-        effects.push(self.emit_terminal(
+        effects.extend(self.emit_terminal(
             game_id,
+            game_coin,
             GameNotification::game_settled(
                 *game_id,
                 SettlementOutcome::Lost,
@@ -873,8 +892,9 @@ impl OnChainPhase {
                         .as_ref()
                         .and_then(CoinString::amount)
                         .unwrap_or_default();
-                    effects.push(self.emit_terminal(
+                    effects.extend(self.emit_terminal(
                         &game_id,
+                        coin_id,
                         GameNotification::game_settled(game_id, outcome, our_share, reward_coin),
                     ));
                     effects.extend(self.process_queued_action(env)?);
@@ -973,7 +993,7 @@ impl OnChainPhase {
                     other_params: None,
                 }
             };
-            effects.push(self.emit_terminal(&old_definition.game_id, notification));
+            effects.extend(self.emit_terminal(&old_definition.game_id, coin_id, notification));
             effects.extend(self.process_queued_action(env)?);
             return Ok(effects);
         }
@@ -1007,8 +1027,9 @@ impl OnChainPhase {
             } else {
                 SettlementOutcome::WeAccepted
             };
-            effects.push(self.emit_terminal(
+            effects.extend(self.emit_terminal(
                 &old_definition.game_id,
+                coin_id,
                 GameNotification::game_settled(
                     old_definition.game_id,
                     outcome,
@@ -1044,8 +1065,9 @@ impl OnChainPhase {
                 "[game-error] {} {reason}",
                 format_coin(coin_id),
             )));
-            effects.push(self.emit_terminal(
+            effects.extend(self.emit_terminal(
                 &old_definition.game_id,
+                coin_id,
                 GameNotification::GameStatus {
                     id: old_definition.game_id,
                     status: GameStatusKind::EndedError,
@@ -1072,8 +1094,9 @@ impl OnChainPhase {
                     "[game-error] {} {reason}",
                     format_coin(coin_id),
                 )));
-                effects.push(self.emit_terminal(
+                effects.extend(self.emit_terminal(
                     &old_definition.game_id,
+                    coin_id,
                     GameNotification::GameStatus {
                         id: old_definition.game_id,
                         status: GameStatusKind::EndedError,
@@ -1140,7 +1163,7 @@ impl OnChainPhase {
                     // advanced through this terminal move, so its readable was
                     // already delivered; there is no fresh readable to forward
                     // here. Emit the loss terminal and drop the game.
-                    self.emit_loser_terminal(&mut effects, &game_id, None);
+                    self.emit_loser_terminal(&mut effects, &game_id, coin_id, None);
                 } else {
                     let finished_flag = if terminal { Some(true) } else { None };
 
@@ -1237,7 +1260,7 @@ impl OnChainPhase {
                         my_reward_coin_string.clone(),
                     )
                 };
-                effects.push(self.emit_terminal(&old_definition.game_id, notif));
+                effects.extend(self.emit_terminal(&old_definition.game_id, coin_id, notif));
                 unblock_queue = true;
             }
             CoinSpentInformation::TheirSpend(TheirTurnCoinSpentResult::Moved {
@@ -1294,7 +1317,12 @@ impl OnChainPhase {
                     && self.get_game_our_current_share(&game_id)? == Amount::default();
 
                 if zero_reward_terminal {
-                    self.emit_loser_terminal(&mut effects, &game_id, Some((readable, mover_share)));
+                    self.emit_loser_terminal(
+                        &mut effects,
+                        &game_id,
+                        coin_id,
+                        Some((readable, mover_share)),
+                    );
                 } else {
                     let finished_flag = if terminal { Some(true) } else { None };
 
@@ -1434,8 +1462,9 @@ impl OnChainPhase {
                                 submitting_timeout_claim: None,
                             }),
                         }));
-                        effects.push(self.emit_terminal(
+                        effects.extend(self.emit_terminal(
                             &old_definition.game_id,
+                            coin_id,
                             GameNotification::game_settled(
                                 old_definition.game_id,
                                 SettlementOutcome::OpponentSlashedUs,
@@ -1471,7 +1500,7 @@ impl OnChainPhase {
                     amt,
                     reward_coin,
                 );
-                effects.push(self.emit_terminal(&old_definition.game_id, notif));
+                effects.extend(self.emit_terminal(&old_definition.game_id, coin_id, notif));
                 unblock_queue = true;
             }
         }
@@ -1552,21 +1581,21 @@ impl OnChainPhase {
 
         if !has_pending_slash && move_result.basic.mover_share == game_amount {
             self.restore_game_state(&game_id, pre_referee, pre_last_ph)?;
-            return Ok(vec![
-                Effect::Notify(GameNotification::LocalActionApplied {
-                    id: game_id,
-                    action,
-                }),
-                self.emit_terminal(
-                    &game_id,
-                    GameNotification::game_settled(
-                        game_id,
-                        SettlementOutcome::ForfeitedSkippedReveal,
-                        Amount::default(),
-                        None,
-                    ),
+            let mut effects = vec![Effect::Notify(GameNotification::LocalActionApplied {
+                id: game_id,
+                action,
+            })];
+            effects.extend(self.emit_terminal(
+                &game_id,
+                current_coin,
+                GameNotification::game_settled(
+                    game_id,
+                    SettlementOutcome::ForfeitedSkippedReveal,
+                    Amount::default(),
+                    None,
                 ),
-            ]);
+            ));
+            return Ok(effects);
         }
 
         let (post_referee, post_last_ph) = self.save_game_state(&game_id)?;
@@ -1701,21 +1730,21 @@ impl OnChainPhase {
                 }
                 let our_share = self.get_game_our_current_share(&game_id);
                 if matches!(our_share, Ok(ref s) if *s == Amount::default()) {
-                    return Ok(vec![
-                        Effect::Notify(GameNotification::LocalActionApplied {
-                            id: game_id,
-                            action: LocalActionKind::AcceptSettlement,
-                        }),
-                        self.emit_terminal(
-                            &game_id,
-                            GameNotification::game_settled(
-                                game_id,
-                                SettlementOutcome::ForfeitedWeAccepted,
-                                Amount::default(),
-                                None,
-                            ),
+                    let mut effects = vec![Effect::Notify(GameNotification::LocalActionApplied {
+                        id: game_id,
+                        action: LocalActionKind::AcceptSettlement,
+                    })];
+                    effects.extend(self.emit_terminal(
+                        &game_id,
+                        &current_coin,
+                        GameNotification::game_settled(
+                            game_id,
+                            SettlementOutcome::ForfeitedWeAccepted,
+                            Amount::default(),
+                            None,
                         ),
-                    ]);
+                    ));
+                    return Ok(effects);
                 }
                 let gt = self
                     .game_map
@@ -2576,6 +2605,34 @@ mod tests {
             assert!(payouts.is_empty());
             assert!(ordered_coins_of_interest(None, &game_map, &payouts).is_empty());
         }
+    }
+
+    #[test]
+    fn zero_share_terminal_retires_the_watched_game_coin() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (_, referees, referee_ph) =
+            crate::games::debug::make_real_debug_referees(&mut allocator);
+        let coin = CoinString::from_parts(
+            &CoinString::default().to_coin_id(),
+            &referee_ph,
+            &Amount::new(100),
+        );
+        let mut phase = phase_with_referee(Rc::new(referees[0].clone()), &coin);
+        let effects = phase.emit_terminal(
+            &GameID(7),
+            &coin,
+            GameNotification::game_settled(
+                GameID(7),
+                SettlementOutcome::Lost,
+                Amount::default(),
+                None,
+            ),
+        );
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Notify(_), Effect::RetireGameCoin(retired)] if retired == &coin
+        ));
+        assert!(phase.game_map.is_empty());
     }
 
     #[test]
