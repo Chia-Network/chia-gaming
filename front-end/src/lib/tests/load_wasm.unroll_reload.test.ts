@@ -347,6 +347,17 @@ async function runOfflineReplacementRestore(poller: BlockchainPoller): Promise<v
     assert.equal(lane.controller.goOnChain(), true);
     await flushWrapperDrain(adapters);
     assert.equal(submittedBlobs.length, 1, 'unilateral spend must be submitted once');
+    const pendingCoins = lane.controller.getCoinsOfInterest();
+    assert.ok(
+      pendingCoins.some(
+        ({ label, id }) => label === 'Channel coin (input)' && id === channelCoin.id,
+      ),
+      'pending channel spend must show its input',
+    );
+    assert.ok(
+      pendingCoins.some(({ label }) => label === 'Expected output from Channel coin'),
+      'pending channel spend must show its expected output',
+    );
     const finalizedBlob = submittedBlobs[0];
 
     lane = (await injectSessionReload(lane, poller)).lane;

@@ -820,11 +820,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
         let bundle = if matches!(self.state, InitiatorState::WaitingForOffer(_, _)) {
             let mut request = self.build_alice_coin_spend_request(env)?;
             request.max_height = self.channel_deadline;
-            self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
-                env.allocator,
-                &wallet_bundle,
-                &request,
-            )?);
+            validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
             effects.push(Effect::RegisterCoin {
                 coin: self.channel_state()?.channel_coin().clone(),
                 timeout: Timeout::new(1_000_000),
@@ -884,6 +880,7 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
                         )));
                 }
             };
+            self.funding_coin = Some(contribution_coin.clone());
             let settlement_solution_node = if let Some(settlement_coin) = &settlement_coin {
                 let payment = (contribution_ph, (amount.clone(), ()))
                     .to_clvm(env.allocator)

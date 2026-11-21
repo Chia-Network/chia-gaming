@@ -148,7 +148,7 @@ it(
       const receiverCoins = wasm_blob2.getCoinsOfInterest();
       assert.deepEqual(
         receiverCoins.map((coin) => coin.label),
-        ['Funding coin', 'Channel coin'],
+        ['Funding coin (input)', 'Channel coin (expected output)'],
       );
       const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
       assert.equal(receiverChannelWatch.length, 1);
@@ -168,7 +168,7 @@ it(
       const initiatorCoins = wasm_blob1.getCoinsOfInterest();
       assert.deepEqual(
         initiatorCoins.map((coin) => coin.label),
-        ['Funding coin', 'Channel coin'],
+        ['Funding coin (input)', 'Channel coin (expected output)'],
       );
       const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
       assert.equal(initiatorChannelWatch.length, 1);
@@ -247,10 +247,18 @@ it(
         label: string;
         id: string;
       }>;
-      assert.deepEqual(
-        restoredCoins.map((coin) => coin.label),
-        ['Funding coin', 'Channel coin'],
-        'reload before channel creation must preserve both displayed setup coins',
+      assert.ok(
+        restoredCoins.some(
+          (coin) => coin.id === receiverCoins[0].id && coin.label === 'Funding coin (input)',
+        ),
+        'reload before channel creation must preserve the funding input',
+      );
+      assert.ok(
+        restoredCoins.some(
+          (coin) =>
+            coin.id === receiverCoins[1].id && coin.label === 'Channel coin (expected output)',
+        ),
+        'reload before channel creation must preserve the expected channel output',
       );
       // This fixture's funding bundle has seven creating inputs. They remain
       // bounded reconciliation interests until its watched channel output lands.

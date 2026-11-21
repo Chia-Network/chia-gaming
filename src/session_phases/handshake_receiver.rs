@@ -692,11 +692,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
         };
         let mut request = self.build_bob_coin_spend_request(env)?;
         request.max_height = self.channel_deadline;
-        self.funding_coin = Some(validate_wallet_bundle_applies_conditions(
-            env.allocator,
-            &wallet_bundle,
-            &request,
-        )?);
+        validate_wallet_bundle_applies_conditions(env.allocator, &wallet_bundle, &request)?;
 
         let amount = self.pre_launcher_amount()?;
         let pre_identity = self.pre_launcher_identity(env)?;
@@ -750,6 +746,7 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
                     )));
             }
         };
+        self.funding_coin = Some(pre_launcher_coin.clone());
         let launcher_coin = CoinString::from_parts(
             &pre_launcher_coin.to_coin_id(),
             &PuzzleHash::from_bytes(crate::common::constants::SINGLETON_LAUNCHER_HASH),
