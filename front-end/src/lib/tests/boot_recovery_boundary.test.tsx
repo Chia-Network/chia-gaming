@@ -96,6 +96,7 @@ function ShellBootHarness(props: {
   onAuthorityLost?: () => void;
 }) {
   const [presentation, setPresentation] = useState<string | null>(null);
+  const [confirmErase, setConfirmErase] = useState(false);
   const [walletReady] = useState(false);
   const [hubReady] = useState(false);
   const boundary = useBootRecoveryBoundary({
@@ -125,7 +126,26 @@ function ShellBootHarness(props: {
       'section',
       null,
       createElement('p', null, boundary.state.loadError),
-      createElement('button', { onClick: boundary.retryHardReset }, 'Retry Hard Reset'),
+      boundary.state.resetAlreadyApproved
+        ? createElement('button', { onClick: boundary.retryHardReset }, 'Retry Hard Reset')
+        : createElement(
+            'div',
+            null,
+            createElement('button', { onClick: props.reload }, 'Reload'),
+            createElement('button', { onClick: () => setConfirmErase(true) }, 'Erase local data'),
+            confirmErase &&
+              createElement(
+                'div',
+                null,
+                createElement(
+                  'p',
+                  null,
+                  'This deletes all data this app has saved in this browser.',
+                ),
+                createElement('button', { onClick: boundary.retryHardReset }, 'Confirm erase'),
+                createElement('button', { onClick: () => setConfirmErase(false) }, 'Cancel'),
+              ),
+          ),
     );
   }
   if (boundary.state.kind === 'tabConflict') {
@@ -399,7 +419,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     claim.mockRestore();
   });
 
-  it('routes an unsupported cradle restore to hard-reset recovery without changing the root', async () => {
+  it('preserves an unsupported cradle save when erase confirmation is cancelled', async () => {
     await storageRepository.claimApplicationState();
     const save = liveSave({
       sessionId: 'stable-restore-session',
@@ -430,7 +450,15 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     await waitForRender(renderer!, 'Unsupported saved game format');
 
     expect(onRestore).toHaveBeenCalledTimes(1);
-    expect(renderer!.root.findByProps({ children: 'Retry Hard Reset' })).toBeDefined();
+    expect(renderer!.root.findByProps({ children: 'Reload' })).toBeDefined();
+    await act(async () => {
+      renderer!.root.findByProps({ children: 'Erase local data' }).props.onClick();
+    });
+    expect(await readApplicationState()).toEqual(save);
+    await act(async () => {
+      renderer!.root.findByProps({ children: 'Cancel' }).props.onClick();
+    });
+    expect(renderer!.root.findAllByProps({ children: 'Confirm erase' })).toHaveLength(0);
     expect(await readApplicationState()).toEqual(save);
     expect(storageRepository.loadState()).toEqual(save);
   });
@@ -634,7 +662,7 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     inspect.mockRestore();
   });
 
-  it('hard-resets preserved malformed aggregate evidence on explicit retry', async () => {
+  it('erases malformed aggregate evidence only after confirmation', async () => {
     await storageRepository.claimApplicationState();
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(SESSION_DB_NAME);
@@ -666,7 +694,18 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     await waitForRender(renderer!, 'Stored application state is malformed');
     expect(claim).not.toHaveBeenCalled();
     await act(async () => {
-      await renderer!.root.findByProps({ children: 'Retry Hard Reset' }).props.onClick();
+      renderer!.root.findByProps({ children: 'Erase local data' }).props.onClick();
+    });
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => {
+      renderer!.root.findByProps({ children: 'Cancel' }).props.onClick();
+    });
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => {
+      renderer!.root.findByProps({ children: 'Erase local data' }).props.onClick();
+    });
+    await act(async () => {
+      await renderer!.root.findByProps({ children: 'Confirm erase' }).props.onClick();
     });
     expect(reload).toHaveBeenCalledTimes(1);
     expect(beginHardReset).not.toHaveBeenCalled();

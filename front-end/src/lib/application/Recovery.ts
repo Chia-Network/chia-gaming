@@ -10,7 +10,7 @@ export type BootRecoveryState =
   | { kind: 'loading' }
   | { kind: 'ready' }
   | { kind: 'autoResuming' }
-  | { kind: 'loadFailed'; loadError: string }
+  | { kind: 'loadFailed'; loadError: string; resetAlreadyApproved?: boolean }
   | { kind: 'tabConflict'; save: DurableApplicationState | null; midSession: boolean }
   | { kind: 'tabDead' };
 
@@ -87,6 +87,7 @@ export class Recovery {
         markSavedSession();
         this.setState({
           kind: 'loadFailed',
+          resetAlreadyApproved: true,
           loadError:
             'A pending hard reset is still blocked. Close other app tabs and wallet connections, then retry.',
         });
@@ -258,6 +259,7 @@ export class Recovery {
         markSavedSession();
         this.setState({
           kind: 'loadFailed',
+          resetAlreadyApproved: true,
           loadError: blocked
             ? 'Hard reset is blocked. Close other app tabs and wallet connections, then retry.'
             : 'Hard reset could not delete all local databases. Close other app tabs and wallet connections, then retry.',
@@ -273,6 +275,7 @@ export class Recovery {
       markSavedSession();
       this.setState({
         kind: 'loadFailed',
+        resetAlreadyApproved: true,
         loadError:
           'Hard reset failed. Close other app tabs and wallet connections, then retry hard reset.',
       });
@@ -280,6 +283,7 @@ export class Recovery {
       this.setStartingOver(false);
     }
   };
+  reload = () => (this.dependencies.reload ?? (() => window.location.reload()))();
   closeTab = () => {
     this.nextRecoveryGeneration();
     this.claimedRecovery = null;
