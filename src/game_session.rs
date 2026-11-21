@@ -13,7 +13,7 @@ use crate::common::standard_coin::{
     sign_agg_sig_me, solution_for_conditions, standard_solution_partial, ChiaIdentity,
 };
 use crate::common::types::{
-    AllocEncoder, Amount, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
+    AllocEncoder, Amount, CoinID, CoinSpend, CoinString, Error, GameID, GameType, Hash, IntoErr,
     LocalProposalId, Program, ProgramRef, PuzzleHash, Sha256tree, Spend, SpendBundle, Timeout,
     ToQuotedProgram,
 };
@@ -605,6 +605,20 @@ impl GameSession {
             && !self.peer.has_active_on_chain_games())
     }
 
+    /// The channel input of a positive-payout clean close. Its spend must stay
+    /// recoverable until the transaction manager finishes watching that input.
+    pub(crate) fn clean_close_recovery_input(&self) -> Option<CoinID> {
+        let status = self.last_channel_status.as_ref()?;
+        if status.state != ChannelStatus::ResolvedClean {
+            return None;
+        }
+        status
+            .coin
+            .as_ref()?
+            .to_parts()
+            .map(|(parent, _, _)| parent)
+    }
+
     pub fn provide_coin_spend_bundle(
         &mut self,
         allocator: &mut AllocEncoder,
@@ -958,6 +972,10 @@ impl GameSession {
                 self.state.next_terminal_handoff_id += 1;
                 self.state.pending_outbound_terminal = Some(command);
                 self.state.session_disposition = Some(SessionDisposition::AwaitOutboundTerminal);
+            } else if let Effect::RetireGameCoin(coin) = effect {
+                self.state
+                    .events
+                    .push_back(GameSessionEvent::RetireGameCoin(coin));
             } else if let Effect::NeedCoinSpend(req) = effect {
                 self.state
                     .events

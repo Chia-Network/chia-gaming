@@ -262,6 +262,25 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
     'ResolvedClean',
     `clean landing failed: advisory=${lane.controller.lastChannelStatus?.advisory ?? 'none'}\n${lane.controller.diagnosticLog.join('\n')}`,
   );
+  await lane.controller.flushPendingWork();
+  assert.equal(
+    (await storageRepository.readCurrentState())?.session?.phase,
+    'live',
+    'a shallow clean close must retain its recoverable manager',
+  );
+  const watchesAtLanding = lane.controller.snapshotWatchedCoins();
+  lane = (await injectSessionReload(lane, poller)).lane;
+  assert.equal(lane.controller.lastChannelStatus?.state, 'ResolvedClean');
+  assert.ok(lane.controller.snapshotWatchedCoins().length >= watchesAtLanding.length);
+  for (let block = 0; block < 33; block++) {
+    await fakeBlockchainInfo.farmBlock();
+  }
+  await pollOnce(poller);
+  await flushWrapperDrain(adapters);
+  assert.ok(
+    lane.controller.snapshotWatchedCoins().length < watchesAtLanding.length,
+    'the channel input watch must retire after confirmation depth',
+  );
   await finalizeTerminalSession(
     {
       controller: lane.controller,
