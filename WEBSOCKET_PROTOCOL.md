@@ -424,9 +424,22 @@ challenges globally; with the default 1,000-player limit, the global cap cannot
 be filled by pending challenges. Challenges do not expire on a timer. They are
 removed on acceptance, decline, cancellation, or when either player leaves or
 becomes busy. For an automatic removal, the hub sends `challenge_resolved` with
-`accepted: false` to both connected players. Deployments may
+`accepted: false` to both connected players. The hub sends the sender a
+`challenge_outgoing` message with its challenge ID on creation and on hub
+reconnection (or `null` when none is pending), so the UI can disable further
+challenge requests until that ID is resolved. Deployments may
 override the challenge limits with `HUB_MAX_PENDING_CHALLENGES_PER_PLAYER` and
 `HUB_MAX_CHALLENGES`.
+
+Lobby roster changes within 250 ms are combined into one current `hub_update`.
+Each hub socket has at most one roster update in flight; if it falls behind, the
+hub sends the latest snapshot when that write completes. The public roster is
+serialized once; a busy player's private reasons are inserted only into that
+player's `hub_update`. Hub control writes are limited to 1 MiB queued per socket
+and 64 MiB globally by default. A socket that exceeds either budget is disconnected and
+can reconnect to receive the current state. Deployments may override these
+budgets with `HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION` and
+`HUB_MAX_TOTAL_OUTBOUND_BYTES`.
 
 ### 8.2 Registration
 

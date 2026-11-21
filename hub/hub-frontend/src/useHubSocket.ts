@@ -33,6 +33,7 @@ type InboundMessage =
       channel_timeout?: string;
       unroll_timeout?: string;
     }
+  | { type: 'challenge_outgoing'; challenge_id: string | null }
   | { type: 'challenge_resolved'; challenge_id: string | null; accepted: boolean }
   | { type: 'alias_result'; alias: string | null }
   | { type: 'keepalive' }
@@ -52,6 +53,8 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
   const [hubUpdateReceived, setHubUpdateReceived] = useState(false);
   const [pendingChallenge, setPendingChallenge] = useState<ChallengeReceived | null>(null);
   const [challengeSent, setChallengeSent] = useState(false);
+  const challengeSentRef = useRef(false);
+  const outgoingChallengeIdRef = useRef<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [hasConnected, setHasConnected] = useState(false);
   const [initialConnectionFailed, setInitialConnectionFailed] = useState(false);
@@ -157,6 +160,7 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
           case 'joined':
             setPublicId(msg.id);
             setSavedAlias(msg.alias);
+            setPendingChallenge(null);
             break;
           case 'hub_update':
             if (!Array.isArray(msg.players)) {
@@ -169,8 +173,20 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
           case 'challenge_received':
             setPendingChallenge(msg);
             break;
+          case 'challenge_outgoing':
+            outgoingChallengeIdRef.current = msg.challenge_id;
+            challengeSentRef.current = msg.challenge_id !== null;
+            setChallengeSent(challengeSentRef.current);
+            break;
           case 'challenge_resolved':
-            setChallengeSent(false);
+            if (
+              msg.challenge_id === outgoingChallengeIdRef.current &&
+              (msg.challenge_id !== null || challengeSentRef.current)
+            ) {
+              outgoingChallengeIdRef.current = null;
+              challengeSentRef.current = false;
+              setChallengeSent(false);
+            }
             setPendingChallenge((prev) =>
               prev && msg.challenge_id && prev.challenge_id === msg.challenge_id ? null : prev,
             );
@@ -306,6 +322,7 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
       channelTimeout?: string,
       unrollTimeout?: string,
     ) => {
+      if (challengeSentRef.current) return;
       const payload: Record<string, unknown> = {
         type: 'challenge',
         target_id: targetId,
@@ -314,8 +331,9 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
       };
       if (channelTimeout) payload.channel_timeout = channelTimeout;
       if (unrollTimeout) payload.unroll_timeout = unrollTimeout;
-      send(payload);
+      challengeSentRef.current = true;
       setChallengeSent(true);
+      send(payload);
     },
     [send],
   );
@@ -344,7 +362,6 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
 
   const cancelChallenge = useCallback(() => {
     send({ type: 'challenge_cancel' });
-    setChallengeSent(false);
   }, [send]);
 
   const setHubAlias = useCallback(
