@@ -21,6 +21,32 @@ async function waitFor(check: () => boolean): Promise<void> {
 }
 
 describe('submission pump delivery and lifecycle', () => {
+  it('retains a provisional broadcast for exact replay after fresh sync', async () => {
+    const spend = jest.fn().mockResolvedValue({ status: 'provisional', detail: 'PENDING' });
+    const { blockchain, controller, cradle, submit } = setup(spend);
+    const lease = new ControlledRuntime();
+    const first = submission('provisional');
+    try {
+      commitRuntime(controller, lease);
+      submit(first);
+      await lease.launch('submission:provisional');
+      await controller.flushTransactionSubmissions();
+      expect(cradle.submission_attempt_unavailable).toHaveBeenCalledWith(first.attempt_token);
+      expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalled();
+
+      const replay = nextAttempt(first, 'provisional-attempt-2');
+      cradle.drain_submissions.mockReturnValueOnce(submissionDrain([replay]));
+      await controller.reportChainSnapshotReady(100n);
+      await lease.launch('submission:provisional');
+      await controller.flushTransactionSubmissions();
+      expect(spend).toHaveBeenCalledTimes(2);
+      expect(spend.mock.calls[1]).toEqual(spend.mock.calls[0]);
+    } finally {
+      controller.cleanup();
+      blockchain.retire();
+    }
+  });
+
   it('retries the exact transaction through a replacement wallet while the old call stays pending', async () => {
     let resolveOldSpend!: (outcome: WalletSubmitOutcome) => void;
     const oldSpend = jest.fn(
