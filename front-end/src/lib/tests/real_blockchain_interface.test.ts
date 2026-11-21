@@ -732,10 +732,7 @@ describe('RealBlockchainInterface', () => {
       if (allowMissing) throw new WalletConnectResponseError('Internal error');
       // The wallet rejects a multi-coin request if even one coin has never existed.
       const found = requested.map((name: string) => byName.get(name));
-      if (found.some((record: CoinRecord | undefined) => !record)) {
-        throw new Error('Internal Error');
-      }
-      return { coinRecords: found };
+      return { coinRecords: found.filter((record): record is CoinRecord => record !== undefined) };
     });
     const blockchain = new RealBlockchainInterface();
     const observations: Array<{ height: bigint; records: CoinStateRecord[] }> = [];
@@ -797,7 +794,7 @@ describe('RealBlockchainInterface', () => {
     expect(poller.getPeak()).toBe(102n);
   });
 
-  it('silently treats every wallet coin-record error as absent and continues the batch', async () => {
+  it('rejects an incomplete wallet coin-record batch', async () => {
     const opaqueErrorName = 'opaque-error-coin-id';
     const daemonErrorName = 'daemon-error-coin-id';
     const presentName = 'present-coin-id';
@@ -834,7 +831,7 @@ describe('RealBlockchainInterface', () => {
           daemonErrorName,
           presentName,
         ]),
-      ).resolves.toEqual([record]);
+      ).rejects.toThrow('Internal Error');
     } finally {
       unsubscribe();
     }
@@ -857,7 +854,7 @@ describe('RealBlockchainInterface', () => {
     expect(logLines.some((line) => line.includes('getCoinRecordsByNames error'))).toBe(false);
   });
 
-  it('preserves the last successful coin record across a transient lookup failure', async () => {
+  it('does not treat a cached coin record as a complete lookup after a failure', async () => {
     const name = 'previously-live-coin-id';
     const liveRecord: CoinRecord = {
       coin: {
@@ -884,8 +881,78 @@ describe('RealBlockchainInterface', () => {
 
     const blockchain = new RealBlockchainInterface();
     await expect(blockchain.getCoinRecordsByNames([name])).resolves.toEqual([liveRecord]);
-    await expect(blockchain.getCoinRecordsByNames([name])).resolves.toEqual([liveRecord]);
+    await expect(blockchain.getCoinRecordsByNames([name])).rejects.toThrow('Internal Error');
     await expect(blockchain.getCoinRecordsByNames([name])).resolves.toEqual([spentRecord]);
+  });
+
+  it('keeps a restored opening pending through an unavailable lookup at expiry', async () => {
+    const record: CoinRecord = {
+      coin: {
+        parentCoinInfo: '11'.repeat(32),
+        puzzleHash: '22'.repeat(32),
+        amount: 100n,
+      },
+      confirmedBlockIndex: 99n,
+      spentBlockIndex: 0n,
+      spent: false,
+      coinbase: false,
+      timestamp: 0n,
+    };
+    const name = (await coinRecordToName(record))!;
+    const blockchain = new RealBlockchainInterface();
+    const snapshots: CoinStateRecord[][] = [];
+    const heights: bigint[] = [];
+    mockGetCoinRecordsByNames
+      .mockRejectedValueOnce(new WalletConnectTransportError('Request timed out'))
+      .mockResolvedValueOnce({ success: true, coinRecords: [record] })
+      .mockRejectedValueOnce(new WalletConnectResponseError('Internal error'));
+    const poller = new BlockchainPoller(
+      {
+        isConnected: () => true,
+        getHeightInfo: async () => 106n,
+        registerCoins: async () => {},
+        getCoinRecordsByNames: (names: string[]) => blockchain.getCoinRecordsByNames(names),
+      } as unknown as InternalBlockchainInterface,
+      10_000,
+    );
+    poller.attachGameSession({
+      snapshotWatchedCoins: () => [{ coin_name: name, coin_string: 'channel-coin' }],
+      reportNewBlock: (height) => heights.push(height),
+      reportCoinStates: (_height, records) => snapshots.push(records),
+    });
+
+    await pollOnce(poller);
+    expect(heights).toEqual([106n]);
+    expect(snapshots).toEqual([]);
+    await pollOnce(poller);
+    expect(snapshots).toEqual([
+      [{ coin: 'channel-coin', created_height: 99n, spent_height: null }],
+    ]);
+  });
+
+  it('reports a successful empty lookup as absence at expiry', async () => {
+    const blockchain = new RealBlockchainInterface();
+    const snapshots: CoinStateRecord[][] = [];
+    mockGetCoinRecordsByNames.mockResolvedValue({ success: true, coinRecords: [] });
+    const poller = new BlockchainPoller(
+      {
+        isConnected: () => true,
+        getHeightInfo: async () => 106n,
+        registerCoins: async () => {},
+        getCoinRecordsByNames: (names: string[]) => blockchain.getCoinRecordsByNames(names),
+      } as unknown as InternalBlockchainInterface,
+      10_000,
+    );
+    poller.attachGameSession({
+      snapshotWatchedCoins: () => [{ coin_name: 'unknown', coin_string: 'channel-coin' }],
+      reportNewBlock: () => {},
+      reportCoinStates: (_height, records) => snapshots.push(records),
+    });
+
+    await pollOnce(poller);
+    expect(snapshots).toEqual([
+      [{ coin: 'channel-coin', created_height: null, spent_height: null }],
+    ]);
   });
 
   describe('coin query capability detection', () => {
@@ -983,8 +1050,12 @@ describe('RealBlockchainInterface', () => {
       });
       const blockchain = new RealBlockchainInterface();
 
-      await expect(blockchain.getCoinRecordsByNames([absent, present])).resolves.toEqual([record]);
-      await expect(blockchain.getCoinRecordsByNames([present, absent])).resolves.toEqual([record]);
+      await expect(blockchain.getCoinRecordsByNames([absent, present])).rejects.toThrow(
+        'Internal error',
+      );
+      await expect(blockchain.getCoinRecordsByNames([present, absent])).rejects.toThrow(
+        'Internal error',
+      );
       expect(requestedNames()).toEqual([[absent], [present], [present], [present], [absent]]);
       expect(mockGetCoinRecordsByNames.mock.calls.map(([request]) => request.allowMissing)).toEqual(
         [undefined, undefined, true, undefined, undefined],
@@ -1003,8 +1074,17 @@ describe('RealBlockchainInterface', () => {
         });
         const blockchain = new RealBlockchainInterface();
 
-        await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).resolves.toEqual([]);
-        await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).resolves.toEqual([]);
+        if (missingResult === 'error') {
+          await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).rejects.toThrow();
+          await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).rejects.toThrow();
+        } else {
+          await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).resolves.toEqual(
+            [],
+          );
+          await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).resolves.toEqual(
+            [],
+          );
+        }
         expect(requestedNames()).toEqual([[absent], [otherAbsent], [absent], [otherAbsent]]);
         expect(
           mockGetCoinRecordsByNames.mock.calls.every(([request]) => !('allowMissing' in request)),
@@ -1081,8 +1161,8 @@ describe('RealBlockchainInterface', () => {
       mockGetCoinRecordsByNames.mockRejectedValue(
         new WalletConnectTransportError('Request timed out; relay restarted'),
       );
-      await expect(new RealBlockchainInterface().getCoinRecordsByNames([absent])).resolves.toEqual(
-        [],
+      await expect(new RealBlockchainInterface().getCoinRecordsByNames([absent])).rejects.toThrow(
+        'Request timed out',
       );
       expect(mockGetCoinRecordsByNames).toHaveBeenCalledTimes(1);
       expect(mockGetCoinRecordsByNames.mock.calls[0][0]).not.toHaveProperty('allowMissing');
@@ -1118,8 +1198,8 @@ describe('RealBlockchainInterface', () => {
         mockGetCoinRecordsByNames.mockResolvedValue(failure);
       }
 
-      await expect(blockchain.getCoinRecordsByNames([present, absent])).resolves.toEqual([record]);
-      await expect(blockchain.getCoinRecordsByNames([present, absent])).resolves.toEqual([record]);
+      await expect(blockchain.getCoinRecordsByNames([present, absent])).rejects.toThrow();
+      await expect(blockchain.getCoinRecordsByNames([present, absent])).rejects.toThrow();
       expect(requestedNames()).toEqual([
         [present],
         [present],
@@ -1153,10 +1233,10 @@ describe('RealBlockchainInterface', () => {
         second,
         record,
       ]);
-      await expect(blockchain.getCoinRecordsByNames(names)).resolves.toEqual([record, second]);
+      await expect(blockchain.getCoinRecordsByNames(names)).rejects.toThrow('Internal Error');
       await expect(blockchain.getCoinRecordsByNames(names)).resolves.toEqual([second]);
-      // A successful omission clears the old record; a later failure cannot revive it.
-      await expect(blockchain.getCoinRecordsByNames(names)).resolves.toEqual([second]);
+      // A failed batch remains incomplete even after a successful omission.
+      await expect(blockchain.getCoinRecordsByNames(names)).rejects.toThrow('Internal Error');
       expect(requestedNames()).toEqual([[present], [present], names, names, names, names]);
       expect(mockGetCoinRecordsByNames).toHaveBeenLastCalledWith({
         names,
@@ -1294,7 +1374,9 @@ describe('RealBlockchainInterface', () => {
       await expect(blockchain.getCoinRecordsByNames([present])).resolves.toEqual([record]);
       resolveProbe({ success: true, coinRecords: [record] });
       await expect(pending).resolves.toEqual([record]);
-      await expect(blockchain.getCoinRecordsByNames([present, absent])).resolves.toEqual([record]);
+      await expect(blockchain.getCoinRecordsByNames([present, absent])).rejects.toThrow(
+        'Internal error',
+      );
       mockCancelOffer.mockResolvedValue({ success: true });
       await blockchain.beginWalletOfferCancellation('replacement-rejected-probe');
       expect(mockCancelOffer).toHaveBeenCalledWith({
@@ -1320,7 +1402,9 @@ describe('RealBlockchainInterface', () => {
       await expect(blockchain.getCoinRecordsByNames([])).resolves.toEqual([]);
       expect(mockGetCoinRecordsByNames).not.toHaveBeenCalled();
       mockGetCoinRecordsByNames.mockRejectedValue(new Error('Internal Error'));
-      await blockchain.getCoinRecordsByNames([absent, otherAbsent]);
+      await expect(blockchain.getCoinRecordsByNames([absent, otherAbsent])).rejects.toThrow(
+        'Internal Error',
+      );
       expect(requestedNames()).toEqual([[absent], [otherAbsent]]);
     });
   });

@@ -438,7 +438,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
   private readinessListeners = new Set<(ready: boolean) => void>();
   private lastConnectedState = false;
   private lastRecoveringState = false;
-  private coinRecordCache = new Map<string, CoinRecord>();
   // Probe once using a known existing coin; never persist the decision or
   // share it with another wallet connection.
   private coinRecordsQueryCapability: { scope: string; supportsAllowMissing: boolean } | null =
@@ -939,6 +938,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     // singleton request until a probe on a known existing coin accepts the flag.
     const queries = supportsAllowMissing ? [uniqueNames] : uniqueNames.map((name) => [name]);
     const records: CoinRecord[] = [];
+    let queryError: unknown;
     for (const queryNames of queries) {
       try {
         const query = (allowMissing: boolean) =>
@@ -953,20 +953,11 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           throw new Error('Wallet did not return coin records');
         }
         const r = resp.coinRecords;
-        const byName = new Map<string, CoinRecord>();
-        if (queryNames.length === 1) {
-          if (r[0]) byName.set(queryNames[0], r[0]);
-        } else {
+        if (queryNames.length > 1) {
           for (const record of r) {
             const name = await coinRecordToName(record);
             if (!name) throw new Error('Wallet returned an invalid coin record');
-            byName.set(name, record);
           }
-        }
-        for (const name of queryNames) {
-          const record = byName.get(name);
-          if (record) this.coinRecordCache.set(name, record);
-          else this.coinRecordCache.delete(name);
         }
         if (r.length > 0) {
           log(
@@ -1000,17 +991,16 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
             // this connection, even if the probe fails or times out.
           }
         }
-      } catch {
-        // WalletConnect may collapse the wallet's expected missing-coin result
-        // and unrelated daemon failures into the same opaque "Internal Error".
-        // Preserve last-known records so a transient failure cannot turn a
-        // previously live coin into an authoritative disappearance. Unknown
-        // names remain absent and polling retries them without noisy logging.
-        for (const name of queryNames) {
-          const cached = this.coinRecordCache.get(name);
-          if (cached) records.push(cached);
-        }
+      } catch (error) {
+        queryError ??= error;
       }
+    }
+    // A legacy wallet may use the same error for a missing coin and a failed
+    // lookup. Neither is proof of absence, even when other queries succeeded.
+    if (queryError) {
+      throw new Error(`Wallet coin-record lookup incomplete: ${String(queryError)}`, {
+        cause: queryError,
+      });
     }
     return records;
   }
