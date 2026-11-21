@@ -75,11 +75,16 @@ When a test fails, use this sequence:
 
 ### Environment variables
 
+`./ct.sh` passes these settings through to its Rust and JavaScript test runners.
+
 | Variable | Effect |
 |----------|--------|
 | `SIM_TEST_FROM=name` | Start the test rotation at the first test matching `name`, wrap around (`./ct.sh name`) |
 | `SIM_TEST_ONLY=name` | Run only test(s) matching `name` (`./ct.sh -o name`) |
 | `SIM_TIMING=1` | Print detailed timing for each simulation step (farm_block, new_block, push_transactions, deliver_message) |
+| `RUST_TEST_THREADS=n` | Override Rust's automatic test thread count |
+| `CHIA_GAMING_WASM_SHARDS=n` | Override the WASM/Jest shard count; by default it uses available CPUs minus one for the concurrent hub tests, capped at the number of WASM test files |
+| `CHIA_GAMING_HUB_TEST_CONCURRENCY=n` | Override how many isolated hub behavior tests run concurrently; defaults to available CPUs |
 | `RUST_LOG=debug` | Enable `log::debug!` output (normally suppressed) |
 
 ### Test registration
