@@ -210,6 +210,7 @@ export type SubmissionFinalizationResult = WasmContract.SubmissionFinalizationRe
 
 export type WalletSubmitOutcome =
   | { status: 'acknowledged'; detail?: string }
+  | { status: 'provisional'; detail: string }
   | { status: 'unavailable'; detail: string }
   | { status: 'rejected'; detail: string };
 
