@@ -6,20 +6,20 @@ on:
       - main
       - 'release/**'
       - 'long_lived/**'
-  release:
-    types: [published]
   pull_request:
     branches:
       - '**'
-  workflow_dispatch:
+  workflow_call:
     inputs:
+      source_sha:
+        required: true
+        type: string
       release_tag:
-        description: Existing GitHub release tag to build and publish
-        required: false
+        required: true
         type: string
 
 concurrency:
-  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}
+  group: ${{ github.ref }}-build-electron-${{ github.event_name }}-${{ inputs.source_sha != '' && github.run_id || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -55,6 +55,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
@@ -195,7 +197,7 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.APPLE_DEV_ID_APP }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEV_ID_APP_PASS }}
-          RELEASE_VERSION: ${{ github.event.release.tag_name || inputs.release_tag }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
         run: |
           args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
           if [[ -n "$RELEASE_VERSION" ]]; then
@@ -212,7 +214,7 @@ jobs:
           AZURE_TOKEN_CREDENTIALS: prod
           AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
-          RELEASE_VERSION: ${{ github.event.release.tag_name || inputs.release_tag }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
         run: |
           args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
           if [[ -n "$RELEASE_VERSION" ]]; then
@@ -225,7 +227,7 @@ jobs:
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          RELEASE_VERSION: ${{ github.event.release.tag_name || inputs.release_tag }}
+          RELEASE_VERSION: ${{ inputs.release_tag }}
         run: |
           args=(--platform=${{ matrix.platform }} --arch=${{ matrix.arch }})
           if [[ -n "$RELEASE_VERSION" ]]; then
@@ -328,6 +330,16 @@ jobs:
             done
           ) > "desktop/release/$checksum_file"
 
+      - name: Record application source
+        if: inputs.source_sha != ''
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          printf 'source_sha=%s\nworkflow_sha=%s\n' "$SOURCE_SHA" "$WORKFLOW_SHA" > "desktop/release/SOURCE-${{ matrix.platform }}.txt"
+
       - name: Upload installers
         uses: actions/upload-artifact@v7
         with:
@@ -341,28 +353,4 @@ jobs:
             desktop/release/*.AppImage
             desktop/release/*.deb
             desktop/release/SHA256SUMS-*.txt
-
-  publish:
-    name: Publish Electron installers
-    if: github.event_name == 'release' || inputs.release_tag != ''
-    needs: [build]
-    runs-on: ubuntu-22.04
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - name: Download installers
-        uses: actions/download-artifact@v8
-        with:
-          pattern: chia-gaming-electron-*
-          path: release
-          merge-multiple: true
-
-      - name: Upload installers to GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
-        run: |
-          files=(release/*)
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+            desktop/release/SOURCE-*.txt

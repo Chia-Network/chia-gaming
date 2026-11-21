@@ -2,14 +2,19 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { describe, test as nodeTest } from 'node:test';
 
 import bencodex from 'chia-gaming-bencodex';
 import { WebSocket } from 'ws';
 
 const { decode: decodeBencodex, encode: encodeBencodex, isDictionary } = bencodex;
+// Register the cases together below so node:test can run their isolated hubs concurrently.
+const hubTests = [];
+function test(name, run) {
+  hubTests.push({ name, run });
+}
 
 function sessionKey(label) {
   return /^[0-9a-f]{32}$/.test(label)
@@ -535,13 +540,10 @@ test('every fixed game-wire key and tag is at most two UTF-8 bytes', () => {
 });
 
 test('hub emits the compact game keepalive semantically', async () => {
-  const hub = await startHub();
+  const hub = await startHub({ GAME_KEEPALIVE_INTERVAL_MS: '100' });
   try {
     const game = await openWs(hub.origin, '/ws/game');
-    assert.equal(
-      (await nextGame(game, (msg) => msg.type === 'keepalive', 16_000)).type,
-      'keepalive',
-    );
+    assert.equal((await nextGame(game, (msg) => msg.type === 'keepalive')).type, 'keepalive');
     await closeWs(game);
   } finally {
     await hub.stop();
@@ -1650,4 +1652,14 @@ test('default game byte budget relays a maximum-size protocol message', async ()
   } finally {
     await hub.stop();
   }
+});
+
+const hubTestConcurrency = Number(
+  process.env.CHIA_GAMING_HUB_TEST_CONCURRENCY ?? availableParallelism(),
+);
+if (!Number.isSafeInteger(hubTestConcurrency) || hubTestConcurrency < 1) {
+  throw new Error('CHIA_GAMING_HUB_TEST_CONCURRENCY must be a positive integer');
+}
+describe('hub behavior', { concurrency: hubTestConcurrency }, () => {
+  for (const { name, run } of hubTests) nodeTest(name, run);
 });

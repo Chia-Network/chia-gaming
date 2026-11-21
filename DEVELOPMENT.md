@@ -155,28 +155,34 @@ which publishes the platform-neutral player and hub archives.
 
 ## Publishing a release
 
-One GitHub tag owns every product artifact. The release workflows use the tag
-as the web archive name and Electron application version.
+One GitHub tag owns every product artifact. The release workflow checks out the
+commit behind that tag for every build and test, including manual dispatches
+from a newer workflow revision. It records both the application commit and the
+workflow commit in `RELEASE-SOURCE.txt` and the per-platform source records.
 
 1. Merge the release candidate to `main` and wait for required checks.
 2. Create and push an annotated semantic-version tag.
-3. Publish a GitHub prerelease for that tag. The `release: published` workflows
-   build and attach:
+3. Pushing the tag starts the release workflow. Its Linux, frontend, macOS test,
+   and desktop jobs run in parallel. The workflow builds and checks:
    - player `.tgz` and `.zip`
    - hub `.tgz` and `.zip`
    - universal macOS `.dmg` and `.zip`
    - Windows x64 NSIS `.exe`
    - Linux x64 `.AppImage` and `.deb`
    - SHA-256 checksum files
-4. The Linux release workflow deploys the verified player archive to
+4. After every required job succeeds, the workflow verifies the complete asset
+   set and source revisions, creates a draft GitHub Release with all assets,
+   then publishes it. It will not overwrite assets on an existing release.
+5. The release workflow deploys the already prepared player archive to
    https://Chia-Network.github.io/chia-gaming/. Each published release (including
    prereleases) replaces the hosted site. No hub or Node server is started.
-5. Confirm every asset uses the tag version and smoke-test the native packages
+6. Confirm every asset uses the tag version and smoke-test the native packages
    on clean target systems.
 
 Before the first Pages deployment, select **GitHub Actions** in repository
 **Settings → Pages → Build and deployment**. The `github-pages` environment
-must allow deployments from release tags. Cloud Wallet OAuth client settings
+must allow deployments from release tags and `main` for manual rebuilds. Cloud
+Wallet OAuth client settings
 must allow `https://chia-network.github.io/chia-gaming/player/oauth/callback`.
 The player archive can also be served at any directory URL ending in `/`;
 its assets and OAuth callback resolve within that installation.
@@ -194,8 +200,8 @@ proxy must forward the prefix unchanged, including WebSocket upgrades. If
 `--redirect-html-to` is used, give the full player installation URL, including
 its directory. Both archives work at the domain root as well.
 
-There is no separate publish-release script: the tag and `gh release create`
-commands below trigger the release workflows. `tools/build-deploy.sh` builds
+There is no separate publish-release script: pushing a version tag triggers the
+release workflow. `tools/build-deploy.sh` builds
 the archives locally; `tools/stage-production.sh` extracts them for local
 testing, and `tools/run-production.sh` starts local player and hub servers.
 The Pages root serves the project landing page from `project-page/index.html`; the
@@ -236,19 +242,23 @@ For example:
 ```bash
 git tag -a 0.4.0-beta.1 -m "Beta 0.4.0-beta.1"
 git push origin 0.4.0-beta.1
-gh release create 0.4.0-beta.1 \
-  --title "Beta 0.4.0-beta.1" \
-  --prerelease \
-  --notes-file release-notes.md
 ```
 
-To rebuild native assets for an existing release after a workflow-only fix:
+To rebuild a historical tag with a corrected workflow on `main`, use a tag that
+does not already have a GitHub Release:
 
 ```bash
-gh workflow run build-electron.yml \
+gh workflow run release.yml \
   --ref main \
   -f release_tag=0.4.0-beta.1
 ```
+
+The application still comes from the tag; the workflow comes from `main`, and
+both commits are recorded. If a draft remains after a failed publish, inspect
+and delete that draft before rerunning. Once a release is public, publish a new
+version for changed installers instead of replacing its assets. If Pages
+deployment fails after release publication, rerun the failed deployment job;
+the verified release assets remain public.
 
 # Build Details
 
