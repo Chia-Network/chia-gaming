@@ -19,6 +19,9 @@ mod gaming_wasm {
     use chia_gaming::clvm_execution::{
         diagnose_clvm as diagnose_clvm_token, DebugMetadataCollection, DiagnosticToken,
     };
+    use chia_gaming::common::protocol_timeout_bounds::{
+        MAX_SESSION_TIMEOUT_BLOCKS, MIN_SESSION_TIMEOUT_BLOCKS,
+    };
     use chia_gaming::common::types::ChaCha8SerializationWrapper;
 
     use wasm_bindgen::prelude::*;
@@ -233,6 +236,35 @@ mod gaming_wasm {
         agg_sig_me_additional_data: Hash,
     }
 
+    fn parse_session_timeout(value: i32, name: &str) -> Result<Timeout, types::Error> {
+        let blocks = u64::try_from(value).map_err(|_| {
+            types::Error::StrErr(format!("{name} {value} outside session timeout bounds"))
+        })?;
+        if !(MIN_SESSION_TIMEOUT_BLOCKS..=MAX_SESSION_TIMEOUT_BLOCKS).contains(&blocks) {
+            return Err(types::Error::StrErr(format!(
+                "{name} {value} outside session timeout bounds [{MIN_SESSION_TIMEOUT_BLOCKS}, {MAX_SESSION_TIMEOUT_BLOCKS}]"
+            )));
+        }
+        Ok(Timeout::new(blocks))
+    }
+
+    #[cfg(test)]
+    mod session_timeout_tests {
+        use super::*;
+
+        #[test]
+        fn rejects_negative_and_out_of_range_session_timeouts() {
+            for name in ["channel_timeout", "unroll_timeout"] {
+                for value in [-1, 0, 2, 31] {
+                    assert!(parse_session_timeout(value, name).is_err(), "{name}={value}");
+                }
+                for value in [3, 30] {
+                    assert_eq!(parse_session_timeout(value, name).unwrap().to_u64(), value as u64);
+                }
+            }
+        }
+    }
+
     fn parse_game_config(jsconfig: ChannelConfig) -> Result<GameConfigPartial, types::Error> {
         // Handshake does not need factories. Page load warms them in the
         // background; OffChainPhase installs the cached collection when the
@@ -254,8 +286,8 @@ mod gaming_wasm {
         Ok(GameConfigPartial {
             game_types,
             is_initiator: jsconfig.is_initiator,
-            channel_timeout: Timeout::new(jsconfig.channel_timeout as u64),
-            unroll_timeout: Timeout::new(jsconfig.unroll_timeout as u64),
+            channel_timeout: parse_session_timeout(jsconfig.channel_timeout, "channel_timeout")?,
+            unroll_timeout: parse_session_timeout(jsconfig.unroll_timeout, "unroll_timeout")?,
             my_contribution: jsconfig.my_contribution,
             their_contribution: jsconfig.their_contribution,
             reward_puzzle_hash: PuzzleHash::from_hash(Hash::from_slice(&reward_puzzle_hash_bytes)?),
