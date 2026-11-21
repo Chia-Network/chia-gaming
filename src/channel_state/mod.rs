@@ -901,7 +901,12 @@ impl ChannelState {
         let aggregate_public_key = our_channel_pubkey.clone() + their_channel_pubkey.clone();
 
         let channel_coin_puzzle_hash = puzzle_hash_for_pk(env.allocator, &aggregate_public_key)?;
-        let amount = my_contribution.clone() + their_contribution.clone();
+        let amount = Amount::new(
+            my_contribution
+                .to_u64()
+                .checked_add(their_contribution.to_u64())
+                .ok_or_else(|| Error::Channel("channel contributions overflow u64".to_string()))?,
+        );
         let channel_coin_parent =
             CoinString::from_parts(&launcher_coin_id, &channel_coin_puzzle_hash, &amount);
 
