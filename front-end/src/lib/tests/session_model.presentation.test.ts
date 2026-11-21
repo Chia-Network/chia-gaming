@@ -380,6 +380,21 @@ describe('session model dashboard and on-chain presentation contracts', () => {
     });
   });
 
+  it('shows both confirmed direct rewards after a stale unroll', () => {
+    const coin = new Uint8Array(65);
+    coin[64] = 60;
+    const status = channelStatusModelFromPayload({
+      state: 'ResolvedStale',
+      coin,
+      our_balance: { Amount: '90' },
+      their_balance: { Amount: '25' },
+    });
+    expect(selectStatusBarBalances(createSessionModel({ channel: { status } }))).toEqual([
+      { label: 'Me', value: '60' },
+      { label: 'Opp', value: '25' },
+    ]);
+  });
+
   it('owns WASM channel coin bytes across memory growth', () => {
     const memory = new WebAssembly.Memory({ initial: 1 });
     const wasmCoin = new Uint8Array(memory.buffer, 0, 72);
