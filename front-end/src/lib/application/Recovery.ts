@@ -283,7 +283,10 @@ export class Recovery {
       this.setStartingOver(false);
     }
   };
-  reload = () => (this.dependencies.reload ?? (() => window.location.reload()))();
+  reload = () => {
+    if (this.view.startingOver) return;
+    (this.dependencies.reload ?? (() => window.location.reload()))();
+  };
   closeTab = () => {
     this.nextRecoveryGeneration();
     this.claimedRecovery = null;

@@ -662,7 +662,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             <>
               <button
                 onClick={() => dispatch({ type: 'reload' })}
-                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+                disabled={startingOver}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
               >
                 Reload
               </button>

@@ -194,6 +194,34 @@ describe('BootRecoveryBoundary composed Shell recovery', () => {
     await deleteSessionDatabase();
   });
 
+  it('does not reload while an approved hard reset is in progress', async () => {
+    let finishPreparation!: () => void;
+    const preparation = new Promise<void>((resolve) => {
+      finishPreparation = resolve;
+    });
+    const reload = jest.fn();
+    const recovery = new Recovery(
+      {
+        onSessionId: jest.fn(),
+        onRestore: jest.fn(),
+        onFreshClaim: jest.fn(),
+        onAuthorityLost: jest.fn(),
+        beforeHardReset: () => preparation,
+        reload,
+      },
+      jest.fn(),
+    );
+
+    const reset = recovery.retryHardReset();
+    expect(recovery.view.startingOver).toBe(true);
+    recovery.reload();
+    expect(reload).not.toHaveBeenCalled();
+
+    finishPreparation();
+    await reset;
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it('finishes a pending wipe before automatic inspection, claim, identity, or restore', async () => {
     const originalIndexedDb = indexedDB;
     localStorage.setItem('appState_pendingWipe', '1');
