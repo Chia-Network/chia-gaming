@@ -436,8 +436,12 @@ Each hub socket has at most one roster update in flight; if it falls behind, the
 hub sends the latest snapshot when that write completes. The public roster is
 serialized once; a busy player's private reasons are inserted only into that
 player's `hub_update`. Hub control writes are limited to 1 MiB queued per socket
-and 64 MiB globally by default. A socket that exceeds either budget is disconnected and
-can reconnect to receive the current state. Deployments may override these
+and 64 MiB globally by default. A socket that exceeds its per-socket budget or
+tries to send a frame larger than the global budget is disconnected. When the
+global budget is temporarily full, roster updates wait and send the latest
+snapshot after capacity frees up; up to 1 MiB remains available for other hub
+control messages. Those other messages still disconnect on budget overflow.
+Deployments may override these
 budgets with `HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION` and
 `HUB_MAX_TOTAL_OUTBOUND_BYTES`.
 

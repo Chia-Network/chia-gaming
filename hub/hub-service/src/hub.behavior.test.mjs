@@ -1296,6 +1296,31 @@ test('bursty alias changes deliver one current roster snapshot', async () => {
   }
 });
 
+test('roster fan-out waits for global outbound capacity without disconnecting players', async () => {
+  const hub = await startHub({ HUB_MAX_TOTAL_OUTBOUND_BYTES: '900' });
+  const players = [];
+  try {
+    for (let index = 0; index < 5; index++) {
+      players.push(await joinHub(hub.origin, `roster-budget-${index}`, `Player ${index}`));
+    }
+    const updates = players.map(({ ws }) =>
+      nextJson(
+        ws,
+        (msg) =>
+          msg.type === 'hub_update' &&
+          msg.players.length === players.length &&
+          msg.players.some((player) => player.alias === 'Updated player'),
+      ),
+    );
+    sendJson(players[0].ws, { type: 'change_alias', newAlias: 'Updated player' });
+    await Promise.all(updates);
+    assert.ok(players.every(({ ws }) => ws.readyState === WebSocket.OPEN));
+  } finally {
+    for (const { ws } of players) await closeWs(ws);
+    await hub.stop();
+  }
+});
+
 test('hub control outbound budget disconnects an overloaded socket', async () => {
   const hub = await startHub({ HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION: '64' });
   try {

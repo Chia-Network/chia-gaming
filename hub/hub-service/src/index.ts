@@ -189,6 +189,9 @@ const MAX_TOTAL_HUB_OUTBOUND_BYTES = readPositiveIntegerEnv(
   'HUB_MAX_TOTAL_OUTBOUND_BYTES',
   64 * 1024 * 1024,
 );
+const MAX_HUB_ROSTER_OUTBOUND_BYTES =
+  MAX_TOTAL_HUB_OUTBOUND_BYTES -
+  Math.min(1024 * 1024, Math.floor(MAX_TOTAL_HUB_OUTBOUND_BYTES / 8));
 if (HUB_CONTROL_MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
   throw new Error('HUB_CONTROL_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
 }
@@ -577,20 +580,31 @@ function sendSerializedWs(
   type: string,
   serialized: string,
   onSent?: () => void,
-): boolean {
+  deferWhenGloballyFull = false,
+): 'sent' | 'deferred' | 'closed' {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
-    return false;
+    return 'closed';
   }
   const bytes = Buffer.byteLength(serialized);
   const queued = queuedHubBytes.get(ws) ?? 0;
   if (
     Math.max(queued, ws.bufferedAmount) + bytes > MAX_HUB_OUTBOUND_BYTES_PER_CONNECTION ||
-    totalQueuedHubBytes + bytes > MAX_TOTAL_HUB_OUTBOUND_BYTES
+    bytes > MAX_TOTAL_HUB_OUTBOUND_BYTES
   ) {
     logHub('send_ws_backpressure', { ws_id: wsId(ws), type, bytes, queued });
     ws.terminate();
-    return false;
+    return 'closed';
+  }
+  const globalLimit =
+    deferWhenGloballyFull && bytes <= MAX_HUB_ROSTER_OUTBOUND_BYTES
+      ? MAX_HUB_ROSTER_OUTBOUND_BYTES
+      : MAX_TOTAL_HUB_OUTBOUND_BYTES;
+  if (totalQueuedHubBytes + bytes > globalLimit) {
+    if (deferWhenGloballyFull) return 'deferred';
+    logHub('send_ws_backpressure', { ws_id: wsId(ws), type, bytes, queued });
+    ws.terminate();
+    return 'closed';
   }
   queuedHubBytes.set(ws, queued + bytes);
   totalQueuedHubBytes += bytes;
@@ -604,6 +618,7 @@ function sendSerializedWs(
         totalQueuedHubBytes -= bytes;
       }
       if (error) logHub('send_ws_error', { ws_id: wsId(ws), type, error: error.message });
+      flushDeferredHubUpdates();
       onSent?.();
     });
   } catch (error) {
@@ -613,7 +628,7 @@ function sendSerializedWs(
     throw error;
   }
   logHubVerbose('send_ws_ok', { ws_id: wsId(ws), type });
-  return true;
+  return 'sent';
 }
 
 function sendWs(ws: WebSocket, type: string, payload: unknown): void {
@@ -900,6 +915,15 @@ let latestHubUpdate = '';
 let latestPrivatePlayers = new Map<string, { start: number; end: number; serialized: string }>();
 let hubUpdateVersion = 0;
 const hubUpdateInFlight = new WeakSet<WebSocket>();
+const deferredHubUpdates = new Map<WebSocket, string>();
+
+function flushDeferredHubUpdates(): void {
+  for (const [ws, playerId] of deferredHubUpdates) {
+    deferredHubUpdates.delete(ws);
+    sendLatestHubUpdate(playerId, ws);
+    if (deferredHubUpdates.has(ws)) break;
+  }
+}
 
 function sendLatestHubUpdate(playerId: string, ws: WebSocket): void {
   if (hubConnections.get(playerId) !== ws || hubUpdateInFlight.has(ws)) return;
@@ -911,13 +935,20 @@ function sendLatestHubUpdate(playerId: string, ws: WebSocket): void {
     : latestHubUpdate;
   const version = hubUpdateVersion;
   hubUpdateInFlight.add(ws);
-  const sent = sendSerializedWs(ws, 'hub_update', serialized, () => {
-    hubUpdateInFlight.delete(ws);
-    if (hubConnections.get(playerId) === ws && hubUpdateVersion > version) {
-      sendLatestHubUpdate(playerId, ws);
-    }
-  });
-  if (!sent) hubUpdateInFlight.delete(ws);
+  const result = sendSerializedWs(
+    ws,
+    'hub_update',
+    serialized,
+    () => {
+      hubUpdateInFlight.delete(ws);
+      if (hubConnections.get(playerId) === ws && hubUpdateVersion > version) {
+        sendLatestHubUpdate(playerId, ws);
+      }
+    },
+    true,
+  );
+  if (result !== 'sent') hubUpdateInFlight.delete(ws);
+  if (result === 'deferred') deferredHubUpdates.set(ws, playerId);
 }
 
 /** One current roster frame per socket; slow sockets skip superseded snapshots. */
@@ -1852,6 +1883,7 @@ hubWsServer.on('connection', (ws) => {
 
   ws.on('close', (code, reason) => {
     clearKeepalive(ws);
+    deferredHubUpdates.delete(ws);
     logHub('hub_ws_closed', { ws_id: currentWsId, code, reason: reason.toString() });
     const hubMeta = wsHubMeta.get(ws);
     if (hubMeta) {
