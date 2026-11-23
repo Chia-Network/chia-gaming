@@ -204,7 +204,7 @@ export fn krunk_bob_handler_clue(
     } else {
         let word = bytes(move)[16..21];
         let reveal_clue = if truthy(mover_share) {
-            expand_clue(0x72)
+            expand_clue(ALL_GREEN_CLUE)
         } else {
             expand_clue(make_clue(word, pair(pre_state.guesses.bob_guesses).first))
         };

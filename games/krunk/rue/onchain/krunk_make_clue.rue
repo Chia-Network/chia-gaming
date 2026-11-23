@@ -1,6 +1,12 @@
 import common::*;
 import krunk_shapes::*;
 
+inline const GRAY: Int = 0;
+inline const YELLOW: Int = 1;
+inline const GREEN: Int = 2;
+// Five green tiles encode as 22222 in base 3, offset by -128 for the wire.
+export inline const ALL_GREEN_CLUE: Int = 242 - 128;
+
 export fn make_clue(word: Any, guess: Any) -> Any {
     let (not_green_word, (not_green_guess, green)) = unchecked_cast::<(Any, (Any, Any))>(make_green(
         expand_word(word),
@@ -43,9 +49,9 @@ export fn make_yellow(word: Any, guess: Any) -> Any {
     if !truthy(guess) {
         0
     } else if truthy(is_yellow(word, pair(guess).first)) {
-        (1, make_yellow(elide_one(word, pair(guess).first), pair(guess).rest))
+        (YELLOW, make_yellow(elide_one(word, pair(guess).first), pair(guess).rest))
     } else {
-        (0, make_yellow(word, pair(guess).rest))
+        (GRAY, make_yellow(word, pair(guess).rest))
     }
 }
 
@@ -81,7 +87,7 @@ export fn merge_colors(green: Any, yellow: Any, val: Any) -> Any {
             (3 * integer(val))
                 + integer(
                     if truthy(pair(green).first) {
-                        2
+                        GREEN
                     } else {
                         pair(yellow).first
                     },

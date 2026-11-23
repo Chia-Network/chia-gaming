@@ -629,7 +629,7 @@ impl TheirTurnReferee {
 
         let validation_info_hash = if vih_raw.is_empty() {
             ValidationInfoHash::None
-        } else if *vih_raw == [0x78] {
+        } else if vih_raw.as_slice() == b"x" {
             ValidationInfoHash::Initial
         } else {
             ValidationInfoHash::Hash(Hash::from_slice(vih_raw)?)

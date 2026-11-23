@@ -17,13 +17,13 @@ fn main(params: RefereeParams, ...solution: Timeout | Move | Slash) -> Any {
         Timeout as (mover_ph, waiter_ph) => {
             let remainder = amount - share;
             let waiter_conditions: List<Any> = if remainder != 0 {
-                [[CREATE_COIN, waiter_ph, remainder], [AGG_SIG_UNSAFE, waiter, 0x78 + waiter_ph]]
+                [[CREATE_COIN, waiter_ph, remainder], [AGG_SIG_UNSAFE, waiter, "x" + waiter_ph]]
             } else {
                 assert waiter_ph == nil;
                 nil
             };
             let (coin, signature): (Any, Any) = if share != 0 {
-                ([CREATE_COIN, mover_ph, share], [AGG_SIG_UNSAFE, mover, 0x78 + mover_ph])
+                ([CREATE_COIN, mover_ph, share], [AGG_SIG_UNSAFE, mover, "x" + mover_ph])
             } else {
                 assert mover_ph == nil;
                 ([1], [1])
@@ -62,7 +62,7 @@ fn main(params: RefereeParams, ...solution: Timeout | Move | Slash) -> Any {
             let result = validate(...(hash, (params, solution)));
             let payout = [
                 [CREATE_COIN, payout_ph, amount],
-                [AGG_SIG_UNSAFE, mover, 0x78 + payout_ph],
+                [AGG_SIG_UNSAFE, mover, "x" + payout_ph],
             ];
             if result is Bytes {
                 assert result == nil;

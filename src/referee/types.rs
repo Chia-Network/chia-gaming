@@ -74,9 +74,7 @@ impl<E: ClvmEncoder<Node = NodePtr>> ToClvm<E> for ValidationInfoHash {
     fn to_clvm(&self, encoder: &mut E) -> Result<<E as ClvmEncoder>::Node, ToClvmError> {
         match self {
             ValidationInfoHash::None => encoder.encode_atom(clvm_traits::Atom::Borrowed(&[])),
-            ValidationInfoHash::Initial => {
-                encoder.encode_atom(clvm_traits::Atom::Borrowed(&[0x78]))
-            }
+            ValidationInfoHash::Initial => encoder.encode_atom(clvm_traits::Atom::Borrowed(b"x")),
             ValidationInfoHash::Hash(h) => encoder.encode_atom(clvm_traits::Atom::Borrowed(&h.0)),
         }
     }
@@ -320,7 +318,7 @@ pub fn parse_validator_result(
 ///   Authorized via AGG_SIG_UNSAFE with pre-signed payout signatures.
 ///
 /// If action is slash, args is ((state validation_program . evidence) . mover_payout_ph).
-///   Authorized via AGG_SIG_UNSAFE MOVER_PUBKEY (concat 0x78 mover_payout_ph).
+///   Authorized via AGG_SIG_UNSAFE MOVER_PUBKEY (concat "x" mover_payout_ph).
 ///
 /// If action is move, args is #(new_move infohash_c new_mover_share new_max_move_size).
 ///   Authorized via AGG_SIG_ME MOVER_PUBKEY (shatree args).

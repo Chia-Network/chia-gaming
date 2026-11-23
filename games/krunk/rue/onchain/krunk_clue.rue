@@ -48,7 +48,7 @@ fn main(
     if move.length == 1 {
         if (mover_share == 0)
             && (integer(list_length(alice_clues)) < 4)
-            && ((0x72 as Int) > integer(move))
+            && (ALL_GREEN_CLUE > integer(move))
         {
             validator_transition(
                 krunk_guess_hash,
