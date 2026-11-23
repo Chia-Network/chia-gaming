@@ -310,12 +310,24 @@ fn every_game_package_is_registered() {
     let mut missing_files = Vec::new();
     for key in &registered {
         let root = PathBuf::from("games").join(key);
-        if !root.join("clsp/factory.clsp").is_file() {
-            missing_files.push(format!("games/{key}/clsp/factory.clsp"));
+        // A package's puzzles are either in Rue, in `puzzles/games/<key>/`, or in Chialisp.
+        let rue = PathBuf::from("puzzles/games").join(key);
+        let (factory, factory_probe) = if rue.join("factory.rue").is_file() {
+            (rue.join("factory.rue"), rue.join("factory_probe.rue"))
+        } else {
+            (
+                root.join("clsp/factory.clsp"),
+                root.join("clsp/factory_probe.clsp"),
+            )
+        };
+        if !factory.is_file() {
+            missing_files.push(factory.display().to_string());
         }
         if production.iter().any(|k| k == key) {
+            if !factory_probe.is_file() {
+                missing_files.push(factory_probe.display().to_string());
+            }
             for rel in [
-                "clsp/factory_probe.clsp",
                 "ui/handProposal.ts",
                 "ui/handProposalForm.tsx",
                 "ui/play.tsx",

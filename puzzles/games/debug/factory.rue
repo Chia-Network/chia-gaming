@@ -1,0 +1,271 @@
+import project::games::types::*;
+import project::referee::types::*;
+
+// A minimal game for the simulator tests, with a controllable mover share. One program is every
+// part of the game, chosen by MODE: the factory, the validator, and the two handlers. Each of them
+// is this program curried with its mode and the curry arguments.
+//
+// Every valid move repeats the data that's stable for the validator, followed by the mover share
+// and a slash byte. A nonzero slash byte makes the move slashable, with evidence equal to it.
+fn main(MODE: Bytes, args: DebugCurry, ...rest: Any) -> Any {
+    // The mode says which arguments follow it.
+    if MODE == "validator" {
+        validator(args, ...unchecked_cast::<ValidatorArgs>(rest))
+    } else if MODE == "myturn" {
+        my_turn(args, ...unchecked_cast::<MyTurnArgs>(rest))
+    } else if MODE == "theirturn" {
+        their_turn(args, ...unchecked_cast::<TheirTurnArgs>(rest))
+    } else if MODE == "factory" {
+        factory(...unchecked_cast::<FactoryArgs>(rest))
+    } else {
+        raise "no such personality";
+    }
+}
+
+// The arguments curried into every part of the game. The validator is always curried with a count
+// of zero, and the live count comes from the state, so every turn uses the same validator, which
+// the factory registers.
+struct DebugCurry {
+    count: Int,
+    self_hash: Bytes32,
+    self_program: fn(...args: Any) -> Any,
+}
+
+struct DebugState {
+    count: Int,
+    slashable: Bytes,
+    ...mover_share: Int,
+}
+
+// The local move, from the test harness.
+struct DebugMove {
+    prefix: Bytes,
+    count: Int,
+    mover_share: Int,
+    slash: Bytes,
+}
+
+struct DebugReadable {
+    count: Int,
+    slashable: Bytes,
+    mover_share: Int,
+}
+
+type DebugMyTurn = MyTurnHandler<DebugState, DebugReadable | nil, DebugMove | nil>;
+type DebugTheirTurn = TheirTurnHandler<DebugState, DebugReadable | nil, DebugMove | nil>;
+
+struct ValidatorArgs {
+    validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<DebugState, Bytes>,
+    ..._payout: Bytes32 | nil,
+}
+
+struct MyTurnArgs {
+    local_move: DebugMove | nil,
+    amount: Int,
+    state: DebugState,
+    mover_share: Int,
+    entropy: Bytes32,
+}
+
+struct TheirTurnArgs {
+    amount: Int,
+    pre_state: DebugState,
+    state: DebugState,
+    move: Bytes,
+    validation_program_hash: Bytes32,
+    mover_share: Int,
+}
+
+struct FactoryArgs {
+    proposer_reserve: Int,
+    accepter_reserve: Int,
+    curry: DebugCurry,
+}
+
+fn validator(args: DebugCurry, ...validator_args: ValidatorArgs) -> ValidatorResult<DebugState>
+    | nil
+{
+    let { coin, turn } = validator_args.params;
+    let { state, evidence } = validator_args.move;
+    let game_move = turn.last_move.game_move;
+
+    let count = state.count + 0;
+    let own_hash = validator_hash(args);
+    let counter_data = coin.players.waiter_pubkey as Bytes
+        + coin.players.mover_pubkey as Bytes
+        + coin.mod_hash
+        + turn.infohash_a as Bytes
+        + own_hash
+        + byteify(coin.timeout)
+        + byteify(coin.amount)
+        + byteify(turn.last_move.nonce)
+        + byteify(turn.mover_share)
+        + byteify(count);
+    let counter_length = counter_data.length;
+    let move_length = game_move.length;
+
+    // The move is too short, or doesn't repeat the counter data.
+    if counter_length > move_length - 2 || counter_data != game_move[..counter_length] {
+        return nil;
+    }
+
+    // If the mover and waiter are the same, things are broken.
+    if coin.players.mover_pubkey == coin.players.waiter_pubkey {
+        return nil;
+    }
+
+    // The evidence is the slash byte of the move, which can't be zero.
+    let slash_byte = game_move[move_length - 1..move_length];
+    if evidence == slash_byte && evidence as Int + 0 != 0 {
+        return nil;
+    }
+
+    validator_transition(
+        validator_hash(DebugCurry { ...args, count: args.count + 1 }),
+        DebugState {
+            count: count + 1,
+            slashable: slash_byte,
+            mover_share: game_move[counter_length..move_length - 1] as Int + 0,
+        },
+        512,
+    )
+}
+
+// The hash of this program curried as the validator, with a count of zero.
+fn validator_hash(args: DebugCurry) -> Bytes32 {
+    let curry_hash = tree_hash_pair(
+        tree_hash_atom(nil),
+        tree_hash_pair(
+            tree_hash_atom(args.self_hash),
+            tree_hash_pair(args.self_hash, tree_hash_atom(nil)),
+        ),
+    );
+    curry_tree_hash(args.self_hash, [tree_hash_atom("validator"), curry_hash])
+}
+
+// Makes a value at least one byte long.
+fn byteify(value: Int) -> Bytes {
+    inline if value != 0 { value as Bytes } else { 0x00 }
+}
+
+fn my_turn(
+    args: DebugCurry,
+    ...my_turn_args: MyTurnArgs,
+) -> MyTurnMove<DebugState, DebugReadable | nil, DebugMove | nil> {
+    // A nil local move makes us emit a local slash, so that it can be tested.
+    let local_move = my_turn_args.local_move;
+    assert !(local_move is nil), "my turn local slash";
+
+    let { prefix, count, mover_share, slash } = local_move;
+    assert count == args.count, ["count not equal for this move", count, args.count];
+
+    MyTurnMove::<DebugState, DebugReadable | nil, DebugMove | nil> {
+        label: "debug game: move",
+        game_move: prefix + byteify(mover_share) + slash,
+        mover_share,
+        their_turn_handler: curry_their_turn(DebugCurry { ...args, count: args.count + 1 }),
+    }
+}
+
+// Reads backwards over a positive integer that ends at `position`, returning it and the position
+// before it.
+fn read_over_integer(value: Bytes, read: Bytes, position: Int) -> IntegerRead {
+    let byte = value[position..position + 1];
+    if byte as Int & -128 != 0 {
+        read_over_integer(value, byte + read, position - 1)
+    } else {
+        IntegerRead { value: byte + read, position }
+    }
+}
+
+struct IntegerRead {
+    value: Bytes,
+    position: Int,
+}
+
+fn their_turn(
+    args: DebugCurry,
+    ...their_turn_args: TheirTurnArgs,
+) -> TheirTurnMove<DebugState, DebugReadable | nil, DebugMove | nil> {
+    let { state, move, validation_program_hash, mover_share: split } = their_turn_args;
+    let move_length = move.length;
+
+    if 1 > move_length {
+        return TheirTurnMove::<DebugState, DebugReadable | nil, DebugMove | nil> {
+            readable: nil,
+            evidence: nil,
+            next: [nil],
+        };
+    }
+
+    // Skipping the last byte and the mover share, there should be a count.
+    let slash_byte = move[move_length - 1..move_length];
+    let mover_share = read_over_integer(move, nil, move_length - 2);
+    let move_count = read_over_integer(move, nil, mover_share.position - 1);
+
+    assert move_count.value as Int + 0 == args.count, "their turn: mismatched count";
+    assert validator_hash(args) == validation_program_hash,
+        "their turn: mismatched validator program";
+    assert split == mover_share.value as Int + 0, "their turn: wrong mover share";
+    assert split == state.mover_share, "their turn: wrong mover share in state";
+    assert state.slashable == slash_byte, "their turn: wrong slash byte in state";
+
+    TheirTurnMove::<DebugState, DebugReadable | nil, DebugMove | nil> {
+        readable: DebugReadable {
+            count: state.count,
+            slashable: state.slashable,
+            mover_share: state.mover_share,
+        },
+        // The first candidate deliberately doesn't slash, so the game exercises retrying with
+        // later evidence.
+        evidence: [nil, slash_byte],
+        next: [curry_my_turn(DebugCurry { ...args, count: args.count + 1 })],
+    }
+}
+
+fn factory(
+    ...factory_args: FactoryArgs,
+) -> FactoryResult<DebugState, List<Int>, DebugReadable | nil, DebugMove | nil> {
+    let { proposer_reserve, accepter_reserve, curry: args } = factory_args;
+    assert proposer_reserve > 0;
+    assert accepter_reserve > 0;
+
+    let proposer_contribution = inline if proposer_reserve > 100 { 100 } else { proposer_reserve };
+    let accepter_contribution = inline if accepter_reserve > 100 { 100 } else { accepter_reserve };
+
+    FactorySuccess::<DebugState, List<Int>, DebugReadable | nil, DebugMove | nil> {
+        records: [GameRecord::<DebugState, List<Int>, DebugReadable | nil, DebugMove | nil> {
+            proposer_contribution,
+            accepter_contribution,
+            proposer_goes_first: true,
+            initial_move: nil,
+            initial_max_move_size: 512,
+            initial_state: DebugState { count: 0, slashable: nil, mover_share: 0 },
+            initial_mover_share: 0,
+            my_turn_handler: curry_my_turn(args),
+            their_turn_handler: curry_their_turn(args),
+            validation_programs: [curry_validator(args)],
+            readable_parameters: [proposer_contribution, accepter_contribution],
+        }],
+    }
+}
+
+fn curry_my_turn(args: DebugCurry) -> DebugMyTurn {
+    unchecked_cast::<DebugMyTurn>(curry(args, "myturn"))
+}
+
+fn curry_their_turn(args: DebugCurry) -> DebugTheirTurn {
+    unchecked_cast::<DebugTheirTurn>(curry(args, "theirturn"))
+}
+
+fn curry_validator(args: DebugCurry) -> Validator {
+    unchecked_cast::<Validator>(curry(args, "validator"))
+}
+
+// Curries this program with a mode and the curry arguments, which builds the program
+// `(a (q . program) (c (q . mode) (c (q . args) 1)))`.
+fn curry(args: DebugCurry, mode: Bytes) -> Any {
+    [2, (1, args.self_program), [4, (1, mode), [4, (1, args), 1]]]
+}

@@ -1,0 +1,86 @@
+// The calling conventions of game factories and handlers, which `clsp/handler_api.md` describes.
+
+import project::referee::types::Validator;
+
+// The result of a game factory: the games that a proposal creates, or which of the players don't
+// have enough to contribute.
+export type FactoryResult<S, P, R, M> = FactorySuccess<S, P, R, M> | FactoryShort;
+
+export struct FactorySuccess<S, P, R, M> {
+    success = 1,
+    records: List<GameRecord<S, P, R, M>>,
+}
+
+export struct FactoryShort {
+    success = nil,
+    proposer_short: Bool,
+    accepter_short: Bool,
+}
+
+// A game that a factory creates, with the type of its state `S`, its readable parameters `P`, the
+// readable moves of the opponent `R`, and the local moves `M`.
+export struct GameRecord<S, P, R, M> {
+    proposer_contribution: Int,
+    accepter_contribution: Int,
+    proposer_goes_first: Bool,
+    initial_move: Bytes,
+    initial_max_move_size: Int,
+    initial_state: S,
+    initial_mover_share: Int,
+    my_turn_handler: MyTurnHandler<S, R, M>,
+    their_turn_handler: TheirTurnHandler<S, R, M>,
+    // Every validator the game can select. The first is the initial validator.
+    validation_programs: List<Validator>,
+    readable_parameters: P,
+}
+
+// Makes a move from the local player's input, or rejects the input.
+export type MyTurnHandler<S, R, M> = fn(
+    local_move: M,
+    amount: Int,
+    state: S,
+    mover_share: Int,
+    entropy: Bytes32,
+) -> MyTurnMove<S, R, M> | MoveRejection;
+
+// The move to make, and the handler for the opponent's reply. A message parser, if there is one,
+// reads the messages that the opponent sends outside of moves.
+export struct MyTurnMove<S, R, M> {
+    label: String,
+    game_move: Bytes,
+    mover_share: Int,
+    their_turn_handler: TheirTurnHandler<S, R, M>,
+    ...message_parser: [MessageParser<S>] | nil = nil,
+}
+
+// Rejects the local player's input, which the host reports as a rejected move.
+export struct MoveRejection {
+    tag: Bytes,
+    message: Bytes,
+}
+
+// Reads a message from the opponent, given the current state and the amount of the game.
+export type MessageParser<S> = fn(message: Bytes, state: S, amount: Int) -> Any;
+
+// Reads the opponent's move, given the states before and after it.
+export type TheirTurnHandler<S, R, M> = fn(
+    amount: Int,
+    pre_state: S,
+    state: S,
+    move: Bytes,
+    validation_program_hash: Bytes32,
+    mover_share: Int,
+) -> TheirTurnMove<S, R, M>;
+
+// The opponent's move, and the evidence that might slash it. The rest is the handler for the next
+// move (which is nil or left out when the game is over), optionally followed by a message to send
+// to the opponent.
+export struct TheirTurnMove<S, R, M> {
+    readable: R,
+    evidence: List<Any>,
+    ...next: TheirTurnNext<S, R, M>,
+}
+
+export type TheirTurnNext<S, R, M> = nil
+    | [MyTurnHandler<S, R, M> | nil]
+    | [MyTurnHandler<S, R, M> | nil, Bytes];

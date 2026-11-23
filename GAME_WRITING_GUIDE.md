@@ -115,7 +115,12 @@ internal test-suite aggregation.
 The catalog key must equal the `games/<key>/` directory name. The build
 automatically compiles `clsp/factory.clsp`, `clsp/factory_probe.clsp`, and
 production `.clsp` files below `clsp/onchain/`; do not add package entries to
-`chialisp.toml`. Run `./cb.sh` before the first frontend build so the generated
+`chialisp.toml`. A package written in Rue instead keeps its sources in
+`puzzles/games/<key>/`: `factory.rue`, an optional `factory_probe.rue`, and its
+validators in `onchain/`, each a file whose `main` function is the program.
+The build writes their outputs to the package's `clsp/` directory, as
+`factory`, `factory_probe`, and `onchain/<name>`. The factory and handler
+calling conventions are typed in `puzzles/games/types.rue`. Run `./cb.sh` before the first frontend build so the generated
 prepared factory exists for the frontend registry generator.
 
 Do not edit or check in compiled `.hex` files, prepared factory binaries, or

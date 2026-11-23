@@ -177,14 +177,22 @@ fn validate_package(key: &str, production: bool) {
     let root = PathBuf::from("games").join(key);
     let rust_mod = root.join("rust/mod.rs");
     let rust_tests = root.join("rust/tests/mod.rs");
-    let factory = root.join("clsp/factory.clsp");
-    let factory_probe = root.join("clsp/factory_probe.clsp");
+    let (factory, factory_probe) = match rue_package_dir(key) {
+        Some(dir) => (dir.join("factory.rue"), dir.join("factory_probe.rue")),
+        None => (
+            root.join("clsp/factory.clsp"),
+            root.join("clsp/factory_probe.clsp"),
+        ),
+    };
     if !factory.is_file() {
-        panic!("game package {key} missing clsp/factory.clsp");
+        panic!("game package {key} missing puzzles/games/{key}/factory.rue or clsp/factory.clsp");
     }
     if production {
         if !factory_probe.is_file() {
-            panic!("production game package {key} missing clsp/factory_probe.clsp");
+            panic!(
+                "production game package {key} missing {}",
+                factory_probe.display()
+            );
         }
         for rel in [
             "ui/handProposal.ts",
@@ -268,6 +276,9 @@ fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
             panic!("duplicate game package key {key}");
         }
         validate_package(key, registry.production.iter().any(|k| k == key));
+        if rue_package_dir(key).is_some() {
+            continue;
+        }
         for (title, path) in package_clsp_entrypoints(key) {
             do_compile(&title, &path)?;
         }
@@ -276,9 +287,68 @@ fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
     Ok(())
 }
 
-/// Compiles the Rue project in `Rue.toml`, and writes each program in [`RUE_PROGRAMS`] as binary
-/// CLVM, hex, and a debug metadata sidecar. Any diagnostic fails the build, including warnings.
-fn compile_rue() -> Result<(), String> {
+/// The directory of a game package's Rue sources, if it's written in Rue.
+fn rue_package_dir(key: &str) -> Option<PathBuf> {
+    let dir = PathBuf::from("puzzles/games").join(key);
+    dir.join("factory.rue").is_file().then_some(dir)
+}
+
+/// The programs of the game packages written in Rue, with where their outputs are written. A
+/// package has a `factory.rue`, an optional `factory_probe.rue`, and its validators in `onchain/`
+/// (except for `test_` files). Their outputs are written to the package's `clsp/` directory.
+fn rue_package_programs(registry: &GameRegistry) -> Vec<(String, String)> {
+    let mut programs = Vec::new();
+    for key in registry.production.iter().chain(registry.test.iter()) {
+        let Some(dir) = rue_package_dir(key) else {
+            continue;
+        };
+        let output = PathBuf::from("games").join(key).join("clsp");
+        for name in ["factory", "factory_probe"] {
+            let source = dir.join(format!("{name}.rue"));
+            if source.is_file() {
+                programs.push((
+                    source.to_string_lossy().into_owned(),
+                    output.join(name).to_string_lossy().into_owned(),
+                ));
+            }
+        }
+        let onchain = dir.join("onchain");
+        if onchain.is_dir() {
+            let mut files: Vec<PathBuf> = fs::read_dir(&onchain)
+                .unwrap_or_else(|e| panic!("read {onchain:?}: {e}"))
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rue"))
+                .filter(|p| {
+                    p.file_stem()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|stem| !stem.starts_with("test_"))
+                })
+                .collect();
+            files.sort();
+            for file in files {
+                let stem = file
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .expect("validator file name");
+                programs.push((
+                    file.to_string_lossy().into_owned(),
+                    output
+                        .join("onchain")
+                        .join(stem)
+                        .to_string_lossy()
+                        .into_owned(),
+                ));
+            }
+        }
+    }
+    programs
+}
+
+/// Compiles the Rue project in `Rue.toml`, and writes each program in [`RUE_PROGRAMS`] and in the
+/// Rue game packages as binary CLVM, hex, and a debug metadata sidecar. Any diagnostic fails the
+/// build, including warnings.
+fn compile_rue(registry: &GameRegistry) -> Result<(), String> {
     let root = std::env::current_dir().map_err(|e| format!("finding the project root: {e}"))?;
     let project = rue_options::find_project(&root.join("Rue.toml"), false)
         .map_err(|e| format!("loading Rue.toml: {e}"))?
@@ -309,11 +379,16 @@ fn compile_rue() -> Result<(), String> {
         return Err(format!("Rue diagnostics:\n{}", messages.join("\n")));
     }
 
+    let programs = RUE_PROGRAMS
+        .iter()
+        .map(|(source, output)| (source.to_string(), output.to_string()))
+        .chain(rue_package_programs(registry));
+
     let mut allocator = Allocator::new();
-    for (source, output) in RUE_PROGRAMS {
+    for (source, output) in programs {
         let kind =
-            normalize_path(&root.join(source)).map_err(|e| format!("resolving {source}: {e}"))?;
-        if let Some(dir) = Path::new(output).parent() {
+            normalize_path(&root.join(&source)).map_err(|e| format!("resolving {source}: {e}"))?;
+        if let Some(dir) = Path::new(&output).parent() {
             fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
         }
         let (program, metadata) = tree
@@ -423,7 +498,11 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
 
     for key in &registry.production {
         let root = PathBuf::from("games").join(key).join("clsp");
-        let raw_factory_path = root.join(format!("factory_{key}_factory.clvm.bin"));
+        let raw_factory_path = if rue_package_dir(key).is_some() {
+            root.join("factory.clvm.bin")
+        } else {
+            root.join(format!("factory_{key}_factory.clvm.bin"))
+        };
         let raw_metadata_path =
             PathBuf::from(debug_output_path(&raw_factory_path.to_string_lossy()));
         let mut allocator = Allocator::new();
@@ -619,7 +698,7 @@ fn compile_chialisp_with_large_stack(registry: GameRegistry) {
         .name("chialisp-compiler".to_string())
         .stack_size(CHIALISP_COMPILER_STACK_SIZE)
         .spawn(move || {
-            if let Err(e) = compile_rue() {
+            if let Err(e) = compile_rue(&registry) {
                 panic!("error compiling Rue: {e}");
             }
             if let Err(e) = compile_chialisp(&registry) {

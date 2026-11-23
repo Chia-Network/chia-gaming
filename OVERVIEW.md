@@ -1248,6 +1248,7 @@ configured by `Rue.toml`, and its sources are in `puzzles/`.
 | `puzzles/unroll.rue`                                | Unroll coin: timeout vs challenge with sequence numbers        |
 | `puzzles/referee/referee.rue`                       | Game coin: move / timeout / slash enforcement                  |
 | `puzzles/referee/types.rue`                         | Layouts the referee shares with validators and Rust            |
+| `puzzles/games/types.rue`                           | Factory and handler calling conventions                        |
 | `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
 | `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp`      | Calpoker validation programs (one per protocol step)           |
 | `games/calpoker/clsp/calpoker_generate.clinc`       | Off-chain calpoker handlers (Alice & Bob sides)                |
@@ -1256,7 +1257,7 @@ configured by `Rue.toml`, and its sources are in `puzzles/`.
 | `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                                      |
 | `games/krunk/clsp/krunk_generate.clinc`             | Off-chain Krunk handlers (Alice & Bob sides)                   |
 | `games/krunk/clsp/factory_args.clvm.bin`            | Generated factory curry arguments: `(pubkey signed_dict_tree)` |
-| `games/debug/clsp/factory.clsp`                     | Debug game: validator, my-turn, their-turn, and factory        |
+| `puzzles/games/debug/factory.rue`                   | Debug game: validator, my-turn, their-turn, and factory        |
 | `clsp/handler_api.md`                               | Handler calling conventions (see also `HANDLER_GUIDE.md`)      |
 
 ### Test infrastructure
