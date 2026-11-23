@@ -127,7 +127,7 @@ export function decodeChannelFundingEntry(
                   typeof input.coin_name !== 'string' ||
                   !/^[0-9a-f]{64}$/.test(input.coin_name) ||
                   typeof input.coin_string !== 'string' ||
-                  !/^[0-9a-f]{144}$/.test(input.coin_string)
+                  !/^[0-9a-f]{128}(?:[0-9a-f]{2}){0,9}$/.test(input.coin_string)
                 ) {
                   throw new Error(`Garbled save: invalid ${label}.inputs[${index}]`);
                 }
