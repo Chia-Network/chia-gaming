@@ -1,0 +1,4 @@
+// The test controls the validator result through the previous-state slot.
+fn main(_hash: Any, _params: Any, (previous_state, _): (Any, Any), ..._payout: Any) -> Any {
+    previous_state
+}

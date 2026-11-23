@@ -1,0 +1,385 @@
+import artifacts::{
+    calpoker_a_program,
+    calpoker_b_program,
+    calpoker_c_program,
+    calpoker_d_program,
+    calpoker_e_program,
+};
+import calpoker_arrange_cards::*;
+import calpoker_handcalc::*;
+import calpoker_make_cards::*;
+import calpoker_onehandcalc::*;
+import common::*;
+import curry::curry_program;
+import std_deep_compare::*;
+import std_list_compare::*;
+import std_popcount::*;
+
+// Acceptance factory arguments: (proposer_reserve accepter_reserve requested_stake).
+// Returns `(1 records)` or `(0 proposer_short accepter_short)`.
+export fn calpoker_factory(..._args: Any) -> Any {
+    let [
+        proposer_reserve,
+        accepter_reserve,
+        requested_stake,
+        ..._,
+    ] = unchecked_cast::<[Any, Any, Any, ...Any]>(_args);
+    assert integer(requested_stake) > 0;
+    assert truthy(deep_eq(_args, [proposer_reserve, accepter_reserve, requested_stake]));
+    if (integer(requested_stake) > integer(proposer_reserve))
+        || (integer(requested_stake) > integer(accepter_reserve))
+    {
+        [
+            0,
+            integer(requested_stake) > integer(proposer_reserve),
+            integer(requested_stake) > integer(accepter_reserve),
+        ]
+    } else {
+        [
+            1,
+            [[
+                requested_stake,
+                requested_stake,
+                1,
+                0,
+                32,
+                0,
+                0,
+                calpoker_alice_handler_a,
+                calpoker_bob_handler_a,
+                [
+                    calpoker_a_program,
+                    calpoker_b_program,
+                    calpoker_c_program,
+                    calpoker_d_program,
+                    calpoker_e_program,
+                ],
+                requested_stake,
+            ]],
+        ]
+    }
+}
+
+// state is empty
+// local_move is nil
+export fn calpoker_alice_handler_a(
+    _local_move: Any,
+    _amount: Any,
+    _state: Any,
+    _split: Any,
+    entropy: Any,
+) -> Any {
+    let preimage = bytes(entropy)[0..16];
+    [
+        "calpoker_alice_handler_a",
+        sha256(preimage),
+        0,
+        curry_program(calpoker_alice_handler_b, [preimage]),
+    ]
+}
+
+// pre_state is alice_commit
+// move is Bob's seed
+// state is (calpoker-seeds alice_commit bob_seed)
+// immediately sends a message giving Alice's seed
+export fn calpoker_alice_handler_b(
+    curried_preimage: Any,
+    amount: Any,
+    _pre_state: Any,
+    _state: Any,
+    move: Any,
+    _validation_info_hash: Any,
+    _split: Any,
+) -> Any {
+    [
+        {
+            let (alice_cards, bob_cards) = unchecked_cast::<(Any, Any)>(make_cards(sha256(
+                bytes(curried_preimage) + bytes(move) + bytes(amount),
+            )));
+            [alice_cards, bob_cards]
+        },
+        0,
+        curry_program(calpoker_alice_handler_c, [curried_preimage]),
+        curried_preimage,
+    ]
+}
+
+export fn single_byte(raw_indices: Any) -> Any {
+    if truthy(raw_indices) {
+        let indices_len = bytes(raw_indices).length;
+        bytes(raw_indices)[indices_len - 1..indices_len]
+    } else {
+        0x00
+    }
+}
+
+export fn indices_to_bitfield_inner(mylist: Any, index: Any) -> Any {
+    if !truthy(mylist) {
+        0
+    } else if bytes(pair(mylist).first) == bytes(index) {
+        1 | (integer(indices_to_bitfield_inner(pair(mylist).rest, integer(index) + 1)) >>> -1)
+    } else {
+        integer(indices_to_bitfield_inner(mylist, integer(index) + 1)) >>> -1
+    }
+}
+
+export fn indices_to_bitfield(mylist: Any) -> Any {
+    single_byte(indices_to_bitfield_inner(mylist, 0))
+}
+
+export fn list_contains(item: Any, mylist: Any) -> Any {
+    if !truthy(mylist) {
+        0
+    } else if bytes(item) == bytes(pair(mylist).first) {
+        1
+    } else {
+        list_contains(item, pair(mylist).rest)
+    }
+}
+
+export fn cards_to_indices_inner(cards: Any, selected: Any, index: Any) -> Any {
+    if !truthy(cards) {
+        0
+    } else if truthy(list_contains(pair(cards).first, selected)) {
+        (index, cards_to_indices_inner(pair(cards).rest, selected, integer(index) + 1))
+    } else {
+        cards_to_indices_inner(pair(cards).rest, selected, integer(index) + 1)
+    }
+}
+
+export fn cards_to_bitfield(selected: Any, cards: Any) -> Any {
+    indices_to_bitfield(cards_to_indices_inner(cards, selected, 0))
+}
+
+// my_discards is a list of cards
+// state is (calpoker-seeds alice_commit bob_seed)
+// move is Alice's reveal of her card generating seed and her commit to which cards she's picking
+export fn calpoker_alice_handler_c(
+    curried_preimage: Any,
+    my_discards: Any,
+    amount: Any,
+    state: Any,
+    _split: Any,
+    entropy: Any,
+) -> Any {
+    let (_, bob_seed) = unchecked_cast::<(Any, Any)>(state);
+    let (cardsa, _) = unchecked_cast::<(Any, Any)>(make_cards(sha256(
+        bytes(curried_preimage) + bytes(bob_seed) + bytes(amount),
+    )));
+    let my_discards_bitfield = cards_to_bitfield(my_discards, cardsa);
+    let salt = bytes(entropy)[0..16];
+    let new_commit = sha256(salt + bytes(my_discards_bitfield));
+    if integer(popcount(my_discards_bitfield)) == 4 {
+        [
+            "calpoker_alice_handler_c",
+            bytes(curried_preimage) + new_commit,
+            0,
+            curry_program(calpoker_alice_handler_d, [salt, my_discards_bitfield]),
+        ]
+    } else {
+        raise [[
+            "alice_handler_c bad discard selection",
+            "bitfield",
+            my_discards_bitfield,
+            "popcount",
+            popcount(my_discards_bitfield),
+        ]];
+    }
+}
+
+// pre_state is (alce_cards bob_cards alice_commit)
+// move is Bob's discards
+// state is (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit)
+// should get an immediate call back with a nil move
+export fn calpoker_alice_handler_d(
+    my_salt: Any,
+    my_picks: Any,
+    amount: Any,
+    _pre_state: Any,
+    record_arg4: Any,
+    move: Any,
+    _validation_program_hash: Any,
+    _split: Any,
+) -> Any {
+    let ((_, alice_cards), (bob_cards, _)) = unchecked_cast::<((Any, Any), (Any, Any))>(
+        record_arg4,
+    );
+    let (
+        my_all_cards_indices,
+        bob_all_cards_indices,
+    ) = unchecked_cast::<(Any, Any)>(get_final_cards_in_canonical_order(
+        alice_cards,
+        my_picks,
+        bob_cards,
+        move,
+    ));
+    let my_all_cards = my_all_cards_indices;
+    let bob_all_cards = bob_all_cards_indices;
+    let (my_hand_value, (my_selects, _)) = unchecked_cast::<(Any, (Any, Any))>(handcalc(
+        my_all_cards,
+    ));
+    let (bob_hand_value, (bob_selects, _)) = unchecked_cast::<(Any, (Any, Any))>(handcalc(
+        bob_all_cards,
+    ));
+    let my_selects_bitfield = indices_to_bitfield(my_selects);
+    let bob_selects_bitfield = indices_to_bitfield(bob_selects);
+    let win_result = list_compare(my_hand_value, bob_hand_value);
+    let split = (1 - integer(win_result)) * (integer(amount) / 2);
+    [
+        [
+            move,
+            my_selects_bitfield,
+            bob_selects_bitfield,
+            my_hand_value,
+            bob_hand_value,
+            win_result,
+        ],
+        0,
+        curry_program(
+            calpoker_alice_handler_e,
+            [bytes(my_salt) + bytes(my_picks) + bytes(single_byte(my_selects_bitfield)), split],
+        ),
+    ]
+}
+
+// state is (alice_discards alice_card_selections alice_cards bob_cards alice_final_cards bob_final_cards)
+// Alice makes a nil move to end the game
+export fn calpoker_alice_handler_e(
+    next_move: Any,
+    curried_split: Any,
+    _local_move: Any,
+    _amount: Any,
+    _state: Any,
+    _last_mover_share: Any,
+    _entropy: Any,
+) -> Any {
+    ["calpoker_alice_handler_e", next_move, curried_split, 0]
+}
+
+// pre_state is nil
+// move is Alice commit
+// state is alice_commit
+export fn calpoker_bob_handler_a(
+    _amount: Any,
+    _pre_state: Any,
+    _state: Any,
+    _move: Any,
+    _validation_program_hash: Any,
+    _split: Any,
+) -> Any {
+    [0, 0, calpoker_bob_handler_b]
+}
+
+// local_move is nil
+// state is alice_commit
+// move is bob_seed
+export fn calpoker_bob_handler_b(
+    _local_move: Any,
+    _amount: Any,
+    _state: Any,
+    _split: Any,
+    entropy: Any,
+) -> Any {
+    ["calpoker_bob_handler_b", bytes(entropy)[0..16], 0, calpoker_bob_handler_c, parse_message]
+}
+
+// returns (alice_cards_readable bob_cards_readable)
+export fn parse_message(message: Any, record_arg1: Any, amount: Any) -> Any {
+    let (alice_commit, bob_seed) = unchecked_cast::<(Any, Any)>(record_arg1);
+    assert sha256(bytes(message)) == bytes(alice_commit);
+    let (alice_cards, bob_cards) = unchecked_cast::<(Any, Any)>(make_cards(sha256(
+        bytes(message)[0..16] + bytes(bob_seed)[0..16] + bytes(amount),
+    )));
+    [alice_cards, bob_cards]
+}
+
+// state is alice's commit and bob's seed
+// move is alice's reveal of her card generating seed and her commit to which cards she's picking
+// expecting a message revealing Alice's seed which results in local display once verified
+// return readable is (alice_cards bob_cards)
+export fn calpoker_bob_handler_c(
+    _amount: Any,
+    _pre_state: Any,
+    record_arg2: Any,
+    _move: Any,
+    _validation_program_hash: Any,
+    _split: Any,
+) -> Any {
+    let (_, (alice_cards, bob_cards)) = unchecked_cast::<(Any, (Any, Any))>(record_arg2);
+    [[alice_cards, bob_cards], 0, calpoker_bob_handler_d]
+}
+
+// my_move is a list of cards
+// state is (calpoker-deal alice_commit alice_cards bob_cards)
+// move is Bob's discards
+export fn calpoker_bob_handler_d(
+    my_move: Any,
+    _amount: Any,
+    state: Any,
+    _split: Any,
+    _entropy: Any,
+) -> Any {
+    let (_, (_, bob_cards)) = unchecked_cast::<(Any, (Any, Any))>(state);
+    let my_discards_bitfield = cards_to_bitfield(my_move, bob_cards);
+    [
+        "calpoker_bob_handler_d",
+        if integer(popcount(my_discards_bitfield)) == 4 {
+            my_discards_bitfield
+        } else {
+            raise [[
+                "bob_handler_d bad discard selection",
+                "bitfield",
+                my_discards_bitfield,
+                "popcount",
+                popcount(my_discards_bitfield),
+            ]];
+        },
+        0,
+        calpoker_bob_handler_e,
+        0,
+    ]
+}
+
+// pre_state is (calpoker-discard-state bob_discards alice_cards bob_cards alice_commit)
+// move is alice_salted_discards (17 bytes) + alice_card_selections (1 byte)
+// Computes final cards and hand values from pre_state + move.
+// Nil-evidence e.clsp raises (evidence is required), so `state` is nil.
+export fn calpoker_bob_handler_e(
+    amount: Any,
+    record_arg1: Any,
+    _state: Any,
+    move: Any,
+    _validation_program_hash: Any,
+    split: Any,
+) -> Any {
+    let ((bob_discards, alice_cards), (bob_cards, _)) = unchecked_cast::<((Any, Any), (Any, Any))>(
+        record_arg1,
+    );
+    let alice_discards = bytes(move)[16..17];
+    let alice_selects = bytes(move)[17..bytes(move).length];
+    let (
+        alice_final_cards,
+        bob_final_cards,
+    ) = unchecked_cast::<(Any, Any)>(get_final_cards_in_canonical_order(
+        alice_cards,
+        alice_discards,
+        bob_cards,
+        bob_discards,
+    ));
+    let alice_hand_value = onehandcalc(pull_out_cards(...[alice_selects, alice_final_cards]));
+    let (bob_hand_value, (bob_selects, _)) = unchecked_cast::<(Any, (Any, Any))>(handcalc(
+        bob_final_cards,
+    ));
+    [
+        [
+            alice_discards,
+            alice_selects,
+            indices_to_bitfield(bob_selects),
+            alice_hand_value,
+            bob_hand_value,
+            deep_compare(split, integer(amount) / 2),
+        ],
+        [indices_to_bitfield(bob_selects)],
+        0,
+    ]
+}

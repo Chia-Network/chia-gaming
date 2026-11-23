@@ -1,0 +1,29 @@
+// Interpret atoms at the untyped CLVM boundary. An atom's original bytes are
+// significant for equality, even when two encodings represent the same integer.
+export inline fn integer(value: Any) -> Int {
+    unchecked_cast(value)
+}
+
+export inline fn bytes(value: Any) -> Bytes {
+    unchecked_cast(value)
+}
+
+export inline fn truthy(value: Any) -> Bool {
+    unchecked_cast(value)
+}
+
+export inline fn pair(value: Any) -> (Any, Any) {
+    unchecked_cast(value)
+}
+
+export inline fn apply_program(program: Any, args: Any) -> Any {
+    unchecked_cast::<fn(...env: Any) -> Any>(program)(...args)
+}
+
+export fn map_with_rest(program: Any, items: Any, tail: Any) -> Any {
+    if items is (Any, Any) {
+        (apply_program(program, [items.first]), map_with_rest(program, items.rest, tail))
+    } else {
+        tail
+    }
+}

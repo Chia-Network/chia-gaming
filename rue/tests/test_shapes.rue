@@ -1,0 +1,129 @@
+// Pair types preserve the existing closed-union ABI, including optional tails.
+type Pair = (Int, Int);
+type Left = (Pair, Int);
+type Right = (Int, Pair);
+type Deep = (Pair, Pair);
+type Triple = (Int, Pair);
+
+fn total((a, (b, c)): Triple) -> Int {
+    a + b + c
+}
+
+fn classify(value: Left | Right) -> Int {
+    match value {
+        Left as ((a, b), c) => a + b + c,
+        Right as (d, (e, f)) => d + e - f,
+    }
+}
+
+fn guarded(value: Int | Pair | Left) -> Int {
+    match value {
+        Int as a => a,
+        Pair as (a, b) => a + b,
+        Left as ((a, b), c) => a + b + c,
+    }
+}
+
+fn optional((first, _): (Int | Pair, Any)) -> Int {
+    if first is Int {
+        first
+    } else {
+        first.first
+    }
+}
+
+fn nil_or_pair(value: nil | Pair) -> Int {
+    if value is nil {
+        17
+    } else {
+        value.first + value.rest
+    }
+}
+
+fn four_way(value: Pair | Left | Right | Deep) -> Int {
+    match value {
+        Pair => 1,
+        Left => 2,
+        Right => 3,
+        Deep => 4,
+    }
+}
+
+fn final_assumed((left, _): (Any, Any)) -> Int {
+    if left is (Any, Any) {
+        2
+    } else {
+        1
+    }
+}
+
+type GroupOne = ((Int, Any), (((Any, Any), Any), Any));
+type GroupTwo = (((Any, Any), Any), (Any, (Int, Any)));
+type GroupThree = (Any, ((Int, Any), ((Any, Any), Any)));
+
+fn guarded_groups(value: GroupOne | GroupTwo | GroupThree) -> Int {
+    match value {
+        GroupOne => 1,
+        GroupTwo => 2,
+        GroupThree => 3,
+    }
+}
+
+fn nested(value: Int | Pair | Right, extra: Int) -> Int {
+    if value is Int {
+        return value + extra;
+    }
+    let (a, tail) = value;
+    if tail is Int {
+        a + tail + extra
+    } else {
+        a + tail.first + tail.rest + extra
+    }
+}
+
+fn main(a: Int, b: Int, c: Int, d: Int) -> Any {
+    let triple = (a, (b, c));
+    let four = ((a, b), (c, d));
+    let five = ((a, b), (c, (d, a)));
+    [
+        triple,
+        four,
+        (triple, four),
+        ((a, (b, c)), ((a, b), (c, d))),
+        total(triple),
+        total((a, (b, c))),
+        classify(((a, b), c)),
+        classify((a, (b, c))),
+        guarded(a),
+        guarded((a, b)),
+        guarded(((a, b), c)),
+        optional((a, nil)),
+        optional(((a, b), nil)),
+        nil_or_pair(nil),
+        nil_or_pair((a, b)),
+        four_way((a, b)),
+        four_way(((a, b), c)),
+        four_way((a, (b, c))),
+        four_way(four),
+        final_assumed(four),
+        [a, b, c],
+        triple,
+        a,
+        (a, b),
+        five,
+        (five, ((b, (c, d)), (a, (b, c)))),
+        guarded_groups(((a, b), (((c, d), a), nil))),
+        guarded_groups((((a, b), c), (nil, (d, a)))),
+        guarded_groups((nil, ((a, b), ((c, d), a)))),
+        nested(a, b),
+        nested((a, b), c),
+        nested((a, (b, c)), d),
+    ]
+}
+
+test fn dispatch_ignores_optional_tails() {
+    assert optional((7, nil)) == 7;
+    assert optional(((8, 9), 0x1234)) == 8;
+    assert guarded_groups((nil, ((1, 2), ((3, 4), 5)))) == 3;
+    assert final_assumed(((1, 2), (3, 4))) == 2;
+}

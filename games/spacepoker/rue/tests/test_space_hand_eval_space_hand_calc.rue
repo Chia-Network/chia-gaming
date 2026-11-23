@@ -1,0 +1,5 @@
+import space_hand_calc::space_hand_calc;
+
+fn main(cards: Any, boost: Any) -> Any {
+    space_hand_calc(cards, boost)
+}

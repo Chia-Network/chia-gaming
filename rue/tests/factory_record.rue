@@ -1,0 +1,22 @@
+// Test-side view of the existing Rust factory and first-turn handler ABI.
+export type FirstTurn = fn(move: Any, amount: Int, state: Any, share: Int, entropy: Bytes32) -> Any;
+
+export struct Record {
+    proposer: Int,
+    accepter: Int,
+    proposer_moves: Bool,
+    proposer_share: Int,
+    max_move_size: Int,
+    state: Any,
+    initial_move: Any,
+    my_turn: FirstTurn,
+    their_turn: Any,
+    validators: List<Any>,
+    parameters: Any,
+}
+
+export fn first_record(result: Any) -> Record {
+    let [success, [record, ..._]] = unchecked_cast::<[Int, [Record, ...Any]]>(result);
+    assert success == 1;
+    record
+}

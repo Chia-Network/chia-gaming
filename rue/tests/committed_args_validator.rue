@@ -1,0 +1,15 @@
+import common::*;
+import shapes::*;
+
+fn main(_mod_hash: Any, params: Parameters, _witness: Any, ..._unused_payout: Any) -> Any {
+    let (_, (_, (infohash_b, _))) = params;
+    if truthy(infohash_b) {
+        raise ["committed validator execution"];
+    } else {
+        validator_transition(
+            0x1111111111111111111111111111111111111111111111111111111111111111,
+            "derived state",
+            32,
+        )
+    }
+}

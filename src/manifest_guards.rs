@@ -310,12 +310,18 @@ fn every_game_package_is_registered() {
     let mut missing_files = Vec::new();
     for key in &registered {
         let root = PathBuf::from("games").join(key);
-        if !root.join("clsp/factory.clsp").is_file() {
-            missing_files.push(format!("games/{key}/clsp/factory.clsp"));
+        let is_production = production.iter().any(|k| k == key);
+        let layer = if is_production { "offchain" } else { "tests" };
+        let factory = root.join(format!("rue/{layer}/{key}_factory.rue"));
+        if !factory.is_file() {
+            missing_files.push(factory.display().to_string());
         }
-        if production.iter().any(|k| k == key) {
+        if is_production {
+            let probe = root.join(format!("rue/tests/{key}_factory_probe.rue"));
+            if !probe.is_file() {
+                missing_files.push(probe.display().to_string());
+            }
             for rel in [
-                "clsp/factory_probe.clsp",
                 "ui/handProposal.ts",
                 "ui/handProposalForm.tsx",
                 "ui/play.tsx",

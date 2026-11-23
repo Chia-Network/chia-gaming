@@ -1,0 +1,55 @@
+import common::*;
+import std_len::*;
+import std_reverse::*;
+
+export const KRUNK_PAYOUTS: Any = [100, 100, 20, 5, 1];
+
+export fn expand_clue(clue_byte: Any) -> Any {
+    reverse_list(expand_clue_inner(integer(clue_byte) + 128, 5))
+}
+
+export fn expand_clue_inner(val: Any, n: Any) -> Any {
+    if integer(n) == 0 {
+        0
+    } else {
+        ((integer(val) % 3), expand_clue_inner(integer(val) / 3, integer(n) - 1))
+    }
+}
+
+export fn krunk_payout_share(base_unit: Any, n: Any) -> Any {
+    integer(base_unit) * integer(pair(drop(integer(n) - 1, KRUNK_PAYOUTS)).first)
+}
+
+export fn drop(n: Any, lst: Any) -> Any {
+    if integer(n) == 0 {
+        lst
+    } else {
+        drop(integer(n) - 1, pair(lst).rest)
+    }
+}
+
+export fn guess_matches_word(guess: Any, word: Any) -> Any {
+    bytes(guess) == bytes(word)
+}
+
+export fn krunk_should_reveal(guess: Any, word: Any, num_guesses: Any) -> Any {
+    if truthy(guess_matches_word(guess, word)) {
+        1
+    } else {
+        integer(num_guesses) == 5
+    }
+}
+
+export fn krunk_reveal_move(salt: Any, word: Any) -> Any {
+    bytes(salt) + bytes(word)
+}
+
+export fn krunk_reveal_mover_share(base_unit: Any, bob_guesses: Any, word: Any) -> Any {
+    if bytes(pair(bob_guesses).first) == bytes(word) {
+        krunk_payout_share(base_unit, list_length(bob_guesses))
+    } else if integer(list_length(bob_guesses)) == 5 {
+        0
+    } else {
+        raise ["krunk_reveal_mover_share: not terminal"];
+    }
+}

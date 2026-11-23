@@ -1,0 +1,55 @@
+import calpoker_onehandcalc::*;
+import common::*;
+import std_deep_compare::*;
+import std_max::*;
+
+export fn process_entries(card: Any, index: Any, entries: Any) -> Any {
+    if !truthy(entries) {
+        0
+    } else {
+        let [sel_cards, sel_indices, count, ..._] = unchecked_cast::<[Any, Any, Any, ...Any]>(
+            pair(entries).first,
+        );
+        let remaining = process_entries(card, index, pair(entries).rest);
+        let after_skip = if (integer(count) + integer(index)) > 4 {
+            (pair(entries).first, remaining)
+        } else {
+            remaining
+        };
+        if integer(count) < 5 {
+            ([(card, sel_cards), (index, sel_indices), integer(count) + 1], after_skip)
+        } else {
+            after_skip
+        }
+    }
+}
+
+// Return all C(n, 5) subsets as (cards indices count) triples.
+// Recurses on the tail first so prepending produces ascending indices.
+export fn choose_hands(index: Any, cards: Any) -> Any {
+    if !truthy(cards) {
+        [[0, 0, 0]]
+    } else {
+        process_entries(
+            pair(cards).first,
+            index,
+            choose_hands(integer(index) + 1, pair(cards).rest),
+        )
+    }
+}
+
+export fn handcalc(cards: Any) -> Any {
+    maximum(
+        deep_lt,
+        map_with_rest(
+            fn(record_arg0: Any) => {
+                let (sel_cards, (sel_indices, _)) = unchecked_cast::<[Any, Any, Any, ...Any]>(
+                    record_arg0,
+                );
+                [onehandcalc(sel_cards), sel_indices]
+            },
+            choose_hands(0, cards),
+            nil,
+        ),
+    )
+}

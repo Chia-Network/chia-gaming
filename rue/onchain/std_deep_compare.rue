@@ -1,0 +1,31 @@
+// Order pairs lexicographically. Atoms compare as signed CLVM integers.
+export fn deep_compare(a: Any, b: Any) -> Int {
+    if a is (Any, Any) {
+        if b is (Any, Any) {
+            let first = deep_compare(a.first, b.first);
+            if first != 0 {
+                first
+            } else {
+                deep_compare(a.rest, b.rest)
+            }
+        } else {
+            1
+        }
+    } else if b is (Any, Any) {
+        -1
+    } else if (a as Int) > (b as Int) {
+        1
+    } else if (a as Int) < (b as Int) {
+        -1
+    } else {
+        0
+    }
+}
+
+export fn deep_lt(a: Any, b: Any) -> Bool {
+    deep_compare(a, b) < 0
+}
+
+export fn deep_eq(a: Any, b: Any) -> Bool {
+    deep_compare(a, b) == 0
+}

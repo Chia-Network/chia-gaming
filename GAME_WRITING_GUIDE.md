@@ -1,5 +1,9 @@
 # How to Add a Game
 
+On this branch the default compiler is Rue. The Chialisp examples below describe
+the same CLVM contracts. See the [Rue build instructions](DEVELOPMENT.md#1-puzzle-programs)
+for compiler selection, tree-hash imports, and the reference build.
+
 Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
 `defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
 their syntax and assumptions.
@@ -62,6 +66,10 @@ such as `calpoker`.
 
 ```text
 games/<key>/
+  rue/
+    onchain/              # Validators and helpers they can call in a dispute
+    offchain/             # Factory, turn handlers, and move generation
+    tests/                # Native Rue tests, CLVM fixtures, and factory probe
   clsp/
     factory.clsp          # Creates the initial game program and state
     factory_probe.clsp    # Returns one representative valid parameter value
@@ -112,7 +120,14 @@ and the factory preset list for every production package. When `rust/mod.rs` or
 `rust/tests/mod.rs` exists, it also generates the corresponding Rust module or
 internal test-suite aggregation.
 
-The catalog key must equal the `games/<key>/` directory name. The build
+The catalog key must equal the `games/<key>/` directory name. The Rue build
+discovers the factory in `rue/offchain/<key>_factory.rue` and the probe in
+`rue/tests/<key>_factory_probe.rue`. Give each module a unique filename across
+games. On-chain modules may import other on-chain modules. Off-chain handlers
+may also import validator hashes and programs to construct the next move.
+Only tests may import fixtures.
+
+The reference Chialisp build
 automatically compiles `clsp/factory.clsp`, `clsp/factory_probe.clsp`, and
 production `.clsp` files below `clsp/onchain/`; do not add package entries to
 `chialisp.toml`. Run `./cb.sh` before the first frontend build so the generated
@@ -120,7 +135,7 @@ prepared factory exists for the frontend registry generator.
 
 Do not edit or check in compiled `.hex` files, prepared factory binaries, or
 `games/package_manifest.json`; they are generated implementation artifacts.
-Game packages maintain their `.clsp` sources and, when needed, the optional
+Game packages maintain their puzzle sources and, when needed, the optional
 `factory_args.clvm.bin` input.
 
 Two identifiers appear in the code:
@@ -415,10 +430,18 @@ nil-move, evidence, and conditional-slash examples,
 
 ## Step 3: Add the factory probe
 
-Add `games/<key>/clsp/factory_probe.clsp`, a no-argument Chialisp program that
-returns one representative valid complete factory argument list: contributions
-for the proposer and accepter reserves followed by the game parameters.
-Calpoker's current probe is:
+The probe takes no arguments and returns one valid factory argument list
+containing the proposer reserve, accepter reserve, and game parameters.
+Calpoker's Rue probe is
+
+```rue
+fn main() -> Any {
+    [1, 1, 1]
+}
+```
+
+The corresponding reference implementation lives in
+`games/<key>/clsp/factory_probe.clsp`.
 
 ```clojure
 (include *standard-cl-26*)
@@ -1216,7 +1239,7 @@ The following are frontend implementation details, not APIs for games:
 ## Testing checklist
 
 After adding or changing package files, run `./cb.sh` first. It compiles
-Chialisp, prepares factory binaries, regenerates Rust-side package artifacts,
+the puzzle programs, prepares factory binaries, regenerates Rust-side package artifacts,
 and builds the Rust project in the required order. Then run `./ct.sh` for the
 full Rust, frontend, and simulator-backed test suite. The frontend test/build
 step runs `generate:games`, which regenerates

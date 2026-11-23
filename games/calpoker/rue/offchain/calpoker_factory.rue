@@ -1,0 +1,5 @@
+import calpoker_generate::calpoker_factory;
+
+fn main(...args: Any) -> Any {
+    calpoker_factory(...args)
+}

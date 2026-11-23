@@ -1,0 +1,35 @@
+import artifacts::{calpoker_d_hash};
+import calpoker_make_cards::*;
+import calpoker_shapes::*;
+import common::*;
+import shapes::*;
+
+// Bob challenging
+// state is alice's commit and bob's seed
+// move is alice's reveal of her card generating seed and her commit to which cards she's picking
+// MOVE = [16] + [32]
+// evidence is empty
+// alice_commit: commit to pre-image (for rnd)
+// alice's new commit is a commit to discards that's not revealed yet.
+fn main(
+    _mod_hash: Any,
+    params: Parameters,
+    witness: Witness<Seeds>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { amount, move } = turn(params);
+    let ((alice_commit, bob_seed), _) = witness;
+    if move.length != 48 {
+        0
+    } else {
+        let (alice_cards, bob_cards) = unchecked_cast::<(Any, Any)>(make_cards(sha256(
+            move[0..16] + bytes(bob_seed) + bytes(amount),
+        )));
+        let new_state = make_calpoker_deal(move[16..48], alice_cards, bob_cards);
+        if sha256(move[0..16]) == bytes(alice_commit) {
+            validator_transition(calpoker_d_hash, new_state, 1)
+        } else {
+            0
+        }
+    }
+}

@@ -1,0 +1,68 @@
+import calpoker_shapes::*;
+import common::*;
+import std_append::*;
+import std_deep_compare::*;
+import std_popcount::*;
+import std_sort::*;
+
+export fn split_cards(mask: Any, cards: Any) -> Any {
+    split_cards_inner(mask, cards, 0, 0)
+}
+
+// Use mask to determine which cards are prepended to leftcards and which to rightcards
+export fn split_cards_inner(mask: Any, cards: Any, leftcards: Any, rightcards: Any) -> Any {
+    if !truthy(cards) {
+        make_calpoker_hands(leftcards, rightcards)
+    } else if truthy(integer(mask) & 1) {
+        split_cards_inner(
+            integer(mask) >>> 1,
+            pair(cards).rest,
+            leftcards,
+            (pair(cards).first, rightcards),
+        )
+    } else {
+        split_cards_inner(
+            integer(mask) >>> 1,
+            pair(cards).rest,
+            (pair(cards).first, leftcards),
+            rightcards,
+        )
+    }
+}
+
+export fn pull_out_cards_inner(selections: Any, cards: Any) -> Any {
+    if !truthy(cards) {
+        0
+    } else if truthy(integer(selections) & 1) {
+        (pair(cards).first, pull_out_cards_inner(integer(selections) >>> 1, pair(cards).rest))
+    } else {
+        pull_out_cards_inner(integer(selections) >>> 1, pair(cards).rest)
+    }
+}
+
+export fn pull_out_cards(...args: Any) -> Any {
+    if integer(popcount(pair(args).first)) == 5 {
+        apply_program(pull_out_cards_inner, [...args])
+    } else {
+        raise ["pull_out_cards got bad data:", args];
+    }
+}
+
+export fn get_final_cards_in_canonical_order(
+    alice_cards: Any,
+    alice_picks: Any,
+    bob_cards: Any,
+    bob_picks: Any,
+) -> Any {
+    let (my_cards_me, my_cards_bob) = unchecked_cast::<(Any, Any)>(split_cards(
+        alice_picks,
+        alice_cards,
+    ));
+    let (bob_cards_bob, bob_cards_me) = unchecked_cast::<(Any, Any)>(split_cards(
+        bob_picks,
+        bob_cards,
+    ));
+    let my_all_cards = sort_list(deep_lt, append_list(my_cards_me, bob_cards_me));
+    let bob_all_cards = sort_list(deep_lt, append_list(bob_cards_bob, my_cards_bob));
+    make_calpoker_hands(my_all_cards, bob_all_cards)
+}

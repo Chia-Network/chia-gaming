@@ -1,0 +1,6 @@
+import common::*;
+
+export fn flatten_card(record_arg0: Any) -> Any {
+    let (rank, suit) = unchecked_cast::<(Any, Any)>(record_arg0);
+    (integer(rank) >>> -4) | integer(suit)
+}

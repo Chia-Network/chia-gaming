@@ -1,0 +1,23 @@
+import calpoker_arrange_cards::*;
+import calpoker_handcalc::*;
+import calpoker_make_cards::*;
+import calpoker_onehandcalc::*;
+import common::*;
+
+fn main(kind: Any, ...arguments: Any) -> Any {
+    if bytes(kind) == "onehandcalc" {
+        apply_program(onehandcalc, [...arguments])
+    } else if bytes(kind) == "make_cards" {
+        apply_program(make_cards, [...arguments])
+    } else if bytes(kind) == "pull_out_cards" {
+        apply_program(pull_out_cards, [...arguments])
+    } else if bytes(kind) == "split_cards" {
+        apply_program(split_cards, [...arguments])
+    } else if bytes(kind) == "get_final_cards_in_canonical_order" {
+        apply_program(get_final_cards_in_canonical_order, [...arguments])
+    } else if bytes(kind) == "handcalc" {
+        apply_program(handcalc, [...arguments])
+    } else {
+        raise ["Couldn't find entrypoint: ", kind];
+    }
+}

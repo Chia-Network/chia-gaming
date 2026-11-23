@@ -1,0 +1,5 @@
+import spacepoker_generate::spacepoker_factory;
+
+fn main(...args: Any) -> Any {
+    spacepoker_factory(...args)
+}

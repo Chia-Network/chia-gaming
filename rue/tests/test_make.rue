@@ -1,0 +1,7 @@
+fn main(a: Any, b: Any, c: Any, d: Any) -> Any {
+    [(a, b), ((a, b), (c, d)), [a, b, c, d]]
+}
+
+test fn dotted_balanced_and_proper() {
+    assert deep_equal(main(1, 2, 3, 4), [(1, 2), ((1, 2), (3, 4)), [1, 2, 3, 4]]);
+}

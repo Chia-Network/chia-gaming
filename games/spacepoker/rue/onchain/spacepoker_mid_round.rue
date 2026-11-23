@@ -1,0 +1,83 @@
+import artifacts::{spacepoker_begin_round_hash, spacepoker_end_hash};
+import common::*;
+import shapes::*;
+import spacepoker_shapes::*;
+
+// state is (bet_unit half_pot last_raise_amount mover_image_n waiter_image_n N)
+//
+// begin_hash is imported directly (begin_round does not import mid_round,
+// so there is no circular dependency). mod_hash (mid_round's own hash) is
+// used for the raise self-loop and passed into begin_round's state on
+// callback so begin_round can transition here without importing mid_round.
+//
+// Image positions swap perspective each turn: begin_round outputs
+// (waiter_image, mover_image) from its own view, which mid_round reads
+// as (mover_image, waiter_image) since the mover/waiter roles alternate.
+//
+// MOVE is either:
+// - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
+// - a call: preimage that hashes to mover_image_n (16 bytes at N=1, 32 otherwise)
+// evidence is empty
+fn main(mod_hash: Any, params: Parameters, witness: Witness<Raise>, ..._unused_payout: Any) -> Any {
+    let { amount, move, mover_share } = turn(params);
+    let (
+        ((bet_unit, (half_pot, last_raise_amount)), (mover_image_n, (waiter_image_n, n))),
+        _,
+    ) = witness;
+    if move.length > 32 {
+        let new_raise_amount = move[32..move.length];
+        if (mover_share == ((amount / 2) - (integer(half_pot) + integer(last_raise_amount))))
+            && ((new_raise_amount as Int) >= 0)
+            && (
+                (integer(half_pot) + integer(last_raise_amount) + (new_raise_amount as Int)) <= (
+                    amount / 2
+                )
+            )
+        {
+            validator_transition(
+                mod_hash,
+                make_space_raise(
+                    bet_unit,
+                    integer(half_pot) + integer(last_raise_amount),
+                    new_raise_amount,
+                    waiter_image_n,
+                    mover_image_n,
+                    n,
+                ),
+                42,
+            )
+        } else {
+            0
+        }
+    } else if (move.length == integer(inline if integer(n) == 1 { 16 } else { 32 }))
+        && (sha256(move) == bytes(mover_image_n))
+        && (mover_share == ((amount / 2) - (integer(half_pot) + integer(last_raise_amount))))
+    {
+        if integer(n) == 1 {
+            validator_transition(
+                spacepoker_end_hash,
+                make_space_end(
+                    integer(half_pot) + integer(last_raise_amount),
+                    waiter_image_n,
+                    move,
+                ),
+                17,
+            )
+        } else {
+            validator_transition(
+                spacepoker_begin_round_hash,
+                make_space_open(
+                    bet_unit,
+                    integer(half_pot) + integer(last_raise_amount),
+                    waiter_image_n,
+                    move,
+                    integer(n) - 1,
+                    mod_hash,
+                ),
+                42,
+            )
+        }
+    } else {
+        0
+    }
+}

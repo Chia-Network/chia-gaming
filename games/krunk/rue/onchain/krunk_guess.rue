@@ -1,0 +1,45 @@
+import common::*;
+import krunk_shapes::*;
+import shapes::*;
+
+// Alice challenging Bob's guess.
+// state is (krunk-state)
+// MOVE is Bob's 5-letter guess.
+// evidence is a 10-byte atom (begin_range || end_range) when Alice slashes
+// an out-of-dictionary guess. A condition (AGG_SIG_UNSAFE dict_pubkey evidence)
+// is emitted to prove the range was signed by both players.
+fn main(
+    _mod_hash: Any,
+    params: Parameters,
+    witness: Witness<State>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { move, mover_share } = turn(params);
+    let (
+        ((dict_pubkey, (base_unit, bob_guesses)), (alice_clues, (alice_commit, clue_hash))),
+        (_, evidence),
+    ) = witness;
+    if (move.length == 5) && (mover_share == 0) {
+        validator_result(
+            clue_hash,
+            make_krunk_state(
+                dict_pubkey,
+                base_unit,
+                (move, bob_guesses),
+                alice_clues,
+                alice_commit,
+                clue_hash,
+            ),
+            21,
+            if !truthy(evidence) {
+                0
+            } else {
+                assert integer(move) >= (bytes(evidence)[0..5] as Int);
+                assert integer(move) <= (bytes(evidence)[5..10] as Int);
+                [[AGG_SIG_UNSAFE, dict_pubkey, evidence]]
+            },
+        )
+    } else {
+        0
+    }
+}

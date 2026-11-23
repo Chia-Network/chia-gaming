@@ -1,0 +1,29 @@
+import artifacts::{krunk_guess_hash};
+import krunk_shapes::*;
+import shapes::*;
+
+// Bob challenging Alice's commit.
+// previous_state is (krunk-initial).
+// MOVE is sha256(salt || word), 32 bytes.
+//
+// The factory supplies clue_hash from its registered program. Thread it
+// through state so transitions name that exact program instead of a separate
+// nested compilation of clue.clsp.
+fn main(
+    _mod_hash: Any,
+    params: Parameters,
+    witness: Witness<Initial>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { move, mover_share } = turn(params);
+    let ((dict_pubkey, (base_unit, clue_hash)), _) = witness;
+    if (move.length == 32) && (mover_share == 0) {
+        validator_transition(
+            krunk_guess_hash,
+            make_krunk_state(dict_pubkey, base_unit, 0, 0, move, clue_hash),
+            5,
+        )
+    } else {
+        0
+    }
+}

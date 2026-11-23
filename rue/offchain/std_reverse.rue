@@ -1,0 +1,13 @@
+import common::*;
+
+export fn reverse_inner(reversed: Any, remaining: Any) -> Any {
+    if truthy(remaining) {
+        reverse_inner((pair(remaining).first, reversed), pair(remaining).rest)
+    } else {
+        reversed
+    }
+}
+
+export fn reverse_list(vals: Any) -> Any {
+    reverse_inner(0, vals)
+}

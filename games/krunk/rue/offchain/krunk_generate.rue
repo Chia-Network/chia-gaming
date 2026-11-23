@@ -1,0 +1,243 @@
+import artifacts::{krunk_clue_program, krunk_commit_program, krunk_guess_program};
+import common::*;
+import curry::curry_program;
+import krunk_dict_tree::*;
+import krunk_helpers::*;
+import krunk_make_clue::*;
+import krunk_shapes::*;
+import std_deep_compare::*;
+import std_len::*;
+
+export const MIN_WORD: Any = 0x8000000000;
+
+export const MAX_WORD: Any = 0x7fffffffff;
+
+export fn krunk_factory(dict_pubkey: Any, dict_tree: Any, ..._args: Any) -> Any {
+    let [
+        proposer_reserve,
+        accepter_reserve,
+        requested_stake,
+        ..._,
+    ] = unchecked_cast::<[Any, Any, Any, ...Any]>(_args);
+    assert integer(requested_stake) > 0;
+    assert (integer(requested_stake) % 100) == 0;
+    assert truthy(deep_eq(_args, [proposer_reserve, accepter_reserve, requested_stake]));
+    if (integer(requested_stake) > integer(proposer_reserve))
+        || (integer(requested_stake) > integer(accepter_reserve))
+    {
+        [
+            0,
+            integer(requested_stake) > integer(proposer_reserve),
+            integer(requested_stake) > integer(accepter_reserve),
+        ]
+    } else {
+        let base_unit = integer(requested_stake) / 100;
+        let initial_state = make_krunk_initial(
+            dict_pubkey,
+            base_unit,
+            tree_hash(krunk_clue_program),
+        );
+        let alice_handler = curry_program(krunk_alice_handler_commit, [dict_tree]);
+        let bob_handler = curry_program(krunk_bob_handler_commit, [dict_tree]);
+        [
+            1,
+            [
+                [
+                    requested_stake,
+                    0,
+                    1,
+                    0,
+                    32,
+                    initial_state,
+                    0,
+                    alice_handler,
+                    bob_handler,
+                    [krunk_commit_program, krunk_guess_program, krunk_clue_program],
+                    requested_stake,
+                ],
+                [
+                    0,
+                    requested_stake,
+                    0,
+                    0,
+                    32,
+                    initial_state,
+                    0,
+                    alice_handler,
+                    bob_handler,
+                    [krunk_commit_program, krunk_guess_program, krunk_clue_program],
+                    requested_stake,
+                ],
+            ],
+        ]
+    }
+}
+
+// --- Alice handlers ---
+export fn krunk_alice_handler_commit(
+    dict_tree: Any,
+    local_move: Any,
+    _amount: Any,
+    _state: Any,
+    _mover_share: Any,
+    entropy: Any,
+) -> Any {
+    let word = local_move;
+    let salt = bytes(entropy)[0..16];
+    let move = sha256(salt + bytes(word));
+    if truthy(dict_lookup(MIN_WORD, MAX_WORD, word, dict_tree)) {
+        ["not_in_dictionary", word]
+    } else {
+        [
+            "krunk_alice_handler_commit",
+            move,
+            0,
+            curry_program(krunk_alice_handler_guess, [salt, word, dict_tree]),
+            0,
+        ]
+    }
+}
+
+export fn krunk_alice_handler_guess(
+    curried_salt: Any,
+    curried_word: Any,
+    dict_tree: Any,
+    _amount: Any,
+    _pre_state: Any,
+    state: Any,
+    move: Any,
+    _validation_info_hash: Any,
+    _mover_share: Any,
+) -> Any {
+    let [_, _, _, ..._clue_hash] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(state);
+    let lookup_result = dict_lookup(MIN_WORD, MAX_WORD, move, dict_tree);
+    if truthy(lookup_result) {
+        [
+            0,
+            [[
+                "s",
+                bytes(pair(lookup_result).first) + bytes(pair(pair(lookup_result).rest).first),
+                pair(pair(pair(lookup_result).rest).rest).first,
+            ]],
+            0,
+        ]
+    } else {
+        let clue = make_clue(curried_word, move);
+        [
+            [move, expand_clue(clue)],
+            0,
+            curry_program(krunk_alice_handler_clue, [curried_salt, curried_word, clue, dict_tree]),
+        ]
+    }
+}
+
+export fn krunk_alice_handler_clue(
+    curried_salt: Any,
+    curried_word: Any,
+    curried_clue: Any,
+    dict_tree: Any,
+    _local_move: Any,
+    _amount: Any,
+    state: Any,
+    _mover_share: Any,
+    _entropy: Any,
+) -> Any {
+    let [
+        (_, (base_unit, bob_guesses)),
+        _,
+        _,
+        ..._clue_hash,
+    ] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(state);
+    let num_guesses = list_length(bob_guesses);
+    let latest_guess = pair(bob_guesses).first;
+    if truthy(krunk_should_reveal(latest_guess, curried_word, num_guesses)) {
+        let reveal = krunk_reveal_move(curried_salt, curried_word);
+        let payout = krunk_reveal_mover_share(base_unit, bob_guesses, curried_word);
+        ["krunk_alice_handler_clue reveal", reveal, payout, 0, 0]
+    } else {
+        [
+            "krunk_alice_handler_clue",
+            curried_clue,
+            0,
+            curry_program(krunk_alice_handler_guess, [curried_salt, curried_word, dict_tree]),
+            0,
+        ]
+    }
+}
+
+// --- Bob handlers ---
+export fn krunk_bob_handler_commit(
+    dict_tree: Any,
+    _amount: Any,
+    _pre_state: Any,
+    _state: Any,
+    _move: Any,
+    _validation_info_hash: Any,
+    _mover_share: Any,
+) -> Any {
+    [0, 0, curry_program(krunk_bob_handler_guess, [dict_tree])]
+}
+
+export fn krunk_bob_handler_guess(
+    dict_tree: Any,
+    local_move: Any,
+    _amount: Any,
+    state: Any,
+    _mover_share: Any,
+    _entropy: Any,
+) -> Any {
+    let [_, _, _, ..._clue_hash] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(state);
+    let guess = local_move;
+    if truthy(dict_lookup(MIN_WORD, MAX_WORD, guess, dict_tree)) {
+        ["not_in_dictionary", guess]
+    } else {
+        ["krunk_bob_handler_guess", guess, 0, curry_program(krunk_bob_handler_clue, [dict_tree]), 0]
+    }
+}
+
+export const KRUNK_EVIDENCE_INDICES: Any = [0x00, 1, 2, 3, 4];
+
+export fn krunk_bob_handler_clue(
+    dict_tree: Any,
+    _amount: Any,
+    pre_state: Any,
+    state: Any,
+    move: Any,
+    _validation_info_hash: Any,
+    mover_share: Any,
+) -> Any {
+    if bytes(move).length == 1 {
+        let [_, _, _, ..._clue_hash] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(
+            state,
+        );
+        [expand_clue(move), 0, curry_program(krunk_bob_handler_guess, [dict_tree])]
+    } else {
+        let [
+            (_, (_, bob_guesses)),
+            _,
+            _,
+            ..._clue_hash,
+        ] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(pre_state);
+        let word = bytes(move)[16..21];
+        let reveal_clue = if truthy(mover_share) {
+            expand_clue(0x72)
+        } else {
+            expand_clue(make_clue(word, pair(bob_guesses).first))
+        };
+        let lookup_result = dict_lookup(MIN_WORD, MAX_WORD, word, dict_tree);
+        if truthy(lookup_result) {
+            [
+                [word, reveal_clue],
+                [[
+                    "s",
+                    bytes(pair(lookup_result).first) + bytes(pair(pair(lookup_result).rest).first),
+                    pair(pair(pair(lookup_result).rest).rest).first,
+                ]],
+                0,
+                0,
+            ]
+        } else {
+            [[word, reveal_clue], KRUNK_EVIDENCE_INDICES, 0, 0]
+        }
+    }
+}

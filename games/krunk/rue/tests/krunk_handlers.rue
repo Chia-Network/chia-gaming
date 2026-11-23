@@ -1,0 +1,27 @@
+import artifacts::{krunk_clue_hash, krunk_commit_hash, krunk_factory_program};
+import factory_record::first_record;
+
+test fn factory_threads_clue_hash_and_commits_a_dictionary_word() {
+    let word = "apple";
+    let tree = [nil, nil, word];
+    let record = first_record(krunk_factory_program(...["key", tree, 100, 100, 100]));
+    assert record.validators is (Any, List<Any>);
+    assert tree_hash(record.validators.first) == krunk_commit_hash;
+    assert deep_equal(record.state, ("key", (1, krunk_clue_hash)));
+    let entropy = sha256("krunk");
+    let [
+        label,
+        move,
+        share,
+        _,
+        _,
+    ] = unchecked_cast::<[String, Bytes, Int, Any, Any]>(record.my_turn(
+        word,
+        100,
+        record.state,
+        0,
+        entropy,
+    ));
+    assert label == "krunk_alice_handler_commit";
+    assert move == sha256(entropy[..16] + word) && share == 0;
+}

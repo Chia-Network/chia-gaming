@@ -1,0 +1,5 @@
+import calpoker_make_cards::*;
+
+fn main(randomness: Any) -> Any {
+    make_cards(randomness)
+}

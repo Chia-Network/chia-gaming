@@ -1,0 +1,14 @@
+import common::*;
+
+// List compare returns 1 if the a list is greater than the b list.
+export fn list_compare(a: Any, b: Any) -> Any {
+    if bytes(pair(a).first) == bytes(pair(b).first) {
+        if truthy(pair(a).rest) {
+            list_compare(pair(a).rest, pair(b).rest)
+        } else {
+            0
+        }
+    } else {
+        (2 * ((integer(pair(a).first) > integer(pair(b).first)) as Int)) - 1
+    }
+}

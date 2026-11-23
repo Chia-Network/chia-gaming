@@ -1,0 +1,95 @@
+import artifacts::{krunk_guess_hash};
+import common::*;
+import krunk_make_clue::*;
+import krunk_shapes::*;
+import shapes::*;
+import std_len::*;
+
+export const KRUNK_PAYOUTS: Any = [100, 100, 20, 5, 1];
+
+export fn krunk_payout_share(base_unit: Any, n: Any) -> Any {
+    integer(base_unit) * integer(pair(drop(integer(n) - 1, KRUNK_PAYOUTS)).first)
+}
+
+export fn drop(n: Any, lst: Any) -> Any {
+    if integer(n) == 0 {
+        lst
+    } else {
+        drop(integer(n) - 1, pair(lst).rest)
+    }
+}
+
+export fn reveal_mover_share(base_unit: Any, bob_guesses: Any, revealed_word: Any) -> Any {
+    if integer(list_length(bob_guesses)) != 5 {
+        krunk_payout_share(base_unit, list_length(bob_guesses))
+    } else if bytes(pair(bob_guesses).first) == bytes(revealed_word) {
+        krunk_payout_share(base_unit, 5)
+    } else {
+        0
+    }
+}
+
+// Bob challenging Alice's clue or reveal.
+// state is (krunk-state)
+// MOVE is either a 1-byte clue or a 21-byte salt||word reveal.
+// On a continue (clue), we transition back to guess. guess_hash is imported
+// directly from games.krunk.clsp.onchain.guess.
+fn main(
+    _mod_hash: Any,
+    params: Parameters,
+    witness: Witness<State>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { move, mover_share } = turn(params);
+    let (
+        ((dict_pubkey, (base_unit, bob_guesses)), (alice_clues, (alice_commit, clue_hash))),
+        (_, evidence),
+    ) = witness;
+    if move.length == 1 {
+        if (mover_share == 0)
+            && (integer(list_length(alice_clues)) < 4)
+            && ((0x72 as Int) > integer(move))
+        {
+            validator_transition(
+                krunk_guess_hash,
+                make_krunk_state(
+                    dict_pubkey,
+                    base_unit,
+                    bob_guesses,
+                    (move, alice_clues),
+                    alice_commit,
+                    clue_hash,
+                ),
+                5,
+            )
+        } else {
+            0
+        }
+    } else if move.length != 21 {
+        0
+    } else {
+        let revealed_word = move[16..21];
+        if (bytes(mover_share) == bytes(reveal_mover_share(base_unit, bob_guesses, revealed_word)))
+            && (bytes(alice_commit) == sha256(move[0..16] + revealed_word))
+            && (
+                (bytes(evidence).length != 1)
+                    || (
+                        bytes(make_clue(
+                            revealed_word,
+                            pair(drop(integer(evidence) + 1, bob_guesses)).first,
+                        )) == bytes(pair(drop(integer(evidence) + 0, alice_clues)).first)
+                    )
+            )
+        {
+            if bytes(evidence).length == 10 {
+                assert (revealed_word as Int) >= (bytes(evidence)[0..5] as Int);
+                assert (revealed_word as Int) <= (bytes(evidence)[5..10] as Int);
+                validator_result(0, 0, 0, [[AGG_SIG_UNSAFE, dict_pubkey, evidence]])
+            } else {
+                validator_transition(0, 0, 0)
+            }
+        } else {
+            0
+        }
+    }
+}

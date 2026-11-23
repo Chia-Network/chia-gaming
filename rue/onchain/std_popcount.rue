@@ -1,0 +1,9 @@
+import common::*;
+
+export fn popcount(mymask: Any) -> Any {
+    if truthy(mymask) {
+        (integer(mymask) & 1) + integer(popcount(integer(mymask) >>> 1))
+    } else {
+        0
+    }
+}

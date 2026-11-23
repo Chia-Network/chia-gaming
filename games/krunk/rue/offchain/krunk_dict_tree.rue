@@ -1,0 +1,32 @@
+import common::*;
+
+// Balanced BST dictionary lookup with signatures at leaves.
+//
+// Tree structure (built in Rust, curried into handlers):
+// Interior node: (left_node right_node word) — proper 3-element list
+// Leaf: 96-byte BLS signature atom (aggregated sig for that gap)
+//
+// The lookup carries left_bound and right_bound, adjusting them with +1/-1
+// as it descends. This way the leaf knows the exact gap range it covers.
+//
+// Returns:
+// () — word IS in the dictionary
+// (left_bound right_bound signature) — word is NOT in the dictionary;
+// left_bound/right_bound are the gap boundaries and signature is
+// the BLS signature certifying that gap.
+export fn dict_lookup(left_bound: Any, right_bound: Any, word: Any, node: Any) -> Any {
+    if node is (Any, Any) {
+        let left_node = pair(node).first;
+        let right_node = pair(pair(node).rest).first;
+        let word_here = pair(pair(pair(node).rest).rest).first;
+        if bytes(word) == bytes(word_here) {
+            nil
+        } else if integer(word) > integer(word_here) {
+            dict_lookup(integer(word_here) + 1, right_bound, word, right_node)
+        } else {
+            dict_lookup(left_bound, integer(word_here) - 1, word, left_node)
+        }
+    } else {
+        [left_bound, right_bound, node]
+    }
+}

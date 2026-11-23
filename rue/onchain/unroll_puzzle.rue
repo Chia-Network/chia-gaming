@@ -1,0 +1,14 @@
+// Conditions are the dotted tail following the three curried arguments.
+fn main(key: PublicKey, old_sequence: Int, default_hash: Bytes32, ...conditions: Any) -> Any {
+    let hash = tree_hash(conditions);
+    if hash == default_hash {
+        conditions
+    } else {
+        let [(_, (new_sequence, _)), ..._] = unchecked_cast::<[(Any, (Int, Any)), ...Any]>(
+            conditions,
+        );
+        assert new_sequence > old_sequence;
+        assert (new_sequence ^ old_sequence) & 1 != 0;
+        ([AGG_SIG_UNSAFE, key, hash], conditions)
+    }
+}

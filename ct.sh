@@ -17,6 +17,12 @@ fi
 echo "=== Building chialisp ==="
 ./tools/build-chialisp.sh
 
+if [ "${GAMING_PUZZLE_COMPILER:-rue}" = rue ]; then
+    echo "=== Running Rue tests ==="
+    python3 tools/test-build-rue.py
+    python3 tools/build-rue.py --test
+fi
+
 echo "=== Building simulator ==="
 cargo build --bin chia-gaming-sim --features sim-server
 echo "Build took: ${SECONDS} seconds"

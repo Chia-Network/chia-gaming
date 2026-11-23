@@ -1,0 +1,19 @@
+import artifacts::{spacepoker_commitA_hash, spacepoker_factory_program};
+import factory_record::first_record;
+
+test fn factory_links_first_validator_and_opens_with_chain_tip() {
+    let record = first_record(spacepoker_factory_program(...[100, 100, [5, 2]]));
+    assert record.validators is (Any, List<Any>);
+    assert tree_hash(record.validators.first) == spacepoker_commitA_hash;
+    let entropy = sha256("spacepoker");
+    let [label, move, share, _] = unchecked_cast::<[String, Bytes, Int, Any]>(record.my_turn(
+        nil,
+        20,
+        record.state,
+        0,
+        entropy,
+    ));
+    assert label == "spacepoker_alice_commitA";
+    assert move == sha256(sha256(sha256(sha256(sha256(entropy[..16])))));
+    assert share == 10;
+}

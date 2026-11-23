@@ -1,0 +1,87 @@
+import common::*;
+import shapes::*;
+import spacepoker_shapes::*;
+
+// state is (bet_unit half_pot mover_image_next waiter_image_n N mid_hash)
+// mid_hash is curried into begin_round's state by commitB (and by mid_round
+// on callback), avoiding a circular import: mid_round imports begin_round
+// directly, and begin_round gets mid_hash from state instead.
+//
+// At N=4, a coin toss decides who opens the first betting round. With both
+// image_4s revealed, the toss is:
+// mover_opens = (> mover_image_n waiter_image_n) ==
+// (logand (logxor mover_image_n waiter_image_n) 1)
+// The xor bit is invariant under mover/waiter swap, while (>) flips, so
+// the toss flips exactly under swap -- after a pong, the new mover always
+// opens.
+//
+// The coin toss decides interpretation of MOVE BEFORE move shape is
+// inspected. A bare 32-byte move is ambiguous (could be "check" or "pong");
+// the toss disambiguates so the mover cannot ignore an unfavorable toss
+// by opening with a check.
+//
+// MOVE is either:
+// - open: mover_image_n (32 bytes) concatenated with raise amount
+// (>=0 bytes). Valid only when mover_opens.
+// - pong: mover_image_n (exactly 32 bytes). Valid only at N=4 when
+// mover_opens is false. Transitions back to begin_round with
+// mover/waiter images swapped and N still 4.
+// evidence is empty
+fn main(mod_hash: Any, params: Parameters, witness: Witness<Open>, ..._unused_payout: Any) -> Any {
+    let { amount, move, mover_share } = turn(params);
+    let (((bet_unit, (half_pot, mover_image_next)), (waiter_image_n, (n, mid_hash))), _) = witness;
+    if move.length < 32 {
+        0
+    } else {
+        let mover_image_n = move[0..32];
+        let raise_amount = move[32..move.length];
+        let mover_opens = if integer(n) == 4 {
+            (((mover_image_n as Int) > integer(waiter_image_n)) as Int) == (
+                ((mover_image_n as Int) ^ integer(waiter_image_n)) & 1
+            )
+        } else {
+            1
+        };
+        if (mover_share == ((amount / 2) - integer(half_pot)))
+            && (bytes(mover_image_next) == sha256(mover_image_n))
+        {
+            if truthy(mover_opens) {
+                if ((raise_amount as Int) >= 0)
+                    && ((integer(half_pot) + (raise_amount as Int)) <= (amount / 2))
+                {
+                    validator_transition(
+                        mid_hash,
+                        make_space_raise(
+                            bet_unit,
+                            half_pot,
+                            raise_amount,
+                            waiter_image_n,
+                            mover_image_n,
+                            n,
+                        ),
+                        42,
+                    )
+                } else {
+                    0
+                }
+            } else if move.length == 32 {
+                validator_transition(
+                    mod_hash,
+                    make_space_open(
+                        bet_unit,
+                        half_pot,
+                        sha256(bytes(waiter_image_n)),
+                        mover_image_n,
+                        n,
+                        mid_hash,
+                    ),
+                    42,
+                )
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
+}

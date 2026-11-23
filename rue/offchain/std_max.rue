@@ -1,0 +1,15 @@
+import common::*;
+
+export fn max_inner(myless: Any, best_so_far: Any, mylist: Any) -> Any {
+    if !truthy(mylist) {
+        best_so_far
+    } else if truthy(apply_program(myless, [best_so_far, pair(mylist).first])) {
+        max_inner(myless, pair(mylist).first, pair(mylist).rest)
+    } else {
+        max_inner(myless, best_so_far, pair(mylist).rest)
+    }
+}
+
+export fn maximum(myless: Any, mylist: Any) -> Any {
+    max_inner(myless, pair(mylist).first, pair(mylist).rest)
+}

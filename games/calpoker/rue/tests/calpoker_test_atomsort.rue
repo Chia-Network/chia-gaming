@@ -1,0 +1,35 @@
+import std_atomsort::atomsort;
+
+fn main(...items: Any) -> Any {
+    atomsort(items)
+}
+
+// Insert each remaining item at every position. Check duplicate and signed
+// atoms as well as distinct values, as in the original permutation fixture.
+fn permutations(prefix: List<Int>, remaining: List<Int>, expected: List<Int>) {
+    if remaining is nil {
+        assert deep_equal(atomsort(prefix), expected);
+        return;
+    }
+    choose(prefix, nil, remaining, expected);
+}
+
+fn choose(prefix: List<Int>, before: List<Int>, after: List<Int>, expected: List<Int>) {
+    if after is (Int, List<Int>) {
+        permutations([after.first, ...prefix], [...before, ...after.rest], expected);
+        choose(prefix, [after.first, ...before], after.rest, expected);
+    }
+}
+
+test fn sorts_every_permutation() {
+    permutations(nil, [-1, -1, 0, 0, 2], [2, 0, 0, -1, -1]);
+    permutations(nil, [0, 1, 2, 3], [3, 2, 1, 0]);
+    assert deep_equal(atomsort(nil), nil);
+}
+
+test fn sorted_and_reversed_runs() {
+    let ascending = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+    let descending = reverse(ascending);
+    assert deep_equal(atomsort(ascending), descending);
+    assert deep_equal(atomsort(descending), descending);
+}

@@ -1,0 +1,9 @@
+import common::*;
+
+export fn list_length(l: Any) -> Any {
+    if truthy(l) {
+        1 + integer(list_length(pair(l).rest))
+    } else {
+        0
+    }
+}

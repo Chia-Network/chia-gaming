@@ -1,0 +1,75 @@
+import shapes::Parameters;
+
+type Timeout = (Bytes, Bytes);
+type Move = ((Bytes, Bytes), (Int, Int));
+type Slash = ((Any, (Any, Any)), Bytes);
+type Result = ((Bytes, Any), (Int, List<Any>));
+
+fn main(params: Parameters, ...solution: Timeout | Move | Slash) -> Any {
+    let (
+        ((mover, waiter), (timeout, (amount, mod_hash))),
+        ((nonce, (_, max_size)), (info_b, (share, info_a))),
+    ) = params;
+    match solution {
+        Timeout as (mover_ph, waiter_ph) => {
+            let remainder = amount - share;
+            let waiter_conditions: List<Any> = if remainder != 0 {
+                [[CREATE_COIN, waiter_ph, remainder], [AGG_SIG_UNSAFE, waiter, 0x78 + waiter_ph]]
+            } else {
+                assert waiter_ph == nil;
+                nil
+            };
+            let (coin, signature): (Any, Any) = if share != 0 {
+                ([CREATE_COIN, mover_ph, share], [AGG_SIG_UNSAFE, mover, 0x78 + mover_ph])
+            } else {
+                assert mover_ph == nil;
+                ([1], [1])
+            };
+            [[ASSERT_HEIGHT_RELATIVE, timeout], coin, signature, ...waiter_conditions]
+        }
+        Move as ((new_move, info_c), (new_share, new_max)) => {
+            assert info_b != nil;
+            assert new_move.length <= max_size;
+            assert (new_max as Bytes).length <= 2 && new_max >= 0 && new_max == new_max + 0;
+            assert new_share <= amount && new_share >= 0 && new_share == new_share + 0;
+            assert info_c == nil || info_c.length == 32;
+            assert info_c != nil || new_max == 0;
+            let next_params: Parameters = (
+                ((waiter, mover), (timeout, (amount, mod_hash))),
+                ((nonce, (new_move, new_max)), (info_c, (new_share, info_b))),
+            );
+            [
+                [ASSERT_BEFORE_HEIGHT_RELATIVE, timeout],
+                [CREATE_COIN, curry_tree_hash(mod_hash, [tree_hash(next_params)]), amount],
+                [AGG_SIG_ME, mover, tree_hash(solution)],
+            ]
+        }
+        Slash as ((state, (program, _)), payout_ph) => {
+            let hash = tree_hash(program);
+            assert info_a == sha256(hash + tree_hash(state));
+            let validate = unchecked_cast::<fn(...args: Any) -> Any>(program);
+            let result = validate(...(hash, (params, solution)));
+            let payout = [
+                [CREATE_COIN, payout_ph, amount],
+                [AGG_SIG_UNSAFE, mover, 0x78 + payout_ph],
+            ];
+            if result is Bytes {
+                assert result == nil;
+                payout
+            } else {
+                let ((next_hash, next_state), (size, extra)) = unchecked_cast::<Result>(result);
+                let commitment: Bytes = if next_hash != nil {
+                    sha256(next_hash + tree_hash(next_state))
+                } else {
+                    nil
+                };
+                if commitment != info_b || size != max_size || (next_hash == nil && size != 0) {
+                    payout
+                } else {
+                    assert extra is (Any, Any);
+                    [...extra, ...payout]
+                }
+            }
+        }
+    }
+}

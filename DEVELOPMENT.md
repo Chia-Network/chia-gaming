@@ -262,22 +262,42 @@ canonical reference for the full build sequence.
 
 Run commands from the repo root unless noted.
 
-### 1. Chialisp
+### 1. Puzzle programs
 
 ```bash
 ./tools/build-chialisp.sh
 ```
 
-This is the sole entry point for compiling `.clsp` sources. The Chialisp
-compiler emits `.hex`; the build then decodes each output into a
-`.clvm.bin` artifact. For each game it also curries any factory arguments,
-runs the build-only probe, records the protocol ID, and emits one prepared
-runtime factory. It content-hashes the sources, compiler inputs, and generated
-outputs, rebuilding only when an input changes or an output is missing or
-modified. Ordinary Cargo commands do not compile Chialisp. Only prepared
-factories and core runtime programs are loaded by the WASM module over HTTP.
-The gitignored `games/package_manifest.json` caches the generated protocol IDs
-for subsequent Rust builds; it is build output, not a hand-edited catalog.
+This branch builds the referee, unroll puzzle, game validators, factories, and
+their handlers with Rue 0.13.0. The build uses `rue` on PATH or installs the
+pinned CLI under `target/rue-cli`. To build the reference implementations, run
+`GAMING_PUZZLE_COMPILER=chialisp ./cb.sh`. Switching compilers rebuilds the
+puzzles and package IDs. Run `./ct-automation.sh` for the Rue test suite.
+
+Each game owns its Rue sources in `games/<game>/rue`. Shared modules, the
+referee, and the unroll puzzle live in `rue`. Put validators and the helpers
+they need in `onchain/`, and factories, handlers, and full hand searches in
+`offchain/`. Tests and build-only probes live in `tests/`. An off-chain
+handler can use its validator's layouts or compiled program. The builder
+rejects on-chain imports of off-chain or test code, including transitive imports
+and references to compiled hashes. Production code cannot depend on a test.
+`python3 tools/build-rue.py --test` runs the native Rue cases, including calls
+to handlers returned by release-compiled factories. The full suite also checks
+the compiled test entrypoints against the Rust encoders and simulator.
+Import a generated `artifacts` symbol ending in `_hash` or `_program` to refer
+to a separately compiled entrypoint. The prefix is that entrypoint's filename
+stem. The builder follows these dependencies, compiles each entrypoint once,
+and supplies its CLVM tree hash or serialized program to its consumers.
+Self-transitions and callbacks receive their hashes in the validator arguments
+or game state. The referee and game records keep the balanced pair layouts
+used by the Rust encoders.
+
+Both builds produce the runtime's `.hex`, `.clvm.bin`, and debug sidecars.
+The package build curries factory arguments, executes each probe, and derives
+the game ID from its initial validator. Rue compilation changes puzzle hashes
+and game IDs. Start fresh sessions with both peers using the same build.
+Ordinary Cargo and WASM builds consume the prepared artifacts and generated
+`games/package_manifest.json`.
 
 ### 2. WASM (browser target)
 

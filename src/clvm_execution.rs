@@ -461,6 +461,10 @@ mod tests {
                 &std::fs::read(path.with_extension("debug.clvm.bin")).unwrap(),
             )
             .unwrap();
+            let is_rue = metadata
+                .files
+                .iter()
+                .any(|file| file.path.ends_with(".rue"));
             let mut allocator = AllocEncoder::new();
             let factory = decode(
                 allocator.allocator(),
@@ -492,20 +496,34 @@ mod tests {
                     matches!(frame.matched, FrameMatch::Exact | FrameMatch::Curried),
                     "{key} {kind}"
                 );
-                if kind != "validator" {
+                if is_rue && kind == "validator" {
+                    assert_eq!(frame.matched, FrameMatch::Exact);
+                    let span = &metadata.spans[frame.source_span.expect("validator source span")];
+                    let source = std::path::Path::new(&metadata.files[span.file].path);
+                    assert_eq!(source.extension().and_then(|ext| ext.to_str()), Some("rue"));
+                    let name = source.file_stem().unwrap().to_str().unwrap();
+                    let stage = name.strip_prefix(&format!("{key}_")).unwrap();
+                    let artifact = root.join(format!("games/{key}/clsp/onchain/{stage}.clvm.bin"));
+                    assert_eq!(std::fs::read(artifact).unwrap(), program, "{key} {stage}");
+                } else if kind != "validator" {
+                    let (prefix, source) = if is_rue {
+                        (format!("{key}_"), format!("{key}_generate.rue"))
+                    } else {
+                        (
+                            format!("games.{key}.clsp.{key}_generate."),
+                            format!("{key}_generate.clinc"),
+                        )
+                    };
                     assert!(
                         frame
                             .function
                             .as_ref()
-                            .is_some_and(|name| name
-                                .starts_with(&format!("games.{key}.clsp.{key}_generate."))),
+                            .is_some_and(|name| name.starts_with(&prefix)),
                         "{key} {kind}: {:?}",
                         frame.function
                     );
                     let span = &metadata.spans[frame.source_span.expect("handler source span")];
-                    assert!(metadata.files[span.file]
-                        .path
-                        .ends_with(&format!("{key}_generate.clinc")));
+                    assert!(metadata.files[span.file].path.ends_with(&source));
                 }
             }
         }

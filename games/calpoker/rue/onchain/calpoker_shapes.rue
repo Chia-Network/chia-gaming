@@ -1,0 +1,31 @@
+// Fixed records use the balanced pair layout shared by validators and handlers.
+export type Seeds = (Any, Any);
+export type Deal = (Any, (Any, Any));
+export type DiscardState = ((Any, Any), (Any, Any));
+export type Hands = (Any, Any);
+export type Draw = (Any, Any);
+
+export inline fn make_calpoker_seeds(alice_commit: Any, bob_seed: Any) -> Seeds {
+    (alice_commit, bob_seed)
+}
+
+export inline fn make_calpoker_deal(alice_commit: Any, alice_cards: Any, bob_cards: Any) -> Deal {
+    (alice_commit, (alice_cards, bob_cards))
+}
+
+export inline fn make_calpoker_discard_state(
+    bob_discards: Any,
+    alice_cards: Any,
+    bob_cards: Any,
+    alice_commit: Any,
+) -> DiscardState {
+    ((bob_discards, alice_cards), (bob_cards, alice_commit))
+}
+
+export inline fn make_calpoker_hands(alice_cards: Any, bob_cards: Any) -> Hands {
+    (alice_cards, bob_cards)
+}
+
+export inline fn make_calpoker_draw(cards: Any, randomness: Any) -> Draw {
+    (cards, randomness)
+}

@@ -1,0 +1,26 @@
+import artifacts::{spacepoker_begin_round_hash, spacepoker_mid_round_hash};
+import common::*;
+import shapes::*;
+import spacepoker_shapes::*;
+
+// state is (space-commit bet_unit alice_image_5)
+// MOVE is Bob's hash-chain tip (image_4), 32 bytes
+// evidence is empty
+fn main(
+    _mod_hash: Any,
+    params: Parameters,
+    witness: Witness<Commit>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { amount, move, mover_share } = turn(params);
+    let ((bet_unit, alice_image_5), _) = witness;
+    if (move.length == 32) && (mover_share == ((amount / 2) - integer(bet_unit))) {
+        validator_transition(
+            spacepoker_begin_round_hash,
+            make_space_open(bet_unit, bet_unit, alice_image_5, move, 4, spacepoker_mid_round_hash),
+            42,
+        )
+    } else {
+        0
+    }
+}

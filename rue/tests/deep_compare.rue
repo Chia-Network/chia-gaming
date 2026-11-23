@@ -1,0 +1,5 @@
+import std_deep_compare::*;
+
+fn main(a: Any, b: Any) -> Any {
+    deep_compare(a, b)
+}

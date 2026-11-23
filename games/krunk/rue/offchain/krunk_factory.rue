@@ -1,0 +1,5 @@
+import krunk_generate::krunk_factory;
+
+fn main(dict_key: Any, dict_tree: Any, ...args: Any) -> Any {
+    krunk_factory(dict_key, dict_tree, ...args)
+}

@@ -1,0 +1,16 @@
+// Rank and multiplicity lists have at most five items.
+fn insert_descending(value: Int, items: List<Int>) -> List<Int> {
+    if items is nil {
+        return [value];
+    }
+    if value > items.first {
+        [value, ...items]
+    } else {
+        [items.first, ...insert_descending(value, items.rest)]
+    }
+}
+
+export fn atomsort(values: Any) -> List<Int> {
+    let items = unchecked_cast::<List<Int>>(values);
+    for item in items fold sorted: List<Int> = nil { insert_descending(item, sorted) }
+}

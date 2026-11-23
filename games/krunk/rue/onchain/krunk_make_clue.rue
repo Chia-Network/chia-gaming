@@ -1,0 +1,91 @@
+import common::*;
+import krunk_shapes::*;
+
+export fn make_clue(word: Any, guess: Any) -> Any {
+    let (not_green_word, (not_green_guess, green)) = unchecked_cast::<(Any, (Any, Any))>(make_green(
+        expand_word(word),
+        expand_word(guess),
+    ));
+    let yellow = make_yellow(not_green_word, not_green_guess);
+    let clue = integer(merge_colors(green, yellow, 0)) - 128;
+    if clue == 0 {
+        0x00
+    } else {
+        clue
+    }
+}
+
+export fn expand_word(word: Any) -> Any {
+    [bytes(word)[0..1], bytes(word)[1..2], bytes(word)[2..3], bytes(word)[3..4], bytes(word)[4..5]]
+}
+
+export fn make_green(word: Any, guess: Any) -> Any {
+    if !truthy(word) {
+        make_krunk_green(0, 0, 0)
+    } else {
+        let (
+            inner_not_green_word,
+            (inner_not_green_guess, inner_green),
+        ) = unchecked_cast::<(Any, (Any, Any))>(make_green(pair(word).rest, pair(guess).rest));
+        if bytes(pair(word).first) == bytes(pair(guess).first) {
+            make_krunk_green(inner_not_green_word, inner_not_green_guess, (1, inner_green))
+        } else {
+            make_krunk_green(
+                (pair(word).first, inner_not_green_word),
+                (pair(guess).first, inner_not_green_guess),
+                (0, inner_green),
+            )
+        }
+    }
+}
+
+export fn make_yellow(word: Any, guess: Any) -> Any {
+    if !truthy(guess) {
+        0
+    } else if truthy(is_yellow(word, pair(guess).first)) {
+        (1, make_yellow(elide_one(word, pair(guess).first), pair(guess).rest))
+    } else {
+        (0, make_yellow(word, pair(guess).rest))
+    }
+}
+
+export fn elide_one(word: Any, letter: Any) -> Any {
+    if bytes(pair(word).first) == bytes(letter) {
+        pair(word).rest
+    } else {
+        (pair(word).first, elide_one(pair(word).rest, letter))
+    }
+}
+
+export fn is_yellow(word: Any, letter: Any) -> Any {
+    if !truthy(word) {
+        0
+    } else if bytes(pair(word).first) == bytes(letter) {
+        1
+    } else {
+        is_yellow(pair(word).rest, letter)
+    }
+}
+
+export fn merge_colors(green: Any, yellow: Any, val: Any) -> Any {
+    if !truthy(green) {
+        val
+    } else {
+        merge_colors(
+            pair(green).rest,
+            if truthy(pair(green).first) {
+                yellow
+            } else {
+                pair(yellow).rest
+            },
+            (3 * integer(val))
+                + integer(
+                    if truthy(pair(green).first) {
+                        2
+                    } else {
+                        pair(yellow).first
+                    },
+                ),
+        )
+    }
+}

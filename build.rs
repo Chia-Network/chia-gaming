@@ -19,6 +19,9 @@ use chialisp::classic::platform::argparse::ArgumentValue;
 use chialisp::compiler::comptypes::CompileErr;
 use chialisp::compiler::srcloc::Srcloc;
 
+#[path = "tools/rue_metadata.rs"]
+mod rue_metadata;
+
 #[path = "src/factory_abi.rs"]
 #[allow(dead_code)]
 mod factory_abi;
@@ -147,20 +150,37 @@ fn load_registry() -> GameRegistry {
     }
 }
 
+fn building_rue() -> bool {
+    std::env::var("GAMING_PUZZLE_COMPILER").as_deref() != Ok("chialisp")
+}
+
 fn validate_package(key: &str, production: bool) {
     game_package_key::validate_game_package_key(key)
         .unwrap_or_else(|reason| panic!("invalid game package key {key:?}: {reason}"));
     let root = PathBuf::from("games").join(key);
     let rust_mod = root.join("rust/mod.rs");
     let rust_tests = root.join("rust/tests/mod.rs");
-    let factory = root.join("clsp/factory.clsp");
-    let factory_probe = root.join("clsp/factory_probe.clsp");
+    let (factory, factory_probe) = if building_rue() {
+        let layer = if production { "offchain" } else { "tests" };
+        (
+            root.join(format!("rue/{layer}/{key}_factory.rue")),
+            root.join(format!("rue/tests/{key}_factory_probe.rue")),
+        )
+    } else {
+        (
+            root.join("clsp/factory.clsp"),
+            root.join("clsp/factory_probe.clsp"),
+        )
+    };
     if !factory.is_file() {
-        panic!("game package {key} missing clsp/factory.clsp");
+        panic!("game package {key} missing {}", factory.display());
     }
     if production {
         if !factory_probe.is_file() {
-            panic!("production game package {key} missing clsp/factory_probe.clsp");
+            panic!(
+                "production game package {key} missing {}",
+                factory_probe.display()
+            );
         }
         for rel in [
             "ui/handProposal.ts",
@@ -218,6 +238,14 @@ fn package_clsp_entrypoints(key: &str) -> Vec<(String, String)> {
 }
 
 fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
+    if building_rue() {
+        let status = std::process::Command::new("python3")
+            .arg("tools/build-rue.py")
+            .status()
+            .expect("launch Rue puzzle build");
+        assert!(status.success(), "Rue puzzle build failed");
+        return Ok(());
+    }
     let srcloc = Srcloc::start("chialisp.toml");
     let chialisp_toml_text = fs::read_to_string("chialisp.toml").map_err(|e| {
         CompileError::Modern(
@@ -404,11 +432,18 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         let prepared_metadata_path =
             PathBuf::from(debug_output_path(&prepared_path.to_string_lossy()));
         let prepared_identity: [u8; 32] = Sha256::digest(&prepared_bytes).into();
-        let prepared_metadata_bytes = rebind_debug_metadata_identity(
-            &raw_metadata_bytes,
-            &raw_metadata.program_sha256,
-            &prepared_identity,
-        )?;
+        let prepared_metadata_bytes = if building_rue() {
+            let mut metadata = raw_metadata;
+            rue_metadata::link_validators(&mut metadata, &root.join("onchain"))?;
+            metadata.program_sha256 = prepared_identity;
+            metadata.encode()?
+        } else {
+            rebind_debug_metadata_identity(
+                &raw_metadata_bytes,
+                &raw_metadata.program_sha256,
+                &prepared_identity,
+            )?
+        };
         let prepared_metadata = DebugMetadata::decode(&prepared_metadata_bytes).map_err(|e| {
             format!(
                 "decoding prepared factory metadata {}: {e}",
@@ -705,6 +740,8 @@ fn main() {
     println!("cargo:rerun-if-changed=shared/protocol-constants/constants.json");
     println!("cargo:rerun-if-changed=src/factory_abi.rs");
     println!("cargo:rerun-if-env-changed=CHIALISP_COMPILE");
+    println!("cargo:rerun-if-env-changed=GAMING_PUZZLE_COMPILER");
+    println!("cargo:rerun-if-changed=tools/rue_metadata.rs");
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     generate_protocol_timeout_bounds(&out_dir);

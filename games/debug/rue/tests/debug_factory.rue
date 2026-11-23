@@ -1,0 +1,189 @@
+import common::apply_program;
+import curry::curry_program;
+import shapes::{Parameters, validator_transition};
+
+// Rust supplies this proper list so a handler can curry another copy of the
+// same program. Only handler counts advance; the registered validator uses zero.
+struct CurryArgs {
+    count: Int,
+    self_hash: Bytes32,
+    self_program: Any,
+}
+
+type State = (Int, (Bytes, Int));
+
+fn validator_hash(args: CurryArgs) -> Bytes32 {
+    let nil_hash = tree_hash(nil);
+    let args_hash = tree_hash_pair(
+        nil_hash,
+        tree_hash_pair(tree_hash_atom(args.self_hash), tree_hash_pair(args.self_hash, nil_hash)),
+    );
+    curry_tree_hash(args.self_hash, [tree_hash("validator"), args_hash])
+}
+
+fn next_handler(args: CurryArgs, mode: String) -> Any {
+    curry_program(args.self_program, [mode, CurryArgs { ...args, count: args.count + 1 }])
+}
+
+// The wire format uses one NUL byte for zero; CLVM's canonical zero is nil.
+fn byteify(n: Int) -> Bytes {
+    if n == 0 {
+        0x00
+    } else {
+        n as Bytes
+    }
+}
+
+fn validator(
+    args: CurryArgs,
+    _mod_hash: Bytes32,
+    params: Parameters,
+    (state, (_, evidence)): (State, (Any, Bytes)),
+    ..._payout: Any,
+) -> Any {
+    let (
+        ((mover, waiter), (timeout, (amount, mod_hash))),
+        ((nonce, (move, _)), (infohash_b, (mover_share, infohash_a))),
+    ) = params;
+    let (count, _) = state;
+    let hash = validator_hash(args);
+    let prefix = (waiter as Bytes)
+        + (mover as Bytes)
+        + mod_hash
+        + infohash_a
+        + hash
+        + byteify(timeout)
+        + byteify(amount)
+        + byteify(nonce)
+        + byteify(mover_share)
+        + byteify(count);
+    debug ["move-counter-data?", prefix];
+    debug ["MOVE?", move];
+    debug ["INFOHASH_A", infohash_a, "INFOHASH_B", infohash_b];
+    debug ["Previous infohash calculation", sha256(hash + tree_hash(state))];
+
+    if move.length < prefix.length + 2 || move[..prefix.length] != prefix || mover == waiter {
+        return nil;
+    }
+    let slash_byte = move[move.length - 1..];
+    debug ["evidence", evidence, "slash byte", slash_byte];
+    if evidence == slash_byte && 0 + (evidence as Int) != 0 {
+        return nil;
+    }
+    let new_share = 0 + (move[prefix.length..move.length - 1] as Int);
+    validator_transition(hash, (count + 1, (slash_byte, new_share)), 512)
+}
+
+struct LocalMove {
+    prefix: Bytes,
+    count: Int,
+    mover_share: Int,
+    slash: Bytes,
+}
+
+fn myturn(
+    args: CurryArgs,
+    move: LocalMove | nil,
+    _amount: Int,
+    _state: Any,
+    _last_share: Int,
+    _entropy: Bytes,
+) -> Any {
+    debug ["Curry pack", args.count, args.self_hash];
+    assert move is LocalMove, "my turn local slash";
+    assert move.count == args.count, ["count not equal for this move", move.count, args.count];
+    [
+        "debug game: move",
+        move.prefix + byteify(move.mover_share) + move.slash,
+        move.mover_share,
+        next_handler(args, "theirturn"),
+    ]
+}
+
+// Positive integers in the move suffix start with a byte whose high bit is
+// clear. Return the encoded bytes and the position of that first byte.
+fn read_over_integer(move: Bytes, end: Int, pos: Int) -> (Int, Int) {
+    if ((move[pos..pos + 1] as Int) & 128) != 0 {
+        read_over_integer(move, end, pos - 1)
+    } else {
+        (0 + (move[pos..end] as Int), pos)
+    }
+}
+
+fn theirturn(
+    args: CurryArgs,
+    _amount: Int,
+    _pre_state: Any,
+    state: State,
+    move: Bytes,
+    validation_program_hash: Bytes,
+    split: Int,
+) -> Any {
+    if move.length == 0 {
+        return [nil, nil, nil];
+    }
+    let slash_pos = move.length - 1;
+    let slash_byte = move[slash_pos..];
+    let (move_share, share_pos) = read_over_integer(move, slash_pos, slash_pos - 1);
+    let (move_count, _) = read_over_integer(move, share_pos, share_pos - 1);
+    let (count, (slashable, state_share)) = state;
+    debug ["mover share backup", move_share, share_pos];
+    debug ["move-count backup", move_count];
+
+    assert move_count == args.count, ["their turn: mismatched count", move_count, args.count];
+    assert validator_hash(args) == validation_program_hash,
+        "their turn: mismatched validator program";
+    assert split == move_share, ["their turn: wrong mover share", move_share, split];
+    assert split == state_share, ["their turn: wrong mover share in state", state_share, split];
+    assert slashable == slash_byte,
+        ["their turn: wrong slash byte in state", slashable, slash_byte];
+
+    // The empty candidate deliberately fails to slash. The next candidate
+    // exercises ordered evidence retries in the debug-game simulator.
+    [[count, slashable, state_share], [0, slash_byte], next_handler(args, "myturn")]
+}
+
+fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> Any {
+    assert proposer > 0 && accepter > 0;
+    let a = if proposer > 100 {
+        100
+    } else {
+        proposer
+    };
+    let b = if accepter > 100 {
+        100
+    } else {
+        accepter
+    };
+    [
+        1,
+        [[
+            a,
+            b,
+            1,
+            nil,
+            512,
+            (0, (0, 0)),
+            0,
+            curry_program(args.self_program, ["myturn", args]),
+            curry_program(args.self_program, ["theirturn", args]),
+            [curry_program(args.self_program, ["validator", args])],
+            [a, b],
+        ]],
+    ]
+}
+
+fn main(mode: String, curry_args: Any, ...args: Any) -> Any {
+    debug ["executing debug game with mode", mode];
+    if mode == "validator" {
+        apply_program(validator, (curry_args, args))
+    } else if mode == "myturn" {
+        apply_program(myturn, (curry_args, args))
+    } else if mode == "theirturn" {
+        apply_program(theirturn, (curry_args, args))
+    } else if mode == "factory" {
+        apply_program(factory, args)
+    } else {
+        raise ["no such personality", mode];
+    }
+}

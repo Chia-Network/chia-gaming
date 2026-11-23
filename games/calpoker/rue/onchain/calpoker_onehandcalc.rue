@@ -1,0 +1,121 @@
+import calpoker_flatten_card::*;
+import common::*;
+import std_atomsort::*;
+
+export fn mod52_to_pair(card_id: Any) -> Any {
+    let (rank, suit) = divmod(integer(card_id), 4);
+    (2 + rank, 1 + suit)
+}
+
+export fn check_flush(...cards: Any) -> Any {
+    let [
+        (_, suit1),
+        (_, suit2),
+        (_, suit3),
+        (_, suit4),
+        (_, suit5),
+        ..._,
+    ] = unchecked_cast::<[(Any, Any), (Any, Any), (Any, Any), (Any, Any), (Any, Any), ...Any]>(
+        cards,
+    );
+    ((bytes(suit1) == bytes(suit2)) as Int)
+        & ((bytes(suit1) == bytes(suit3)) as Int)
+        & ((bytes(suit1) == bytes(suit4)) as Int)
+        & ((bytes(suit1) == bytes(suit5)) as Int)
+}
+
+// returns the high card of a straight or 0 if there isn't any
+export fn straight_high(...all_args: Any) -> Any {
+    let [
+        count1,
+        _,
+        _,
+        _,
+        _,
+        rank1,
+        rank2,
+        _,
+        _,
+        rank5,
+        ..._,
+    ] = unchecked_cast::<[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, ...Any]>(all_args);
+    if !(integer(count1) == 1) {
+        0
+    } else if integer(rank5) == (integer(rank1) - 4) {
+        rank1
+    } else if integer(rank1) == 14 {
+        ((integer(rank2) == 5) as Int) * 5
+    } else {
+        0
+    }
+}
+
+export fn group_by_count_inner(items: Any, last: Any, count: Any) -> Any {
+    if !truthy(items) {
+        [flatten_card((count, last))]
+    } else if bytes(pair(items).first) == bytes(last) {
+        group_by_count_inner(pair(items).rest, last, integer(count) + 1)
+    } else {
+        (flatten_card((count, last)), group_by_count_inner(pair(items).rest, pair(items).first, 1))
+    }
+}
+
+export fn group_by_count(items: Any) -> Any {
+    group_by_count_inner(items, pair(items).first, 0)
+}
+
+export fn onehandcalc(cards: Any) -> Any {
+    onehandcalc_inner(map_with_rest(mod52_to_pair, cards, nil))
+}
+
+export fn onehandcalc_inner(record_arg0: Any) -> Any {
+    let cards = record_arg0;
+    let [
+        (card1rank, _),
+        (card2rank, _),
+        (card3rank, _),
+        (card4rank, _),
+        (card5rank, _),
+        ..._,
+    ] = unchecked_cast::<[(Any, Any), (Any, Any), (Any, Any), (Any, Any), (Any, Any), ...Any]>(
+        cards,
+    );
+    let ranks = atomsort([card1rank, card2rank, card3rank, card4rank, card5rank]);
+    let raw_groups = atomsort(group_by_count(ranks));
+    let hand = map_with_rest(
+        fn(x: Any) => { integer(x) >>> 4 },
+        raw_groups,
+        map_with_rest(fn(x: Any) => { integer(x) & 15 }, raw_groups, nil),
+    );
+    let [
+        first_count,
+        second_count,
+        _,
+        _,
+        _,
+        ...flush_ranks,
+    ] = unchecked_cast::<[Any, Any, Any, Any, Any, ...Any]>(hand);
+    let shigh = apply_program(straight_high, [...hand]);
+    if truthy(shigh) {
+        if truthy(apply_program(check_flush, [...cards])) {
+            [5, shigh]
+        } else if truthy(
+            ((integer(first_count) == 4) as Int)
+                | (((integer(first_count) == 3) as Int) & ((integer(second_count) == 2) as Int)),
+        ) {
+            hand
+        } else {
+            [3, 1, 2, shigh]
+        }
+    } else if truthy(
+        integer(apply_program(check_flush, [...cards]))
+            & (
+                ((integer(first_count) < 3) as Int)
+                    | (((integer(first_count) == 3) as Int) & ((integer(second_count) < 2) as Int))
+            ),
+    ) {
+        [3, 1, 3, ...flush_ranks]
+    } else {
+        hand
+    }
+}

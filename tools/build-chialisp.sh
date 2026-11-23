@@ -6,6 +6,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
+export GAMING_PUZZLE_COMPILER=${GAMING_PUZZLE_COMPILER:-rue}
+case "$GAMING_PUZZLE_COMPILER" in
+    rue|chialisp) ;;
+    *) echo "Unknown puzzle compiler: $GAMING_PUZZLE_COMPILER" >&2; exit 1 ;;
+esac
+
 STATE_FILE=".build-chialisp.state"
 CURRENT_STATE=$(mktemp)
 trap 'rm -f "$CURRENT_STATE"' EXIT
@@ -23,7 +29,13 @@ find_chialisp() {
 
 clsp_sources() {
     {
-        find_chialisp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+        if [ "$GAMING_PUZZLE_COMPILER" = rue ]; then
+            find rue games -type f \( -name '*.rue' -o -name 'compiler.toml' \) -print
+            echo tools/build-rue.py
+            echo tools/rue_metadata.rs
+        else
+            find_chialisp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+        fi
         find_chialisp -type f -name 'factory_args.clvm.bin' -print
         for file in \
             build.rs Cargo.toml Cargo.lock chialisp.toml \
@@ -64,7 +76,7 @@ prepared_packages() {
 write_state() {
     local destination=$1
     {
-        echo "version 4"
+        echo "version 5 $GAMING_PUZZLE_COMPILER"
         clsp_sources | while IFS= read -r file; do
             printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
         done
@@ -83,7 +95,7 @@ write_state() {
     } > "$destination"
 }
 
-echo "=== Building chialisp (via cargo build.rs) ==="
+echo "=== Building puzzles with $GAMING_PUZZLE_COMPILER ==="
 
 write_state "$CURRENT_STATE"
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
@@ -91,6 +103,13 @@ if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
 elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
     echo "Chialisp is up to date (skipping build)"
     exit 0
+fi
+
+if [ "$GAMING_PUZZLE_COMPILER" = rue ] && ! command -v rue >/dev/null; then
+    rue_root="$REPO_ROOT/target/rue-cli"
+    rue_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' rue/compiler.toml)
+    cargo install --locked --version "=$rue_version" --root "$rue_root" rue-cli
+    export PATH="$rue_root/bin:$PATH"
 fi
 
 SECONDS=0

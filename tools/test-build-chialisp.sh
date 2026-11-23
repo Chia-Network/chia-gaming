@@ -8,8 +8,13 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 REPO="$TEST_ROOT/repo"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG="$TEST_ROOT/cargo.log"
-mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
+mkdir -p "$REPO/tools" "$REPO/rue/programs" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
 cp "$SCRIPT_DIR/build-chialisp.sh" "$REPO/tools/build-chialisp.sh"
+cp "$SCRIPT_DIR/../rue/compiler.toml" "$REPO/rue/compiler.toml"
+export GAMING_PUZZLE_COMPILER=chialisp
+touch "$REPO/tools/build-rue.py" "$REPO/tools/rue_metadata.rs"
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$FAKE_BIN/rue"
+chmod +x "$FAKE_BIN/rue"
 printf '%s\n' '{}' > "$REPO/games/registry.json"
 # Reject GNU-only find early-exit usage (unsupported on macOS BSD find).
 if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh" >/dev/null; then
@@ -104,5 +109,15 @@ assert_count 8
 printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
 run_build
 assert_count 9
+
+printf '%s\n' 'fn main() -> Int { 1 }' > "$REPO/rue/programs/example.rue"
+GAMING_PUZZLE_COMPILER=rue run_build
+assert_count 10
+GAMING_PUZZLE_COMPILER=rue run_build
+assert_count 10
+GAMING_PUZZLE_COMPILER=chialisp run_build
+assert_count 11
+GAMING_PUZZLE_COMPILER=rue run_build
+assert_count 12
 
 echo "build-chialisp regression tests passed"

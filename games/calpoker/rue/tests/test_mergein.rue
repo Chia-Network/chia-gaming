@@ -1,0 +1,5 @@
+import calpoker_make_cards::*;
+
+fn main(inner: Any, outer: Any, offset: Any) -> Any {
+    mergein(inner, outer, offset)
+}

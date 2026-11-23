@@ -1,0 +1,36 @@
+import common::apply_program;
+
+// Merge sort alternates cards between the two halves.
+fn split(items: List<Any>, left: List<Any>, right: List<Any>) -> (List<Any>, List<Any>) {
+    if items is nil {
+        (left, right)
+    } else {
+        split(items.rest, right, [items.first, ...left])
+    }
+}
+
+fn merge(less: Any, left: List<Any>, right: List<Any>) -> List<Any> {
+    if left is nil {
+        return right;
+    }
+    if right is nil {
+        return left;
+    }
+    if unchecked_cast::<Bool>(apply_program(less, [left.first, right.first])) {
+        [left.first, ...merge(less, left.rest, right)]
+    } else {
+        [right.first, ...merge(less, left, right.rest)]
+    }
+}
+
+fn sort(less: Any, items: List<Any>) -> List<Any> {
+    if items is nil || items.rest is nil {
+        return items;
+    }
+    let (left, right) = split(items, nil, nil);
+    merge(less, sort(less, left), sort(less, right))
+}
+
+export fn sort_list(less: Any, items: Any) -> List<Any> {
+    sort(less, unchecked_cast::<List<Any>>(items))
+}

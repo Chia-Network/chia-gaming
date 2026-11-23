@@ -48,7 +48,7 @@ $name = "$path"
 EOF
     echo "=== Compiling $name ==="
     ulimit -s unlimited 2>/dev/null || true
-    CHIALISP_COMPILE=1 RUST_MIN_STACK=134217728 \
+    GAMING_PUZZLE_COMPILER=chialisp CHIALISP_COMPILE=1 RUST_MIN_STACK=134217728 \
         "$BUILD_SCRIPT"
     echo "=== Done: $name ==="
 }
