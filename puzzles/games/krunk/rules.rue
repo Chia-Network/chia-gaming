@@ -1,0 +1,98 @@
+// The rules of Krunk that both the validators and the handlers use.
+
+// How many base units Bob wins for finding the word with each number of guesses.
+const PAYOUTS: List<Int> = [100, 100, 20, 5, 1];
+
+// The share of the pot that Bob wins for finding the word with `guess_count` guesses.
+export fn payout_share(base_unit: Int, guess_count: Int) -> Int {
+    base_unit * nth(PAYOUTS, guess_count - 1)
+}
+
+// The item at `index`, which raises if there isn't one, including if the index is negative.
+export fn nth<T>(list: List<T>, index: Int) -> T {
+    let rest = drop(list, index);
+    assert !(rest is nil);
+    rest.first
+}
+
+// The list without its first `count` items, which raises if it doesn't have that many.
+fn drop<T>(list: List<T>, count: Int) -> List<T> {
+    if count == 0 {
+        return list;
+    }
+    assert !(list is nil);
+    drop(list.rest, count - 1)
+}
+
+// The clue for a guess: a digit for each letter, which is 2 if the word has the letter in the same
+// place, 1 if it has the letter in another place (that isn't already accounted for), and 0
+// otherwise. The digits are a number in base 3, offset by -128 to fit in a signed byte, where 0
+// is the byte 0x00 rather than nil. The word and the guess must be at least five bytes long, and
+// only the first five are used.
+export fn make_clue(word: Bytes, guess: Bytes) -> Bytes {
+    let word_letters = letters(word);
+    let guess_letters = letters(guess);
+    let places = for letter in guess_letters, answer in word_letters {
+        Place { letter, green: letter == answer }
+    };
+    let unmatched = for answer in word_letters, place in places if !place.green { answer };
+    let clue = score(places, unmatched, 0) - 128;
+    inline if clue == 0 { 0x00 } else { clue as Bytes }
+}
+
+struct Place {
+    letter: Bytes,
+    green: Bool,
+}
+
+fn letters(word: Bytes) -> List<Bytes> {
+    [word[0], word[1], word[2], word[3], word[4]]
+}
+
+// Adds the digits for the places to `value`, given the letters of the word that are still
+// unmatched.
+fn score(places: List<Place>, unmatched: List<Bytes>, value: Int) -> Int {
+    if places is nil {
+        return value;
+    }
+    let { letter, green } = places.first;
+    if green {
+        score(places.rest, unmatched, value * 3 + 2)
+    } else if contains(unmatched, letter) {
+        score(places.rest, remove_first(unmatched, letter), value * 3 + 1)
+    } else {
+        score(places.rest, unmatched, value * 3)
+    }
+}
+
+// The list without the first occurrence of the letter.
+fn remove_first(letters: List<Bytes>, letter: Bytes) -> List<Bytes> {
+    for other, rest in letters fold kept: List<Bytes> = nil {
+        if other == letter {
+            rest
+        } else {
+            [other, ...kept]
+        }
+    }
+}
+
+// The digits of a clue, from the first letter to the last.
+export fn expand_clue(clue: Bytes) -> List<Int> {
+    reverse(clue_digits(clue as Int + 128, 5))
+}
+
+// The last `count` digits of the value in base 3, from the last to the first.
+fn clue_digits(value: Int, count: Int) -> List<Int> {
+    if count == 0 {
+        nil
+    } else {
+        [value % 3, ...clue_digits(value / 3, count - 1)]
+    }
+}
+
+// Whether the value is nil, which raises if it's a pair. A comparison such as `value != 0` is
+// optimized to a truthiness check instead, which doesn't raise, but `strlen` does, like the `=` of
+// the Chialisp validators did.
+export inline fn is_zero(value: Int) -> Bool {
+    (value as Bytes).length == 0
+}

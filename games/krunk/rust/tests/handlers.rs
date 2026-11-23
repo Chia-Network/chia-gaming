@@ -251,7 +251,7 @@ struct GameSetup {
 /// Builds the dictionary-curried factory and extracts slot 0, where player A
 /// is Alice (the word picker).
 fn setup_game(allocator: &mut AllocEncoder, dictionary: Vec<Bytes>) -> GameSetup {
-    let factory_raw = read_hex_puzzle(allocator, "games/krunk/clsp/factory_krunk_factory.hex")
+    let factory_raw = read_hex_puzzle(allocator, "games/krunk/clsp/factory.hex")
         .expect("load factory");
 
     let n_words = dictionary.len();
@@ -397,7 +397,7 @@ fn test_dictionary() -> Vec<Bytes> {
 }
 
 fn factory_puzzle(allocator: &mut AllocEncoder, dictionary: &[Bytes]) -> Puzzle {
-    let factory_raw = read_hex_puzzle(allocator, "games/krunk/clsp/factory_krunk_factory.hex")
+    let factory_raw = read_hex_puzzle(allocator, "games/krunk/clsp/factory.hex")
         .expect("load factory");
     let sigs: Vec<Aggsig> = (0..=dictionary.len()).map(|_| Aggsig::default()).collect();
     let dict_tree =

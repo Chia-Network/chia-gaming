@@ -475,7 +475,7 @@ fn main() -> List<Int> {
 }
 ```
 
-Krunk uses `(list 100 100 100)`, while Space Poker uses
+Krunk's Rue probe returns `[100, 100, 100]`, while Space Poker uses
 `(list 1 1 (list 1 1))`. The build compiles both files, curries any
 `factory_args.clvm.bin` into the factory, and runs the probe against that
 prepared factory. It records the first returned game's first validation-program

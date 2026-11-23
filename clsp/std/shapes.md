@@ -167,9 +167,9 @@ Shared game layouts belong under `onchain`: off-chain code may import them,
 but on-chain code must not import off-chain modules. UI-facing
 lists and handler calling conventions are unchanged.
 
-Card sequences, hand rankings consumed by list comparison, Krunk's guess/clue
-histories, and conditions remain lists: these are traversed sequences, not
-fixed records. Currying is unchanged.
+Card sequences, hand rankings consumed by list comparison, and conditions
+remain lists: these are traversed sequences, not fixed records. Currying is
+unchanged.
 
 Validator results use the explicit pair layout `referee-result`:
 `((next_validator_hash . new_state) . (max_move_size . extra_conditions))`.

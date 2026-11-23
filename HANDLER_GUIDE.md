@@ -499,7 +499,7 @@ intended proof — then the cheat is unslashable.
 
 ### Krunk Reveal and Evidence Semantics
 
-Krunk's `clue.clsp` reveal validator treats an early reveal as a concession.
+Krunk's reveal validator (`puzzles/games/krunk/onchain/clue.rue`) treats an early reveal as a concession.
 The scheduled guesser shares, in `base_unit` multiples, are
 `100, 100, 20, 5, 1` for correct guesses one through five. A fifth incorrect
 guess pays zero. If Alice reveals after an incorrect guess one through four,

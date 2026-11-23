@@ -1254,8 +1254,9 @@ configured by `Rue.toml`, and its sources are in `puzzles/`.
 | `puzzles/games/calpoker/handlers.rue`               | Off-chain calpoker handlers (Alice & Bob sides)                |
 | `puzzles/games/spacepoker/onchain/*.rue`            | Space Poker validation programs                                |
 | `puzzles/games/spacepoker/handlers.rue`             | Off-chain Space Poker handlers                                 |
-| `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                                      |
-| `games/krunk/clsp/krunk_generate.clinc`             | Off-chain Krunk handlers (Alice & Bob sides)                   |
+| `puzzles/games/krunk/onchain/*.rue`                 | Krunk validation programs (commit, guess, clue)                |
+| `puzzles/games/krunk/handlers.rue`                  | Off-chain Krunk handlers (Alice & Bob sides)                   |
+| `puzzles/games/krunk/factory.rue`                   | Krunk factory, which creates the two games of a hand           |
 | `games/krunk/clsp/factory_args.clvm.bin`            | Generated factory curry arguments: `(pubkey signed_dict_tree)` |
 | `puzzles/games/debug/factory.rue`                   | Debug game: validator, my-turn, their-turn, and factory        |
 | `clsp/handler_api.md`                               | Handler calling conventions (see also `HANDLER_GUIDE.md`)      |

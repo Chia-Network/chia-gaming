@@ -1,0 +1,85 @@
+import dictionary::DictTree;
+import handlers::*;
+import onchain::{clue, commit, guess};
+import project::games::types::FactoryShort;
+import project::referee::types::Validator;
+import state::*;
+import types::*;
+
+type KrunkFactoryResult = FactoryResult<KrunkStates, Int, KrunkReadable, Bytes>;
+
+// The game parameters are the stake that each player puts in, a multiple of 100.
+struct FactoryArgs {
+    proposer_reserve: Int,
+    accepter_reserve: Int,
+    requested_stake: Int,
+    ...rest: Any,
+}
+
+// Creates a hand of Krunk, which is two games: in the first, the proposer picks the word and the
+// accepter guesses it, and in the second, they swap roles. The dictionary's public key and tree are
+// curried in from `factory_args.clvm.bin`.
+fn main(dict_pubkey: PublicKey, dict_tree: DictTree, ...args: FactoryArgs) -> KrunkFactoryResult {
+    let { proposer_reserve, accepter_reserve, requested_stake } = args;
+    assert requested_stake > 0;
+    assert requested_stake % 100 == 0;
+    // The Chialisp factory compared the arguments to a list of the first three with `deep=`, which
+    // compares atoms as integers, so the list can end in any atom that's numerically zero.
+    let rest = args.rest;
+    assert rest is Atom && !(rest as Int > 0) && !(0 > rest as Int);
+
+    if requested_stake > proposer_reserve || requested_stake > accepter_reserve {
+        return FactoryShort {
+            proposer_short: requested_stake > proposer_reserve,
+            accepter_short: requested_stake > accepter_reserve,
+        };
+    }
+
+    let initial_state = KrunkInitial {
+        dict_pubkey,
+        base_unit: requested_stake / 100,
+        clue_hash: const { tree_hash(clue::main) },
+    };
+    let alice_handler = alice_commit(dict_tree);
+    let bob_handler = bob_commit(dict_tree);
+    // Each validator trusts the layout of its state and evidence, which the referee's commitments
+    // establish, so it takes a narrower move than the `Validator` that the referee calls it as.
+    let validation_programs = [
+        unchecked_cast::<Validator>(commit::main),
+        unchecked_cast::<Validator>(guess::main),
+        unchecked_cast::<Validator>(clue::main),
+    ];
+
+    FactorySuccess::<KrunkStates, Int, KrunkReadable, Bytes> {
+        records: [
+            // The proposer picks the word, and stakes what the accepter can win by guessing it.
+            GameRecord::<KrunkStates, Int, KrunkReadable, Bytes> {
+                proposer_contribution: requested_stake,
+                accepter_contribution: 0,
+                proposer_goes_first: true,
+                initial_move: nil,
+                initial_max_move_size: 32,
+                initial_state,
+                initial_mover_share: 0,
+                my_turn_handler: alice_handler,
+                their_turn_handler: bob_handler,
+                validation_programs,
+                readable_parameters: requested_stake,
+            },
+            // The accepter picks the word, and stakes what the proposer can win.
+            GameRecord::<KrunkStates, Int, KrunkReadable, Bytes> {
+                proposer_contribution: 0,
+                accepter_contribution: requested_stake,
+                proposer_goes_first: false,
+                initial_move: nil,
+                initial_max_move_size: 32,
+                initial_state,
+                initial_mover_share: 0,
+                my_turn_handler: alice_handler,
+                their_turn_handler: bob_handler,
+                validation_programs,
+                readable_parameters: requested_stake,
+            },
+        ],
+    }
+}

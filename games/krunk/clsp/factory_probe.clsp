@@ -1,3 +1,0 @@
-(include *standard-cl-26*)
-
-(export () (list 100 100 100))

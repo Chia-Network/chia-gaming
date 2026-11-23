@@ -1,0 +1,4 @@
+// The arguments of a representative call of the factory: both reserves, and the stake.
+fn main() -> List<Int> {
+    [100, 100, 100]
+}
