@@ -381,6 +381,65 @@ mod sim_tests {
             }
         }));
 
+        res.push(("test_krunk_zero_clue_honest_play", &|| {
+            let mut allocator = AllocEncoder::new();
+            let game = ScriptGameRef::accepted(1, 0);
+            let nil_move = Rc::new(Program::from_hex("80").expect("nil local move"));
+            let moves = vec![
+                SimScriptAction::ProposeNewGame(0, ProposeTrigger::Channel),
+                SimScriptAction::AcceptProposal(1, ScriptProposalRef(1)),
+                SimScriptAction::Move(
+                    0,
+                    game,
+                    ReadableMove::from_program(Rc::new(word_program(&mut allocator, b"ABUSE"))),
+                    true,
+                ),
+                SimScriptAction::Move(
+                    1,
+                    game,
+                    ReadableMove::from_program(Rc::new(word_program(&mut allocator, b"SAUCE"))),
+                    true,
+                ),
+                SimScriptAction::Move(
+                    0,
+                    game,
+                    ReadableMove::from_program(nil_move.clone()),
+                    true,
+                ),
+                SimScriptAction::Move(
+                    1,
+                    game,
+                    ReadableMove::from_program(Rc::new(word_program(&mut allocator, b"ABUSE"))),
+                    true,
+                ),
+                SimScriptAction::Move(0, game, ReadableMove::from_program(nil_move), true),
+            ];
+            let outcome = run_krunk_container_with_action_list_with_success_predicate(
+                &mut allocator,
+                &moves,
+                Some(&krunk_ran_all_the_moves_predicate(moves.len())),
+                None,
+            )
+            .expect("one-byte zero clue should allow play to continue");
+            assert_stayed_off_chain(&outcome, "test_krunk_zero_clue_honest_play");
+            for (player, expected) in [(0, 2), (1, 2)] {
+                let applied = outcome.local_uis[player]
+                    .notifications
+                    .iter()
+                    .filter(|notification| {
+                        matches!(
+                            notification,
+                            GameNotification::LocalActionApplied {
+                                id: GameID(0),
+                                action: LocalActionKind::MakeMove,
+                            }
+                        )
+                    })
+                    .count();
+                assert_eq!(applied, expected, "player {player} move count");
+            }
+        }));
+
         res.push(("test_krunk_rejection_is_immediate_with_potato", &|| {
             let mut allocator = AllocEncoder::new();
             let invalid_word = word_program(&mut allocator, b"XXXXX");
