@@ -2124,8 +2124,8 @@ mod gaming_wasm {
                                     entry.label.trim_end_matches(" (input)")
                                 ),
                                 id: id.clone(),
-                                game_id: None,
-                                game_coin_kind: None,
+                                game_id: entry.game_id.clone(),
+                                game_coin_kind: entry.game_coin_kind,
                             });
                         }
                     }

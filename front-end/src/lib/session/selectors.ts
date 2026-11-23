@@ -249,10 +249,13 @@ export function selectDashboardCoins(
     const handIndex = model.game.currentHandIds.indexOf(gameId);
     if (handIndex < 0) return [{ ...coin }];
     const inputSuffix = coin.label.endsWith(' (input)') ? ' (input)' : '';
+    const expectedPrefix = coin.label.startsWith('Expected output from ')
+      ? 'Expected output from '
+      : '';
     return [
       {
         ...coin,
-        label: `Hand ${handIndex + 1} ${coin.game_coin_kind === 'reward' ? 'reward coin' : 'coin'}${inputSuffix}`,
+        label: `${expectedPrefix}Hand ${handIndex + 1} ${coin.game_coin_kind === 'reward' ? 'reward coin' : 'coin'}${inputSuffix}`,
       },
     ];
   });

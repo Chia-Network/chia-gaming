@@ -53,6 +53,12 @@ describe('terminal session model', () => {
         { label: 'Game 6 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
         { label: 'Game 4 coin', id: 'b', game_id: '4', game_coin_kind: 'current' },
         { label: 'Game 6 coin (input)', id: 'e', game_id: '6', game_coin_kind: 'current' },
+        {
+          label: 'Expected output from Game 6 coin',
+          id: 'f',
+          game_id: '6',
+          game_coin_kind: 'current',
+        },
         { label: 'Game 4 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
         { label: 'Unroll change coin', id: 'd' },
       ]),
@@ -60,6 +66,12 @@ describe('terminal session model', () => {
       { label: 'Hand 1 coin', id: 'a', game_id: '6', game_coin_kind: 'current' },
       { label: 'Hand 2 coin', id: 'b', game_id: '4', game_coin_kind: 'current' },
       { label: 'Hand 1 coin (input)', id: 'e', game_id: '6', game_coin_kind: 'current' },
+      {
+        label: 'Expected output from Hand 1 coin',
+        id: 'f',
+        game_id: '6',
+        game_coin_kind: 'current',
+      },
       { label: 'Hand 2 reward coin', id: 'c', game_id: '4', game_coin_kind: 'reward' },
       { label: 'Unroll change coin', id: 'd' },
     ]);
