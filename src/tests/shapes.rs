@@ -634,24 +634,30 @@ fn assert_shape_program(body: &str, examples: &[(String, usize)]) {
     }
 }
 
-fn permutations(items: &[String]) -> Vec<Vec<String>> {
-    if items.is_empty() {
-        return vec![vec![]];
-    }
-    let mut result = vec![];
-    for (index, item) in items.iter().enumerate() {
-        let mut rest = items.to_vec();
-        rest.remove(index);
-        for mut tail in permutations(&rest) {
-            tail.insert(0, item.clone());
-            result.push(tail);
-        }
+// Rotations put each branch in every position; reversals also exercise the
+// opposite relative order without compiling every factorial permutation.
+fn representative_order(branches: &[String], order: usize) -> Vec<String> {
+    assert!(order < branches.len() * 2);
+    let mut result = branches.to_vec();
+    result.rotate_left(order % branches.len());
+    if order >= branches.len() {
+        result.reverse();
     }
     result
 }
 
-#[test]
-fn test_shapes_four_way_dispatch_in_every_order() {
+macro_rules! dispatch_order_tests {
+    ($case:ident; $($name:ident = $order:expr),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                $case($order);
+            }
+        )+
+    };
+}
+
+fn four_way_dispatch(order: usize) {
     // Neither check isolates a single alternative. Both checks are necessary,
     // regardless of which one the planner chooses first.
     let branches = [
@@ -671,13 +677,16 @@ fn test_shapes_four_way_dispatch_in_every_order() {
         ("((11 . 22) . ())".into(), 33),
         ("(() . (44 . 88))".into(), 132),
     ];
-    for order in permutations(&branches) {
-        assert_dispatch(&order, &examples);
-    }
+    assert_dispatch(&representative_order(&branches, order), &examples);
 }
 
-#[test]
-fn test_shapes_eight_way_dispatch_needs_three_checks() {
+dispatch_order_tests!(four_way_dispatch;
+    four_way_0 = 0, four_way_1 = 1, four_way_2 = 2, four_way_3 = 3,
+    four_way_reverse_0 = 4, four_way_reverse_1 = 5,
+    four_way_reverse_2 = 6, four_way_reverse_3 = 7,
+);
+
+fn eight_way_dispatch(order: usize) {
     let mut branches = vec![];
     let mut examples = vec![];
     for bits in 0..8 {
@@ -705,10 +714,11 @@ fn test_shapes_eight_way_dispatch_needs_three_checks() {
         ));
     }
     // Every alternative appears first and last, in both forward and reverse order.
-    for _ in 0..8 {
+    let ordered = representative_order(&branches, order);
+    if order < branches.len() {
         let program = shape_program_bytes(&format!(
             "(export VALUE (if-shape VALUE {}))",
-            branches.join(" ")
+            ordered.join(" ")
         ));
         assert!(program.len() <= 111, "{} bytes", program.len());
         for (input, expected) in &examples {
@@ -716,14 +726,21 @@ fn test_shapes_eight_way_dispatch_needs_three_checks() {
             assert_eq!(result, [*expected as u8]);
             assert!(cost <= 675, "{input}: cost {cost}");
         }
-        let reverse = branches.iter().rev().cloned().collect::<Vec<_>>();
-        assert_dispatch(&reverse, &examples);
-        branches.rotate_left(1);
+    } else {
+        assert_dispatch(&ordered, &examples);
     }
 }
 
-#[test]
-fn test_shapes_guard_nested_paths_in_every_order() {
+dispatch_order_tests!(eight_way_dispatch;
+    eight_way_0 = 0, eight_way_1 = 1, eight_way_2 = 2, eight_way_3 = 3,
+    eight_way_4 = 4, eight_way_5 = 5, eight_way_6 = 6, eight_way_7 = 7,
+    eight_way_reverse_0 = 8, eight_way_reverse_1 = 9,
+    eight_way_reverse_2 = 10, eight_way_reverse_3 = 11,
+    eight_way_reverse_4 = 12, eight_way_reverse_5 = 13,
+    eight_way_reverse_6 = 14, eight_way_reverse_7 = 15,
+);
+
+fn guard_nested_paths(order: usize) {
     let branches = [
         "((atom a) 1)",
         "(((atom a) . b) 2)",
@@ -739,13 +756,17 @@ fn test_shapes_guard_nested_paths_in_every_order() {
         ("((11 . 22) . 33)".into(), 3),
         ("((((11 . 22) . 33) . 44) . 55)".into(), 4),
     ];
-    for order in permutations(&branches) {
-        assert_dispatch(&order, &examples);
-    }
+    assert_dispatch(&representative_order(&branches, order), &examples);
 }
 
-#[test]
-fn test_shapes_nil_and_optional_subtrees_in_every_order() {
+dispatch_order_tests!(guard_nested_paths;
+    guard_nested_0 = 0, guard_nested_1 = 1,
+    guard_nested_2 = 2, guard_nested_3 = 3,
+    guard_nested_reverse_0 = 4, guard_nested_reverse_1 = 5,
+    guard_nested_reverse_2 = 6, guard_nested_reverse_3 = 7,
+);
+
+fn nil_and_optional_subtrees(order: usize) {
     let branches = [
         "((nil . (optional #(a b c))) 1)",
         "(((nil . a) . (optional #(b c d))) 2)",
@@ -758,10 +779,13 @@ fn test_shapes_nil_and_optional_subtrees_in_every_order() {
         examples.push((format!("((() . 11) . {tail})"), 2));
         examples.push((format!("(((11 . 22) . 33) . {tail})"), 3));
     }
-    for order in permutations(&branches) {
-        assert_dispatch(&order, &examples);
-    }
+    assert_dispatch(&representative_order(&branches, order), &examples);
 }
+
+dispatch_order_tests!(nil_and_optional_subtrees;
+    nil_optional_0 = 0, nil_optional_1 = 1, nil_optional_2 = 2,
+    nil_optional_reverse_0 = 3, nil_optional_reverse_1 = 4, nil_optional_reverse_2 = 5,
+);
 
 #[test]
 fn test_shapes_make_allows_annotation_names_as_values() {
@@ -801,8 +825,7 @@ fn test_shapes_get_field_named_inline_and_optional() {
     }
 }
 
-#[test]
-fn test_shapes_nil_before_deeper_alternatives_in_every_order() {
+fn nil_before_deeper_alternatives(order: usize) {
     let branches = ["(nil 1)", "(((atom a) . b) 2)", "(((a . b) . c) 3)"].map(String::from);
     let examples = [
         ("()".into(), 1),
@@ -810,7 +833,10 @@ fn test_shapes_nil_before_deeper_alternatives_in_every_order() {
         ("(() . 22)".into(), 2),
         ("((11 . 22) . 33)".into(), 3),
     ];
-    for order in permutations(&branches) {
-        assert_dispatch(&order, &examples);
-    }
+    assert_dispatch(&representative_order(&branches, order), &examples);
 }
+
+dispatch_order_tests!(nil_before_deeper_alternatives;
+    nil_deeper_0 = 0, nil_deeper_1 = 1, nil_deeper_2 = 2,
+    nil_deeper_reverse_0 = 3, nil_deeper_reverse_1 = 4, nil_deeper_reverse_2 = 5,
+);

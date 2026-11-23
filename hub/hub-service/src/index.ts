@@ -124,6 +124,7 @@ interface ConnectionAttemptBudget {
 }
 
 const HUB_DISCONNECT_GRACE_MS = 3000;
+const GAME_KEEPALIVE_INTERVAL_MS = readPositiveIntegerEnv('GAME_KEEPALIVE_INTERVAL_MS', 15_000);
 const CONNECTION_TTL_MS = 60_000;
 const SWEEP_INTERVAL_MS = 15_000;
 const PLAYER_ID_BYTES = 16;
@@ -1687,7 +1688,7 @@ function setupGameKeepalive(ws: WebSocket): void {
     if (ws.readyState === ws.OPEN) {
       sendGameWs(ws, 'keepalive', {});
     }
-  }, 15_000);
+  }, GAME_KEEPALIVE_INTERVAL_MS);
   wsKeepaliveTimers.set(ws, kaTimer);
 }
 
@@ -1779,14 +1780,16 @@ hubWsServer.on('connection', (ws) => {
         hubConnections.delete(playerId);
       }
       cancelPendingHubLeave(playerId);
-      const timer = setTimeout(() => {
-        pendingHubLeaves.delete(playerId);
-        if (!hubConnections.has(playerId)) {
-          logHub('hub_grace_timeout_leave', { player_id: playerId });
-          leaveHub(playerId);
-        }
-      }, HUB_DISCONNECT_GRACE_MS);
-      pendingHubLeaves.set(playerId, timer);
+      if (!shuttingDown) {
+        const timer = setTimeout(() => {
+          pendingHubLeaves.delete(playerId);
+          if (!hubConnections.has(playerId)) {
+            logHub('hub_grace_timeout_leave', { player_id: playerId });
+            leaveHub(playerId);
+          }
+        }, HUB_DISCONNECT_GRACE_MS);
+        pendingHubLeaves.set(playerId, timer);
+      }
     }
   });
 });
@@ -1967,6 +1970,8 @@ function shutdown(signal: string): void {
   shuttingDown = true;
   console.log(`Received ${signal}; shutting down`);
   clearInterval(sweepTimer);
+  for (const timer of pendingHubLeaves.values()) clearTimeout(timer);
+  pendingHubLeaves.clear();
 
   for (const ws of [...hubWsServer.clients, ...gameWsServer.clients]) {
     try {
