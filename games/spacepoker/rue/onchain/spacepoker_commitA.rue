@@ -5,8 +5,13 @@ import spacepoker_shapes::*;
 // state is bet_unit
 // MOVE is Alice's hash-chain tip (image_5), 32 bytes
 // evidence is empty
-fn main(_mod_hash: Any, params: Parameters, witness: Witness<Any>, ..._unused_payout: Any) -> Any {
-    let { amount, move, mover_share } = turn(params);
+fn main(
+    _mod_hash: Any,
+    params: RefereeParams,
+    witness: Witness<Any>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (bet_unit, _) = witness;
     if (move.length == 32) && (mover_share == (amount / 2)) {
         validator_transition(spacepoker_commitB_hash, make_space_commit(bet_unit, move), 32)

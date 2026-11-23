@@ -8,8 +8,13 @@ import std_popcount::*;
 // state is the cards for both players and alice's card pick commitment
 // MOVE is Bob's discards
 // evidence is empty
-fn main(_mod_hash: Any, params: Parameters, witness: Witness<Deal>, ..._unused_payout: Any) -> Any {
-    let { move: bob_discards } = turn(params);
+fn main(
+    _mod_hash: Any,
+    params: RefereeParams,
+    witness: Witness<Deal>,
+    ..._unused_payout: Any,
+) -> Any {
+    let bob_discards = params.move_data.move;
     let (state, _) = witness;
     let (alice_commit, (alice_cards, bob_cards)) = unchecked_cast::<(Any, (Any, Any))>(state);
     if (bytes(bob_discards).length == 1) && (integer(popcount(bob_discards)) == 4) {

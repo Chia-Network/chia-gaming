@@ -13,11 +13,11 @@ import shapes::*;
 // alice's new commit is a commit to discards that's not revealed yet.
 fn main(
     _mod_hash: Any,
-    params: Parameters,
+    params: RefereeParams,
     witness: Witness<Seeds>,
     ..._unused_payout: Any,
 ) -> Any {
-    let { amount, move } = turn(params);
+    let { coin: { amount }, move_data: { move } } = params;
     let ((alice_commit, bob_seed), _) = witness;
     if move.length != 48 {
         0

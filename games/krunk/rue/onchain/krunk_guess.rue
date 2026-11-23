@@ -10,11 +10,11 @@ import shapes::*;
 // is emitted to prove the range was signed by both players.
 fn main(
     _mod_hash: Any,
-    params: Parameters,
+    params: RefereeParams,
     witness: Witness<State>,
     ..._unused_payout: Any,
 ) -> Any {
-    let { move, mover_share } = turn(params);
+    let { move_data: { move }, mover_share } = params;
     let (
         ((dict_pubkey, (base_unit, bob_guesses)), (alice_clues, (alice_commit, clue_hash))),
         (_, evidence),

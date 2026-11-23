@@ -6,8 +6,8 @@ import shapes::*;
 // move is alice commit to a salted word
 // evidence is empty
 // previous_validation_program below is the object whose hash is mod_hash
-fn main(_mod_hash: Any, params: Parameters, _witness: Any, ..._unused_payout: Any) -> Any {
-    let (_, ((_, (move, _)), _)) = params;
+fn main(_mod_hash: Any, params: RefereeParams, _witness: Any, ..._unused_payout: Any) -> Any {
+    let move = params.move_data.move;
     if move.length == 32 {
         validator_transition(calpoker_b_hash, move, 16)
     } else {

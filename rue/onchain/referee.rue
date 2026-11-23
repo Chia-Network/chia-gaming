@@ -1,15 +1,18 @@
-import shapes::Parameters;
+import shapes::{RefereeCoin, RefereeMove, RefereeParams, RefereePubkeys};
 
 type Timeout = (Bytes, Bytes);
 type Move = ((Bytes, Bytes), (Int, Int));
 type Slash = ((Any, (Any, Any)), Bytes);
 type Result = ((Bytes, Any), (Int, List<Any>));
 
-fn main(params: Parameters, ...solution: Timeout | Move | Slash) -> Any {
-    let (
-        ((mover, waiter), (timeout, (amount, mod_hash))),
-        ((nonce, (_, max_size)), (info_b, (share, info_a))),
-    ) = params;
+fn main(params: RefereeParams, ...solution: Timeout | Move | Slash) -> Any {
+    let {
+        coin: { pubkeys: { mover, waiter }, timeout, amount, mod_hash },
+        move_data: { nonce, max_move_size: max_size },
+        validation_info_hash: info_b,
+        mover_share: share,
+        previous_validation_info_hash: info_a,
+    } = params;
     match solution {
         Timeout as (mover_ph, waiter_ph) => {
             let remainder = amount - share;
@@ -34,10 +37,18 @@ fn main(params: Parameters, ...solution: Timeout | Move | Slash) -> Any {
             assert new_share <= amount && new_share >= 0 && new_share == new_share + 0;
             assert info_c == nil || info_c.length == 32;
             assert info_c != nil || new_max == 0;
-            let next_params: Parameters = (
-                ((waiter, mover), (timeout, (amount, mod_hash))),
-                ((nonce, (new_move, new_max)), (info_c, (new_share, info_b))),
-            );
+            let next_params = RefereeParams {
+                coin: RefereeCoin {
+                    pubkeys: RefereePubkeys { mover: waiter, waiter: mover },
+                    timeout,
+                    amount,
+                    mod_hash,
+                },
+                move_data: RefereeMove { nonce, move: new_move, max_move_size: new_max },
+                validation_info_hash: info_c,
+                mover_share: new_share,
+                previous_validation_info_hash: info_b,
+            };
             [
                 [ASSERT_BEFORE_HEIGHT_RELATIVE, timeout],
                 [CREATE_COIN, curry_tree_hash(mod_hash, [tree_hash(next_params)]), amount],

@@ -18,8 +18,13 @@ import spacepoker_shapes::*;
 // - a raise: > 32 bytes, first 32 bytes ignored, rest is raise amount
 // - a call: preimage that hashes to mover_image_n (16 bytes at N=1, 32 otherwise)
 // evidence is empty
-fn main(mod_hash: Any, params: Parameters, witness: Witness<Raise>, ..._unused_payout: Any) -> Any {
-    let { amount, move, mover_share } = turn(params);
+fn main(
+    mod_hash: Any,
+    params: RefereeParams,
+    witness: Witness<Raise>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (
         ((bet_unit, (half_pot, last_raise_amount)), (mover_image_n, (waiter_image_n, n))),
         _,

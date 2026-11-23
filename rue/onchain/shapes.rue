@@ -1,8 +1,30 @@
-// Rust encodes the eleven curried fields as a tree split at len / 2.
-export type Parameters = (
-    ((PublicKey, PublicKey), (Int, (Int, Bytes32))),
-    ((Int, (Bytes, Int)), (Bytes, (Int, Bytes))),
-);
+// Each final spread field is a CLVM pair tail. Together these structs match
+// the eleven-field balanced tree in RefereePuzzleArgs::to_clvm.
+export struct RefereeParams {
+    coin: RefereeCoin,
+    move_data: RefereeMove,
+    validation_info_hash: Bytes,
+    mover_share: Int,
+    ...previous_validation_info_hash: Bytes,
+}
+
+export struct RefereeCoin {
+    pubkeys: RefereePubkeys,
+    timeout: Int,
+    amount: Int,
+    ...mod_hash: Bytes32,
+}
+
+export struct RefereePubkeys {
+    mover: PublicKey,
+    ...waiter: PublicKey,
+}
+
+export struct RefereeMove {
+    nonce: Int,
+    move: Bytes,
+    ...max_move_size: Int,
+}
 
 export inline fn validator_result(
     next_validator_hash: Any,
@@ -24,15 +46,3 @@ export inline fn validator_transition(
 // The validator receives its previous state, the program reveal and an arbitrary
 // evidence tail. Off-chain evaluation supplies nil for the separate payout tail.
 export type Witness<S> = (S, (Any, Any));
-
-export struct Turn {
-    amount: Int,
-    move: Bytes,
-    mover_share: Int,
-    info_hash: Bytes,
-}
-
-export inline fn turn(params: Parameters) -> Turn {
-    let ((_, (_, (amount, _))), ((_, (move, _)), (info_hash, (mover_share, _)))) = params;
-    Turn { amount, move, mover_share, info_hash }
-}

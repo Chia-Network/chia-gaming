@@ -35,11 +35,15 @@ export fn does_alice_claim_small_enough(
 
 fn main(
     _mod_hash: Any,
-    params: Parameters,
+    params: RefereeParams,
     witness: Witness<DiscardState>,
     ..._unused_payout: Any,
 ) -> Any {
-    let { move, amount: curried_amount, mover_share: curried_mover_share } = turn(params);
+    let {
+        move_data: { move },
+        coin: { amount: curried_amount },
+        mover_share: curried_mover_share,
+    } = params;
     let (
         ((bob_discards, alice_cards), (bob_cards, alice_commit)),
         (_, bob_card_selections),

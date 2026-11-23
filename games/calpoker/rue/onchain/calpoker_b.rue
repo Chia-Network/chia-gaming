@@ -6,8 +6,13 @@ import shapes::*;
 // move is bob_seed
 // We receive alice's commit, producing a state consisting only of alice' commit.
 // new state = sliace commit + bob_+seed
-fn main(_mod_hash: Any, params: Parameters, witness: Witness<Any>, ..._unused_payout: Any) -> Any {
-    let { move } = turn(params);
+fn main(
+    _mod_hash: Any,
+    params: RefereeParams,
+    witness: Witness<Any>,
+    ..._unused_payout: Any,
+) -> Any {
+    let move = params.move_data.move;
     let (alice_commit, _) = witness;
     if move.length == 16 {
         validator_transition(calpoker_c_hash, make_calpoker_seeds(alice_commit, move), 48)

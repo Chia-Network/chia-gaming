@@ -8,8 +8,13 @@ import std_popcount::*;
 // state is (space-end)
 // MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
 // evidence is waiter's card selection bitfield
-fn main(_mod_hash: Any, params: Parameters, witness: Witness<End>, ..._unused_payout: Any) -> Any {
-    let { amount, move, mover_share, info_hash: validation_info_hash } = turn(params);
+fn main(
+    _mod_hash: Any,
+    params: RefereeParams,
+    witness: Witness<End>,
+    ..._unused_payout: Any,
+) -> Any {
+    let { coin: { amount }, move_data: { move }, mover_share, validation_info_hash } = params;
     let ((half_pot, (mover_image, waiter_preimage)), (_, evidence)) = witness;
     if (move.length == 17)
         && !truthy(validation_info_hash)

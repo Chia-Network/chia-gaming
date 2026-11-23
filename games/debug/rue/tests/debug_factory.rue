@@ -1,6 +1,6 @@
 import common::apply_program;
 import curry::curry_program;
-import shapes::{Parameters, validator_transition};
+import shapes::{RefereeParams, validator_transition};
 
 // Rust supplies this proper list so a handler can curry another copy of the
 // same program. Only handler counts advance; the registered validator uses zero.
@@ -37,14 +37,17 @@ fn byteify(n: Int) -> Bytes {
 fn validator(
     args: CurryArgs,
     _mod_hash: Bytes32,
-    params: Parameters,
+    params: RefereeParams,
     (state, (_, evidence)): (State, (Any, Bytes)),
     ..._payout: Any,
 ) -> Any {
-    let (
-        ((mover, waiter), (timeout, (amount, mod_hash))),
-        ((nonce, (move, _)), (infohash_b, (mover_share, infohash_a))),
-    ) = params;
+    let {
+        coin: { pubkeys: { mover, waiter }, timeout, amount, mod_hash },
+        move_data: { nonce, move },
+        validation_info_hash: infohash_b,
+        mover_share,
+        previous_validation_info_hash: infohash_a,
+    } = params;
     let (count, _) = state;
     let hash = validator_hash(args);
     let prefix = (waiter as Bytes)

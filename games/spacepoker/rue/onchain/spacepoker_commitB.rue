@@ -8,11 +8,11 @@ import spacepoker_shapes::*;
 // evidence is empty
 fn main(
     _mod_hash: Any,
-    params: Parameters,
+    params: RefereeParams,
     witness: Witness<Commit>,
     ..._unused_payout: Any,
 ) -> Any {
-    let { amount, move, mover_share } = turn(params);
+    let { coin: { amount }, move_data: { move }, mover_share } = params;
     let ((bet_unit, alice_image_5), _) = witness;
     if (move.length == 32) && (mover_share == ((amount / 2) - integer(bet_unit))) {
         validator_transition(

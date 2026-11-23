@@ -1,9 +1,8 @@
 import common::*;
 import shapes::*;
 
-fn main(_mod_hash: Any, params: Parameters, _witness: Any, ..._unused_payout: Any) -> Any {
-    let (_, (_, (infohash_b, _))) = params;
-    if truthy(infohash_b) {
+fn main(_mod_hash: Any, params: RefereeParams, _witness: Any, ..._unused_payout: Any) -> Any {
+    if truthy(params.validation_info_hash) {
         raise ["committed validator execution"];
     } else {
         validator_transition(

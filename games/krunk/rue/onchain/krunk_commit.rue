@@ -11,11 +11,11 @@ import shapes::*;
 // nested compilation of clue.clsp.
 fn main(
     _mod_hash: Any,
-    params: Parameters,
+    params: RefereeParams,
     witness: Witness<Initial>,
     ..._unused_payout: Any,
 ) -> Any {
-    let { move, mover_share } = turn(params);
+    let { move_data: { move }, mover_share } = params;
     let ((dict_pubkey, (base_unit, clue_hash)), _) = witness;
     if (move.length == 32) && (mover_share == 0) {
         validator_transition(
