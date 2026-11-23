@@ -27,13 +27,11 @@ fn main(
             if !truthy(evidence) {
                 validator_transition(0, 0, 0)
             } else {
-                let (
-                    (mover_cards, waiter_cards),
-                    (mover_boost, waiter_boost),
-                ) = unchecked_cast::<((Any, Any), (Any, Any))>(make_all_cards(
-                    move[0..16],
-                    waiter_preimage,
-                ));
+                let {
+                    hands: { alice_cards: mover_cards, bob_cards: waiter_cards },
+                    alice_boost: mover_boost,
+                    bob_boost: waiter_boost,
+                } = make_all_cards(move[0..16], waiter_preimage);
                 let mover_selected = pull_from_bitfield(mover_cards, mover_bitfield);
                 assert bytes(evidence).length == 1;
                 assert !truthy(integer(evidence) & (0x80 as Int));
@@ -84,7 +82,7 @@ export fn pull_from_bitfield(cards: Any, bitfield: Any) -> Any {
 // card from position 1). The card list order here must match
 // derive_all_cards in spacepoker_generate.clinc so the bitfield indexes
 // the same cards on both sides.
-export fn make_all_cards(alice_pre: Any, bob_pre: Any) -> Any {
+export fn make_all_cards(alice_pre: Any, bob_pre: Any) -> Cards {
     let alice_image_1 = sha256(bytes(alice_pre));
     let alice_image_2 = sha256(alice_image_1);
     let alice_image_3 = sha256(alice_image_2);
@@ -118,7 +116,7 @@ export fn make_all_cards(alice_pre: Any, bob_pre: Any) -> Any {
     let bob_boost = !truthy(
         (sha256((integer(bob_pre) ^ (alice_image_4 as Int)) as Bytes) as Int) % 3,
     );
-    make_space_cards(alice_cards, bob_cards, alice_boost, bob_boost)
+    Cards { hands: Hands { alice_cards, bob_cards }, alice_boost, bob_boost }
 }
 
 export fn make_cards(thing1: Any, thing2: Any, num_cards: Any) -> Any {

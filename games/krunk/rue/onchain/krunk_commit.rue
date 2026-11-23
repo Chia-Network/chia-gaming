@@ -20,7 +20,12 @@ fn main(
     if (move.length == 32) && (mover_share == 0) {
         validator_transition(
             krunk_guess_hash,
-            make_krunk_state(dict_pubkey, base_unit, 0, 0, move, clue_hash),
+            State {
+                guesses: GuessState { dict_pubkey, base_unit, bob_guesses: nil },
+                alice_clues: nil,
+                alice_commit: move,
+                clue_hash,
+            },
             5,
         )
     } else {

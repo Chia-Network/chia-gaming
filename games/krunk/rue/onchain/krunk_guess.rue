@@ -15,28 +15,24 @@ fn main(
     ..._unused_payout: Any,
 ) -> Any {
     let { move_data: { move }, mover_share } = params;
-    let (
-        ((dict_pubkey, (base_unit, bob_guesses)), (alice_clues, (alice_commit, clue_hash))),
-        (_, evidence),
-    ) = witness;
+    let (state, (_, evidence)) = witness;
     if (move.length == 5) && (mover_share == 0) {
         validator_result(
-            clue_hash,
-            make_krunk_state(
-                dict_pubkey,
-                base_unit,
-                (move, bob_guesses),
-                alice_clues,
-                alice_commit,
-                clue_hash,
-            ),
+            state.clue_hash,
+            State {
+                ...state,
+                guesses: GuessState {
+                    ...state.guesses,
+                    bob_guesses: (move, state.guesses.bob_guesses),
+                },
+            },
             21,
             if !truthy(evidence) {
                 0
             } else {
                 assert integer(move) >= (bytes(evidence)[0..5] as Int);
                 assert integer(move) <= (bytes(evidence)[5..10] as Int);
-                [[AGG_SIG_UNSAFE, dict_pubkey, evidence]]
+                [[AGG_SIG_UNSAFE, state.guesses.dict_pubkey, evidence]]
             },
         )
     } else {

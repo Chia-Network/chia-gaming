@@ -3,7 +3,18 @@ export type Commit = (Any, Any);
 export type Open = ((Any, (Any, Any)), (Any, (Any, Any)));
 export type Raise = ((Any, (Any, Any)), (Any, (Any, Any)));
 export type End = (Any, (Any, Any));
-export type Cards = ((Any, Any), (Any, Any));
+
+// Alice and Bob label the first and second preimages passed to the deal.
+export struct Cards {
+    hands: Hands,
+    alice_boost: Bool,
+    ...bob_boost: Bool,
+}
+
+export struct Hands {
+    alice_cards: List<Any>,
+    ...bob_cards: List<Any>,
+}
 
 export inline fn make_space_commit(bet_unit: Any, alice_image: Any) -> Commit {
     (bet_unit, alice_image)
@@ -33,13 +44,4 @@ export inline fn make_space_raise(
 
 export inline fn make_space_end(half_pot: Any, mover_image: Any, waiter_preimage: Any) -> End {
     (half_pot, (mover_image, waiter_preimage))
-}
-
-export inline fn make_space_cards(
-    alice_cards: Any,
-    bob_cards: Any,
-    alice_boost: Any,
-    bob_boost: Any,
-) -> Cards {
-    ((alice_cards, bob_cards), (alice_boost, bob_boost))
 }

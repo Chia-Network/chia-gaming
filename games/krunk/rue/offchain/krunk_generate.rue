@@ -104,12 +104,11 @@ export fn krunk_alice_handler_guess(
     dict_tree: Any,
     _amount: Any,
     _pre_state: Any,
-    state: Any,
+    _state: State,
     move: Any,
     _validation_info_hash: Any,
     _mover_share: Any,
 ) -> Any {
-    let [_, _, _, ..._clue_hash] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(state);
     let lookup_result = dict_lookup(MIN_WORD, MAX_WORD, move, dict_tree);
     if truthy(lookup_result) {
         [
@@ -138,16 +137,11 @@ export fn krunk_alice_handler_clue(
     dict_tree: Any,
     _local_move: Any,
     _amount: Any,
-    state: Any,
+    state: State,
     _mover_share: Any,
     _entropy: Any,
 ) -> Any {
-    let [
-        (_, (base_unit, bob_guesses)),
-        _,
-        _,
-        ..._clue_hash,
-    ] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(state);
+    let { guesses: { base_unit, bob_guesses } } = state;
     let num_guesses = list_length(bob_guesses);
     let latest_guess = pair(bob_guesses).first;
     if truthy(krunk_should_reveal(latest_guess, curried_word, num_guesses)) {
@@ -182,11 +176,10 @@ export fn krunk_bob_handler_guess(
     dict_tree: Any,
     local_move: Any,
     _amount: Any,
-    state: Any,
+    _state: State,
     _mover_share: Any,
     _entropy: Any,
 ) -> Any {
-    let [_, _, _, ..._clue_hash] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(state);
     let guess = local_move;
     if truthy(dict_lookup(MIN_WORD, MAX_WORD, guess, dict_tree)) {
         ["not_in_dictionary", guess]
@@ -200,29 +193,20 @@ export const KRUNK_EVIDENCE_INDICES: Any = [0x00, 1, 2, 3, 4];
 export fn krunk_bob_handler_clue(
     dict_tree: Any,
     _amount: Any,
-    pre_state: Any,
-    state: Any,
+    pre_state: State,
+    _state: Any,
     move: Any,
     _validation_info_hash: Any,
     mover_share: Any,
 ) -> Any {
     if bytes(move).length == 1 {
-        let [_, _, _, ..._clue_hash] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(
-            state,
-        );
         [expand_clue(move), 0, curry_program(krunk_bob_handler_guess, [dict_tree])]
     } else {
-        let [
-            (_, (_, bob_guesses)),
-            _,
-            _,
-            ..._clue_hash,
-        ] = unchecked_cast::<[(Any, (Any, Any)), Any, Any, ...Any]>(pre_state);
         let word = bytes(move)[16..21];
         let reveal_clue = if truthy(mover_share) {
             expand_clue(0x72)
         } else {
-            expand_clue(make_clue(word, pair(bob_guesses).first))
+            expand_clue(make_clue(word, pair(pre_state.guesses.bob_guesses).first))
         };
         let lookup_result = dict_lookup(MIN_WORD, MAX_WORD, word, dict_tree);
         if truthy(lookup_result) {

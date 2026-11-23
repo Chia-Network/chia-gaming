@@ -42,7 +42,7 @@ fn main(
 ) -> Any {
     let { move_data: { move }, mover_share } = params;
     let (
-        ((dict_pubkey, (base_unit, bob_guesses)), (alice_clues, (alice_commit, clue_hash))),
+        { guesses: { dict_pubkey, base_unit, bob_guesses }, alice_clues, alice_commit, ...state },
         (_, evidence),
     ) = witness;
     if move.length == 1 {
@@ -52,14 +52,7 @@ fn main(
         {
             validator_transition(
                 krunk_guess_hash,
-                make_krunk_state(
-                    dict_pubkey,
-                    base_unit,
-                    bob_guesses,
-                    (move, alice_clues),
-                    alice_commit,
-                    clue_hash,
-                ),
+                State { ...state, alice_clues: (move, alice_clues) },
                 5,
             )
         } else {
