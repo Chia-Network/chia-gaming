@@ -5,23 +5,14 @@ test fn factory_threads_clue_hash_and_commits_a_dictionary_word() {
     let word = "apple";
     let tree = [nil, nil, word];
     let record = first_record(krunk_factory_program(...["key", tree, 100, 100, 100]));
-    assert record.validators is (Any, List<Any>);
-    assert tree_hash(record.validators.first) == krunk_commit_hash;
-    assert deep_equal(record.state, ("key", (1, krunk_clue_hash)));
+    assert record.validation_programs is (Any, List<Any>);
+    assert tree_hash(record.validation_programs.first) == krunk_commit_hash;
+    assert deep_equal(record.initial_state, ("key", (1, krunk_clue_hash)));
     let entropy = sha256("krunk");
-    let [
-        label,
-        move,
-        share,
-        _,
-        _,
-    ] = unchecked_cast::<[String, Bytes, Int, Any, Any]>(record.my_turn(
-        word,
-        100,
-        record.state,
-        0,
-        entropy,
-    ));
+    let reply = record.my_turn_handler(word, 100, record.initial_state, 0, entropy);
+    assert !(reply is [String, Bytes]);
+    let [label, move, share, _, ...parser] = reply;
+    assert parser is [Any];
     assert label == "krunk_alice_handler_commit";
     assert move == sha256(entropy[..16] + word) && share == 0;
 }

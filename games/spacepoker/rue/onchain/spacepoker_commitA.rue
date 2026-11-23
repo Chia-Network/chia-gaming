@@ -6,11 +6,11 @@ import spacepoker_shapes::*;
 // MOVE is Alice's hash-chain tip (image_5), 32 bytes
 // evidence is empty
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Any>,
+    witness: Witness<Int, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (bet_unit, _) = witness;
     if (move.length == 32) && (mover_share == (amount / 2)) {

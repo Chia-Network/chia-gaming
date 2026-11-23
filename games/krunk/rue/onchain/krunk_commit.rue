@@ -10,11 +10,11 @@ import shapes::*;
 // through state so transitions name that exact program instead of a separate
 // nested compilation of clue.clsp.
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Initial>,
+    witness: Witness<Initial, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { move_data: { move }, mover_share } = params;
     let ((dict_pubkey, (base_unit, clue_hash)), _) = witness;
     if (move.length == 32) && (mover_share == 0) {

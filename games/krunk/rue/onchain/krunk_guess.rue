@@ -1,4 +1,3 @@
-import common::*;
 import krunk_shapes::*;
 import shapes::*;
 
@@ -9,11 +8,11 @@ import shapes::*;
 // an out-of-dictionary guess. A condition (AGG_SIG_UNSAFE dict_pubkey evidence)
 // is emitted to prove the range was signed by both players.
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<State>,
+    witness: Witness<State, Bytes>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { move_data: { move }, mover_share } = params;
     let (state, (_, evidence)) = witness;
     if (move.length == 5) && (mover_share == 0) {
@@ -27,11 +26,11 @@ fn main(
                 },
             },
             21,
-            if !truthy(evidence) {
-                0
+            if evidence is nil {
+                nil
             } else {
-                assert integer(move) >= (bytes(evidence)[0..5] as Int);
-                assert integer(move) <= (bytes(evidence)[5..10] as Int);
+                assert (move as Int) >= (evidence[0..5] as Int);
+                assert (move as Int) <= (evidence[5..10] as Int);
                 [[AGG_SIG_UNSAFE, state.guesses.dict_pubkey, evidence]]
             },
         )

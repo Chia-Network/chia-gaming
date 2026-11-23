@@ -1,6 +1,6 @@
 import std_atomsort::atomsort;
 
-fn main(...items: Any) -> Any {
+fn main(...items: List<Int>) -> List<Int> {
     atomsort(items)
 }
 

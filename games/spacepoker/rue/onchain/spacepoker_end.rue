@@ -1,4 +1,3 @@
-import common::*;
 import shapes::*;
 import space_hand_eval::*;
 import spacepoker_cards::{make_all_cards, pull_from_bitfield};
@@ -10,51 +9,48 @@ import std_popcount::*;
 // MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
 // evidence is waiter's card selection bitfield
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<End>,
+    witness: Witness<End, Bytes>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { coin: { amount }, move_data: { move }, mover_share, validation_info_hash } = params;
     let ((half_pot, (mover_image, waiter_preimage)), (_, evidence)) = witness;
-    if (move.length == 17)
-        && !truthy(validation_info_hash)
-        && (bytes(mover_image) == sha256(move[0..16]))
-    {
+    if (move.length == 17) && validation_info_hash is nil && (mover_image == sha256(move[0..16])) {
         let mover_bitfield = move[16..17];
-        if !truthy((mover_bitfield as Int) & (0x80 as Int))
-            && (integer(popcount(mover_bitfield)) == 5)
+        if ((mover_bitfield as Int) & (0x80 as Int)) == 0
+            && (popcount(mover_bitfield as Int) == 5)
         {
-            if !truthy(evidence) {
-                validator_transition(0, 0, 0)
+            if evidence is nil {
+                validator_transition(nil, 0, 0)
             } else {
                 let {
                     hands: { alice_cards: mover_cards, bob_cards: waiter_cards },
                     alice_boost: mover_boost,
                     bob_boost: waiter_boost,
                 } = make_all_cards(move[0..16], waiter_preimage);
-                let mover_selected = pull_from_bitfield(mover_cards, mover_bitfield);
-                assert bytes(evidence).length == 1;
-                assert !truthy(integer(evidence) & (0x80 as Int));
-                assert integer(popcount(evidence)) == 5;
-                let waiter_selected = pull_from_bitfield(waiter_cards, evidence);
+                let mover_selected = pull_from_bitfield(mover_cards, mover_bitfield as Int);
+                assert evidence.length == 1;
+                assert ((evidence as Int) & (0x80 as Int)) == 0;
+                assert popcount(evidence as Int) == 5;
+                let waiter_selected = pull_from_bitfield(waiter_cards, evidence as Int);
                 let fair_share = {
                     let result = deep_compare(
                         space_hand_eval(mover_selected, mover_boost),
                         space_hand_eval(waiter_selected, waiter_boost),
                     );
-                    if !truthy(result) {
+                    if result == 0 {
                         amount / 2
-                    } else if integer(result) == 1 {
-                        (amount / 2) - integer(half_pot)
+                    } else if result == 1 {
+                        (amount / 2) - half_pot
                     } else {
-                        (amount / 2) + integer(half_pot)
+                        (amount / 2) + half_pot
                     }
                 };
-                if mover_share < integer(fair_share) {
+                if mover_share < fair_share {
                     0
                 } else {
-                    validator_transition(0, 0, 0)
+                    validator_transition(nil, 0, 0)
                 }
             }
         } else {

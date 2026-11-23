@@ -1,59 +1,52 @@
 import calpoker_flatten_card::*;
-import common::*;
+import common::map_with_rest;
 import std_atomsort::*;
 
-export fn mod52_to_pair(card_id: Any) -> Any {
-    let (rank, suit) = divmod(integer(card_id), 4);
+export fn mod52_to_pair(card_id: Int) -> (Int, Int) {
+    let (rank, suit) = divmod(card_id, 4);
     (2 + rank, 1 + suit)
 }
 
-export fn check_flush(...cards: Any) -> Any {
-    let [
-        (_, suit1),
-        (_, suit2),
-        (_, suit3),
-        (_, suit4),
-        (_, suit5),
-        ..._,
-    ] = unchecked_cast::<[(Any, Any), (Any, Any), (Any, Any), (Any, Any), (Any, Any), ...Any]>(
-        cards,
-    );
-    ((bytes(suit1) == bytes(suit2)) as Int)
-        & ((bytes(suit1) == bytes(suit3)) as Int)
-        & ((bytes(suit1) == bytes(suit4)) as Int)
-        & ((bytes(suit1) == bytes(suit5)) as Int)
+type FiveCards = [(Int, Int), (Int, Int), (Int, Int), (Int, Int), (Int, Int), ...List<(Int, Int)>];
+
+fn check_flush(cards: FiveCards) -> Int {
+    let [(_, suit1), (_, suit2), (_, suit3), (_, suit4), (_, suit5), ..._] = cards;
+    ((suit1 == suit2) as Int)
+        & ((suit1 == suit3) as Int)
+        & ((suit1 == suit4) as Int)
+        & ((suit1 == suit5) as Int)
 }
 
 // Called only for five distinct ranks in descending order.
 fn straight_high(high: Int, second: Int, low: Int) -> Int {
     if high - low == 4 {
         high
-    } else if high == 14 && second == 5 {
-        5
     } else {
-        0
+        inline if high == 14 && second == 5 { 5 } else { 0 }
     }
 }
 
-export fn group_by_count_inner(items: Any, last: Any, count: Any) -> Any {
-    if !truthy(items) {
+export fn group_by_count_inner(items: List<Int>, last: Int, count: Int) -> List<Int> {
+    if items is nil {
         [flatten_card((count, last))]
-    } else if bytes(pair(items).first) == bytes(last) {
-        group_by_count_inner(pair(items).rest, last, integer(count) + 1)
+    } else if items.first == last {
+        group_by_count_inner(items.rest, last, count + 1)
     } else {
-        (flatten_card((count, last)), group_by_count_inner(pair(items).rest, pair(items).first, 1))
+        (flatten_card((count, last)), group_by_count_inner(items.rest, items.first, 1))
     }
 }
 
-export fn group_by_count(items: Any) -> Any {
-    group_by_count_inner(pair(items).rest, pair(items).first, 1)
+export fn group_by_count(items: List<Int>) -> List<Int> {
+    assert items is (Int, List<Int>);
+    group_by_count_inner(items.rest, items.first, 1)
 }
 
-export fn onehandcalc(cards: Any) -> Any {
-    onehandcalc_inner(map_with_rest(mod52_to_pair, cards, nil))
+export fn onehandcalc(cards: List<Int>) -> List<Int> {
+    // The selection bitfield supplies five cards. Mapping preserves their count.
+    onehandcalc_inner(unchecked_cast::<FiveCards>(map_with_rest(mod52_to_pair, cards, nil)))
 }
 
-export fn onehandcalc_inner(cards: Any) -> Any {
+fn onehandcalc_inner(cards: FiveCards) -> List<Int> {
     let [
         (card1rank, _),
         (card2rank, _),
@@ -61,25 +54,26 @@ export fn onehandcalc_inner(cards: Any) -> Any {
         (card4rank, _),
         (card5rank, _),
         ..._,
-    ] = unchecked_cast::<[(Any, Any), (Any, Any), (Any, Any), (Any, Any), (Any, Any), ...Any]>(
-        cards,
-    );
+    ] = cards;
     let ranks = atomsort([card1rank, card2rank, card3rank, card4rank, card5rank]);
-    let [r1, r2, r3, r4, r5, ..._] = unchecked_cast::<[Int, Int, Int, Int, Int, ...Any]>(ranks);
+    // Sorting preserves the five ranks supplied by the evaluator.
+    let [r1, r2, r3, r4, r5, ..._] = unchecked_cast::<[Int, Int, Int, Int, Int, ...List<Int>]>(
+        ranks,
+    );
     // A repeated rank in a single deck rules out both a straight and a flush.
     if r1 == r2 || r2 == r3 || r3 == r4 || r4 == r5 {
         let groups = atomsort(group_by_count(ranks));
         return map_with_rest(
-            fn(x: Any) => { integer(x) >>> 4 },
+            fn(x: Int) => { x >>> 4 },
             groups,
-            map_with_rest(fn(x: Any) => { integer(x) & 15 }, groups, nil),
+            map_with_rest(fn(x: Int) => { x & 15 }, groups, nil),
         );
     }
 
     let high = straight_high(r1, r2, r5);
-    let flush = truthy(check_flush(...cards));
+    let flush = check_flush(cards) != 0;
     if high != 0 {
-        if flush { [5, high] } else { [3, 1, 2, high] }
+        inline if flush { [5, high] } else { [3, 1, 2, high] }
     } else if flush {
         [3, 1, 3, ...ranks]
     } else {

@@ -1,47 +1,41 @@
 import calpoker_shapes::*;
-import common::*;
 import std_append::*;
 import std_deep_compare::*;
 import std_popcount::*;
 import std_sort::*;
 
-export fn split_cards(mask: Any, cards: Any) -> Any {
-    split_cards_inner(mask, cards, 0, 0)
+export fn split_cards(mask: Int, cards: List<Int>) -> Hands {
+    split_cards_inner(mask, cards, nil, nil)
 }
 
 // Use mask to determine which cards are prepended to leftcards and which to rightcards
-export fn split_cards_inner(mask: Any, cards: Any, leftcards: Any, rightcards: Any) -> Any {
-    if !truthy(cards) {
+export fn split_cards_inner(
+    mask: Int,
+    cards: List<Int>,
+    leftcards: List<Int>,
+    rightcards: List<Int>,
+) -> Hands {
+    if cards is nil {
         make_calpoker_hands(leftcards, rightcards)
-    } else if truthy(integer(mask) & 1) {
-        split_cards_inner(
-            integer(mask) >>> 1,
-            pair(cards).rest,
-            leftcards,
-            (pair(cards).first, rightcards),
-        )
+    } else if mask & 1 != 0 {
+        split_cards_inner(mask >>> 1, cards.rest, leftcards, (cards.first, rightcards))
     } else {
-        split_cards_inner(
-            integer(mask) >>> 1,
-            pair(cards).rest,
-            (pair(cards).first, leftcards),
-            rightcards,
-        )
+        split_cards_inner(mask >>> 1, cards.rest, (cards.first, leftcards), rightcards)
     }
 }
 
-export fn pull_out_cards_inner(selections: Any, cards: Any) -> Any {
-    if !truthy(cards) {
-        0
-    } else if truthy(integer(selections) & 1) {
-        (pair(cards).first, pull_out_cards_inner(integer(selections) >>> 1, pair(cards).rest))
+export fn pull_out_cards_inner(selections: Int, cards: List<Int>) -> List<Int> {
+    if cards is nil {
+        nil
+    } else if selections & 1 != 0 {
+        (cards.first, pull_out_cards_inner(selections >>> 1, cards.rest))
     } else {
-        pull_out_cards_inner(integer(selections) >>> 1, pair(cards).rest)
+        pull_out_cards_inner(selections >>> 1, cards.rest)
     }
 }
 
-export fn pull_out_cards(selections: Any, cards: Any) -> Any {
-    if integer(popcount(selections)) == 5 {
+export fn pull_out_cards(selections: Int, cards: List<Int>) -> List<Int> {
+    if popcount(selections) == 5 {
         pull_out_cards_inner(selections, cards)
     } else {
         raise ["pull_out_cards got bad data:", [selections, cards]];
@@ -49,19 +43,13 @@ export fn pull_out_cards(selections: Any, cards: Any) -> Any {
 }
 
 export fn get_final_cards_in_canonical_order(
-    alice_cards: Any,
-    alice_picks: Any,
-    bob_cards: Any,
-    bob_picks: Any,
-) -> Any {
-    let (my_cards_me, my_cards_bob) = unchecked_cast::<(Any, Any)>(split_cards(
-        alice_picks,
-        alice_cards,
-    ));
-    let (bob_cards_bob, bob_cards_me) = unchecked_cast::<(Any, Any)>(split_cards(
-        bob_picks,
-        bob_cards,
-    ));
+    alice_cards: List<Int>,
+    alice_picks: Bytes,
+    bob_cards: List<Int>,
+    bob_picks: Bytes,
+) -> Hands {
+    let (my_cards_me, my_cards_bob) = split_cards(alice_picks as Int, alice_cards);
+    let (bob_cards_bob, bob_cards_me) = split_cards(bob_picks as Int, bob_cards);
     let my_all_cards = sort_list(deep_lt, append_list(my_cards_me, bob_cards_me));
     let bob_all_cards = sort_list(deep_lt, append_list(bob_cards_bob, my_cards_bob));
     make_calpoker_hands(my_all_cards, bob_all_cards)

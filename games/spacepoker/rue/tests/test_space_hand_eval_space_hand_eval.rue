@@ -1,5 +1,5 @@
 import space_hand_eval::space_hand_eval;
 
-fn main(cards: Any, boost: Any) -> Any {
+fn main(cards: List<Int>, boost: Bool) -> List<Int> {
     space_hand_eval(cards, boost)
 }

@@ -1,5 +1,13 @@
-import krunk_generate::krunk_factory;
+import krunk_dict_tree::Dictionary;
+import krunk_generate::{FactoryArgs, krunk_factory};
 
-fn main(dict_key: Any, dict_tree: Any, ...args: Any) -> Any {
+import handler_types::FactoryResult;
+import krunk_shapes::Initial;
+
+fn main(
+    dict_key: PublicKey,
+    dict_tree: Dictionary,
+    ...args: FactoryArgs,
+) -> FactoryResult<Initial, Int> {
     krunk_factory(dict_key, dict_tree, ...args)
 }

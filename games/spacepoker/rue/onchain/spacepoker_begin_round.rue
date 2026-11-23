@@ -1,4 +1,3 @@
-import common::*;
 import shapes::*;
 import spacepoker_shapes::*;
 
@@ -28,11 +27,11 @@ import spacepoker_shapes::*;
 // mover/waiter images swapped and N still 4.
 // evidence is empty
 fn main(
-    mod_hash: Any,
+    mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Open>,
+    witness: Witness<Open, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (((bet_unit, (half_pot, mover_image_next)), (waiter_image_n, (n, mid_hash))), _) = witness;
     if move.length < 32 {
@@ -40,26 +39,26 @@ fn main(
     } else {
         let mover_image_n = move[0..32];
         let raise_amount = move[32..move.length];
-        let mover_opens = if integer(n) == 4 {
-            (((mover_image_n as Int) > integer(waiter_image_n)) as Int) == (
-                ((mover_image_n as Int) ^ integer(waiter_image_n)) & 1
+        let mover_opens = if n == 4 {
+            (((mover_image_n as Int) > (waiter_image_n as Int)) as Int) == (
+                ((mover_image_n as Int) ^ (waiter_image_n as Int)) & 1
             )
         } else {
-            1
+            true
         };
-        if (mover_share == ((amount / 2) - integer(half_pot)))
-            && (bytes(mover_image_next) == sha256(mover_image_n))
+        if (mover_share == ((amount / 2) - half_pot))
+            && (mover_image_next == sha256(mover_image_n))
         {
-            if truthy(mover_opens) {
+            if mover_opens {
                 if ((raise_amount as Int) >= 0)
-                    && ((integer(half_pot) + (raise_amount as Int)) <= (amount / 2))
+                    && ((half_pot + (raise_amount as Int)) <= (amount / 2))
                 {
                     validator_transition(
                         mid_hash,
                         make_space_raise(
                             bet_unit,
                             half_pot,
-                            raise_amount,
+                            raise_amount as Int,
                             waiter_image_n,
                             mover_image_n,
                             n,
@@ -75,7 +74,7 @@ fn main(
                     make_space_open(
                         bet_unit,
                         half_pot,
-                        sha256(bytes(waiter_image_n)),
+                        sha256(waiter_image_n),
                         mover_image_n,
                         n,
                         mid_hash,

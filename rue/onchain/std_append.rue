@@ -1,9 +1,7 @@
-import common::*;
-
-export fn append_list(l: Any, r: Any) -> Any {
-    if truthy(l) {
-        (pair(l).first, append_list(pair(l).rest, r))
+export fn append_list<T>(left: List<T>, right: List<T>) -> List<T> {
+    if left is nil {
+        right
     } else {
-        r
+        [left.first, ...append_list(left.rest, right)]
     }
 }

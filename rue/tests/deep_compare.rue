@@ -1,5 +1,5 @@
 import std_deep_compare::*;
 
-fn main(a: Any, b: Any) -> Any {
+fn main(a: Any, b: Any) -> Int {
     deep_compare(a, b)
 }

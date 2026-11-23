@@ -1,7 +1,6 @@
 import calpoker_arrange_cards::*;
 import calpoker_onehandcalc::*;
 import calpoker_shapes::DiscardState;
-import common::*;
 import shapes::*;
 import std_list_compare::*;
 import std_popcount::*;
@@ -14,31 +13,29 @@ import std_popcount::*;
 // Slash succeeds if Alice claimed more than her fair share given the
 // best hand Bob can make with his evidence selections.
 export fn does_alice_claim_small_enough(
-    alice_hand_value: Any,
-    bob_card_selections: Any,
-    bob_final_cards: Any,
-    mover_share: Any,
-    amount: Any,
-) -> Any {
+    alice_hand_value: List<Int>,
+    bob_card_selections: Int,
+    bob_final_cards: List<Int>,
+    mover_share: Int,
+    amount: Int,
+) -> Bool {
     let bob_hand_value = onehandcalc(pull_out_cards(bob_card_selections, bob_final_cards));
     let result = list_compare(alice_hand_value, bob_hand_value);
-    integer(mover_share) >= integer(
-        if !truthy(result) {
-            integer(amount) / 2
-        } else if integer(result) == 1 {
-            0
+    mover_share >= (
+        if result == 0 {
+            amount / 2
         } else {
-            amount
-        },
+            inline if result == 1 { 0 } else { amount }
+        }
     )
 }
 
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<DiscardState>,
+    witness: Witness<DiscardState, Bytes>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let {
         move_data: { move },
         coin: { amount: curried_amount },
@@ -49,40 +46,40 @@ fn main(
         (_, bob_card_selections),
     ) = witness;
     if (move.length != 18)
-        || (integer(popcount(move[16..17])) != 4)
-        || (integer(popcount(move[17..18])) != 5)
+        || (popcount(move[16..17] as Int) != 4)
+        || (popcount(move[17..18] as Int) != 5)
     {
         0
     } else {
         let alice_salted_discards = move[0..17];
         let alice_discards = move[16..17];
         let alice_card_selections = move[17..18];
-        let (
-            alice_final_cards,
-            bob_final_cards,
-        ) = unchecked_cast::<(Any, Any)>(get_final_cards_in_canonical_order(
+        let (alice_final_cards, bob_final_cards) = get_final_cards_in_canonical_order(
             alice_cards,
             alice_discards,
             bob_cards,
             bob_discards,
+        );
+        let alice_hand_value = onehandcalc(pull_out_cards(
+            alice_card_selections as Int,
+            alice_final_cards,
         ));
-        let alice_hand_value = onehandcalc(pull_out_cards(alice_card_selections, alice_final_cards));
-        if (sha256(alice_salted_discards) == bytes(alice_commit))
+        if (sha256(alice_salted_discards) == alice_commit)
             && (
-                !truthy(bob_card_selections)
-                    || truthy({
-                        assert bytes(bob_card_selections).length == 1;
+                bob_card_selections is nil
+                    || {
+                        assert bob_card_selections.length == 1;
                         does_alice_claim_small_enough(
                             alice_hand_value,
-                            bob_card_selections,
+                            (bob_card_selections as Int),
                             bob_final_cards,
                             curried_mover_share,
                             curried_amount,
                         )
-                    })
+                    }
             )
         {
-            validator_transition(0, 0, 0)
+            validator_transition(nil, 0, 0)
         } else {
             0
         }

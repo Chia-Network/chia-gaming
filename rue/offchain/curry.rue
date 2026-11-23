@@ -1,4 +1,7 @@
-export fn curry_program(program: Any, parameters: List<Any>) -> Any {
-    let env: Any = for arg in parameters fold rest: Any = 1 { [4, (1, arg), rest] };
+type CurryEnv = 1 | [4, (1, Any), CurryEnv];
+export type CurriedProgram = [2, (1, Any), CurryEnv];
+
+export fn curry_program(program: Any, parameters: List<Any>) -> CurriedProgram {
+    let env: CurryEnv = for arg in parameters fold rest: CurryEnv = 1 { [4, (1, arg), rest] };
     [2, (1, program), env]
 }

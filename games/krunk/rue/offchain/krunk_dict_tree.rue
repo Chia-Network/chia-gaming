@@ -1,5 +1,3 @@
-import common::*;
-
 // Balanced BST dictionary lookup with signatures at leaves.
 //
 // Tree structure (built in Rust, curried into handlers):
@@ -14,19 +12,21 @@ import common::*;
 // (left_bound right_bound signature) — word is NOT in the dictionary;
 // left_bound/right_bound are the gap boundaries and signature is
 // the BLS signature certifying that gap.
-export fn dict_lookup(left_bound: Any, right_bound: Any, word: Any, node: Any) -> Any {
-    if node is (Any, Any) {
-        let left_node = pair(node).first;
-        let right_node = pair(pair(node).rest).first;
-        let word_here = pair(pair(pair(node).rest).rest).first;
-        if bytes(word) == bytes(word_here) {
-            nil
-        } else if integer(word) > integer(word_here) {
-            dict_lookup(integer(word_here) + 1, right_bound, word, right_node)
-        } else {
-            dict_lookup(left_bound, integer(word_here) - 1, word, left_node)
-        }
+export type Dictionary = Bytes | [Dictionary, Dictionary, Bytes];
+export type Gap = [Int, Int, Bytes];
+
+export fn dict_lookup(left_bound: Int, right_bound: Int, word: Bytes, node: Dictionary) -> nil
+    | Gap
+{
+    if node is Bytes {
+        return [left_bound, right_bound, node];
+    }
+    let [left, right, pivot] = node;
+    if word == pivot {
+        nil
+    } else if (word as Int) > (pivot as Int) {
+        dict_lookup((pivot as Int) + 1, right_bound, word, right)
     } else {
-        [left_bound, right_bound, node]
+        dict_lookup(left_bound, (pivot as Int) - 1, word, left)
     }
 }

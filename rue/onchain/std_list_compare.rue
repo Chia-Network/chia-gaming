@@ -1,14 +1,12 @@
-import common::*;
-
-// List compare returns 1 if the a list is greater than the b list.
-export fn list_compare(a: Any, b: Any) -> Any {
-    if bytes(pair(a).first) == bytes(pair(b).first) {
-        if truthy(pair(a).rest) {
-            list_compare(pair(a).rest, pair(b).rest)
-        } else {
-            0
-        }
+// Compare the nonempty integer ranks lexicographically. Equal ranks have the same length.
+export fn list_compare(a: List<Int>, b: List<Int>) -> Int {
+    assert a is (Int, List<Int>);
+    assert b is (Int, List<Int>);
+    if a.first != b.first {
+        inline if a.first > b.first { 1 } else { -1 }
+    } else if a.rest is nil {
+        0
     } else {
-        (2 * ((integer(pair(a).first) > integer(pair(b).first)) as Int)) - 1
+        list_compare(a.rest, b.rest)
     }
 }

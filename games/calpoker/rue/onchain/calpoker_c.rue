@@ -1,7 +1,6 @@
 import artifacts::{calpoker_d_hash};
 import calpoker_make_cards::*;
 import calpoker_shapes::*;
-import common::*;
 import shapes::*;
 
 // Bob challenging
@@ -12,21 +11,21 @@ import shapes::*;
 // alice_commit: commit to pre-image (for rnd)
 // alice's new commit is a commit to discards that's not revealed yet.
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Seeds>,
+    witness: Witness<Seeds, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { coin: { amount }, move_data: { move } } = params;
     let ((alice_commit, bob_seed), _) = witness;
     if move.length != 48 {
         0
     } else {
-        let (alice_cards, bob_cards) = unchecked_cast::<(Any, Any)>(make_cards(sha256(
-            move[0..16] + bytes(bob_seed) + bytes(amount),
-        )));
+        let (alice_cards, bob_cards) = make_cards(sha256(
+            move[0..16] + bob_seed + (amount as Bytes),
+        ));
         let new_state = make_calpoker_deal(move[16..48], alice_cards, bob_cards);
-        if sha256(move[0..16]) == bytes(alice_commit) {
+        if sha256(move[0..16]) == alice_commit {
             validator_transition(calpoker_d_hash, new_state, 1)
         } else {
             0

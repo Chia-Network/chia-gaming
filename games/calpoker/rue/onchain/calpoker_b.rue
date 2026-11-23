@@ -7,11 +7,11 @@ import shapes::*;
 // We receive alice's commit, producing a state consisting only of alice' commit.
 // new state = sliace commit + bob_+seed
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Any>,
+    witness: Witness<Bytes, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let move = params.move_data.move;
     let (alice_commit, _) = witness;
     if move.length == 16 {

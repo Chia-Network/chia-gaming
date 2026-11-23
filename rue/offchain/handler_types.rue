@@ -1,0 +1,21 @@
+// CLVM handler programs may be bare functions, curried programs, or nil at game end.
+export type MyTurnResult = [String, Bytes, Int, Any, ...nil | [Any]];
+export type TheirTurnResult = [Any, List<Any>, Any, ...nil | [Bytes]];
+
+// Field order is the factory record decoded by Rust. States, game parameters,
+// and the initial my-turn function are specific to each game.
+export struct FactoryRecord<S, P, H> {
+    proposer_contribution: Int,
+    accepter_contribution: Int,
+    proposer_goes_first: Bool,
+    initial_move: Bytes,
+    initial_max_move_size: Int,
+    initial_state: S,
+    initial_mover_share: Int,
+    my_turn_handler: H,
+    their_turn_handler: Any,
+    validation_programs: List<Any>,
+    readable_parameters: P,
+}
+
+export type FactoryResult<S, P> = [0, Bool, Bool] | [1, List<FactoryRecord<S, P, Any>>];

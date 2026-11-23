@@ -1,5 +1,6 @@
 import calpoker_make_cards::*;
+import calpoker_shapes::Hands;
 
-fn main(randomness: Any) -> Any {
+fn main(randomness: Bytes) -> Hands {
     make_cards(randomness)
 }

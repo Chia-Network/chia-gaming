@@ -1,71 +1,57 @@
-import common::*;
 import space_hand_eval::*;
 import std_deep_compare::*;
 import std_max::*;
 
 // Enumerate all C(n,5) subsets from a list of cards.
 // Returns list of (selected_cards bitfield count) triples.
-export fn process_subsets(card: Any, index: Any, entries: Any) -> Any {
-    if !truthy(entries) {
-        0
+type Subset = [List<Int>, Int, Int];
+
+export fn process_subsets(card: Int, index: Int, entries: List<Subset>) -> List<Subset> {
+    if entries is nil {
+        nil
     } else {
-        let [sel_cards, sel_bits, count, ..._] = unchecked_cast::<[Any, Any, Any, ...Any]>(
-            pair(entries).first,
-        );
-        let remaining = process_subsets(card, index, pair(entries).rest);
-        let after_skip = if (integer(count) + integer(index)) > 4 {
-            (pair(entries).first, remaining)
+        let [sel_cards, sel_bits, count, ..._] = entries.first;
+        let remaining = process_subsets(card, index, entries.rest);
+        let after_skip = if (count + index) > 4 {
+            (entries.first, remaining)
         } else {
             remaining
         };
-        if integer(count) < 5 {
-            (
-                [
-                    (card, sel_cards),
-                    integer(sel_bits) | (1 >>> (-integer(index))),
-                    integer(count) + 1,
-                ],
-                after_skip,
-            )
+        if count < 5 {
+            ([(card, sel_cards), sel_bits | (1 >>> (-index)), count + 1], after_skip)
         } else {
             after_skip
         }
     }
 }
 
-export fn choose_subsets(index: Any, cards: Any) -> Any {
-    if !truthy(cards) {
-        [[0, 0, 0]]
+export fn choose_subsets(index: Int, cards: List<Int>) -> List<Subset> {
+    if cards is nil {
+        [[nil, 0, 0]]
     } else {
-        process_subsets(
-            pair(cards).first,
-            index,
-            choose_subsets(integer(index) + 1, pair(cards).rest),
-        )
+        process_subsets(cards.first, index, choose_subsets(index + 1, cards.rest))
     }
 }
 
 // Evaluate one subset entry, return (hand_value bitfield)
-export fn eval_subset(boost: Any, sel_cards: Any, sel_bits: Any, _count: Any) -> Any {
+export fn eval_subset(boost: Bool, sel_cards: List<Int>, sel_bits: Int, _count: Int) -> [
+    List<Int>,
+    Int,
+] {
     [space_hand_eval(sel_cards, boost), sel_bits]
 }
 
 // Map eval_subset over all subsets
-export fn eval_all_subsets(boost: Any, subsets: Any) -> Any {
-    if !truthy(subsets) {
-        0
+export fn eval_all_subsets(boost: Bool, subsets: List<Subset>) -> List<[List<Int>, Int]> {
+    if subsets is nil {
+        nil
     } else {
-        let [sel_cards, sel_bits, count, ..._] = unchecked_cast::<[Any, Any, Any, ...Any]>(
-            pair(subsets).first,
-        );
-        (
-            eval_subset(boost, sel_cards, sel_bits, count),
-            eval_all_subsets(boost, pair(subsets).rest),
-        )
+        let [sel_cards, sel_bits, count, ..._] = subsets.first;
+        (eval_subset(boost, sel_cards, sel_bits, count), eval_all_subsets(boost, subsets.rest))
     }
 }
 
 // Evaluate all 5-card subsets of the given cards, return (best_value best_bitfield).
-export fn space_hand_calc(cards: Any, boost: Any) -> Any {
+export fn space_hand_calc(cards: List<Int>, boost: Bool) -> [List<Int>, Int] {
     maximum(deep_lt, eval_all_subsets(boost, choose_subsets(0, cards)))
 }

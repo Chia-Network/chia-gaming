@@ -1,50 +1,38 @@
 import calpoker_shapes::*;
-import common::*;
 
-export fn make_cards(randomness: Any) -> Any {
-    let (handa, newrandomness) = unchecked_cast::<(Any, Any)>(choose(52, 8, randomness));
-    let (handb, _) = unchecked_cast::<(Any, Any)>(choose(52 - 8, 8, newrandomness));
+export fn make_cards(randomness: Bytes) -> Hands {
+    let (handa, newrandomness) = choose(52, 8, randomness as Int);
+    let (handb, _) = choose(52 - 8, 8, newrandomness);
     make_calpoker_hands(handa, mergeover(handa, handb, 0))
 }
 
 // pick numchoose things out of numcards options with randomness extracted from vals
 // returns (cards newvals) cards are always in sorted order
-export fn choose(numcards: Any, numchoose: Any, randomness: Any) -> Any {
-    if integer(numchoose) == 1 {
-        let (newrandomness, card) = unchecked_cast::<(Any, Any)>(divmod(
-            integer(randomness),
-            integer(numcards),
-        ));
+export fn choose(numcards: Int, numchoose: Int, randomness: Int) -> Draw {
+    if numchoose == 1 {
+        let (newrandomness, card) = divmod(randomness, numcards);
         make_calpoker_draw([card], newrandomness)
     } else {
-        let half = integer(numchoose) >>> 1;
-        let (cards1, newrandomness2) = unchecked_cast::<(Any, Any)>(choose(
-            numcards,
-            half,
-            randomness,
-        ));
-        let (cards2, newrandomness3) = unchecked_cast::<(Any, Any)>(choose(
-            integer(numcards) - half,
-            integer(numchoose) - half,
-            newrandomness2,
-        ));
+        let half = numchoose >>> 1;
+        let (cards1, newrandomness2) = choose(numcards, half, randomness);
+        let (cards2, newrandomness3) = choose(numcards - half, numchoose - half, newrandomness2);
         make_calpoker_draw(mergein(cards1, cards2, 0), newrandomness3)
     }
 }
 
 // like mergein but only calculates the contents of inner with offsets
 // applied and doesn't interleave the contents of outer
-export fn mergeover(outer: Any, inner: Any, offset: Any) -> Any {
-    if !truthy(inner) {
-        0
+export fn mergeover(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
+    if inner is nil {
+        nil
     } else {
-        let first_item = integer(pair(inner).first) + integer(offset);
-        if !truthy(outer) {
-            (first_item, mergeover(0, pair(inner).rest, offset))
-        } else if integer(pair(outer).first) <= first_item {
-            mergeover(pair(outer).rest, inner, integer(offset) + 1)
+        let first_item = inner.first + offset;
+        if outer is nil {
+            (first_item, mergeover(nil, inner.rest, offset))
+        } else if outer.first <= first_item {
+            mergeover(outer.rest, inner, offset + 1)
         } else {
-            (first_item, mergeover(outer, pair(inner).rest, offset))
+            (first_item, mergeover(outer, inner.rest, offset))
         }
     }
 }
@@ -52,17 +40,17 @@ export fn mergeover(outer: Any, inner: Any, offset: Any) -> Any {
 // slide the things in inner in between the things in outer assuming
 // things in inner are already bumped up by offset things from outer which
 // came before
-export fn mergein(outer: Any, inner: Any, offset: Any) -> Any {
-    if !truthy(inner) {
+export fn mergein(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
+    if inner is nil {
         outer
     } else {
-        let first_item = integer(pair(inner).first) + integer(offset);
-        if !truthy(outer) {
-            (first_item, mergein(0, pair(inner).rest, offset))
-        } else if integer(pair(outer).first) <= first_item {
-            (pair(outer).first, mergein(pair(outer).rest, inner, integer(offset) + 1))
+        let first_item = inner.first + offset;
+        if outer is nil {
+            (first_item, mergein(nil, inner.rest, offset))
+        } else if outer.first <= first_item {
+            (outer.first, mergein(outer.rest, inner, offset + 1))
         } else {
-            (first_item, mergein(outer, pair(inner).rest, offset))
+            (first_item, mergein(outer, inner.rest, offset))
         }
     }
 }

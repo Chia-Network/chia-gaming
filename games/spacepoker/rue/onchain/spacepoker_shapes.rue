@@ -1,8 +1,8 @@
 // Fixed records use the balanced pair layout shared by validators and handlers.
-export type Commit = (Any, Any);
-export type Open = ((Any, (Any, Any)), (Any, (Any, Any)));
-export type Raise = ((Any, (Any, Any)), (Any, (Any, Any)));
-export type End = (Any, (Any, Any));
+export type Commit = (Int, Bytes);
+export type Open = ((Int, (Int, Bytes)), (Bytes, (Int, Bytes)));
+export type Raise = ((Int, (Int, Int)), (Bytes, (Bytes, Int)));
+export type End = (Int, (Bytes, Bytes));
 
 // Alice and Bob label the first and second preimages passed to the deal.
 export struct Cards {
@@ -11,37 +11,39 @@ export struct Cards {
     ...bob_boost: Bool,
 }
 
+export type SevenCards = [Int, Int, Int, Int, Int, Int, Int];
+
 export struct Hands {
-    alice_cards: List<Any>,
-    ...bob_cards: List<Any>,
+    alice_cards: SevenCards,
+    ...bob_cards: SevenCards,
 }
 
-export inline fn make_space_commit(bet_unit: Any, alice_image: Any) -> Commit {
+export inline fn make_space_commit(bet_unit: Int, alice_image: Bytes) -> Commit {
     (bet_unit, alice_image)
 }
 
 export inline fn make_space_open(
-    bet_unit: Any,
-    half_pot: Any,
-    mover_image: Any,
-    waiter_image: Any,
-    round: Any,
-    mid_hash: Any,
+    bet_unit: Int,
+    half_pot: Int,
+    mover_image: Bytes,
+    waiter_image: Bytes,
+    round: Int,
+    mid_hash: Bytes,
 ) -> Open {
     ((bet_unit, (half_pot, mover_image)), (waiter_image, (round, mid_hash)))
 }
 
 export inline fn make_space_raise(
-    bet_unit: Any,
-    half_pot: Any,
-    last_raise: Any,
-    mover_image: Any,
-    waiter_image: Any,
-    round: Any,
+    bet_unit: Int,
+    half_pot: Int,
+    last_raise: Int,
+    mover_image: Bytes,
+    waiter_image: Bytes,
+    round: Int,
 ) -> Raise {
     ((bet_unit, (half_pot, last_raise)), (mover_image, (waiter_image, round)))
 }
 
-export inline fn make_space_end(half_pot: Any, mover_image: Any, waiter_preimage: Any) -> End {
+export inline fn make_space_end(half_pot: Int, mover_image: Bytes, waiter_preimage: Bytes) -> End {
     (half_pot, (mover_image, waiter_preimage))
 }

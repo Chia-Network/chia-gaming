@@ -2,6 +2,6 @@ import krunk_dict_tree::*;
 
 // Args: (tree word left_sentinel right_sentinel)
 // Returns dict_lookup result: () if in dict, (left_bound right_bound signature) if not.
-fn main(tree: Any, word: Any, left_sentinel: Any, right_sentinel: Any) -> Any {
+fn main(tree: Dictionary, word: Bytes, left_sentinel: Int, right_sentinel: Int) -> nil | Gap {
     dict_lookup(left_sentinel, right_sentinel, word, tree)
 }

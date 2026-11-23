@@ -1,5 +1,5 @@
 import calpoker_make_cards::*;
 
-fn main(inner: Any, outer: Any, offset: Any) -> Any {
+fn main(inner: List<Int>, outer: List<Int>, offset: Int) -> List<Int> {
     mergein(inner, outer, offset)
 }

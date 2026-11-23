@@ -1,5 +1,7 @@
-import calpoker_generate::calpoker_factory;
+import calpoker_generate::{FactoryArgs, calpoker_factory};
 
-fn main(...args: Any) -> Any {
+import handler_types::FactoryResult;
+
+fn main(...args: FactoryArgs) -> FactoryResult<0, Int> {
     calpoker_factory(...args)
 }

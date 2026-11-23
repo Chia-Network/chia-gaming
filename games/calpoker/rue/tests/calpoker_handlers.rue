@@ -3,16 +3,13 @@ import factory_record::first_record;
 
 test fn factory_links_first_validator_and_opens_with_commitment() {
     let record = first_record(calpoker_factory_program(...[100, 100, 50]));
-    assert record.validators is (Any, List<Any>);
-    assert tree_hash(record.validators.first) == calpoker_a_hash;
+    assert record.validation_programs is (Any, List<Any>);
+    assert tree_hash(record.validation_programs.first) == calpoker_a_hash;
     let entropy = sha256("calpoker");
-    let [label, move, share, _] = unchecked_cast::<[String, Bytes, Int, Any]>(record.my_turn(
-        nil,
-        100,
-        record.state,
-        0,
-        entropy,
-    ));
+    let reply = record.my_turn_handler(nil, 100, record.initial_state, 0, entropy);
+    assert !(reply is [String, Bytes]);
+    let [label, move, share, _, ...parser] = reply;
+    assert parser is nil;
     assert label == "calpoker_alice_handler_a";
     assert move == sha256(entropy[..16]) && share == 0;
 }

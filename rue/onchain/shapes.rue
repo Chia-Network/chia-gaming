@@ -26,23 +26,26 @@ export struct RefereeMove {
     ...max_move_size: Int,
 }
 
+export type ValidatorResult = 0 | ValidatorTransition;
+export type ValidatorTransition = ((Bytes, Any), (Int, List<Any>));
+
 export inline fn validator_result(
-    next_validator_hash: Any,
+    next_validator_hash: Bytes,
     new_state: Any,
-    max_move_size: Any,
-    extra_conditions: Any,
-) -> Any {
+    max_move_size: Int,
+    extra_conditions: List<Any>,
+) -> ValidatorTransition {
     ((next_validator_hash, new_state), (max_move_size, extra_conditions))
 }
 
 export inline fn validator_transition(
-    next_validator_hash: Any,
+    next_validator_hash: Bytes,
     new_state: Any,
-    max_move_size: Any,
-) -> Any {
+    max_move_size: Int,
+) -> ValidatorTransition {
     validator_result(next_validator_hash, new_state, max_move_size, nil)
 }
 
 // The validator receives its previous state, the program reveal and an arbitrary
 // evidence tail. Off-chain evaluation supplies nil for the separate payout tail.
-export type Witness<S> = (S, (Any, Any));
+export type Witness<S, E> = (S, (Any, E));

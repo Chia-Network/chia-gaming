@@ -1,24 +1,32 @@
 // Fixed records use the balanced pair layout shared by validators and handlers.
-export type Initial = (Any, (Any, Any));
-export type Green = (Any, (Any, Any));
+export type Initial = (PublicKey, (Int, Bytes));
+export type Green = (List<Bytes>, (List<Bytes>, List<Bool>));
 
 export struct State {
     guesses: GuessState,
-    alice_clues: Any,
-    alice_commit: Any,
-    ...clue_hash: Any,
+    alice_clues: List<Bytes>,
+    alice_commit: Bytes,
+    ...clue_hash: Bytes,
 }
 
 export struct GuessState {
-    dict_pubkey: Any,
-    base_unit: Any,
-    ...bob_guesses: Any,
+    dict_pubkey: PublicKey,
+    base_unit: Int,
+    ...bob_guesses: List<Bytes>,
 }
 
-export inline fn make_krunk_initial(dict_pubkey: Any, base_unit: Any, clue_hash: Any) -> Initial {
+export inline fn make_krunk_initial(
+    dict_pubkey: PublicKey,
+    base_unit: Int,
+    clue_hash: Bytes,
+) -> Initial {
     (dict_pubkey, (base_unit, clue_hash))
 }
 
-export inline fn make_krunk_green(remaining_word: Any, remaining_guess: Any, green: Any) -> Green {
+export inline fn make_krunk_green(
+    remaining_word: List<Bytes>,
+    remaining_guess: List<Bytes>,
+    green: List<Bool>,
+) -> Green {
     (remaining_word, (remaining_guess, green))
 }

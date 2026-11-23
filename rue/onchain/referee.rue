@@ -1,11 +1,14 @@
-import shapes::{RefereeCoin, RefereeMove, RefereeParams, RefereePubkeys};
+import shapes::{RefereeCoin, RefereeMove, RefereeParams, RefereePubkeys, ValidatorTransition};
 
 type Move = ((Bytes, Bytes), (Int, Int));
 type Timeout = (Bytes, Bytes);
-type Slash = ((Any, (Any, Any)), Bytes);
-type Result = ((Bytes, Any), (Int, List<Any>));
 
-fn main(params: RefereeParams, ...solution: Move | Timeout | Slash) -> Any {
+type Validator = fn(hash: Bytes32, params: RefereeParams, ...solution: Any) -> Bytes
+    | ValidatorTransition;
+
+type Slash = ((Any, (Validator, Any)), Bytes);
+
+fn main(params: RefereeParams, ...solution: Move | Timeout | Slash) -> List<Any> {
     let {
         coin: { pubkeys: { mover, waiter }, timeout, amount, mod_hash },
         move_data: { nonce, max_move_size: max_size },
@@ -42,13 +45,13 @@ fn main(params: RefereeParams, ...solution: Move | Timeout | Slash) -> Any {
         }
         Timeout as (mover_ph, waiter_ph) => {
             let remainder = amount - share;
-            let waiter_conditions: List<Any> = if remainder != 0 {
+            let waiter_conditions = if remainder != 0 {
                 [[CREATE_COIN, waiter_ph, remainder], [AGG_SIG_UNSAFE, waiter, "x" + waiter_ph]]
             } else {
                 assert waiter_ph == nil;
                 nil
             };
-            let (coin, signature): (Any, Any) = if share != 0 {
+            let (coin, signature) = if share != 0 {
                 ([CREATE_COIN, mover_ph, share], [AGG_SIG_UNSAFE, mover, "x" + mover_ph])
             } else {
                 assert mover_ph == nil;
@@ -59,8 +62,7 @@ fn main(params: RefereeParams, ...solution: Move | Timeout | Slash) -> Any {
         Slash as ((state, (program, _)), payout_ph) => {
             let hash = tree_hash(program);
             assert info_a == sha256(hash + tree_hash(state));
-            let validate = unchecked_cast::<fn(...args: Any) -> Any>(program);
-            let result = validate(...(hash, (params, solution)));
+            let result = program(hash, params, ...solution);
             let payout = [
                 [CREATE_COIN, payout_ph, amount],
                 [AGG_SIG_UNSAFE, mover, "x" + payout_ph],
@@ -69,7 +71,7 @@ fn main(params: RefereeParams, ...solution: Move | Timeout | Slash) -> Any {
                 assert result == nil;
                 payout
             } else {
-                let ((next_hash, next_state), (size, extra)) = unchecked_cast::<Result>(result);
+                let ((next_hash, next_state), (size, extra)) = result;
                 let commitment: Bytes = if next_hash != nil {
                     sha256(next_hash + tree_hash(next_state))
                 } else {

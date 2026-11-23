@@ -1,6 +1,7 @@
-import common::apply_program;
-import curry::curry_program;
-import shapes::{RefereeParams, validator_transition};
+import curry::{CurriedProgram, curry_program};
+import handler_types::{FactoryRecord, FactoryResult, MyTurnResult, TheirTurnResult};
+import shapes::{RefereeParams, ValidatorTransition, validator_transition};
+import test_dispatch::apply_program;
 
 // Rust supplies this proper list so a handler can curry another copy of the
 // same program. Only handler counts advance; the registered validator uses zero.
@@ -21,7 +22,7 @@ fn validator_hash(args: CurryArgs) -> Bytes32 {
     curry_tree_hash(args.self_hash, [tree_hash("validator"), args_hash])
 }
 
-fn next_handler(args: CurryArgs, mode: String) -> Any {
+fn next_handler(args: CurryArgs, mode: String) -> CurriedProgram {
     curry_program(args.self_program, [mode, CurryArgs { ...args, count: args.count + 1 }])
 }
 
@@ -40,7 +41,7 @@ fn validator(
     params: RefereeParams,
     (state, (_, evidence)): (State, (Any, Bytes)),
     ..._payout: Any,
-) -> Any {
+) -> nil | ValidatorTransition {
     let {
         coin: { pubkeys: { mover, waiter }, timeout, amount, mod_hash },
         move_data: { nonce, move },
@@ -91,7 +92,7 @@ fn myturn(
     _state: Any,
     _last_share: Int,
     _entropy: Bytes,
-) -> Any {
+) -> MyTurnResult {
     debug ["Curry pack", args.count, args.self_hash];
     assert move is LocalMove, "my turn local slash";
     assert move.count == args.count, ["count not equal for this move", move.count, args.count];
@@ -121,7 +122,7 @@ fn theirturn(
     move: Bytes,
     validation_program_hash: Bytes,
     split: Int,
-) -> Any {
+) -> TheirTurnResult {
     if move.length == 0 {
         return [nil, nil, nil];
     }
@@ -146,7 +147,7 @@ fn theirturn(
     [[count, slashable, state_share], [0, slash_byte], next_handler(args, "myturn")]
 }
 
-fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> Any {
+fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> FactoryResult<State, [Int, Int]> {
     assert proposer > 0 && accepter > 0;
     let a = if proposer > 100 {
         100
@@ -160,19 +161,19 @@ fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> Any {
     };
     [
         1,
-        [[
-            a,
-            b,
-            1,
-            nil,
-            512,
-            (0, (0, 0)),
-            0,
-            curry_program(args.self_program, ["myturn", args]),
-            curry_program(args.self_program, ["theirturn", args]),
-            [curry_program(args.self_program, ["validator", args])],
-            [a, b],
-        ]],
+        [FactoryRecord::<State, [Int, Int], CurriedProgram> {
+            proposer_contribution: a,
+            accepter_contribution: b,
+            proposer_goes_first: true,
+            initial_move: nil,
+            initial_max_move_size: 512,
+            initial_state: (0, (nil, 0)),
+            initial_mover_share: 0,
+            my_turn_handler: curry_program(args.self_program, ["myturn", args]),
+            their_turn_handler: curry_program(args.self_program, ["theirturn", args]),
+            validation_programs: [curry_program(args.self_program, ["validator", args])],
+            readable_parameters: [a, b],
+        }],
     ]
 }
 

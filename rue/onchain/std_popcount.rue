@@ -1,9 +1,7 @@
-import common::*;
-
-export fn popcount(mymask: Any) -> Any {
-    if truthy(mymask) {
-        (integer(mymask) & 1) + integer(popcount(integer(mymask) >>> 1))
-    } else {
+export fn popcount(mask: Int) -> Int {
+    if mask == 0 {
         0
+    } else {
+        (mask & 1) + popcount(mask >>> 1)
     }
 }

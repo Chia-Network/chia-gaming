@@ -1,37 +1,33 @@
 import artifacts::{krunk_clue_program, krunk_commit_program, krunk_guess_program};
-import common::*;
-import curry::curry_program;
+import curry::{CurriedProgram, curry_program};
+import handler_types::{FactoryRecord, FactoryResult, MyTurnResult, TheirTurnResult};
 import krunk_dict_tree::*;
 import krunk_helpers::*;
 import krunk_make_clue::*;
+import krunk_payout::item_at;
 import krunk_shapes::*;
 import std_deep_compare::*;
-import std_len::*;
 
-export const MIN_WORD: Any = 0x8000000000;
+export const MIN_WORD: Int = -(1 << 39);
 
-export const MAX_WORD: Any = 0x7fffffffff;
+export const MAX_WORD: Int = (1 << 39) - 1;
 
-export fn krunk_factory(dict_pubkey: Any, dict_tree: Any, ..._args: Any) -> Any {
-    let [
-        proposer_reserve,
-        accepter_reserve,
-        requested_stake,
-        ..._,
-    ] = unchecked_cast::<[Any, Any, Any, ...Any]>(_args);
-    assert integer(requested_stake) > 0;
-    assert (integer(requested_stake) % 100) == 0;
-    assert truthy(deep_eq(_args, [proposer_reserve, accepter_reserve, requested_stake]));
-    if (integer(requested_stake) > integer(proposer_reserve))
-        || (integer(requested_stake) > integer(accepter_reserve))
-    {
-        [
-            0,
-            integer(requested_stake) > integer(proposer_reserve),
-            integer(requested_stake) > integer(accepter_reserve),
-        ]
+type Record = FactoryRecord<Initial, Int, CurriedProgram>;
+export type FactoryArgs = [Int, Int, Int, ...Any];
+
+export fn krunk_factory(
+    dict_pubkey: PublicKey,
+    dict_tree: Dictionary,
+    ...args: FactoryArgs,
+) -> FactoryResult<Initial, Int> {
+    let [proposer_reserve, accepter_reserve, requested_stake, ..._] = args;
+    assert requested_stake > 0;
+    assert (requested_stake % 100) == 0;
+    assert deep_eq(args, [proposer_reserve, accepter_reserve, requested_stake]);
+    if (requested_stake > proposer_reserve) || (requested_stake > accepter_reserve) {
+        [0, requested_stake > proposer_reserve, requested_stake > accepter_reserve]
     } else {
-        let base_unit = integer(requested_stake) / 100;
+        let base_unit = requested_stake / 100;
         let initial_state = make_krunk_initial(
             dict_pubkey,
             base_unit,
@@ -39,53 +35,42 @@ export fn krunk_factory(dict_pubkey: Any, dict_tree: Any, ..._args: Any) -> Any 
         );
         let alice_handler = curry_program(krunk_alice_handler_commit, [dict_tree]);
         let bob_handler = curry_program(krunk_bob_handler_commit, [dict_tree]);
-        [
-            1,
-            [
-                [
-                    requested_stake,
-                    0,
-                    1,
-                    0,
-                    32,
-                    initial_state,
-                    0,
-                    alice_handler,
-                    bob_handler,
-                    [krunk_commit_program, krunk_guess_program, krunk_clue_program],
-                    requested_stake,
-                ],
-                [
-                    0,
-                    requested_stake,
-                    0,
-                    0,
-                    32,
-                    initial_state,
-                    0,
-                    alice_handler,
-                    bob_handler,
-                    [krunk_commit_program, krunk_guess_program, krunk_clue_program],
-                    requested_stake,
-                ],
-            ],
-        ]
+        let proposer_game = Record {
+            proposer_contribution: requested_stake,
+            accepter_contribution: 0,
+            proposer_goes_first: true,
+            initial_move: nil,
+            initial_max_move_size: 32,
+            initial_state,
+            initial_mover_share: 0,
+            my_turn_handler: alice_handler,
+            their_turn_handler: bob_handler,
+            validation_programs: [krunk_commit_program, krunk_guess_program, krunk_clue_program],
+            readable_parameters: requested_stake,
+        };
+        let accepter_game = Record {
+            ...proposer_game,
+            proposer_contribution: 0,
+            accepter_contribution: requested_stake,
+            proposer_goes_first: false,
+        };
+        [1, [proposer_game, accepter_game]]
     }
 }
 
 // --- Alice handlers ---
 export fn krunk_alice_handler_commit(
-    dict_tree: Any,
-    local_move: Any,
-    _amount: Any,
-    _state: Any,
-    _mover_share: Any,
-    entropy: Any,
-) -> Any {
+    dict_tree: Dictionary,
+    local_move: Bytes,
+    _amount: Int,
+    _state: Initial,
+    _mover_share: Int,
+    entropy: Bytes,
+) -> MyTurnResult | [String, Bytes] {
     let word = local_move;
-    let salt = bytes(entropy)[0..16];
-    let move = sha256(salt + bytes(word));
-    if truthy(dict_lookup(MIN_WORD, MAX_WORD, word, dict_tree)) {
+    let salt = entropy[0..16];
+    let move = sha256(salt + word);
+    if !(dict_lookup(MIN_WORD, MAX_WORD, word, dict_tree) is nil) {
         ["not_in_dictionary", word]
     } else {
         [
@@ -99,53 +84,46 @@ export fn krunk_alice_handler_commit(
 }
 
 export fn krunk_alice_handler_guess(
-    curried_salt: Any,
-    curried_word: Any,
-    dict_tree: Any,
-    _amount: Any,
-    _pre_state: Any,
+    curried_salt: Bytes,
+    curried_word: Bytes,
+    dict_tree: Dictionary,
+    _amount: Int,
+    _pre_state: State,
     _state: State,
-    move: Any,
-    _validation_info_hash: Any,
-    _mover_share: Any,
-) -> Any {
+    move: Bytes,
+    _validation_info_hash: Bytes,
+    _mover_share: Int,
+) -> TheirTurnResult {
     let lookup_result = dict_lookup(MIN_WORD, MAX_WORD, move, dict_tree);
-    if truthy(lookup_result) {
-        [
-            0,
-            [[
-                "s",
-                bytes(pair(lookup_result).first) + bytes(pair(pair(lookup_result).rest).first),
-                pair(pair(pair(lookup_result).rest).rest).first,
-            ]],
-            0,
-        ]
+    if !(lookup_result is nil) {
+        let [left, right, signature] = lookup_result;
+        [0, [["s", (left as Bytes) + (right as Bytes), signature]], 0]
     } else {
         let clue = make_clue(curried_word, move);
         [
             [move, expand_clue(clue)],
-            0,
+            nil,
             curry_program(krunk_alice_handler_clue, [curried_salt, curried_word, clue, dict_tree]),
         ]
     }
 }
 
 export fn krunk_alice_handler_clue(
-    curried_salt: Any,
-    curried_word: Any,
-    curried_clue: Any,
-    dict_tree: Any,
+    curried_salt: Bytes,
+    curried_word: Bytes,
+    curried_clue: Bytes,
+    dict_tree: Dictionary,
     _local_move: Any,
-    _amount: Any,
+    _amount: Int,
     state: State,
-    _mover_share: Any,
-    _entropy: Any,
-) -> Any {
+    _mover_share: Int,
+    _entropy: Bytes,
+) -> MyTurnResult {
     let { guesses: { base_unit, bob_guesses } } = state;
-    let num_guesses = list_length(bob_guesses);
-    let latest_guess = pair(bob_guesses).first;
-    if truthy(krunk_should_reveal(latest_guess, curried_word, num_guesses)) {
-        let reveal = krunk_reveal_move(curried_salt, curried_word);
+    let num_guesses = length(bob_guesses);
+    let latest_guess = item_at(bob_guesses, 0);
+    if krunk_should_reveal(latest_guess, curried_word, num_guesses) {
+        let reveal = curried_salt + curried_word;
         let payout = krunk_reveal_mover_share(base_unit, bob_guesses, curried_word);
         ["krunk_alice_handler_clue reveal", reveal, payout, 0, 0]
     } else {
@@ -161,67 +139,59 @@ export fn krunk_alice_handler_clue(
 
 // --- Bob handlers ---
 export fn krunk_bob_handler_commit(
-    dict_tree: Any,
-    _amount: Any,
-    _pre_state: Any,
-    _state: Any,
-    _move: Any,
-    _validation_info_hash: Any,
-    _mover_share: Any,
-) -> Any {
-    [0, 0, curry_program(krunk_bob_handler_guess, [dict_tree])]
+    dict_tree: Dictionary,
+    _amount: Int,
+    _pre_state: Initial,
+    _state: State,
+    _move: Bytes,
+    _validation_info_hash: Bytes,
+    _mover_share: Int,
+) -> TheirTurnResult {
+    [0, nil, curry_program(krunk_bob_handler_guess, [dict_tree])]
 }
 
 export fn krunk_bob_handler_guess(
-    dict_tree: Any,
-    local_move: Any,
-    _amount: Any,
+    dict_tree: Dictionary,
+    local_move: Bytes,
+    _amount: Int,
     _state: State,
-    _mover_share: Any,
-    _entropy: Any,
-) -> Any {
+    _mover_share: Int,
+    _entropy: Bytes,
+) -> MyTurnResult | [String, Bytes] {
     let guess = local_move;
-    if truthy(dict_lookup(MIN_WORD, MAX_WORD, guess, dict_tree)) {
+    if !(dict_lookup(MIN_WORD, MAX_WORD, guess, dict_tree) is nil) {
         ["not_in_dictionary", guess]
     } else {
         ["krunk_bob_handler_guess", guess, 0, curry_program(krunk_bob_handler_clue, [dict_tree]), 0]
     }
 }
 
-export const KRUNK_EVIDENCE_INDICES: Any = [0x00, 1, 2, 3, 4];
+export const KRUNK_EVIDENCE_INDICES: List<Bytes> = [0x00, 0x01, 0x02, 0x03, 0x04];
 
 export fn krunk_bob_handler_clue(
-    dict_tree: Any,
-    _amount: Any,
+    dict_tree: Dictionary,
+    _amount: Int,
     pre_state: State,
-    _state: Any,
-    move: Any,
-    _validation_info_hash: Any,
-    mover_share: Any,
-) -> Any {
-    if bytes(move).length == 1 {
-        [expand_clue(move), 0, curry_program(krunk_bob_handler_guess, [dict_tree])]
+    _state: State | 0,
+    move: Bytes,
+    _validation_info_hash: Bytes,
+    mover_share: Int,
+) -> TheirTurnResult {
+    if move.length == 1 {
+        [expand_clue(move), nil, curry_program(krunk_bob_handler_guess, [dict_tree])]
     } else {
-        let word = bytes(move)[16..21];
-        let reveal_clue = if truthy(mover_share) {
-            expand_clue(ALL_GREEN_CLUE)
+        let word = move[16..21];
+        let reveal_clue = if mover_share != 0 {
+            expand_clue(ALL_GREEN_CLUE as Bytes)
         } else {
-            expand_clue(make_clue(word, pair(pre_state.guesses.bob_guesses).first))
+            expand_clue(make_clue(word, item_at(pre_state.guesses.bob_guesses, 0)))
         };
         let lookup_result = dict_lookup(MIN_WORD, MAX_WORD, word, dict_tree);
-        if truthy(lookup_result) {
-            [
-                [word, reveal_clue],
-                [[
-                    "s",
-                    bytes(pair(lookup_result).first) + bytes(pair(pair(lookup_result).rest).first),
-                    pair(pair(pair(lookup_result).rest).rest).first,
-                ]],
-                0,
-                0,
-            ]
+        if !(lookup_result is nil) {
+            let [left, right, signature] = lookup_result;
+            [[word, reveal_clue], [["s", (left as Bytes) + (right as Bytes), signature]], 0, nil]
         } else {
-            [[word, reveal_clue], KRUNK_EVIDENCE_INDICES, 0, 0]
+            [[word, reveal_clue], KRUNK_EVIDENCE_INDICES, 0, nil]
         }
     }
 }

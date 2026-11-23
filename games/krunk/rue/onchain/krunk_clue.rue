@@ -1,15 +1,18 @@
 import artifacts::{krunk_guess_hash};
-import common::*;
 import krunk_make_clue::*;
-import krunk_payout::{drop, krunk_payout_share};
+import krunk_payout::{item_at, krunk_payout_share};
 import krunk_shapes::*;
 import shapes::*;
-import std_len::*;
 
-export fn reveal_mover_share(base_unit: Any, bob_guesses: Any, revealed_word: Any) -> Any {
-    if integer(list_length(bob_guesses)) != 5 {
-        krunk_payout_share(base_unit, list_length(bob_guesses))
-    } else if bytes(pair(bob_guesses).first) == bytes(revealed_word) {
+export fn reveal_mover_share(
+    base_unit: Int,
+    bob_guesses: List<Bytes>,
+    revealed_word: Bytes,
+) -> Int {
+    let guesses = length(bob_guesses);
+    if guesses != 5 {
+        krunk_payout_share(base_unit, guesses)
+    } else if item_at(bob_guesses, 0) == revealed_word {
         krunk_payout_share(base_unit, 5)
     } else {
         0
@@ -22,21 +25,18 @@ export fn reveal_mover_share(base_unit: Any, bob_guesses: Any, revealed_word: An
 // On a continue (clue), we transition back to guess. guess_hash is imported
 // directly from games.krunk.clsp.onchain.guess.
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<State>,
+    witness: Witness<State, Bytes>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { move_data: { move }, mover_share } = params;
     let (
         { guesses: { dict_pubkey, base_unit, bob_guesses }, alice_clues, alice_commit, ...state },
         (_, evidence),
     ) = witness;
     if move.length == 1 {
-        if (mover_share == 0)
-            && (integer(list_length(alice_clues)) < 4)
-            && (ALL_GREEN_CLUE > integer(move))
-        {
+        if (mover_share == 0) && (length(alice_clues) < 4) && (ALL_GREEN_CLUE > (move as Int)) {
             validator_transition(
                 krunk_guess_hash,
                 State { ...state, alice_clues: (move, alice_clues) },
@@ -49,24 +49,26 @@ fn main(
         0
     } else {
         let revealed_word = move[16..21];
-        if (bytes(mover_share) == bytes(reveal_mover_share(base_unit, bob_guesses, revealed_word)))
-            && (bytes(alice_commit) == sha256(move[0..16] + revealed_word))
+        if (mover_share == reveal_mover_share(base_unit, bob_guesses, revealed_word))
+            && (alice_commit == sha256(move[0..16] + revealed_word))
             && (
-                (bytes(evidence).length != 1)
-                    || (
-                        bytes(make_clue(
-                            revealed_word,
-                            pair(drop(integer(evidence) + 1, bob_guesses)).first,
-                        )) == bytes(pair(drop(integer(evidence) + 0, alice_clues)).first)
-                    )
+                (evidence.length != 1)
+                    || {
+                        // Evidence index zero is the byte 0x00. Normalize it before list indexing.
+                        let index = (evidence as Int) + 0;
+                        make_clue(revealed_word, item_at(bob_guesses, index + 1)) == item_at(
+                            alice_clues,
+                            index,
+                        )
+                    }
             )
         {
-            if bytes(evidence).length == 10 {
-                assert (revealed_word as Int) >= (bytes(evidence)[0..5] as Int);
-                assert (revealed_word as Int) <= (bytes(evidence)[5..10] as Int);
-                validator_result(0, 0, 0, [[AGG_SIG_UNSAFE, dict_pubkey, evidence]])
+            if evidence.length == 10 {
+                assert (revealed_word as Int) >= (evidence[0..5] as Int);
+                assert (revealed_word as Int) <= (evidence[5..10] as Int);
+                validator_result(nil, 0, 0, [[AGG_SIG_UNSAFE, dict_pubkey, evidence]])
             } else {
-                validator_transition(0, 0, 0)
+                validator_transition(nil, 0, 0)
             }
         } else {
             0

@@ -1,8 +1,12 @@
-import common::*;
 import shapes::*;
 
-fn main(_mod_hash: Any, params: RefereeParams, _witness: Any, ..._unused_payout: Any) -> Any {
-    if truthy(params.validation_info_hash) {
+fn main(
+    _mod_hash: Bytes32,
+    params: RefereeParams,
+    _witness: Any,
+    ..._unused_payout: Any,
+) -> ValidatorTransition {
+    if params.validation_info_hash != nil {
         raise ["committed validator execution"];
     } else {
         validator_transition(

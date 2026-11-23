@@ -13,8 +13,7 @@ fn merge(left: List<Int>, right: List<Int>) -> List<Int> {
 }
 
 // Sort three atoms by comparison, then merge them with the sorted tail.
-export fn atomsort(values: Any) -> List<Int> {
-    let items = unchecked_cast::<List<Int>>(values);
+export fn atomsort(items: List<Int>) -> List<Int> {
     if items is nil || items.rest is nil {
         return items;
     }

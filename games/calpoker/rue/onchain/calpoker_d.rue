@@ -1,6 +1,5 @@
 import artifacts::{calpoker_e_hash};
 import calpoker_shapes::*;
-import common::*;
 import shapes::*;
 import std_popcount::*;
 
@@ -9,15 +8,14 @@ import std_popcount::*;
 // MOVE is Bob's discards
 // evidence is empty
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Deal>,
+    witness: Witness<Deal, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let bob_discards = params.move_data.move;
-    let (state, _) = witness;
-    let (alice_commit, (alice_cards, bob_cards)) = unchecked_cast::<(Any, (Any, Any))>(state);
-    if (bytes(bob_discards).length == 1) && (integer(popcount(bob_discards)) == 4) {
+    let ((alice_commit, (alice_cards, bob_cards)), _) = witness;
+    if (bob_discards.length == 1) && (popcount(bob_discards as Int) == 4) {
         validator_transition(
             calpoker_e_hash,
             make_calpoker_discard_state(bob_discards, alice_cards, bob_cards, alice_commit),

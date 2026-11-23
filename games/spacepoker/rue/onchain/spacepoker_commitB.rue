@@ -1,5 +1,4 @@
 import artifacts::{spacepoker_begin_round_hash, spacepoker_mid_round_hash};
-import common::*;
 import shapes::*;
 import spacepoker_shapes::*;
 
@@ -7,14 +6,14 @@ import spacepoker_shapes::*;
 // MOVE is Bob's hash-chain tip (image_4), 32 bytes
 // evidence is empty
 fn main(
-    _mod_hash: Any,
+    _mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Commit>,
+    witness: Witness<Commit, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let ((bet_unit, alice_image_5), _) = witness;
-    if (move.length == 32) && (mover_share == ((amount / 2) - integer(bet_unit))) {
+    if (move.length == 32) && (mover_share == ((amount / 2) - bet_unit)) {
         validator_transition(
             spacepoker_begin_round_hash,
             make_space_open(bet_unit, bet_unit, alice_image_5, move, 4, spacepoker_mid_round_hash),

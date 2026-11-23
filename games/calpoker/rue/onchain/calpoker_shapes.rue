@@ -1,31 +1,35 @@
 // Fixed records use the balanced pair layout shared by validators and handlers.
-export type Seeds = (Any, Any);
-export type Deal = (Any, (Any, Any));
-export type DiscardState = ((Any, Any), (Any, Any));
-export type Hands = (Any, Any);
-export type Draw = (Any, Any);
+export type Seeds = (Bytes, Bytes);
+export type Deal = (Bytes, Hands);
+export type DiscardState = ((Bytes, List<Int>), (List<Int>, Bytes));
+export type Hands = (List<Int>, List<Int>);
+export type Draw = (List<Int>, Int);
 
-export inline fn make_calpoker_seeds(alice_commit: Any, bob_seed: Any) -> Seeds {
+export inline fn make_calpoker_seeds(alice_commit: Bytes, bob_seed: Bytes) -> Seeds {
     (alice_commit, bob_seed)
 }
 
-export inline fn make_calpoker_deal(alice_commit: Any, alice_cards: Any, bob_cards: Any) -> Deal {
+export inline fn make_calpoker_deal(
+    alice_commit: Bytes,
+    alice_cards: List<Int>,
+    bob_cards: List<Int>,
+) -> Deal {
     (alice_commit, (alice_cards, bob_cards))
 }
 
 export inline fn make_calpoker_discard_state(
-    bob_discards: Any,
-    alice_cards: Any,
-    bob_cards: Any,
-    alice_commit: Any,
+    bob_discards: Bytes,
+    alice_cards: List<Int>,
+    bob_cards: List<Int>,
+    alice_commit: Bytes,
 ) -> DiscardState {
     ((bob_discards, alice_cards), (bob_cards, alice_commit))
 }
 
-export inline fn make_calpoker_hands(alice_cards: Any, bob_cards: Any) -> Hands {
+export inline fn make_calpoker_hands(alice_cards: List<Int>, bob_cards: List<Int>) -> Hands {
     (alice_cards, bob_cards)
 }
 
-export inline fn make_calpoker_draw(cards: Any, randomness: Any) -> Draw {
+export inline fn make_calpoker_draw(cards: List<Int>, randomness: Int) -> Draw {
     (cards, randomness)
 }

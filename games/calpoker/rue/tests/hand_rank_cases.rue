@@ -13,10 +13,10 @@ fn nth(cards: List<Int>, index: Int) -> Int {
     }
 }
 
-fn checked_rank(cards: List<Int>) -> Any {
-    let [rank, selected] = unchecked_cast::<[Any, List<Int>]>(handcalc(cards));
+fn checked_rank(cards: List<Int>) -> List<Int> {
+    let [rank, selected] = handcalc(cards);
     let mask = for index in selected fold mask = 0 { mask | (1 << index) };
-    assert length(selected) == 5 && unchecked_cast::<Int>(popcount(mask)) == 5;
+    assert length(selected) == 5 && popcount(mask) == 5;
     let five = for index in selected { nth(cards, index) };
     assert deep_equal(rank, onehandcalc(five));
     rank

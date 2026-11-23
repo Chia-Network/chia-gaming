@@ -1,15 +1,14 @@
-import common::*;
+const KRUNK_PAYOUTS: List<Int> = [100, 100, 20, 5, 1];
 
-const KRUNK_PAYOUTS: Any = [100, 100, 20, 5, 1];
-
-export fn krunk_payout_share(base_unit: Any, n: Any) -> Any {
-    integer(base_unit) * integer(pair(drop(integer(n) - 1, KRUNK_PAYOUTS)).first)
+export fn krunk_payout_share(base_unit: Int, n: Int) -> Int {
+    base_unit * item_at(KRUNK_PAYOUTS, n - 1)
 }
 
-export fn drop(n: Any, lst: Any) -> Any {
-    if integer(n) == 0 {
-        lst
+export fn item_at<T>(items: List<T>, index: Int) -> T {
+    assert items is (T, List<T>);
+    if index == 0 {
+        items.first
     } else {
-        drop(integer(n) - 1, pair(lst).rest)
+        item_at(items.rest, index - 1)
     }
 }

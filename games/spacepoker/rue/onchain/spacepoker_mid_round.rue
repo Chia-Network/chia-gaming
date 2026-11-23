@@ -1,5 +1,4 @@
 import artifacts::{spacepoker_begin_round_hash, spacepoker_end_hash};
-import common::*;
 import shapes::*;
 import spacepoker_shapes::*;
 
@@ -19,11 +18,11 @@ import spacepoker_shapes::*;
 // - a call: preimage that hashes to mover_image_n (16 bytes at N=1, 32 otherwise)
 // evidence is empty
 fn main(
-    mod_hash: Any,
+    mod_hash: Bytes32,
     params: RefereeParams,
-    witness: Witness<Raise>,
+    witness: Witness<Raise, Any>,
     ..._unused_payout: Any,
-) -> Any {
+) -> ValidatorResult {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (
         ((bet_unit, (half_pot, last_raise_amount)), (mover_image_n, (waiter_image_n, n))),
@@ -31,20 +30,16 @@ fn main(
     ) = witness;
     if move.length > 32 {
         let new_raise_amount = move[32..move.length];
-        if (mover_share == ((amount / 2) - (integer(half_pot) + integer(last_raise_amount))))
+        if (mover_share == ((amount / 2) - (half_pot + last_raise_amount)))
             && ((new_raise_amount as Int) >= 0)
-            && (
-                (integer(half_pot) + integer(last_raise_amount) + (new_raise_amount as Int)) <= (
-                    amount / 2
-                )
-            )
+            && ((half_pot + last_raise_amount + (new_raise_amount as Int)) <= (amount / 2))
         {
             validator_transition(
                 mod_hash,
                 make_space_raise(
                     bet_unit,
-                    integer(half_pot) + integer(last_raise_amount),
-                    new_raise_amount,
+                    half_pot + last_raise_amount,
+                    new_raise_amount as Int,
                     waiter_image_n,
                     mover_image_n,
                     n,
@@ -54,18 +49,14 @@ fn main(
         } else {
             0
         }
-    } else if (move.length == integer(inline if integer(n) == 1 { 16 } else { 32 }))
-        && (sha256(move) == bytes(mover_image_n))
-        && (mover_share == ((amount / 2) - (integer(half_pot) + integer(last_raise_amount))))
+    } else if (move.length == (inline if n == 1 { 16 } else { 32 }))
+        && (sha256(move) == mover_image_n)
+        && (mover_share == ((amount / 2) - (half_pot + last_raise_amount)))
     {
-        if integer(n) == 1 {
+        if n == 1 {
             validator_transition(
                 spacepoker_end_hash,
-                make_space_end(
-                    integer(half_pot) + integer(last_raise_amount),
-                    waiter_image_n,
-                    move,
-                ),
+                make_space_end(half_pot + last_raise_amount, waiter_image_n, move),
                 17,
             )
         } else {
@@ -73,10 +64,10 @@ fn main(
                 spacepoker_begin_round_hash,
                 make_space_open(
                     bet_unit,
-                    integer(half_pot) + integer(last_raise_amount),
+                    half_pot + last_raise_amount,
                     waiter_image_n,
                     move,
-                    integer(n) - 1,
+                    n - 1,
                     mod_hash,
                 ),
                 42,

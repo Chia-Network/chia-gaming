@@ -1,0 +1,4 @@
+// Used by the test entrypoints that dispatch a raw CLVM argument tree.
+export inline fn apply_program(program: Any, args: Any) -> Any {
+    unchecked_cast::<fn(...env: Any) -> Any>(program)(...args)
+}
