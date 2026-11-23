@@ -1,0 +1,3 @@
+[compiler]
+version = "0.13.0"
+entrypoint = "puzzles"

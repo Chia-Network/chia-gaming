@@ -18,6 +18,8 @@ use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
 use chialisp::classic::platform::argparse::ArgumentValue;
 use chialisp::compiler::comptypes::CompileErr;
 use chialisp::compiler::srcloc::Srcloc;
+use rue_compiler::{normalize_path, Compiler, FileTree};
+use rue_diagnostic::DiagnosticSeverity;
 
 #[path = "src/factory_abi.rs"]
 #[allow(dead_code)]
@@ -32,6 +34,24 @@ struct GameRegistry {
 }
 
 const CHIALISP_COMPILER_STACK_SIZE: usize = 128 * 1024 * 1024;
+
+/// The Rue programs, each a file whose `main` function is the program, and where its outputs are
+/// written, without their extensions. The outputs keep the paths of the Chialisp programs they
+/// replaced, which the runtime and the deployment scripts load them from.
+const RUE_PROGRAMS: &[(&str, &str)] = &[
+    (
+        "puzzles/unroll.rue",
+        "clsp/unroll/unroll_puzzle_state_channel_unrolling",
+    ),
+    (
+        "puzzles/test/mock_validator.rue",
+        "clsp/test/mock_validator",
+    ),
+    (
+        "puzzles/test/committed_args_validator.rue",
+        "clsp/test/committed_args_validator",
+    ),
+];
 
 fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
     // The compiler may use a different clvmr version than the game runtime.
@@ -246,6 +266,68 @@ fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
         validate_package(key, registry.production.iter().any(|k| k == key));
         for (title, path) in package_clsp_entrypoints(key) {
             do_compile(&title, &path)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Compiles the Rue project in `Rue.toml`, and writes each program in [`RUE_PROGRAMS`] as binary
+/// CLVM, hex, and a debug metadata sidecar. Any diagnostic fails the build, including warnings.
+fn compile_rue() -> Result<(), String> {
+    let root = std::env::current_dir().map_err(|e| format!("finding the project root: {e}"))?;
+    let project = rue_options::find_project(&root.join("Rue.toml"), false)
+        .map_err(|e| format!("loading Rue.toml: {e}"))?
+        .ok_or_else(|| "Rue.toml not found".to_string())?;
+    if !project.unknown_lints.is_empty() || !project.forbidden_lints.is_empty() {
+        return Err("Rue.toml has unknown or forbidden lints".to_string());
+    }
+
+    let mut ctx = Compiler::new(project.options);
+    let tree = FileTree::compile_path(&mut ctx, &project.entrypoint, &mut HashMap::new())
+        .map_err(|e| format!("compiling Rue: {e}"))?;
+    let diagnostics = ctx.take_diagnostics();
+    if !diagnostics.is_empty() {
+        let messages = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                let severity = match diagnostic.severity {
+                    DiagnosticSeverity::Error => "error",
+                    DiagnosticSeverity::Warning => "warning",
+                };
+                let lint = diagnostic
+                    .lint()
+                    .map(|lint| format!("[{lint}]"))
+                    .unwrap_or_default();
+                format!("{severity}{lint}: {}", diagnostic.full_message(&root))
+            })
+            .collect::<Vec<_>>();
+        return Err(format!("Rue diagnostics:\n{}", messages.join("\n")));
+    }
+
+    let mut allocator = Allocator::new();
+    for (source, output) in RUE_PROGRAMS {
+        let kind =
+            normalize_path(&root.join(source)).map_err(|e| format!("resolving {source}: {e}"))?;
+        let (program, metadata) = tree
+            .main_with_debug_metadata(&mut ctx, &mut allocator, &kind, root.clone())
+            .map_err(|e| format!("compiling {source}: {e}"))?
+            .ok_or_else(|| format!("{source} has no main function"))?;
+        let program = node_to_bytes(&allocator, program)
+            .map_err(|e| format!("serializing {source}: {e:?}"))?;
+
+        // The runtime reads these sidecars with Chialisp's decoder, so check that it accepts them.
+        DebugMetadata::decode(&metadata)
+            .and_then(|decoded| decoded.verify_program(&program))
+            .map_err(|e| format!("debug metadata of {source}: {e}"))?;
+
+        for (extension, bytes) in [
+            ("clvm.bin", program.clone()),
+            ("hex", hex::encode(&program).into_bytes()),
+            ("debug.clvm.bin", metadata),
+        ] {
+            let path = format!("{output}.{extension}");
+            fs::write(&path, bytes).map_err(|e| format!("writing {path}: {e}"))?;
         }
     }
 
@@ -530,6 +612,9 @@ fn compile_chialisp_with_large_stack(registry: GameRegistry) {
         .name("chialisp-compiler".to_string())
         .stack_size(CHIALISP_COMPILER_STACK_SIZE)
         .spawn(move || {
+            if let Err(e) = compile_rue() {
+                panic!("error compiling Rue: {e}");
+            }
             if let Err(e) = compile_chialisp(&registry) {
                 panic!("error compiling chialisp: {e:?}");
             }
@@ -548,7 +633,7 @@ fn emit_rerun_directives(dir: &Path) {
             if path.is_dir() {
                 emit_rerun_directives(&path);
             } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if (ext == "clsp" || ext == "clinc" || ext == "json" || ext == "rs")
+                if (ext == "clsp" || ext == "clinc" || ext == "rue" || ext == "json" || ext == "rs")
                     && path != Path::new("games/package_manifest.json")
                 {
                     println!("cargo:rerun-if-changed={}", path.display());
@@ -700,7 +785,9 @@ fn main() {
 
     emit_rerun_directives(Path::new("clsp"));
     emit_rerun_directives(Path::new("games"));
+    emit_rerun_directives(Path::new("puzzles"));
     println!("cargo:rerun-if-changed=chialisp.toml");
+    println!("cargo:rerun-if-changed=Rue.toml");
     println!("cargo:rerun-if-changed=games/registry.json");
     println!("cargo:rerun-if-changed=shared/protocol-constants/constants.json");
     println!("cargo:rerun-if-changed=src/factory_abi.rs");

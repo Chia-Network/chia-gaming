@@ -1,0 +1,80 @@
+// The layouts that the referee shares with validators, and with `src/referee/types.rs`.
+
+// The referee's curried arguments. `encode_referee_args` builds them as a balanced tree rather
+// than a list: each node splits its fields at half of their count, without a nil terminator. These
+// structs name the nodes of that tree, with a spread last field for the right side of each node.
+export struct RefereeParameters {
+    coin: RefereeCoin,
+    ...turn: RefereeTurn,
+}
+
+// The players (who swap after every move), and the fields that stay the same for the whole game.
+export struct RefereeCoin {
+    players: Players,
+    timeout: Int,
+    amount: Int,
+    // The tree hash of the referee itself.
+    ...mod_hash: Bytes32,
+}
+
+export struct Players {
+    mover_pubkey: PublicKey,
+    ...waiter_pubkey: PublicKey,
+}
+
+// The commitments of the latest move.
+export struct RefereeTurn {
+    last_move: LastMove,
+    infohash_b: Bytes32 | nil,
+    mover_share: Int,
+    ...infohash_a: Bytes32 | nil,
+}
+
+// The latest move and the maximum size of the next one. The nonce, which prevents replays, is here
+// because this is where the tree splits.
+export struct LastMove {
+    nonce: Int,
+    game_move: Bytes,
+    ...max_move_size: Int,
+}
+
+// A validator, which the referee calls with its own tree hash, the referee's curried arguments,
+// the move being checked, and the payout (which validators don't use, and is nil off chain).
+export type Validator = fn(
+    validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<Any, Any>,
+    ...payout: Bytes32 | nil,
+) -> ValidatorResult<Any> | nil;
+
+// The move that a validator checks: the state before it, the validator itself, and the evidence.
+export struct ValidatorMove<S, E> {
+    state: S,
+    validation_program: Any,
+    ...evidence: E,
+}
+
+// The result of a validator that accepts the move. A validator returns nil instead to slash.
+// Terminal success has a nil next validator hash and state, and a zero maximum move size.
+export struct ValidatorResult<S> {
+    transition: Transition<S>,
+    max_move_size: Int,
+    ...extra_conditions: List<Condition>,
+}
+
+export struct Transition<S> {
+    next_validator_hash: Bytes32 | nil,
+    ...new_state: S,
+}
+
+export inline fn validator_transition<S>(
+    next_validator_hash: Bytes32 | nil,
+    new_state: S,
+    max_move_size: Int,
+) -> ValidatorResult<S> {
+    ValidatorResult::<S> {
+        transition: Transition::<S> { next_validator_hash, new_state },
+        max_move_size,
+        extra_conditions: nil,
+    }
+}

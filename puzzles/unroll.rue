@@ -1,0 +1,46 @@
+// The unroll coin. The channel coin is always spent to it by mutual agreement, and it either
+// times out to the default conditions, or is preempted by a later state with the opposite parity.
+//
+// The timeout path is taken when the conditions hash to DEFAULT_CONDITIONS_HASH, and returns them
+// as they are. Otherwise the conditions preempt this state: their sequence number must be higher
+// than OLD_SEQUENCE_NUMBER and have the opposite parity, and both players must sign them.
+fn main(
+    // The aggregate 2-of-2 unroll public key.
+    SHARED_PUBKEY: PublicKey,
+    OLD_SEQUENCE_NUMBER: Int,
+    DEFAULT_CONDITIONS_HASH: Bytes32,
+    // The conditions are the rest of the arguments, rather than a list wrapped around them.
+    ...conditions: UnrollConditions,
+) -> UnrollConditions | Preemption {
+    let conditions_hash = tree_hash(conditions);
+
+    if conditions_hash == DEFAULT_CONDITIONS_HASH {
+        return conditions;
+    }
+
+    let sequence_number = conditions.sequence.sequence_number;
+    assert sequence_number > OLD_SEQUENCE_NUMBER;
+    assert (sequence_number ^ OLD_SEQUENCE_NUMBER) & 1 == 1;
+
+    Preemption {
+        signature: AggSigUnsafe { public_key: SHARED_PUBKEY, message: conditions_hash },
+        conditions,
+    }
+}
+
+// The conditions of a state, which start with a remark of its sequence number.
+struct UnrollConditions {
+    sequence: SequenceRemark,
+    ...rest: List<Condition>,
+}
+
+struct SequenceRemark {
+    opcode = 1,
+    sequence_number: Int,
+}
+
+// A state's conditions with the signature that preempting to them requires.
+struct Preemption {
+    signature: AggSigUnsafe,
+    ...conditions: UnrollConditions,
+}

@@ -8,7 +8,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 REPO="$TEST_ROOT/repo"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG="$TEST_ROOT/cargo.log"
-mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
+mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$REPO/puzzles" "$FAKE_BIN"
 cp "$SCRIPT_DIR/build-chialisp.sh" "$REPO/tools/build-chialisp.sh"
 printf '%s\n' '{}' > "$REPO/games/registry.json"
 # Reject GNU-only find early-exit usage (unsupported on macOS BSD find).
@@ -18,6 +18,8 @@ if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh"
 fi
 printf '%s\n' '(mod ())' > "$REPO/clsp/example.clsp"
 printf '%s\n' '[compile]' > "$REPO/chialisp.toml"
+printf '%s\n' 'fn main() {}' > "$REPO/puzzles/example.rue"
+printf '%s\n' '[compiler]' > "$REPO/Rue.toml"
 printf '%s\n' 'fn main() {}' > "$REPO/build.rs"
 printf '%s\n' '[package]' > "$REPO/Cargo.toml"
 printf '%s\n' '# lock' > "$REPO/Cargo.lock"
@@ -104,5 +106,13 @@ assert_count 8
 printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
 run_build
 assert_count 9
+
+printf '%s\n' 'fn main() -> Int { 1 }' > "$REPO/puzzles/example.rue"
+run_build
+assert_count 10
+
+printf '%s\n' '[compiler]' 'entrypoint = "puzzles"' > "$REPO/Rue.toml"
+run_build
+assert_count 11
 
 echo "build-chialisp regression tests passed"

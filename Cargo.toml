@@ -60,6 +60,11 @@ chialisp = "=0.7.0"
 clvm-utils = "=0.54.0"
 clvmr = { version = "=0.22.0", features = ["pre-eval"] }
 hex = "=0.4.3"
+# Rue 0.13.0 with xch-dev/rue#643, which makes `const { tree_hash(f) }` match the program `f`
+# compiles to. Pin to a release once it includes that fix.
+rue-compiler = { git = "https://github.com/xch-dev/rue", rev = "9faa0bd544dd9148d15323b48c945fde14c3f13f" }
+rue-diagnostic = { git = "https://github.com/xch-dev/rue", rev = "9faa0bd544dd9148d15323b48c945fde14c3f13f" }
+rue-options = { git = "https://github.com/xch-dev/rue", rev = "9faa0bd544dd9148d15323b48c945fde14c3f13f" }
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"
 toml = "=1.2.1"

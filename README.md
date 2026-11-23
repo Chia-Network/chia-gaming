@@ -125,7 +125,8 @@ The simplest way to start is to copy the game closest to your idea. [`calpoker`]
 
 ```
 src/            Rust core: channel state, potato protocol, referee, on-chain dispute handling
-clsp/           Chialisp puzzles for the referee, unroll coin and shared libraries
+puzzles/        Rue puzzles, replacing the Chialisp ones (configured by Rue.toml)
+clsp/           Chialisp puzzles for the referee and shared libraries, and the compiled puzzles
 games/          Game packages (rules, tests, UI) and the game host API
 wasm/           WebAssembly bindings so the Rust core runs in the browser
 front-end/      The player app (React)

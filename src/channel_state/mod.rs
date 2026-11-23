@@ -956,7 +956,7 @@ impl ChannelState {
         //
         // The shared puzzle hash passed into the state_channel puzzle
         // essentially an invocation of
-        // unroll/unroll_puzzle.clsp::state_channel_unrolling
+        // puzzles/unroll.rue
         // should be a standard puzzle with a aggsig parent condition.
 
         // Puzzle hash of a standard puzzle with a pubkey that combines our

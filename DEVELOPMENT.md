@@ -268,9 +268,15 @@ Run commands from the repo root unless noted.
 ./tools/build-chialisp.sh
 ```
 
-This is the sole entry point for compiling `.clsp` sources. The Chialisp
-compiler emits `.hex`; the build then decodes each output into a
-`.clvm.bin` artifact. For each game it also curries any factory arguments,
+This is the sole entry point for compiling puzzles, both the Rue project
+(`Rue.toml`, with its sources in `puzzles/`) and the remaining `.clsp`
+sources. The Chialisp compiler emits `.hex`; the build then decodes each
+output into a `.clvm.bin` artifact. Each Rue program is listed in
+`RUE_PROGRAMS` in `build.rs`, with the path its `.clvm.bin`, `.hex`, and
+`.debug.clvm.bin` outputs are written to. Those paths are under `clsp/` and
+`games/`, where the Chialisp programs they replaced were written, so the
+runtime and deployment scripts load them unchanged. Any Rue error or warning
+fails the build. For each game it also curries any factory arguments,
 runs the build-only probe, records the protocol ID, and emits one prepared
 runtime factory. It content-hashes the sources, compiler inputs, and generated
 outputs, rebuilding only when an input changes or an output is missing or

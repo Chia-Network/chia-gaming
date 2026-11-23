@@ -227,7 +227,7 @@ Funding coins (one per player)
     └──────────────────────────────▶ Channel Coin ── 2-of-2 multisig
              │
              ▼  (spend to unroll)
-         Unroll Coin ── unroll_puzzle.clsp (sequence number, default conditions)
+         Unroll Coin ── puzzles/unroll.rue (sequence number, default conditions)
              │
              ▼  (timeout / preemption)
          ┌───┴───────────────────────┐
@@ -319,7 +319,7 @@ IndexedDB. Compact historical unroll records are therefore part of the durable
 minimum even though obsolete full signatures and preemption conditions are not.
 
 **Key code:** `src/channel_state/types/unroll_coin.rs`,
-`clsp/unroll/unroll_puzzle.clsp`
+`puzzles/unroll.rue`
 
 ### Game Coin (Referee)
 
@@ -1238,11 +1238,15 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | **Game Session**             | `src/game_session.rs`                                                | `PeerLifecyclePhase` trait, `GameSession` struct                                          |
 | **Simulator**                | `src/simulator/`                                                     | Block-level simulation for integration tests                                              |
 
-### Chialisp puzzles
+### Puzzles
+
+The puzzles are being rewritten from Chialisp in Rue. The Rue project is
+configured by `Rue.toml`, and its sources are in `puzzles/`.
 
 | File                                                | Purpose                                                        |
 | --------------------------------------------------- | -------------------------------------------------------------- |
-| `clsp/unroll/unroll_puzzle.clsp`                    | Unroll coin: timeout vs challenge with sequence numbers        |
+| `puzzles/unroll.rue`                                | Unroll coin: timeout vs challenge with sequence numbers        |
+| `puzzles/referee/types.rue`                         | Layouts the referee shares with validators and Rust            |
 | `clsp/referee/onchain/referee.clsp`                 | Game coin: move / timeout / slash enforcement                  |
 | `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
 | `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp`      | Calpoker validation programs (one per protocol step)           |
