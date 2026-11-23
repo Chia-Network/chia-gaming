@@ -337,7 +337,7 @@ The referee enforces game rules on-chain:
   take the funds
 
 **Key code:** `src/referee/mod.rs`, `src/referee/types.rs`,
-`clsp/referee/onchain/referee.clsp`
+`puzzles/referee/referee.rue`
 
 ---
 
@@ -1246,8 +1246,8 @@ configured by `Rue.toml`, and its sources are in `puzzles/`.
 | File                                                | Purpose                                                        |
 | --------------------------------------------------- | -------------------------------------------------------------- |
 | `puzzles/unroll.rue`                                | Unroll coin: timeout vs challenge with sequence numbers        |
+| `puzzles/referee/referee.rue`                       | Game coin: move / timeout / slash enforcement                  |
 | `puzzles/referee/types.rue`                         | Layouts the referee shares with validators and Rust            |
-| `clsp/referee/onchain/referee.clsp`                 | Game coin: move / timeout / slash enforcement                  |
 | `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
 | `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp`      | Calpoker validation programs (one per protocol step)           |
 | `games/calpoker/clsp/calpoker_generate.clinc`       | Off-chain calpoker handlers (Alice & Bob sides)                |

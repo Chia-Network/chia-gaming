@@ -1,5 +1,4 @@
 [compile]
-onchain-referee = "clsp/referee/onchain/referee.clsp"
 handcalc-micro = "clsp/test/test_handcalc_micro.clsp"
 make-cards = "clsp/test/test_make_cards.clsp"
 deep-compare = "clsp/test/deep_compare.clsp"

@@ -44,6 +44,10 @@ const RUE_PROGRAMS: &[(&str, &str)] = &[
         "clsp/unroll/unroll_puzzle_state_channel_unrolling",
     ),
     (
+        "puzzles/referee/referee.rue",
+        "clsp/referee/onchain/referee",
+    ),
+    (
         "puzzles/test/mock_validator.rue",
         "clsp/test/mock_validator",
     ),

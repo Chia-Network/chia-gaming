@@ -50,7 +50,7 @@ export type Validator = fn(
 // The move that a validator checks: the state before it, the validator itself, and the evidence.
 export struct ValidatorMove<S, E> {
     state: S,
-    validation_program: Any,
+    validation_program: Validator,
     ...evidence: E,
 }
 
@@ -77,4 +77,32 @@ export inline fn validator_transition<S>(
         max_move_size,
         extra_conditions: nil,
     }
+}
+
+// The solutions of the referee. They aren't nil-terminated, and are told apart by which of their
+// halves are pairs: a timeout is two atoms, a slash is a pair and an atom, and a move is two pairs.
+export type RefereeSolution = RefereeTimeout | RefereeSlash | RefereeMove;
+
+// Claims the timeout. The puzzle hash of a player whose share is zero must be nil instead.
+export struct RefereeTimeout {
+    mover_payout_ph: Bytes32,
+    ...waiter_payout_ph: Bytes32,
+}
+
+// Slashes the previous move, by running its validator with evidence.
+export struct RefereeSlash {
+    move: ValidatorMove<Any, Any>,
+    ...mover_payout_ph: Bytes32,
+}
+
+// Makes a move, which the referee accepts optimistically.
+export struct RefereeMove {
+    proposal: ProposedMove,
+    new_mover_share: Int,
+    ...new_max_move_size: Int,
+}
+
+export struct ProposedMove {
+    new_move: Bytes,
+    ...infohash_c: Bytes32 | nil,
 }

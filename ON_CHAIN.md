@@ -617,8 +617,9 @@ its successor-coin hash calculation, and every validator:
 
 Chialisp’s `#(...)` reader syntax selects the balanced layout automatically.
 Every field is at most four tree edges from the argument root.
-`RefereePuzzleArgs::to_clvm` encodes this shape; do not encode these fields as a proper list. Solution shapes are declared in
-`clsp/referee/onchain/shapes.clinc` and have no terminating list nils. This layout is
+`RefereePuzzleArgs::to_clvm` encodes this shape; do not encode these fields as a proper list. The tree and the solution
+shapes are declared in `puzzles/referee/types.rue` (and, for the validators not yet
+ported from Chialisp, `clsp/referee/onchain/shapes.clinc`), and have no terminating list nils. This layout is
 part of the on-chain puzzle interface and changes the referee and validator
 hashes; an already-created coin must still be spent with its original puzzle.
 
@@ -669,7 +670,7 @@ generated game IDs from the separate shared game namespace.
 The referee runs validator programs to enforce game rules on-chain. For how
 validators relate to off-chain handlers, see `HANDLER_GUIDE.md`.
 
-The referee puzzle (`referee.clsp`) accepts three types of solutions:
+The referee puzzle (`puzzles/referee/referee.rue`) accepts three types of solutions:
 
 1. **Timeout** (`args = (mover_payout_ph . waiter_payout_ph)`):
   - Requires `ASSERT_HEIGHT_RELATIVE >= TIMEOUT`
@@ -902,7 +903,7 @@ infohash and prove that the optimistic move commitment was invalid.
 **Key code:** `src/referee/types.rs` — `ValidationInfoHash`,
 `RefereePuzzleArgs`;
 `src/referee/my_turn.rs`, `src/referee/their_turn.rs`;
-`clsp/referee/onchain/referee.clsp`
+`puzzles/referee/referee.rue`
 
 ---
 
