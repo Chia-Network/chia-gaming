@@ -288,6 +288,13 @@ Import a generated `artifacts` symbol ending in `_hash` or `_program` to refer
 to a separately compiled entrypoint. The prefix is that entrypoint's filename
 stem. The builder follows these dependencies, compiles each entrypoint once,
 and supplies its CLVM tree hash or serialized program to its consumers.
+On subsequent builds it checks the actual compiler executable, build driver,
+compiler settings, imported source files, and the hash constants or program
+bytes passed to that entrypoint. It also checks the generated hex, binary,
+and debug sidecar against their recorded contents. A changed validator hash
+therefore rebuilds its consumers. A repaired validator with identical bytes
+lets those consumers reuse their outputs. The package build also tracks the
+registry, curry arguments, prepared factories, sidecars, and game ID manifest.
 Self-transitions and callbacks receive their hashes in the validator arguments
 or game state. The referee and game records keep the balanced pair layouts
 used by the Rust encoders.

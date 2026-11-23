@@ -2,16 +2,22 @@
 """Build Rue programs in dependency order, or run the native Rue tests."""
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
+
+from puzzle_build import build_lock, digest, generated
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "rue"
 LAYERS = {"onchain": 0, "offchain": 1, "tests": 2}
+ARTIFACT_EXTENSIONS = (".hex", ".clvm.bin", ".debug.clvm.bin")
 
 
 def discover():
@@ -78,6 +84,9 @@ class Build:
         self.cli = cli
         self.built = {}
         self.visiting = set()
+        self.changed = {}
+        self.cache = ROOT / "target/rue-build"
+        self.toolchain = [digest(Path(cli)), digest(Path(__file__))]
 
     def project(self, entry, *, testing=False):
         project = self.directory / (entry.stem + "-tests" if testing else entry.stem)
@@ -109,6 +118,20 @@ class Build:
             raise ValueError(f"Cyclic compiled-program dependency at {entry}")
         self.visiting.add(entry)
         project = self.project(entry)
+        # These are the exact inputs Rue sees, including transitive source imports,
+        # generated hash constants, serialized extern programs, and compiler options.
+        inputs = {str(path.relative_to(project)): digest(path)
+                  for path in project.rglob("*") if path.is_file()}
+        key = hashlib.sha256(json.dumps([self.toolchain, inputs],
+                                        sort_keys=True).encode()).hexdigest()
+        stamp = self.cache / (entry.stem + ".stamp")
+        output = destination(entry)
+        paths = [output.with_suffix(ext) for ext in ARTIFACT_EXTENSIONS]
+        cached = self.read_cached(stamp, key, paths)
+        if cached is not None:
+            self.built[entry] = cached
+            self.visiting.remove(entry)
+            return cached
         print(f"Compiling {entry.relative_to(ROOT)}", flush=True)
         result = subprocess.run(
             [self.cli, "build", f"puzzles/{entry.name}", "--hex", "--hash",
@@ -116,20 +139,46 @@ class Build:
             cwd=project, check=True, text=True, stdout=subprocess.PIPE,
         )
         program, tree_hash = result.stdout.split()
+        self.changed[entry] = key, paths, stamp
         self.built[entry] = program, tree_hash
         self.visiting.remove(entry)
         return program, tree_hash
 
+    @staticmethod
+    def signature(tree_hash, paths):
+        return hashlib.sha256((tree_hash + "".join(digest(p) for p in paths)).encode()).hexdigest()
+
+    def read_cached(self, stamp, key, paths):
+        if os.environ.get("GITHUB_ACTIONS") == "true" or not stamp.is_file():
+            return None
+        fields = stamp.read_bytes().split()
+        if len(fields) != 3 or fields[0] != key.encode() or not re.fullmatch(b"[0-9a-f]{64}", fields[1]):
+            return None
+        tree_hash = fields[1].decode()
+        if all(p.is_file() for p in paths) and fields[2] == self.signature(tree_hash, paths).encode():
+            return paths[0].read_text().strip(), tree_hash
+        return None
+
     def publish(self):
-        for entry, (program, _) in self.built.items():
-            output = destination(entry)
-            output.parent.mkdir(parents=True, exist_ok=True)
-            output.with_suffix(".hex").write_text(program + "\n")
-            output.with_suffix(".clvm.bin").write_bytes(bytes.fromhex(program))
-            shutil.copyfile(
-                self.directory / entry.stem / "program.debug.clvm.bin",
-                output.with_suffix(".debug.clvm.bin"),
-            )
+        self.cache.mkdir(parents=True, exist_ok=True)
+        for entry, (key, paths, stamp) in self.changed.items():
+            program, tree_hash = self.built[entry]
+            paths[0].parent.mkdir(parents=True, exist_ok=True)
+            metadata = (self.directory / entry.stem / "program.debug.clvm.bin").read_bytes()
+            for path, data in zip(paths, [(program + "\n").encode(), bytes.fromhex(program), metadata]):
+                if not path.is_file() or path.read_bytes() != data:
+                    path.write_bytes(data)
+            stamp.write_text(f"{key} {tree_hash} {self.signature(tree_hash, paths)}\n")
+
+        # Drop former entrypoints and artifacts from the reference compiler before
+        # Rust scans the validator sidecars to prepare the registered factories.
+        expected = {destination(entry).with_suffix(ext).relative_to(ROOT) for entry in self.built
+                    for ext in ARTIFACT_EXTENSIONS}
+        for key in json.loads((ROOT / "games/registry.json").read_text())["production"]:
+            expected.update(Path("games") / key / "clsp" / name for name in
+                            ("factory_prepared.clvm.bin", "factory_prepared.debug.clvm.bin"))
+        for obsolete in generated() - expected:
+            obsolete.unlink()
 
     def test(self, entry):
         project = self.project(entry, testing=True)
@@ -140,9 +189,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--test", action="store_true")
     args = parser.parse_args()
-    cli = shutil.which("rue") or str(ROOT / "target/rue-cli/bin/rue")
-    sources = discover()
-    with tempfile.TemporaryDirectory(prefix="gaming-rue-") as directory:
+    os.chdir(ROOT)
+    cli = shutil.which("rue") or shutil.which("rue", path=str(ROOT / "target/rue-cli/bin"))
+    if not cli:
+        parser.error("Rue compiler missing. Run ./cb.sh to install it.")
+    # Cargo's producer already holds the outer lock. Standalone builds and
+    # tests also read the published artifacts and must see a consistent set.
+    lock = nullcontext() if os.environ.get("CHIALISP_COMPILE") else build_lock()
+    with lock, tempfile.TemporaryDirectory(prefix="gaming-rue-") as directory:
+        sources = discover()
         build = Build(Path(directory), sources, cli)
         for entry in sources.values():
             source = entry.read_text()

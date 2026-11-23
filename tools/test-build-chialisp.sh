@@ -8,14 +8,16 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 REPO="$TEST_ROOT/repo"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG="$TEST_ROOT/cargo.log"
-mkdir -p "$REPO/tools" "$REPO/rue/programs" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
+mkdir -p "$REPO/tools" "$REPO/src" "$REPO/rue/onchain" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
 cp "$SCRIPT_DIR/build-chialisp.sh" "$REPO/tools/build-chialisp.sh"
+cp "$SCRIPT_DIR/puzzle_build.py" "$REPO/tools/puzzle_build.py"
 cp "$SCRIPT_DIR/../rue/compiler.toml" "$REPO/rue/compiler.toml"
 export GAMING_PUZZLE_COMPILER=chialisp
 touch "$REPO/tools/build-rue.py" "$REPO/tools/rue_metadata.rs"
+touch "$REPO/src/factory_abi.rs" "$REPO/src/game_package_key.rs"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$FAKE_BIN/rue"
 chmod +x "$FAKE_BIN/rue"
-printf '%s\n' '{}' > "$REPO/games/registry.json"
+printf '%s\n' '{"production":[],"test":[]}' > "$REPO/games/registry.json"
 # Reject GNU-only find early-exit usage (unsupported on macOS BSD find).
 if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh" >/dev/null; then
     echo "build-chialisp.sh must not use find's GNU-only early-exit primary" >&2
@@ -36,6 +38,11 @@ echo compile >> "$FAKE_CARGO_LOG"
 git hash-object clsp/example.clsp > clsp/example.hex
 printf '\200' > clsp/example.clvm.bin
 printf 'debug:%s\n' "$(git hash-object clsp/example.clsp)" > clsp/example.debug.clvm.bin
+cp games/registry.json games/package_manifest.json
+# Simulate an edit after the compiler has already read its input.
+if [ -f edit-during-build ]; then
+    mv edit-during-build clsp/example.clsp
+fi
 EOF
 chmod +x "$FAKE_BIN/cargo"
 
@@ -110,7 +117,7 @@ printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
 run_build
 assert_count 9
 
-printf '%s\n' 'fn main() -> Int { 1 }' > "$REPO/rue/programs/example.rue"
+printf '%s\n' 'fn main() -> Int { 1 }' > "$REPO/rue/onchain/example.rue"
 GAMING_PUZZLE_COMPILER=rue run_build
 assert_count 10
 GAMING_PUZZLE_COMPILER=rue run_build
@@ -119,5 +126,31 @@ GAMING_PUZZLE_COMPILER=chialisp run_build
 assert_count 11
 GAMING_PUZZLE_COMPILER=rue run_build
 assert_count 12
+
+printf '%s\n' '# new compiler build' >> "$FAKE_BIN/rue"
+GAMING_PUZZLE_COMPILER=rue run_build
+assert_count 13
+printf '%s\n' '// changed package preparation' >> "$REPO/src/factory_abi.rs"
+GAMING_PUZZLE_COMPILER=rue run_build
+assert_count 14
+printf '%s\n' stale > "$REPO/games/package_manifest.json"
+GAMING_PUZZLE_COMPILER=rue run_build
+assert_count 15
+
+printf '%s\n' '(mod () 42)' > "$REPO/edit-during-build"
+GAMING_PUZZLE_COMPILER=chialisp run_build
+assert_count 17
+[ "$(cat "$REPO/clsp/example.hex")" = "$(git hash-object "$REPO/clsp/example.clsp")" ]
+GAMING_PUZZLE_COMPILER=chialisp run_build
+assert_count 17
+
+printf '\377' > "$REPO/.build-chialisp.state"
+run_build &
+first_build=$!
+run_build &
+second_build=$!
+wait "$first_build"
+wait "$second_build"
+assert_count 18
 
 echo "build-chialisp regression tests passed"

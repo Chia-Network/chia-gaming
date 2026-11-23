@@ -356,6 +356,13 @@ fn rebind_debug_metadata_identity(
     Ok(rebound)
 }
 
+fn write_if_changed(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if fs::read(path).is_ok_and(|previous| previous == bytes) {
+        return Ok(());
+    }
+    fs::write(path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))
+}
+
 fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8; 32]>, String> {
     let mut package_ids = HashMap::new();
     let mut manifest = Vec::new();
@@ -411,10 +418,7 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
         let prepared_path = root.join("factory_prepared.clvm.bin");
         let prepared_bytes = node_to_bytes(&allocator, prepared_factory)
             .map_err(|e| format!("serializing prepared factory for {key}: {e:?}"))?;
-        fs::write(&prepared_path, prepared_bytes)
-            .map_err(|e| format!("writing prepared factory {}: {e}", prepared_path.display()))?;
-        let prepared_bytes = fs::read(&prepared_path)
-            .map_err(|e| format!("reading prepared factory {}: {e}", prepared_path.display()))?;
+        write_if_changed(&prepared_path, &prepared_bytes)?;
         let prepared_frame = raw_metadata
             .symbolize_frame(&prepared_bytes, &[])
             .map_err(|e| format!("symbolizing prepared factory {key}: {e}"))?;
@@ -467,12 +471,7 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
                 prepared_metadata_path.display()
             ));
         }
-        fs::write(&prepared_metadata_path, prepared_metadata_bytes).map_err(|e| {
-            format!(
-                "writing prepared factory metadata {}: {e}",
-                prepared_metadata_path.display()
-            )
-        })?;
+        write_if_changed(&prepared_metadata_path, &prepared_metadata_bytes)?;
 
         let probe_path = root.join("factory_probe.clvm.bin");
         let probe_program = read_binary_node(&mut allocator, &probe_path)?;
@@ -520,8 +519,7 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
     let manifest_path = Path::new("games/package_manifest.json");
     let manifest_json = serde_json::to_vec_pretty(&serde_json::json!({ "production": manifest }))
         .map_err(|e| format!("serializing game package manifest: {e}"))?;
-    fs::write(manifest_path, manifest_json)
-        .map_err(|e| format!("writing {}: {e}", manifest_path.display()))?;
+    write_if_changed(manifest_path, &manifest_json)?;
     Ok(package_ids)
 }
 

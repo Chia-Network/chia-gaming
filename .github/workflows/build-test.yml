@@ -85,6 +85,9 @@ jobs:
         run: |
           tools/build-chialisp.sh
 
+      - name: Test Rue dependency tracking
+        run: python3 tools/test-build-rue.py
+
       - name: Run rust tests and simulator tests
         run: |
           # Build without sim-tests to ensure that configuration compiles

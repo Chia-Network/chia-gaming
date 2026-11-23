@@ -1,16 +1,46 @@
-// Rank and multiplicity lists have at most five items.
-fn insert_descending(value: Int, items: List<Int>) -> List<Int> {
-    if items is nil {
-        return [value];
+fn merge(left: List<Int>, right: List<Int>) -> List<Int> {
+    if left is nil {
+        return right;
     }
-    if value > items.first {
-        [value, ...items]
+    if right is nil {
+        return left;
+    }
+    if left.first > right.first {
+        [left.first, ...merge(left.rest, right)]
     } else {
-        [items.first, ...insert_descending(value, items.rest)]
+        [right.first, ...merge(left, right.rest)]
     }
 }
 
+// Sort three atoms by comparison, then merge them with the sorted tail.
 export fn atomsort(values: Any) -> List<Int> {
     let items = unchecked_cast::<List<Int>>(values);
-    for item in items fold sorted: List<Int> = nil { insert_descending(item, sorted) }
+    if items is nil || items.rest is nil {
+        return items;
+    }
+    let first = items.first;
+    let second = items.rest.first;
+    if items.rest.rest is nil {
+        if first > second {
+            return items;
+        }
+        return [second, first];
+    }
+    let third = items.rest.rest.first;
+    let three: List<Int> = if first > second {
+        if second > third {
+            [first, second, third]
+        } else if first > third {
+            [first, third, second]
+        } else {
+            [third, first, second]
+        }
+    } else if first > third {
+        [second, first, third]
+    } else if second > third {
+        [second, third, first]
+    } else {
+        [third, second, first]
+    };
+    merge(three, atomsort(items.rest.rest.rest))
 }
