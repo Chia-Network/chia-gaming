@@ -15,42 +15,24 @@ export fn group_by_count_inner(items: Any, last: Any, count: Any) -> Any {
 }
 
 export fn group_by_count(items: Any) -> Any {
-    group_by_count_inner(items, pair(items).first, 0)
+    group_by_count_inner(pair(items).rest, pair(items).first, 1)
 }
 
-// Evaluate a single 5-card hand. Returns (counts... boost ranks...).
-// Modeled on calpoker's onehandcalc: map produces a flat hand with
-// boost inserted between counts and ranks via map's tail argument.
+// Space Poker ranks five cards without suits. The boost precedes the ranks.
 export fn space_hand_eval(cards: Any, boost: Any) -> Any {
-    let sorted = atomsort(cards);
-    let raw_groups = atomsort(group_by_count(sorted));
-    let hand = map_with_rest(
-        fn(x: Any) => { integer(x) >>> 4 },
-        raw_groups,
-        (boost, map_with_rest(fn(x: Any) => { integer(x) & 15 }, raw_groups, nil)),
-    );
-    let (first_count, _) = unchecked_cast::<(Any, Any)>(hand);
-    if !(integer(first_count) == 1) {
-        hand
+    let ranks = atomsort(cards);
+    let [r1, r2, r3, r4, r5, ..._] = unchecked_cast::<[Int, Int, Int, Int, Int, ...Any]>(ranks);
+    if r1 == r2 || r2 == r3 || r3 == r4 || r4 == r5 {
+        let groups = atomsort(group_by_count(ranks));
+        return map_with_rest(
+            fn(x: Any) => { integer(x) >>> 4 },
+            groups,
+            (boost, map_with_rest(fn(x: Any) => { integer(x) & 15 }, groups, nil)),
+        );
+    }
+    if r1 - r5 == 4 {
+        [3, 3, boost, r1]
     } else {
-        let [
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            r1,
-            _,
-            _,
-            _,
-            r5,
-            ..._,
-        ] = unchecked_cast::<[Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, Any, ...Any]>(hand);
-        if integer(r5) == (integer(r1) - 4) {
-            [3, 3, boost, r1]
-        } else {
-            hand
-        }
+        [1, 1, 1, 1, 1, boost, ...ranks]
     }
 }

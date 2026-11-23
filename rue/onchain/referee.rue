@@ -1,11 +1,11 @@
 import shapes::{RefereeCoin, RefereeMove, RefereeParams, RefereePubkeys};
 
-type Timeout = (Bytes, Bytes);
 type Move = ((Bytes, Bytes), (Int, Int));
+type Timeout = (Bytes, Bytes);
 type Slash = ((Any, (Any, Any)), Bytes);
 type Result = ((Bytes, Any), (Int, List<Any>));
 
-fn main(params: RefereeParams, ...solution: Timeout | Move | Slash) -> Any {
+fn main(params: RefereeParams, ...solution: Move | Timeout | Slash) -> Any {
     let {
         coin: { pubkeys: { mover, waiter }, timeout, amount, mod_hash },
         move_data: { nonce, max_move_size: max_size },
@@ -14,23 +14,8 @@ fn main(params: RefereeParams, ...solution: Timeout | Move | Slash) -> Any {
         previous_validation_info_hash: info_a,
     } = params;
     match solution {
-        Timeout as (mover_ph, waiter_ph) => {
-            let remainder = amount - share;
-            let waiter_conditions: List<Any> = if remainder != 0 {
-                [[CREATE_COIN, waiter_ph, remainder], [AGG_SIG_UNSAFE, waiter, "x" + waiter_ph]]
-            } else {
-                assert waiter_ph == nil;
-                nil
-            };
-            let (coin, signature): (Any, Any) = if share != 0 {
-                ([CREATE_COIN, mover_ph, share], [AGG_SIG_UNSAFE, mover, "x" + mover_ph])
-            } else {
-                assert mover_ph == nil;
-                ([1], [1])
-            };
-            [[ASSERT_HEIGHT_RELATIVE, timeout], coin, signature, ...waiter_conditions]
-        }
-        Move as ((new_move, info_c), (new_share, new_max)) => {
+        // Only Move has a pair on the right, so dispatch needs one pair test.
+        (Any, (Any, Any)) as ((new_move, info_c), (new_share, new_max)) => {
             assert info_b != nil;
             assert new_move.length <= max_size;
             assert (new_max as Bytes).length <= 2 && new_max >= 0 && new_max == new_max + 0;
@@ -54,6 +39,22 @@ fn main(params: RefereeParams, ...solution: Timeout | Move | Slash) -> Any {
                 [CREATE_COIN, curry_tree_hash(mod_hash, [tree_hash(next_params)]), amount],
                 [AGG_SIG_ME, mover, tree_hash(solution)],
             ]
+        }
+        Timeout as (mover_ph, waiter_ph) => {
+            let remainder = amount - share;
+            let waiter_conditions: List<Any> = if remainder != 0 {
+                [[CREATE_COIN, waiter_ph, remainder], [AGG_SIG_UNSAFE, waiter, "x" + waiter_ph]]
+            } else {
+                assert waiter_ph == nil;
+                nil
+            };
+            let (coin, signature): (Any, Any) = if share != 0 {
+                ([CREATE_COIN, mover_ph, share], [AGG_SIG_UNSAFE, mover, "x" + mover_ph])
+            } else {
+                assert mover_ph == nil;
+                ([1], [1])
+            };
+            [[ASSERT_HEIGHT_RELATIVE, timeout], coin, signature, ...waiter_conditions]
         }
         Slash as ((state, (program, _)), payout_ph) => {
             let hash = tree_hash(program);

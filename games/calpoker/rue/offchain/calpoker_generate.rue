@@ -366,7 +366,7 @@ export fn calpoker_bob_handler_e(
         bob_cards,
         bob_discards,
     ));
-    let alice_hand_value = onehandcalc(pull_out_cards(...[alice_selects, alice_final_cards]));
+    let alice_hand_value = onehandcalc(pull_out_cards(alice_selects, alice_final_cards));
     let (bob_hand_value, (bob_selects, _)) = unchecked_cast::<(Any, (Any, Any))>(handcalc(
         bob_final_cards,
     ));

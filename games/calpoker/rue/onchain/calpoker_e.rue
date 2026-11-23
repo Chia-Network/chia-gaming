@@ -20,7 +20,7 @@ export fn does_alice_claim_small_enough(
     mover_share: Any,
     amount: Any,
 ) -> Any {
-    let bob_hand_value = onehandcalc(pull_out_cards(...[bob_card_selections, bob_final_cards]));
+    let bob_hand_value = onehandcalc(pull_out_cards(bob_card_selections, bob_final_cards));
     let result = list_compare(alice_hand_value, bob_hand_value);
     integer(mover_share) >= integer(
         if !truthy(result) {
@@ -66,10 +66,7 @@ fn main(
             bob_cards,
             bob_discards,
         ));
-        let alice_hand_value = onehandcalc(pull_out_cards(...[
-            alice_card_selections,
-            alice_final_cards,
-        ]));
+        let alice_hand_value = onehandcalc(pull_out_cards(alice_card_selections, alice_final_cards));
         if (sha256(alice_salted_discards) == bytes(alice_commit))
             && (
                 !truthy(bob_card_selections)

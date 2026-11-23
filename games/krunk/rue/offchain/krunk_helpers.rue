@@ -1,8 +1,7 @@
 import common::*;
+import krunk_payout::krunk_payout_share;
 import std_len::*;
 import std_reverse::*;
-
-export const KRUNK_PAYOUTS: Any = [100, 100, 20, 5, 1];
 
 export fn expand_clue(clue_byte: Any) -> Any {
     reverse_list(expand_clue_inner(integer(clue_byte) + 128, 5))
@@ -13,18 +12,6 @@ export fn expand_clue_inner(val: Any, n: Any) -> Any {
         0
     } else {
         ((integer(val) % 3), expand_clue_inner(integer(val) / 3, integer(n) - 1))
-    }
-}
-
-export fn krunk_payout_share(base_unit: Any, n: Any) -> Any {
-    integer(base_unit) * integer(pair(drop(integer(n) - 1, KRUNK_PAYOUTS)).first)
-}
-
-export fn drop(n: Any, lst: Any) -> Any {
-    if integer(n) == 0 {
-        lst
-    } else {
-        drop(integer(n) - 1, pair(lst).rest)
     }
 }
 

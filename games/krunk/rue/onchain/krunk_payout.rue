@@ -1,0 +1,15 @@
+import common::*;
+
+const KRUNK_PAYOUTS: Any = [100, 100, 20, 5, 1];
+
+export fn krunk_payout_share(base_unit: Any, n: Any) -> Any {
+    integer(base_unit) * integer(pair(drop(integer(n) - 1, KRUNK_PAYOUTS)).first)
+}
+
+export fn drop(n: Any, lst: Any) -> Any {
+    if integer(n) == 0 {
+        lst
+    } else {
+        drop(integer(n) - 1, pair(lst).rest)
+    }
+}

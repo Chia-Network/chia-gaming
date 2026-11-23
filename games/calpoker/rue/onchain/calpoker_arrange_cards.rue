@@ -40,11 +40,11 @@ export fn pull_out_cards_inner(selections: Any, cards: Any) -> Any {
     }
 }
 
-export fn pull_out_cards(...args: Any) -> Any {
-    if integer(popcount(pair(args).first)) == 5 {
-        apply_program(pull_out_cards_inner, [...args])
+export fn pull_out_cards(selections: Any, cards: Any) -> Any {
+    if integer(popcount(selections)) == 5 {
+        pull_out_cards_inner(selections, cards)
     } else {
-        raise ["pull_out_cards got bad data:", args];
+        raise ["pull_out_cards got bad data:", [selections, cards]];
     }
 }
 
