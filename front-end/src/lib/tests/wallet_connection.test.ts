@@ -259,6 +259,22 @@ it('asks for confirmation before a full reset', async () => {
   }
 });
 
+it('requires confirmation for a reset requested from the recovery screen', async () => {
+  const hardReset = jest.spyOn(storageRepository, 'hardReset');
+  const application = createApplication();
+
+  await application.dispatch({ type: 'reset' });
+  expect(application.snapshot().confirmDialog).toMatchObject({
+    title: 'Erase local data?',
+    confirmLabel: 'Erase local data',
+  });
+  expect(hardReset).not.toHaveBeenCalled();
+
+  await application.dispatch({ type: 'cancel-confirmation' });
+  expect(application.snapshot().confirmDialog).toBeNull();
+  expect(hardReset).not.toHaveBeenCalled();
+});
+
 it.each([false, true])(
   'keeps pairing and wallet setup pending through completion, silent=%s',
   async (silent) => {

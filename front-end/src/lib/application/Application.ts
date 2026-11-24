@@ -177,6 +177,7 @@ export type ApplicationIntent =
   | {
       type:
         | 'reset'
+        | 'reload'
         | 'takeover'
         | 'close-tab'
         | 'wallet-cancel'
@@ -504,11 +505,11 @@ export function createApplication() {
       },
     });
   };
-  const requestFullReset = () => {
+  const requestFullReset = (fromRecovery = false) => {
     update('confirmDialog', {
-      title: 'Reset everything?',
+      title: fromRecovery ? 'Erase local data?' : 'Reset everything?',
       body: 'This deletes all data this app has saved in this browser, disconnects your wallet, and reloads. If a session is in progress you will lose the ability to resolve it and may lose the funds in it. This cannot be undone.',
-      confirmLabel: 'Full reset',
+      confirmLabel: fromRecovery ? 'Erase local data' : 'Full reset',
       onConfirm: () => {
         update('confirmDialog', null);
         return recovery.retryHardReset();
@@ -2628,7 +2629,11 @@ export function createApplication() {
   function applyIntent(intent: ApplicationIntent): void | Promise<void> {
     switch (intent.type) {
       case 'reset':
-        return recovery.retryHardReset();
+        return recovery.view.state.kind === 'loadFailed' && recovery.view.state.resetAlreadyApproved
+          ? recovery.retryHardReset()
+          : requestFullReset(true);
+      case 'reload':
+        return recovery.reload();
       case 'takeover':
         return recovery.takeOver();
       case 'close-tab':

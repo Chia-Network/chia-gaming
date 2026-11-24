@@ -647,16 +647,58 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
             Saved session unavailable
           </p>
           <p className="text-canvas-text text-sm text-center">
-            {bootState.loadError} Use Retry Hard Reset when the blockers are closed.
+            {bootState.loadError}
+            {bootState.resetAlreadyApproved && ' Retry Hard Reset when the blockers are closed.'}
           </p>
-          <button
-            onClick={() => dispatch({ type: 'reset' })}
-            disabled={startingOver}
-            className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
-          >
-            {startingOver ? 'Starting over\u2026' : 'Retry Hard Reset'}
-          </button>
+          {bootState.resetAlreadyApproved ? (
+            <button
+              onClick={() => dispatch({ type: 'reset' })}
+              disabled={startingOver}
+              className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+            >
+              {startingOver ? 'Starting over\u2026' : 'Retry Hard Reset'}
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => dispatch({ type: 'reload' })}
+                disabled={startingOver}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+              >
+                Reload
+              </button>
+              <button
+                onClick={() => dispatch({ type: 'reset' })}
+                disabled={startingOver}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-50"
+              >
+                Erase local data
+              </button>
+            </>
+          )}
         </div>
+        {confirmDialog && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+            <div className="flex w-[90%] max-w-96 flex-col items-center gap-3 rounded-lg border border-canvas-border bg-canvas-bg p-6">
+              <p className="text-canvas-text-contrast font-semibold text-lg">
+                {confirmDialog.title}
+              </p>
+              <p className="text-canvas-text text-sm text-center">{confirmDialog.body}</p>
+              <button
+                onClick={() => dispatch({ type: 'confirm' })}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover transition-colors"
+              >
+                {confirmDialog.confirmLabel ?? 'Proceed'}
+              </button>
+              <button
+                onClick={() => dispatch({ type: 'cancel-confirmation' })}
+                className="w-full px-4 py-2 rounded-md font-medium text-sm border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
