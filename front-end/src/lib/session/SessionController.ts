@@ -431,6 +431,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
         throw new Error('accepted session leaked a peer message to TypeScript');
       },
       peerUnavailable: peer_conn.onPeerUnavailable,
+      peerSetupEnded: peer_conn.onPeerSetupEnded,
       channelResult: (result) => this.processResult(result),
       error: (reason) => {
         this.receiveEvent({ type: 'error', error: reason });

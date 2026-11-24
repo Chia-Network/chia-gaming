@@ -1,6 +1,7 @@
 import WholeWasmObject from '../../../node-pkg/chia_gaming_wasm.js';
 import type { PeerHost } from '../../../../wasm/contract';
-import { decodePeerAppMessage } from '../../services/PeerSession';
+import { decodePeerAppMessage, encodePeerAppMessage } from '../../services/PeerSession';
+import { createPeerProtocol } from '../../services/peerProtocol';
 import { PeerConnectionResult } from '../../types/ChiaGaming';
 import { protocolIdForCatalog } from '../gameIdentities';
 import { SessionController } from '../session/SessionController';
@@ -10,6 +11,7 @@ import { fakeBlockchainInfo } from '../wallet/FakeBlockchainInterface';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 import { hasSavedSessionMarker } from '../session/saveCoordination';
+import { DEFAULT_SESSION_RECEIVE_POLICY } from '../session/receivePolicy';
 import { storageRepository } from '../session/storageRepository';
 import {
   LONG_WASM_TEST_TIMEOUT,
@@ -39,7 +41,9 @@ function saveLiveFields(fields: Record<string, unknown>): Promise<void> {
 function checkHandshakeFailure(
   sender: SessionController,
   receiver: SessionController,
-  offerSent: boolean,
+  recipientOfferSent: boolean,
+  ownOfferSent = false,
+  recipientFirstOfferOnly = false,
 ) {
   const failed = restoreTestSession(sender, sender.getPeerProtocol().serialize(), 'failed-peer');
   const other = restoreTestSession(
@@ -50,7 +54,14 @@ function checkHandshakeFailure(
   const notify = jest.fn();
   const host: PeerHost = { status: () => ({ available: true }), send: () => true, notify };
   try {
+    const unackedBefore = failed.snapshot().unackedMessages;
     const result = failed.wallet_callback_failed('wallet declined funding');
+    if (ownOfferSent) {
+      expect(result.disposition.kind).toBe('active');
+      expect(failed.snapshot().disposition).toBe('active');
+      expect(failed.snapshot().unackedMessages).toEqual(unackedBefore);
+      return;
+    }
     expect(result.disposition.kind).toBe('terminal');
     const rejection = failed.snapshot().unackedMessages.at(-1)!;
     expect(decodePeerAppMessage(Uint8Array.from(rejection.msg))).toEqual({
@@ -66,11 +77,112 @@ function checkHandshakeFailure(
       ),
     ).toBe(true);
     expect(other.snapshot().remoteNumber).toBe(rejection.msgno);
-    expect(other.snapshot().disposition).toBe(offerSent ? 'active' : 'inbound-reject');
-    expect(other.snapshot().inboundHandshakeFailed).toBe(!offerSent);
-    if (offerSent) {
-      expect(notify).toHaveBeenCalledWith({ type: 'peer-unavailable' });
-      expect(other.serialize()).toEqual(before);
+    expect(other.snapshot().disposition).toBe(recipientOfferSent ? 'active' : 'inbound-reject');
+    expect(other.snapshot().inboundHandshakeFailed).toBe(!recipientOfferSent);
+    if (recipientOfferSent) {
+      expect(notify).toHaveBeenCalledWith({ type: 'peer-setup-ended' });
+      expect(notify).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'channel-result',
+          result: expect.objectContaining({
+            events: expect.arrayContaining([
+              expect.objectContaining({
+                Notification: expect.objectContaining({
+                  ChannelStatus: expect.objectContaining({
+                    advisory: expect.stringContaining('other player reported a setup failure'),
+                  }),
+                }),
+              }),
+            ]),
+          }),
+        }),
+      );
+      expect(other.serialize()).not.toEqual(before);
+      const generic = restoreTestSession(
+        receiver,
+        receiver.getPeerProtocol().serialize(),
+        'generic-reject-peer',
+      );
+      try {
+        notify.mockClear();
+        generic.consumer_ready('channel', host);
+        expect(
+          generic.receive(
+            {
+              type: 'data',
+              msgno: rejection.msgno,
+              body: encodePeerAppMessage({ type: 'session_reject' }),
+            },
+            host,
+          ),
+        ).toBe(true);
+        expect(notify).toHaveBeenCalledWith({ type: 'peer-setup-ended' });
+        expect(notify).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: 'channel-result',
+            result: expect.objectContaining({
+              events: expect.arrayContaining([
+                expect.objectContaining({
+                  Notification: expect.objectContaining({
+                    ChannelStatus: expect.objectContaining({
+                      advisory: expect.stringContaining('other player ended setup'),
+                    }),
+                  }),
+                }),
+              ]),
+            }),
+          }),
+        );
+        const status = notify.mock.calls
+          .flatMap(([event]) =>
+            event.type === 'channel-result'
+              ? event.result.events.flatMap(
+                  (item: { Notification?: { ChannelStatus?: { advisory: string } } }) =>
+                    item.Notification?.ChannelStatus ? [item.Notification.ChannelStatus] : [],
+                )
+              : [],
+          )
+          .find((item: { advisory: string }) =>
+            item.advisory?.includes('other player ended setup'),
+          );
+        if (recipientFirstOfferOnly) {
+          expect(status?.advisory).toContain(
+            'The first offer was not combined into a channel transaction',
+          );
+        }
+        const countdown = status?.advisory.match(/block (\d+) \((\d+) blocks remaining\)/);
+        expect(countdown?.length).toBeGreaterThanOrEqual(3);
+        expect(BigInt(countdown![2])).toBeGreaterThan(0n);
+        const snapshot = generic.snapshot();
+        const restored = createPeerProtocol(
+          snapshot,
+          DEFAULT_SESSION_RECEIVE_POLICY,
+          'generic-reject-reloaded',
+        );
+        try {
+          restored.restore(snapshot, snapshot.terminalHandoff);
+          restored.restore_channel(generic.serialize());
+          const nextHeight = BigInt(countdown![1]) - BigInt(countdown![2]) + 1n;
+          const nextRemaining = BigInt(countdown![2]) - 1n;
+          const progress = restored.report_height(nextHeight);
+          expect(progress.disposition.kind).toBe('active');
+          expect(progress.events).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                Notification: expect.objectContaining({
+                  ChannelStatus: expect.objectContaining({
+                    advisory: expect.stringContaining(`${nextRemaining} blocks remaining`),
+                  }),
+                }),
+              }),
+            ]),
+          );
+        } finally {
+          restored.free();
+        }
+      } finally {
+        generic.free();
+      }
     }
   } finally {
     failed.free();
@@ -144,7 +256,7 @@ it(
       wasm_blob1.receiveAck(BigInt(sentA[0].msgno));
       await flushWrapperDrain([cradle1]);
       assertCradleRoundTrip('receiver-processed-a-sent-b', wasm_blob2);
-      checkHandshakeFailure(wasm_blob1, wasm_blob2, true);
+      checkHandshakeFailure(wasm_blob1, wasm_blob2, true, false, true);
       const receiverCoins = wasm_blob2.getCoinsOfInterest();
       assert.deepEqual(
         receiverCoins.map((coin) => coin.label),
@@ -164,7 +276,7 @@ it(
       wasm_blob2.receiveAck(BigInt(sentB[0].msgno));
       await flushWrapperDrain([cradle2]);
       assertCradleRoundTrip('initiator-processed-b-funded-sent-c', wasm_blob1);
-      checkHandshakeFailure(wasm_blob2, wasm_blob1, true);
+      checkHandshakeFailure(wasm_blob2, wasm_blob1, true, true);
       const initiatorCoins = wasm_blob1.getCoinsOfInterest();
       assert.deepEqual(
         initiatorCoins.map((coin) => coin.label),

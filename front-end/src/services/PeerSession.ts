@@ -67,6 +67,7 @@ export interface ReliableMessageConsumer {
   acknowledged?: (ack: bigint) => void;
   rejectionAcknowledged?: () => void;
   peerUnavailable?: () => void;
+  peerSetupEnded?: () => void;
   channelResult?: (result: WasmResult) => void;
   error?: (reason: string) => void;
   keepalive?: () => void;
@@ -111,6 +112,9 @@ export class ReliablePeerTransport {
             break;
           case 'peer-unavailable':
             this.consumer?.peerUnavailable?.();
+            break;
+          case 'peer-setup-ended':
+            this.consumer?.peerSetupEnded?.();
             break;
           case 'rejection-acknowledged':
             this.consumer?.rejectionAcknowledged?.();

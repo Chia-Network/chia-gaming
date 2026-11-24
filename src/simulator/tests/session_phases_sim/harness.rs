@@ -1233,12 +1233,9 @@ impl SimulationHarness {
                     }
                     GameSessionEvent::ReceiveError(error) => {
                         eprintln!("SIM receive error p{player_index}: {error}");
-                        deferred_notifications.push(GameNotification::ChannelStatus(
-                            ChannelStatusSnapshot {
-                                advisory: Some(format!("error receiving peer message: {error}")),
-                                ..ChannelStatusSnapshot::new(ChannelStatus::Failed)
-                            },
-                        ));
+                        // The session owns the channel status. A receive error
+                        // can leave funding pending while the coin is watched.
+                        self.local_uis[player_index].got_error = true;
                     }
                     GameSessionEvent::CoinSolutionRequest(coin) => {
                         coin_requests.push(coin.clone());
