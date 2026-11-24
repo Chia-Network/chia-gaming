@@ -39,9 +39,9 @@ use crate::test_support::peer::peer_harness::test_funs as peer_harness_tests;
 #[cfg(test)]
 use crate::tests::channel_state::test_funs as channel_handler_tests;
 #[cfg(test)]
-use crate::tests::chialisp::test_funs as chialisp_tests;
-#[cfg(test)]
 use crate::tests::referee_conditions::test_funs as referee_conditions_tests;
+#[cfg(test)]
+use crate::tests::rue::test_funs as rue_tests;
 #[cfg(test)]
 use crate::tests::standard_coin::test_funs as standard_coin_tests;
 
@@ -1037,7 +1037,7 @@ pub fn run_simulation_tests() {
     let ref_lists: Vec<Vec<(&str, &(dyn Fn() + Send + Sync))>> = vec![
         divmod_tests(),
         standard_coin_tests(),
-        chialisp_tests(),
+        rue_tests(),
         game_package_test_funs(),
         channel_handler_tests(),
         referee_conditions_tests(),

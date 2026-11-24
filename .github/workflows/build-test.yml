@@ -69,7 +69,7 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
       - name: Build hex files
-        run: tools/build-chialisp.sh
+        run: tools/build-rue.sh
       - name: clippy
         run: |
           set -x
@@ -93,12 +93,12 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
 
-      - name: Test chialisp build orchestration
-        run: tools/test-build-chialisp.sh
+      - name: Test Rue build orchestration
+        run: tools/test-build-rue.sh
 
       - name: Build hex files
         run: |
-          tools/build-chialisp.sh
+          tools/build-rue.sh
 
       - name: Run rust tests and simulator tests
         run: |
@@ -201,13 +201,13 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           components: "clippy, rustfmt"
       - name: Build hex files
-        run: tools/build-chialisp.sh
+        run: tools/build-rue.sh
       - name: Run for coverage
         run: |
           rustup component add llvm-tools-preview
           cargo install --locked --version "$GRCOV_VERSION" grcov
           export RUSTFLAGS="-Cinstrument-coverage"
-          export LLVM_PROFILE_FILE=$(pwd)/target/chialisp-%p-%m.profraw
+          export LLVM_PROFILE_FILE=$(pwd)/target/rust-%p-%m.profraw
           export CARGO_TARGET_DIR=$(pwd)/target
           cargo test --locked --lib --features sim-tests,sim-server -- --nocapture
           grcov . --binary-path target -s . --branch --ignore-not-existing --ignore='*/.cargo/*' --ignore='*/tests/*' -o rust_cov.info

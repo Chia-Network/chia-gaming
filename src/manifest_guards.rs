@@ -126,7 +126,7 @@ fn every_test_module_is_registered_and_run() {
 }
 
 /// Every static compiled CLVM path referenced from Rust source must exist on
-/// disk. The puzzle build (`tools/build-chialisp.sh`) runs before the test
+/// disk. The puzzle build (`tools/build-rue.sh`) runs before the test
 /// suite, so a missing file means the source `.rue` was never registered in
 /// `RUE_PROGRAMS` in `build.rs` (or was renamed/removed).
 #[test]

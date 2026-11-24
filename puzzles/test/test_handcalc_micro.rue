@@ -1,7 +1,7 @@
 import project::games::calpoker::arrange::{final_cards, pull_out_cards};
 import project::games::calpoker::handcalc::handcalc;
 
-// Runs one of calpoker's card helpers, chosen by `kind`, for `src/tests/chialisp.rs`. The test
+// Runs one of calpoker's card helpers, chosen by `kind`, for `src/tests/rue.rs`. The test
 // passes the arguments that the helper expects.
 fn main(kind: Bytes, ...arguments: Any) -> Any {
     if kind == "pull_out_cards" {

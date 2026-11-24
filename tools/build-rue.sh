@@ -6,12 +6,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-STATE_FILE=".build-chialisp.state"
+STATE_FILE=".build-rue.state"
 CURRENT_STATE=$(mktemp)
 trap 'rm -f "$CURRENT_STATE"' EXIT
 
 # GNU find errors if a named root is missing. Only search directories that exist.
-find_chialisp() {
+find_puzzle_files() {
     local dirs=()
     [ -d clsp ] && dirs+=(clsp)
     [ -d games ] && dirs+=(games)
@@ -22,14 +22,14 @@ find_chialisp() {
     find "${dirs[@]}" "$@"
 }
 
-clsp_sources() {
+puzzle_build_inputs() {
     {
-        find_chialisp -type f -name '*.rue' -print
-        find_chialisp -type f -name 'factory_args.clvm.bin' -print
+        find_puzzle_files -type f -name '*.rue' -print
+        find_puzzle_files -type f -name 'factory_args.clvm.bin' -print
         for file in \
             build.rs Cargo.toml Cargo.lock Rue.toml \
             games/registry.json \
-            tools/build-chialisp.sh
+            tools/build-rue.sh
         do
             [ -f "$file" ] && printf '%s\n' "$file"
         done
@@ -37,7 +37,7 @@ clsp_sources() {
 }
 
 clsp_hex() {
-    find_chialisp -type f -name '*.hex' -print | LC_ALL=C sort
+    find_puzzle_files -type f -name '*.hex' -print | LC_ALL=C sort
 }
 
 clsp_binary() {
@@ -50,7 +50,7 @@ clsp_binary() {
 clsp_debug() {
     {
         clsp_binary
-        find_chialisp -type f -name 'factory_prepared.clvm.bin' -print
+        find_puzzle_files -type f -name 'factory_prepared.clvm.bin' -print
     } | while IFS= read -r file; do
         debug="${file%.clvm.bin}.debug.clvm.bin"
         [ -f "$debug" ] && printf '%s\n' "$debug"
@@ -58,7 +58,7 @@ clsp_debug() {
 }
 
 prepared_packages() {
-    find_chialisp -type f -name 'factory_prepared.clvm.bin' -print | LC_ALL=C sort
+    find_puzzle_files -type f -name 'factory_prepared.clvm.bin' -print | LC_ALL=C sort
     [ -f games/package_manifest.json ] && printf '%s\n' games/package_manifest.json
 }
 
@@ -66,7 +66,7 @@ write_state() {
     local destination=$1
     {
         echo "version 4"
-        clsp_sources | while IFS= read -r file; do
+        puzzle_build_inputs | while IFS= read -r file; do
             printf 'input %s  %s\n' "$(git hash-object "$file")" "$file"
         done
         clsp_hex | while IFS= read -r file; do
@@ -84,13 +84,13 @@ write_state() {
     } > "$destination"
 }
 
-echo "=== Building chialisp (via cargo build.rs) ==="
+echo "=== Building Rue puzzles (via cargo build.rs) ==="
 
 write_state "$CURRENT_STATE"
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    echo "GitHub Actions detected; forcing Chialisp build"
+    echo "GitHub Actions detected; forcing Rue puzzle build"
 elif [ -f "$STATE_FILE" ] && cmp -s "$CURRENT_STATE" "$STATE_FILE"; then
-    echo "Chialisp is up to date (skipping build)"
+    echo "Rue puzzles are up to date (skipping build)"
     exit 0
 fi
 
@@ -98,31 +98,31 @@ SECONDS=0
 prepared_packages | while IFS= read -r file; do
     rm -f "$file"
 done
-find_chialisp -type f -name '*.clvm.bin' ! -name 'factory_args.clvm.bin' -delete
-find_chialisp -name '*.hex' -delete
+find_puzzle_files -type f -name '*.clvm.bin' ! -name 'factory_args.clvm.bin' -delete
+find_puzzle_files -name '*.hex' -delete
 
-# CHIALISP_COMPILE is deliberately unique. Cargo tracks it as a build-script
-# input, so this forces one Chialisp compile without deleting Cargo's package
-# cache. Ordinary cargo commands leave it unset and never compile Chialisp.
-CHIALISP_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --locked --features sim-server
+# RUE_COMPILE is deliberately unique. Cargo tracks it as a build-script
+# input, so this forces one Rue puzzle compile without deleting Cargo's package
+# cache. Ordinary cargo commands leave it unset and never compile Rue puzzles.
+RUE_COMPILE="$(date +%s)-$$-${RANDOM:-0}" cargo build --locked --features sim-server
 
-if [ -z "$(find_chialisp -type f -name '*.hex' -print)" ]; then
-    echo "Error: Chialisp build produced no .hex files" >&2
+if [ -z "$(find_puzzle_files -type f -name '*.hex' -print)" ]; then
+    echo "Error: Rue puzzle build produced no .hex files" >&2
     exit 1
 fi
 
 if [ -z "$(clsp_binary)" ]; then
-    echo "Error: Chialisp build produced no binary CLVM files" >&2
+    echo "Error: Rue puzzle build produced no binary CLVM files" >&2
     exit 1
 fi
 
 {
     clsp_binary
-    find_chialisp -type f -name 'factory_prepared.clvm.bin' -print
+    find_puzzle_files -type f -name 'factory_prepared.clvm.bin' -print
 } | while IFS= read -r file; do
     debug="${file%.clvm.bin}.debug.clvm.bin"
     if [ ! -f "$debug" ]; then
-        echo "Error: missing Chialisp debug sidecar $debug" >&2
+        echo "Error: missing Rue debug sidecar $debug" >&2
         exit 1
     fi
 done

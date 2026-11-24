@@ -9,11 +9,11 @@ REPO="$TEST_ROOT/repo"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG="$TEST_ROOT/cargo.log"
 mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$REPO/puzzles" "$FAKE_BIN"
-cp "$SCRIPT_DIR/build-chialisp.sh" "$REPO/tools/build-chialisp.sh"
+cp "$SCRIPT_DIR/build-rue.sh" "$REPO/tools/build-rue.sh"
 printf '%s\n' '{}' > "$REPO/games/registry.json"
 # Reject GNU-only find early-exit usage (unsupported on macOS BSD find).
-if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh" >/dev/null; then
-    echo "build-chialisp.sh must not use find's GNU-only early-exit primary" >&2
+if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-rue.sh" >/dev/null; then
+    echo "build-rue.sh must not use find's GNU-only early-exit primary" >&2
     exit 1
 fi
 printf '%s\n' 'fn main() {}' > "$REPO/puzzles/example.rue"
@@ -26,7 +26,7 @@ git -C "$REPO" init -q
 cat > "$FAKE_BIN/cargo" <<'EOF'
 #!/bin/bash
 set -e
-: "${CHIALISP_COMPILE:?build-chialisp.sh must explicitly request compilation}"
+: "${RUE_COMPILE:?build-rue.sh must explicitly request compilation}"
 echo compile >> "$FAKE_CARGO_LOG"
 git hash-object puzzles/example.rue > clsp/example.hex
 printf '\200' > clsp/example.clvm.bin
@@ -35,11 +35,11 @@ EOF
 chmod +x "$FAKE_BIN/cargo"
 
 run_build() {
-    (cd "$REPO" && GITHUB_ACTIONS= PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-chialisp.sh)
+    (cd "$REPO" && GITHUB_ACTIONS= PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-rue.sh)
 }
 
 run_github_actions_build() {
-    (cd "$REPO" && GITHUB_ACTIONS=true PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-chialisp.sh)
+    (cd "$REPO" && GITHUB_ACTIONS=true PATH="$FAKE_BIN:$PATH" FAKE_CARGO_LOG="$LOG" ./tools/build-rue.sh)
 }
 
 compile_count() {
@@ -55,7 +55,7 @@ assert_count() {
     local actual
     actual=$(compile_count)
     if [ "$actual" != "$expected" ]; then
-        echo "expected $expected Chialisp compile(s), got $actual" >&2
+        echo "expected $expected Rue puzzle build(s), got $actual" >&2
         exit 1
     fi
 }
@@ -117,4 +117,4 @@ printf '%s\n' '[compiler]' 'entrypoint = "puzzles"' > "$REPO/Rue.toml"
 run_build
 assert_count 12
 
-echo "build-chialisp regression tests passed"
+echo "build-rue regression tests passed"

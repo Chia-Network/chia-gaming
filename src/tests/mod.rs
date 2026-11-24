@@ -1,7 +1,7 @@
 pub mod channel_state;
-pub mod chialisp;
 pub mod constants;
 pub mod referee_conditions;
+pub mod rue;
 pub mod standard_coin;
 
 /// The include path for the Chialisp programs that the runtime's debug metadata tests compile.
