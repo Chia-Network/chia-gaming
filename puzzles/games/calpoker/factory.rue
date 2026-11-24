@@ -1,0 +1,63 @@
+import handlers::{AliceA, BobA, alice_handler_a, bob_handler_a};
+import project::games::types::*;
+import project::referee::types::Validator;
+
+// The arguments of the factory, which `clsp/handler_api.md` describes. The game parameters are the
+// amount that each player contributes.
+struct FactoryArgs {
+    proposer_reserve: Int,
+    accepter_reserve: Int,
+    requested_stake: Int,
+}
+
+// Creates a game of calpoker, where each player contributes the requested stake, and the proposer
+// is Alice, who moves first.
+fn main(...args: FactoryArgs) -> FactoryResult<Any, Int, Any, Any> {
+    let { proposer_reserve, accepter_reserve, requested_stake } = args;
+    assert requested_stake > 0;
+    assert deep_equal(args, [proposer_reserve, accepter_reserve, requested_stake]);
+
+    let proposer_short = requested_stake > proposer_reserve;
+    let accepter_short = requested_stake > accepter_reserve;
+    if proposer_short || accepter_short {
+        return FactoryShort { proposer_short, accepter_short };
+    }
+
+    FactorySuccess::<Any, Int, Any, Any> {
+        records: [GameRecord::<Any, Int, Any, Any> {
+            proposer_contribution: requested_stake,
+            accepter_contribution: requested_stake,
+            proposer_goes_first: true,
+            initial_move: nil,
+            initial_max_move_size: 32,
+            initial_state: nil,
+            initial_mover_share: 0,
+            my_turn_handler: my_turn_handler(alice_handler_a),
+            their_turn_handler: their_turn_handler(bob_handler_a),
+            validation_programs: [
+                validator(onchain::a::main),
+                validator(onchain::b::main),
+                validator(onchain::c::main),
+                validator(onchain::d::main),
+                validator(onchain::e::main),
+            ],
+            readable_parameters: requested_stake,
+        }],
+    }
+}
+
+// The framework passes each handler the state that the last validator produced, so the handlers are
+// typed by step, rather than with one state type for the whole game.
+fn my_turn_handler(handler: AliceA) -> MyTurnHandler<Any, Any, Any> {
+    unchecked_cast::<MyTurnHandler<Any, Any, Any>>(handler)
+}
+
+fn their_turn_handler(handler: BobA) -> TheirTurnHandler<Any, Any, Any> {
+    unchecked_cast::<TheirTurnHandler<Any, Any, Any>>(handler)
+}
+
+// The referee only runs each validator with the state that the one before it produced, so each
+// validator is typed with its own state and evidence.
+fn validator(program: Any) -> Validator {
+    unchecked_cast::<Validator>(program)
+}

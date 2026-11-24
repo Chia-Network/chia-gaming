@@ -204,7 +204,7 @@ display.
 
 
 ## Notes on validators vs handlers
-Validators (a.clsp through e.clsp) run both on-chain and off-chain.
+Validators (such as calpoker's `a.rue` through `e.rue`) run both on-chain and off-chain.
 Handlers run off-chain only to produce moves and interpret opponent moves.
 
 Handlers do not return or chain validators. The factory supplies a nonempty

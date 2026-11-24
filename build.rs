@@ -55,6 +55,15 @@ const RUE_PROGRAMS: &[(&str, &str)] = &[
         "puzzles/test/committed_args_validator.rue",
         "clsp/test/committed_args_validator",
     ),
+    (
+        "puzzles/test/test_make_cards.rue",
+        "clsp/test/test_make_cards",
+    ),
+    ("puzzles/test/test_mergein.rue", "clsp/test/test_mergein"),
+    (
+        "puzzles/test/test_handcalc_micro.rue",
+        "clsp/test/test_handcalc_micro",
+    ),
 ];
 
 fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {

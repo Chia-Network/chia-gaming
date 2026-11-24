@@ -1250,8 +1250,8 @@ configured by `Rue.toml`, and its sources are in `puzzles/`.
 | `puzzles/referee/types.rue`                         | Layouts the referee shares with validators and Rust            |
 | `puzzles/games/types.rue`                           | Factory and handler calling conventions                        |
 | `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
-| `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp`      | Calpoker validation programs (one per protocol step)           |
-| `games/calpoker/clsp/calpoker_generate.clinc`       | Off-chain calpoker handlers (Alice & Bob sides)                |
+| `puzzles/games/calpoker/onchain/{a,b,c,d,e}.rue`    | Calpoker validation programs (one per protocol step)           |
+| `puzzles/games/calpoker/handlers.rue`               | Off-chain calpoker handlers (Alice & Bob sides)                |
 | `games/spacepoker/clsp/onchain/*.clsp`              | Space Poker validation programs                                |
 | `games/spacepoker/clsp/spacepoker_generate.clinc`   | Off-chain Space Poker handlers                                 |
 | `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                                      |

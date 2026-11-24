@@ -1,0 +1,16 @@
+import project::referee::types::*;
+
+// Alice commits to her seed: the move is the hash of the seed, and becomes the state.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    _move: ValidatorMove<nil, Any>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<Bytes> | nil {
+    let seed_commit = params.turn.last_move.game_move;
+    if seed_commit.length == 32 {
+        validator_transition(const { tree_hash(b::main) }, seed_commit, 16)
+    } else {
+        nil
+    }
+}

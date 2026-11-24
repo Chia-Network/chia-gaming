@@ -492,7 +492,20 @@ mod tests {
                     matches!(frame.matched, FrameMatch::Exact | FrameMatch::Curried),
                     "{key} {kind}"
                 );
-                if kind != "validator" {
+                // Rue's debug metadata doesn't name the function of a program value, so a Rue
+                // package only checks that the program comes from its sources.
+                if root
+                    .join(format!("puzzles/games/{key}/factory.rue"))
+                    .is_file()
+                {
+                    let span = &metadata.spans[frame.source_span.expect("program source span")];
+                    assert!(
+                        metadata.files[span.file]
+                            .path
+                            .starts_with(&format!("puzzles/games/{key}/")),
+                        "{key} {kind}"
+                    );
+                } else if kind != "validator" {
                     assert!(
                         frame
                             .function

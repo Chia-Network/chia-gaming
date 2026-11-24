@@ -155,19 +155,17 @@ Most factories create one game. A factory may create several games that must
 be accepted or cancelled together; the code calls these an atomic group.
 Krunk is the reference example for that case.
 
-`factory.clsp` is normally only an exported entry point. California Poker uses:
-
-```clojure
-(include *standard-cl-26*)
-
-(import games.calpoker.clsp.calpoker_generate exposing calpoker_factory)
-
-(export calpoker_factory)
-```
-
+In a Chialisp package, `factory.clsp` is normally only an exported entry point.
 Module paths start at a repository include root, so package modules use names
 such as `games.<key>.clsp.<module>`. The factory implementation may live in a
 `.clinc` module so handlers and tests can import the same definitions.
+
+California Poker is written in Rue. Its factory is the `main` function of
+[`puzzles/games/calpoker/factory.rue`](puzzles/games/calpoker/factory.rue),
+which imports its handlers from
+[`handlers.rue`](puzzles/games/calpoker/handlers.rue) and its validators from
+[`onchain/`](puzzles/games/calpoker/onchain). The factory result, game record,
+and handler types are in [`puzzles/games/types.rue`](puzzles/games/types.rue).
 
 Success is `(1 records)`, where `records` is nonempty and every member has
 exactly these 11 fields:
@@ -194,48 +192,57 @@ The fields mean:
 | `readable_parameters`                            | Opaque per-member CLVM initialization value reported to the host.                                                                                      |
 
 The handler fields are program values, not names. Curry secrets or
-role-specific data into them when needed. California Poker validates a positive
-requested stake, reports reserve shortages without raising, and emits one
-record on success:
+role-specific data into them when needed (in Rue, capture them in a closure).
+California Poker validates a positive requested stake and the exact argument
+list, reports reserve shortages without raising, and emits one record on
+success:
 
-```clojure
-(import games.calpoker.clsp.onchain.a exposing (program as pokera))
-(import games.calpoker.clsp.onchain.b exposing (program as pokerb))
-(import games.calpoker.clsp.onchain.c exposing (program as pokerc))
-(import games.calpoker.clsp.onchain.d exposing (program as pokerd))
-(import games.calpoker.clsp.onchain.e exposing (program as pokere))
-(import std.li)
-(import std.assert)
-(import std.relops)
-(import std.deep_compare)
+```rue
+fn main(...args: FactoryArgs) -> FactoryResult<Any, Int, Any, Any> {
+    let { proposer_reserve, accepter_reserve, requested_stake } = args;
+    assert requested_stake > 0;
+    assert deep_equal(args, [proposer_reserve, accepter_reserve, requested_stake]);
 
-(defun calpoker_factory
-    (@ _args (proposer_reserve accepter_reserve requested_stake))
-    (assert
-        (> requested_stake 0)
-        (if (or (> requested_stake proposer_reserve)
-                (> requested_stake accepter_reserve))
-            (li 0
-                (> requested_stake proposer_reserve)
-                (> requested_stake accepter_reserve))
-            (li 1
-                (li
-                    (li requested_stake requested_stake 1
-                        0 32 0 0
-                        calpoker_alice_handler_a
-                        calpoker_bob_handler_a
-                        (li pokera pokerb pokerc pokerd pokere)
-                        requested_stake)))
-        )
-    )
-)
+    let proposer_short = requested_stake > proposer_reserve;
+    let accepter_short = requested_stake > accepter_reserve;
+    if proposer_short || accepter_short {
+        return FactoryShort { proposer_short, accepter_short };
+    }
+
+    FactorySuccess::<Any, Int, Any, Any> {
+        records: [GameRecord::<Any, Int, Any, Any> {
+            proposer_contribution: requested_stake,
+            accepter_contribution: requested_stake,
+            proposer_goes_first: true,
+            initial_move: nil,
+            initial_max_move_size: 32,
+            initial_state: nil,
+            initial_mover_share: 0,
+            my_turn_handler: my_turn_handler(alice_handler_a),
+            their_turn_handler: their_turn_handler(bob_handler_a),
+            validation_programs: [
+                validator(onchain::a::main),
+                validator(onchain::b::main),
+                validator(onchain::c::main),
+                validator(onchain::d::main),
+                validator(onchain::e::main),
+            ],
+            readable_parameters: requested_stake,
+        }],
+    }
+}
 ```
+
+Calpoker types each handler with the state, readable move, and next handler of
+its own step, so `my_turn_handler`, `their_turn_handler`, and `validator` cast
+the first handlers and the validators to the framework's untyped calling
+conventions.
 
 Validate the exact contribution and parameter shape in the factory. It is the
 semantic authority for proposal acceptance; a frontend form is only an earlier
 user-facing check. See the complete
-[`calpoker_generate.clinc`](games/calpoker/clsp/calpoker_generate.clinc) for
-handler currying and the remaining move sequence.
+[`handlers.rue`](puzzles/games/calpoker/handlers.rue) for the handler closures
+and the remaining move sequence.
 
 The proposer is mapped to A or B once by the proposal-wide
 `senderIsPlayerA`/`sender_is_player_a` value. Rust uses that mapping to project
@@ -302,11 +309,12 @@ on-chain actuation consumes that prepared output to apply/curry/sign/send; it
 never reruns your handler.
 Post-application redo caching is a separate protocol mechanism.
 
-Import validators using their compiled `program` export, as above. Factory field
-9 contains the proper nonempty list of those program values; handlers do not
-return validators. Handler functions are also program values; use
-`(curry handler captured_value...)` when the next phase needs a secret or other
-role-specific data.
+In Chialisp, import validators using their compiled `program` export; in Rue,
+refer to each validator's exported `main`, as Calpoker's factory does. Factory
+field 9 contains the proper nonempty list of those program values; handlers do
+not return validators. Handler functions are also program values; use
+`(curry handler captured_value...)` in Chialisp, or a closure in Rue, when the
+next phase needs a secret or other role-specific data.
 
 A their-turn handler returns:
 
@@ -323,25 +331,49 @@ message parser `(message state amount)`, whose result becomes
 `message-readable`.
 
 California Poker's first pair illustrates both entry directions. The starting
-player creates a commitment and curries its secret into a later handler. The
-waiting player's initial their-turn handler interprets that commitment and
-returns its first my-turn handler:
+player creates a commitment and captures its secret in the closure for a later
+handler. The waiting player's initial their-turn handler interprets that
+commitment and returns its first my-turn handler:
 
-```clojure
-(defun calpoker_alice_handler_a (local_move amount state split entropy)
-  (assign
-    preimage (substr entropy 0 16)
-    (list "calpoker_alice_handler_a"
-          (sha256 preimage)
-          0
-          (curry calpoker_alice_handler_b preimage))))
+```rue
+export fn alice_handler_a(
+    _local_move: Any,
+    _amount: Int,
+    _state: nil,
+    _mover_share: Int,
+    entropy: Bytes32,
+) -> MyMove<AliceB, nil> {
+    let alice_seed = entropy[..16];
+    MyMove::<AliceB, nil> {
+        label: "calpoker_alice_handler_a",
+        game_move: sha256(alice_seed),
+        mover_share: 0,
+        their_turn_handler: fn(
+            amount,
+            _pre_state,
+            _state,
+            move,
+            _program_hash,
+            _mover_share,
+        ) => alice_handler_b(alice_seed, amount, move),
+        message_parser: nil,
+    }
+}
 
-(defun calpoker_bob_handler_a
-    (amount pre_state state move validation_program_hash split)
-  (list 0 0 calpoker_bob_handler_b))
+export fn bob_handler_a(
+    _amount: Int,
+    _pre_state: nil,
+    _state: Bytes,
+    _move: Bytes,
+    _validation_program_hash: Bytes32,
+    _mover_share: Int,
+) -> TheirMove<nil, [BobB]> {
+    TheirMove::<nil, [BobB]> { readable: nil, evidence: nil, next: [bob_handler_b] }
+}
 ```
 
-The zero readables are CLVM nil and the empty evidence list. Your own handlers
+`MyMove` and `TheirMove` are the return lists above, and the nil readable and
+evidence are CLVM nil and the empty evidence list. Your own handlers
 may expose meaningful readables immediately; the important structure is that
 the two factory entry handlers meet at the same validated state transition.
 
@@ -382,6 +414,11 @@ Import `referee.onchain.shapes` and return a fixed result tree for a valid move:
 (validator-result next_validation_program_hash new_state next_max_move_size conditions)
 ```
 
+In Rue, these are the `RefereeParameters`, `ValidatorMove`, and
+`ValidatorResult` structs in
+[`puzzles/referee/types.rue`](puzzles/referee/types.rue), and
+`validator_transition` returns a result without extra conditions.
+
 Return nil when the move is illegal for that evidence and should slash.
 `(validator-transition 0 0 0)` means the next validator hash is nil (no further moves). Check
 move shape before operations such as `substr`. A nil-evidence run that
@@ -396,23 +433,30 @@ slash. A validator may reject unusable evidence by raising or may treat it like
 nil and return the valid payload. Evidence processing that can raise must occur
 only after the move itself is known to be valid. Evidence must never
 accidentally return nil and slash a valid move. California Poker's first
-validator is a compact example:
+validator is a compact example. It commits to the next validator by the tree
+hash of its `main` function, which the compiler computes:
 
-```clojure
-(export (mod_hash
-    #(MOVER_PUBKEY WAITER_PUBKEY TIMEOUT AMOUNT MOD_HASH NONCE
-       MOVE MAX_MOVE_SIZE VALIDATION_INFO_HASH MOVER_SHARE PREVIOUS_VALIDATION_INFO_HASH)
-    (previous_state previous_validation_program . evidence) . unused_payout)
-  (if (= (strlen MOVE) 32)
-      (list bhash MOVE 16)
-      0))
+```rue
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    _move: ValidatorMove<nil, Any>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<Bytes> | nil {
+    let seed_commit = params.turn.last_move.game_move;
+    if seed_commit.length == 32 {
+        validator_transition(const { tree_hash(b::main) }, seed_commit, 16)
+    } else {
+        nil
+    }
+}
 ```
 
 The factory supplies `initial_state` to the first local handler and selects the
 first registry validator as current for that move. Each successful nil-evidence
 validator run returns the tree hash selecting the next registry program. See
 California Poker's
-[`onchain/`](games/calpoker/clsp/onchain) directory for the complete validator
+[`onchain/`](puzzles/games/calpoker/onchain) directory for the complete validator
 registry and sequence, [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for handler flow,
 nil-move, evidence, and conditional-slash examples,
 [`clsp/handler_api.md`](clsp/handler_api.md) for the full return contracts, and
@@ -420,15 +464,15 @@ nil-move, evidence, and conditional-slash examples,
 
 ## Step 3: Add the factory probe
 
-Add `games/<key>/clsp/factory_probe.clsp`, a no-argument Chialisp program that
-returns one representative valid complete factory argument list: contributions
-for the proposer and accepter reserves followed by the game parameters.
-Calpoker's current probe is:
+Add `games/<key>/clsp/factory_probe.clsp` (or `puzzles/games/<key>/factory_probe.rue`
+in a Rue package), a no-argument program that returns one representative valid
+complete factory argument list: contributions for the proposer and accepter
+reserves followed by the game parameters. Calpoker's current probe is:
 
-```clojure
-(include *standard-cl-26*)
-
-(export () (list 1 1 1))
+```rue
+fn main() -> List<Int> {
+    [1, 1, 1]
+}
 ```
 
 Krunk uses `(list 100 100 100)`, while Space Poker uses

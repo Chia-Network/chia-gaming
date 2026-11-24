@@ -1,0 +1,60 @@
+import arrange::deep_compare;
+import hand::onehandcalc;
+
+// The best hand of five of the cards, and the indices of its cards in ascending order.
+export struct ScoredHand {
+    hand: List<Int>,
+    indices: List<Int>,
+}
+
+export fn handcalc(cards: List<Int>) -> ScoredHand {
+    let scored = for { cards, indices } in choose_hands(0, cards) {
+        ScoredHand { hand: onehandcalc(cards), indices }
+    };
+    assert scored is (ScoredHand, List<ScoredHand>);
+    best(scored.first, scored.rest)
+}
+
+// The first of the hands that no later hand is better than.
+fn best(best_so_far: ScoredHand, hands: List<ScoredHand>) -> ScoredHand {
+    if hands is nil {
+        best_so_far
+    } else if deep_compare(best_so_far, hands.first) == -1 {
+        best(hands.first, hands.rest)
+    } else {
+        best(best_so_far, hands.rest)
+    }
+}
+
+// Some of the cards from an index onward, with their indices.
+struct Selection {
+    cards: List<Int>,
+    indices: List<Int>,
+    count: Int,
+}
+
+// Every selection of five cards from the index onward, along with the smaller selections that can
+// still grow to five with the cards before the index.
+fn choose_hands(index: Int, cards: List<Int>) -> List<Selection> {
+    if cards is nil {
+        return [Selection { cards: nil, indices: nil, count: 0 }];
+    }
+
+    let card = cards.first;
+    for selection in choose_hands(index + 1, cards.rest) fold selections: List<Selection> = nil {
+        let { cards, indices, count } = selection;
+        let rest = inline if count + index > 4 { [selection, ...selections] } else { selections };
+        if count < 5 {
+            [
+                Selection {
+                    cards: [card, ...cards],
+                    indices: [index, ...indices],
+                    count: count + 1,
+                },
+                ...rest,
+            ]
+        } else {
+            rest
+        }
+    }
+}

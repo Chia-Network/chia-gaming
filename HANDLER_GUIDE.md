@@ -40,10 +40,11 @@ Games are driven by two cooperating systems:
 
 - **Handlers** run off-chain on each player's machine. They produce moves,
   interpret the opponent's moves, and decide what to display in the UI. They
-  are chialisp programs, curried with game-specific state.
+  are CLVM programs (written in Chialisp or Rue), curried with game-specific
+  state.
 
-- **Validators** enforce the rules of each move. They are chialisp programs,
-  one per protocol step (e.g. `a.clsp` through `e.clsp` for calpoker). They
+- **Validators** enforce the rules of each move. They are CLVM programs, one
+  per protocol step (e.g. `a.rue` through `e.rue` for calpoker). They
   run both off-chain (to check a move before sending it) and on-chain (inside
   the referee puzzle, for slash enforcement during disputes). Package layout
   and registration are in `GAME_WRITING_GUIDE.md`.
@@ -386,16 +387,16 @@ state, and maximum move size.
 On-chain, validator hashes describe the protocol sequence:
 
 ```
-a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> (terminal)
+a -> b -> c -> d -> e -> (terminal)
 ```
 
 Off-chain, there are two parallel handler progressions (one per player):
 
 ```
 alice: alice_handler_0 -> move 0
-bob:   move 0 -> a.clsp with initial_state
+bob:   move 0 -> a with initial_state
 bob:   bob_handler_0 -> move 1
-alice: move 1 -> b.clsp
+alice: move 1 -> b
 ...
 ```
 
@@ -867,7 +868,7 @@ Alice my-turn handler a  ──>  Bob their-turn handler a
 ### Validator Sequence
 
 ```
-a.clsp ──> b.clsp ──> c.clsp ──> d.clsp ──> e.clsp ──> (nil, game over)
+a.rue ──> b.rue ──> c.rue ──> d.rue ──> e.rue ──> (nil, game over)
 ```
 
 All five programs are present in the factory registry. The first is initially
@@ -877,20 +878,22 @@ current; each validator returns the tree hash selecting the next one.
 
 | Step | Mover | Handler | Validator | Move |
 |------|-------|---------|-----------|------|
-| a | Alice | `calpoker_alice_handler_a` | `a.clsp` | `sha256(preimage)` |
-| b | Bob | `calpoker_bob_handler_b` | `b.clsp` | `bob_seed` |
-| c | Alice | `calpoker_alice_handler_c` | `c.clsp` | `preimage \|\| sha256(salt\|\|discards)` |
-| d | Bob | `calpoker_bob_handler_d` | `d.clsp` | `bob_discards` |
-| e | Alice | `calpoker_alice_handler_e` | `e.clsp` | `salt\|\|discards\|\|selects` |
+| a | Alice | `alice_handler_a` | `a.rue` | `sha256(preimage)` |
+| b | Bob | `bob_handler_b` | `b.rue` | `bob_seed` |
+| c | Alice | `alice_handler_c` | `c.rue` | `preimage \|\| sha256(salt\|\|discards)` |
+| d | Bob | `bob_handler_d` | `d.rue` | `bob_discards` |
+| e | Alice | `alice_handler_e` | `e.rue` | `salt\|\|discards\|\|selects` |
 
 After step e, Alice's my-turn handler returns nil for
-`their_turn_handler`, and `e.clsp` returns a nil next validator hash. Their
+`their_turn_handler`, and `e.rue` returns a nil next validator hash. Their
 agreement signals that the game is over.
 
 ### Key Code
 
-- Handlers: `games/calpoker/clsp/calpoker_generate.clinc`
-- Validators: `games/calpoker/clsp/onchain/a.clsp` through `e.clsp`
+- Factory: `puzzles/games/calpoker/factory.rue`
+- Handlers: `puzzles/games/calpoker/handlers.rue`, with the card helpers in
+  the modules beside it
+- Validators: `puzzles/games/calpoker/onchain/a.rue` through `e.rue`
 - Rust-side handler invocation: `src/channel_state/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`

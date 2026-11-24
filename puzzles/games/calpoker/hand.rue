@@ -1,0 +1,165 @@
+// Evaluates the best poker hand of five cards, as a list of numbers that compares with
+// `compare_hands`. The hands are:
+//
+// - Straight flush: `(5 high_card)`
+// - Four of a kind: `(4 1 quad_rank kicker)`
+// - Full house: `(3 2 set_rank pair_rank)`
+// - Flush: `(3 1 3 high_card first_kicker second_kicker third_kicker fourth_kicker)`
+// - Straight: `(3 1 2 high_card)`
+// - Three of a kind: `(3 1 1 set_rank first_kicker second_kicker)`
+// - Two pair: `(2 2 1 high_pair_rank low_pair_rank kicker)`
+// - Pair: `(2 1 1 1 pair_rank first_kicker second_kicker third_kicker)`
+// - High card: `(1 1 1 1 1 high_card first_kicker second_kicker third_kicker fourth_kicker)`
+export fn onehandcalc(cards: List<Int>) -> List<Int> {
+    let cards = for card in cards { to_card(card) };
+
+    // Only the first five cards count.
+    assert cards is [Card, Card, Card, Card, Card, ...List<Card>];
+    let [card1, card2, card3, card4, card5, ..._] = cards;
+
+    let ranks = atomsort([card1.rank, card2.rank, card3.rank, card4.rank, card5.rank]);
+    let groups = atomsort(group_by_count(ranks));
+
+    // The counts of the groups from the largest, followed by their ranks.
+    let hand = [...for group in groups { group >>> 4 }, ...for group in groups { group & 15 }];
+    assert hand is [Int, Int, ...List<Int>];
+    let [first_count, second_count, ..._] = hand;
+
+    let flush = (card1.suit == card2.suit)
+        & (card1.suit == card3.suit)
+        & (card1.suit == card4.suit)
+        & (card1.suit == card5.suit);
+    let straight = straight_high(hand);
+
+    if straight != 0 {
+        if flush {
+            [5, straight]
+        } else if (first_count == 4) | ((first_count == 3) & (second_count == 2)) {
+            hand
+        } else {
+            [3, 1, 2, straight]
+        }
+    } else if flush & ((first_count < 3) | ((first_count == 3) & (second_count < 2))) {
+        assert hand is [Int, Int, Int, Int, Int, ...List<Int>];
+        let [_, _, _, _, _, ...flush_ranks] = hand;
+        [3, 1, 3, ...flush_ranks]
+    } else {
+        hand
+    }
+}
+
+// A card's rank, from 2 to 14 (an ace), and its suit, from 1 to 4.
+struct Card {
+    rank: Int,
+    ...suit: Int,
+}
+
+fn to_card(card: Int) -> Card {
+    let (rank, suit) = divmod(card, 4);
+    Card { rank: rank + 2, suit: suit + 1 }
+}
+
+// The high card of a straight, or 0 if the hand isn't one. A hand of five different ranks is
+// `(1 1 1 1 1 rank1 rank2 rank3 rank4 rank5)`, in descending order, and an ace can be low.
+fn straight_high(hand: [Int, ...List<Int>]) -> Int {
+    if hand.first != 1 {
+        return 0;
+    }
+
+    assert hand is [Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, ...List<Int>];
+    let [_, _, _, _, _, rank1, rank2, _, _, rank5, ..._] = hand;
+
+    if rank5 == rank1 - 4 {
+        rank1
+    } else if rank1 == 14 {
+        inline if rank2 == 5 { 5 } else { 0 }
+    } else {
+        0
+    }
+}
+
+// Groups equal ranks, which are in descending order. Each group is its count shifted left by four
+// bits, combined with its rank.
+fn group_by_count(ranks: List<Int>) -> List<Int> {
+    assert ranks is [Int, ...List<Int>];
+    group_ranks(ranks, ranks.first, 0)
+}
+
+fn group_ranks(ranks: List<Int>, last: Int, count: Int) -> List<Int> {
+    if ranks is nil {
+        [(count << 4) | last]
+    } else if ranks.first == last {
+        group_ranks(ranks.rest, last, count + 1)
+    } else {
+        [(count << 4) | last, ...group_ranks(ranks.rest, ranks.first, 1)]
+    }
+}
+
+// Sorts numbers into descending order, which is optimized for short lists.
+export fn atomsort(list: List<Int>) -> List<Int> {
+    if list is nil {
+        return nil;
+    }
+
+    let rest = list.rest;
+    if rest is nil {
+        return list;
+    }
+
+    let first = list.first;
+    let second = rest.first;
+    let rest = rest.rest;
+    if rest is nil {
+        return if first > second {
+            list
+        } else {
+            [second, first]
+        };
+    }
+
+    let third = rest.first;
+    let sorted = if first > second {
+        if second > third {
+            [first, second, third]
+        } else if first > third {
+            [first, third, second]
+        } else {
+            [third, first, second]
+        }
+    } else if first > third {
+        [second, first, third]
+    } else if second > third {
+        [second, third, first]
+    } else {
+        [third, second, first]
+    };
+
+    merge(sorted, atomsort(rest.rest))
+}
+
+// Merges two lists that are in descending order.
+fn merge(a: List<Int>, b: List<Int>) -> List<Int> {
+    if a is nil {
+        b
+    } else if b is nil {
+        a
+    } else if a.first > b.first {
+        [a.first, ...merge(a.rest, b)]
+    } else {
+        [b.first, ...merge(a, b.rest)]
+    }
+}
+
+// Compares two hands, returning 1 if the first is better, -1 if the second is, and 0 if they tie.
+export fn compare_hands(a: List<Int>, b: List<Int>) -> Int {
+    assert a is [Int, ...List<Int>];
+    assert b is [Int, ...List<Int>];
+
+    if a.first != b.first {
+        inline if a.first > b.first { 1 } else { -1 }
+    } else if a.rest is nil {
+        0
+    } else {
+        compare_hands(a.rest, b.rest)
+    }
+}

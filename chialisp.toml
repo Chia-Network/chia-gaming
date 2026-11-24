@@ -1,8 +1,5 @@
 [compile]
-handcalc-micro = "clsp/test/test_handcalc_micro.clsp"
-make-cards = "clsp/test/test_make_cards.clsp"
 deep-compare = "clsp/test/deep_compare.clsp"
-test-mergein = "clsp/test/test_mergein.clsp"
 test-shapes = "clsp/test/test_shapes.clsp"
 test-make = "clsp/test/test_make.clsp"
 test-space-hand-eval = "clsp/test/test_space_hand_eval.clsp"

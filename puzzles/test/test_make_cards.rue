@@ -1,0 +1,7 @@
+import project::games::calpoker::cards::make_cards;
+import project::games::calpoker::types::Hands;
+
+// Deals calpoker's cards from the randomness, for `src/tests/chialisp.rs`.
+fn main(randomness: Int) -> Hands {
+    make_cards(randomness)
+}

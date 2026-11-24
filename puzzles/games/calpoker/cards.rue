@@ -1,0 +1,70 @@
+import types::Hands;
+
+// Deals eight cards to each player from the randomness, each hand in ascending order.
+export fn make_cards(randomness: Int) -> Hands {
+    let alice = choose(52, 8, randomness);
+    let bob = choose(52 - 8, 8, alice.randomness);
+    Hands { alice_cards: alice.cards, bob_cards: mergeover(alice.cards, bob.cards, 0) }
+}
+
+// Some cards, and the randomness that's left after choosing them.
+struct Draw {
+    cards: List<Int>,
+    ...randomness: Int,
+}
+
+// Chooses `count` of the numbers below `limit`, in ascending order.
+fn choose(limit: Int, count: Int, randomness: Int) -> Draw {
+    if count == 1 {
+        let (randomness, card) = divmod(randomness, limit);
+        return Draw { cards: [card], randomness };
+    }
+
+    let half = count >>> 1;
+    let first = choose(limit, half, randomness);
+    let second = choose(limit - half, count - half, first.randomness);
+    Draw { cards: mergein(first.cards, second.cards, 0), randomness: second.randomness }
+}
+
+// Like `mergein`, but only returns the items of `inner`, each shifted up past the items of
+// `outer` before it.
+fn mergeover(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
+    if inner is nil {
+        return nil;
+    }
+
+    let first = inner.first + offset;
+    if outer is nil {
+        [first, ...mergeover(nil, inner.rest, offset)]
+    } else if outer.first <= first {
+        mergeover(outer.rest, inner, offset + 1)
+    } else {
+        [first, ...mergeover(outer, inner.rest, offset)]
+    }
+}
+
+// Merges the ascending items of `inner` into `outer`, shifting each item of `inner` up by the
+// number of items of `outer` before it, as well as by `offset`.
+export fn mergein(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
+    if inner is nil {
+        return outer;
+    }
+
+    let first = inner.first + offset;
+    if outer is nil {
+        [first, ...mergein(nil, inner.rest, offset)]
+    } else if outer.first <= first {
+        [outer.first, ...mergein(outer.rest, inner, offset + 1)]
+    } else {
+        [first, ...mergein(outer, inner.rest, offset)]
+    }
+}
+
+// The number of set bits.
+export fn popcount(mask: Int) -> Int {
+    if mask == 0 {
+        0
+    } else {
+        (mask & 1) + popcount(mask >>> 1)
+    }
+}
