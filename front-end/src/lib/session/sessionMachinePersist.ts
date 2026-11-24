@@ -115,11 +115,14 @@ export function buildDurableApplicationState(
     throw new Error('Cannot persist an initialized session without a reward puzzle hash');
   }
   const rewardPuzzleHash = wasm.rewardPuzzleHash;
-  const presentation = snapshotFromSessionModel(model, {
-    channelStatus: wasm.channelStatus ? channelStatusPayloadFromModel(authoritativeStatus) : null,
-    waitingStateEnteredAt: wasm.waitingStateEnteredAt,
-    cleanShutdownGraceStartedAt: wasm.cleanShutdownGraceStartedAt,
-  });
+  const presentation = {
+    ...snapshotFromSessionModel(model, {
+      channelStatus: wasm.channelStatus ? channelStatusPayloadFromModel(authoritativeStatus) : null,
+      waitingStateEnteredAt: wasm.waitingStateEnteredAt,
+      cleanShutdownGraceStartedAt: wasm.cleanShutdownGraceStartedAt,
+    }),
+    ...(wasm.fundingRefusal ? { fundingRefusal: structuredClone(wasm.fundingRefusal) } : {}),
+  };
   const walletProviderScope = capture.walletProviderScope;
   const currentPairing =
     root.session?.phase === 'pre-handshake' || root.session?.phase === 'live'

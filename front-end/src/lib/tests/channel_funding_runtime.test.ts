@@ -270,6 +270,86 @@ describe('durable channel funding record', () => {
     }
   });
 
+  it('restores a refused funding request after reload so Retry still funds the channel', async () => {
+    const refuse = jest
+      .fn()
+      .mockResolvedValue({ kind: 'failure', reason: 'Operation cancelled by user' });
+    const first = setup(jest.fn(), bestEffortWalletRpc(refuse));
+    first.cradle.wallet_callback_failed = jest.fn(() => wasmResult());
+    let saved;
+    try {
+      commitRuntime(first.controller, new ControlledRuntime());
+      first.controller.setWallet(first.blockchain);
+      const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+      first.controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      await first.controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+      saved = first.controller.getWasmFields()?.fundingRefusal;
+      expect(saved).toEqual({ request, reason: 'Operation cancelled by user' });
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
+    } finally {
+      first.controller.cleanup();
+      first.blockchain.detachProvider();
+    }
+
+    // Reload: Rust does not reissue NeedCoinSpend, so only the save brings it back.
+    const begin = jest.fn().mockResolvedValue({
+      kind: 'created-reserved',
+      material: { kind: 'offer', offer: 'offer1afterreload' },
+      tradeId: 'after-reload-trade',
+    });
+    const blockchain = new BlockchainPoller(
+      {
+        ...mockRpc,
+        spend: jest.fn(),
+        ...bestEffortWalletRpc(begin),
+      } as InternalBlockchainInterface,
+      60_000,
+    );
+    blockchain.refreshProviderReadiness();
+    const controller = new SessionController(
+      blockchain,
+      'submission-handoff',
+      100n,
+      100n,
+      makePeerConn([], []),
+    );
+    const cradle = makeMockCradle();
+    cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+    cradle.wallet_callback_failed = jest.fn(() => wasmResult());
+    try {
+      controller.rewardPuzzleHash = '11'.repeat(32);
+      controller.loadWasm(mockWasmConnection);
+      controller.restoreFundingRefusal(saved);
+      controller.setGameSession(cradle);
+      commitRuntime(controller, new ControlledRuntime());
+      controller.setWallet(blockchain);
+      await controller.flushPendingWork();
+
+      expect(controller.getState().model.channel.queue).toEqual([
+        expect.objectContaining({
+          retry: 'channel-funding',
+          message: expect.stringContaining('Operation cancelled by user'),
+        }),
+      ]);
+      expect(begin).not.toHaveBeenCalled();
+      expect(controller.getWasmFields()?.fundingRefusal).toEqual(saved);
+
+      controller.frontend.dispatch({ type: 'retry-channel' });
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+      await controller.flushPendingWork();
+
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1afterreload');
+      expect(cradle.wallet_callback_failed).not.toHaveBeenCalled();
+      expect(controller.getWasmFields()?.fundingRefusal).toBeUndefined();
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+    }
+  });
+
   it('fails the funding request when the user dismisses the refused-funding notice', async () => {
     const begin = jest
       .fn()

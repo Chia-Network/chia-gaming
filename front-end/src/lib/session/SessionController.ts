@@ -70,7 +70,12 @@ import { StorageAuthorityLostError, StorageAuthorityRequiredError } from './inde
 import { validateChannelStatus } from './persistencePayloads';
 import { providerScopeKey, type ProviderOwner } from './providerKeys';
 import { DEFAULT_SESSION_RECEIVE_POLICY, type ReadonlySessionReceivePolicy } from './receivePolicy';
-import { type SessionTerminalHandoffSave, type SessionTransportSave } from './saveEnvelope';
+import {
+  MAX_FUNDING_REFUSAL_REASON_LENGTH,
+  type SessionFundingRefusalSave,
+  type SessionTerminalHandoffSave,
+  type SessionTransportSave,
+} from './saveEnvelope';
 import { storageRepository } from './storageRepository';
 import { SubmissionPump } from './submissionPump';
 import { type SessionModel, type RegisteredGameType } from './types';
@@ -132,6 +137,7 @@ export interface WasmFields {
   opponentAlias: string | undefined;
   waitingStateEnteredAt: bigint | null;
   cleanShutdownGraceStartedAt: bigint | null;
+  fundingRefusal?: SessionFundingRefusalSave;
 }
 
 function clvmToBytes(value: Program | null): Uint8Array {
@@ -297,6 +303,8 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     materialReady?: boolean;
     /** The wallet refused this request; the user chooses to retry or give up. */
     failure?: string;
+    /** The Retry / Dismiss notification for `failure` is queued. */
+    failureNotified?: boolean;
   } | null = null;
   private fundingInFlight: NonNullable<SessionController['pendingFunding']> | null = null;
   private fundingEffectSequence = 0;
@@ -534,6 +542,11 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   }
 
   private scheduleFunding(): void {
+    const refused = this.pendingFunding;
+    if (refused?.failure !== undefined) {
+      if (this.executionActive && !this.retired) this.notifyFundingRefusal(refused);
+      return;
+    }
     if (
       !this.fundingRuntime ||
       !this.executionActive ||
@@ -662,14 +675,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
         )
           return;
         // Keep the request open: the user can retry it or dismiss to give up.
-        pending.failure = outcome.reason;
+        // The refusal is saved so a reload restores the same decision.
+        pending.failure = outcome.reason.slice(0, MAX_FUNDING_REFUSAL_REASON_LENGTH);
         log(`[wasm] ${outcome.reason}`);
-        this.dispatch({
-          type: 'enqueue-error',
-          kind: 'infra-error',
-          message: `The wallet did not fund the channel: ${outcome.reason}. Retry to ask the wallet again, or dismiss to cancel this session.`,
-          retry: 'channel-funding',
-        });
+        this.notifyFundingRefusal(pending);
         this.requestCommit();
       });
       return;
@@ -758,10 +767,34 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     });
   }
 
+  private notifyFundingRefusal(pending: NonNullable<SessionController['pendingFunding']>): void {
+    if (pending.failure === undefined || pending.failureNotified) return;
+    pending.failureNotified = true;
+    this.dispatch({
+      type: 'enqueue-error',
+      kind: 'infra-error',
+      message: `The wallet did not fund the channel: ${pending.failure}. Retry to ask the wallet again, or dismiss to cancel this session.`,
+      retry: 'channel-funding',
+    });
+  }
+
+  /** Restore a saved refusal; Rust does not reissue the funding request. */
+  restoreFundingRefusal(refusal: SessionFundingRefusalSave | undefined): void {
+    if (!refusal) return;
+    this.pendingFunding = {
+      owner: null,
+      purpose: { kind: 'funding', operationId: fundingRequestKey(refusal.request) },
+      request: refusal.request,
+      failure: refusal.reason,
+    };
+  }
+
   private retryFunding(): void {
     const pending = this.pendingFunding;
     if (!pending || pending.failure === undefined) return;
     delete pending.failure;
+    delete pending.failureNotified;
+    this.requestCommit();
     this.scheduleFunding();
   }
 
@@ -1969,6 +2002,14 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       opponentAlias: this.opponentAlias,
       waitingStateEnteredAt: this.waitingStateEnteredAt,
       cleanShutdownGraceStartedAt: this.cleanShutdownGraceStartedAt,
+      ...(this.pendingFunding?.failure === undefined
+        ? {}
+        : {
+            fundingRefusal: {
+              request: this.pendingFunding.request,
+              reason: this.pendingFunding.failure,
+            },
+          }),
     };
   }
 
