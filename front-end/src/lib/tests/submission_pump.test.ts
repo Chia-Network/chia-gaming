@@ -26,6 +26,7 @@ describe('submission pump delivery and lifecycle', () => {
     const { blockchain, controller, cradle, submit } = setup(spend);
     const lease = new ControlledRuntime();
     const first = submission('provisional');
+    const updateCoinInterest = jest.spyOn(blockchain, 'updateCoinInterest');
     try {
       commitRuntime(controller, lease);
       submit(first);
@@ -33,6 +34,7 @@ describe('submission pump delivery and lifecycle', () => {
       await controller.flushTransactionSubmissions();
       expect(cradle.submission_attempt_unavailable).toHaveBeenCalledWith(first.attempt_token);
       expect(cradle.acknowledge_submission_attempt).not.toHaveBeenCalled();
+      expect(updateCoinInterest).not.toHaveBeenCalledWith(controller);
 
       const replay = nextAttempt(first, 'provisional-attempt-2');
       cradle.drain_submissions.mockReturnValueOnce(submissionDrain([replay]));
@@ -46,6 +48,52 @@ describe('submission pump delivery and lifecycle', () => {
       blockchain.retire();
     }
   });
+
+  it.each(['acknowledged', 'still limited', 'retired'] as const)(
+    'honors the broadcast rate limit when the submission is %s',
+    async (result) => {
+      jest.useFakeTimers();
+      const rateLimit = {
+        status: 'rejected',
+        detail: 'Rate limit exceeded, please try again in 1 seconds',
+      };
+      const spend = jest
+        .fn()
+        .mockResolvedValueOnce(rateLimit)
+        .mockResolvedValue(result === 'still limited' ? rateLimit : { status: 'acknowledged' });
+      const { blockchain, controller, cradle, submit } = setup(spend);
+      const lease = new ControlledRuntime();
+      const tx = submission('rate-limited');
+      try {
+        commitRuntime(controller, lease);
+        submit(tx);
+        await lease.launch('submission:rate-limited');
+        await jest.advanceTimersByTimeAsync(999);
+        expect(spend).toHaveBeenCalledTimes(1);
+        expect(cradle.reject_submission_attempt).not.toHaveBeenCalled();
+        if (result === 'retired') {
+          cradle.drain_submissions.mockReturnValueOnce(submissionDrain([], [tx.id]));
+          controller.processResult(wasmResult());
+        }
+        await jest.advanceTimersByTimeAsync(1000);
+        await controller.flushTransactionSubmissions();
+
+        expect(spend).toHaveBeenCalledTimes(result === 'retired' ? 1 : 2);
+        if (result !== 'retired') expect(spend.mock.calls[1]).toEqual(spend.mock.calls[0]);
+        expect(cradle.finalize_submission_attempt).toHaveBeenCalledTimes(1);
+        expect(cradle.acknowledge_submission_attempt).toHaveBeenCalledTimes(
+          result === 'acknowledged' ? 1 : 0,
+        );
+        expect(cradle.reject_submission_attempt).toHaveBeenCalledTimes(
+          result === 'still limited' ? 1 : 0,
+        );
+      } finally {
+        controller.cleanup();
+        blockchain.retire();
+        jest.useRealTimers();
+      }
+    },
+  );
 
   it('retries the exact transaction through a replacement wallet while the old call stays pending', async () => {
     let resolveOldSpend!: (outcome: WalletSubmitOutcome) => void;

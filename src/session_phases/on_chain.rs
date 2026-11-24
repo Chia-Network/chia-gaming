@@ -2146,6 +2146,22 @@ impl PeerLifecyclePhase for OnChainPhase {
             &self.game_payout_coins,
         )
     }
+    fn pending_game_move_coins(&self) -> Vec<(CoinString, CoinString)> {
+        self.pending_moves
+            .iter()
+            .filter(|(input, _)| self.game_map.contains_key(*input))
+            .filter_map(|(input, pending)| {
+                // The referee's move spend preserves the game coin's amount.
+                let output = CoinString::from_parts(
+                    &input.to_coin_id(),
+                    &pending.expected_ph,
+                    &input.amount()?,
+                );
+                Some((input.clone(), output))
+            })
+            .collect()
+    }
+
     fn has_active_on_chain_games(&self) -> bool {
         // `game_finished` means the referee has no legal next move. The game
         // coin is still unresolved until its timeout/slash spend confirms, and

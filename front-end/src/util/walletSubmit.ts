@@ -10,3 +10,8 @@ export function isExactDuplicateTransaction(detail: string): boolean {
     /\btransaction (?:is |was |has been )?already (?:included|in (?:the )?mempool)\b/i.test(detail)
   );
 }
+
+export function rateLimitedSubmissionDelayMs(detail: string): number | null {
+  const match = /\bRate limit exceeded, please try again in ([1-9][0-9]*) seconds?\b/i.exec(detail);
+  return match ? Number(match[1]) * 1_000 : null;
+}
