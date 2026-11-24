@@ -1,0 +1,69 @@
+// Finds the best five-card hand out of a player's cards, off chain.
+
+import hand_eval::{deep_compare, space_hand_eval};
+
+// A hand's ranking, and the bitfield of the cards that make it, where bit 0 is the first card.
+export struct BestHand {
+    ranking: List<Int>,
+    bitfield: Int,
+}
+
+// The cards of a hand that's being chosen, their bitfield, and how many there are.
+struct Choice {
+    cards: List<Int>,
+    bitfield: Int,
+    count: Int,
+}
+
+// Ranks every five-card hand, and returns the best one. Of hands that rank the same, the one with
+// the highest bitfield wins.
+export fn space_hand_calc(cards: List<Int>, boost: Bool) -> BestHand {
+    let hands = for choice in choose_hands(0, cards) {
+        BestHand { ranking: space_hand_eval(choice.cards, boost), bitfield: choice.bitfield }
+    };
+    assert !(hands is nil);
+    best_hand(hands.first, hands.rest)
+}
+
+// Chooses every way of taking five of the cards from `index` onwards.
+fn choose_hands(index: Int, cards: List<Int>) -> List<Choice> {
+    if cards is nil {
+        return [Choice { cards: nil, bitfield: 0, count: 0 }];
+    }
+
+    // Adds the card to each choice from the cards after it, as long as it has room, and keeps
+    // the choices that can still be completed without it.
+    let card = cards.first;
+    for choice in choose_hands(index + 1, cards.rest) fold chosen: List<Choice> = nil {
+        let without = if choice.count + index > 4 {
+            [choice, ...chosen]
+        } else {
+            chosen
+        };
+        if choice.count < 5 {
+            [
+                Choice {
+                    cards: [card, ...choice.cards],
+                    bitfield: choice.bitfield | 1 << index,
+                    count: choice.count + 1,
+                },
+                ...without,
+            ]
+        } else {
+            without
+        }
+    }
+}
+
+fn best_hand(best: BestHand, hands: List<BestHand>) -> BestHand {
+    if hands is nil {
+        return best;
+    }
+
+    let hand = hands.first;
+    if deep_compare(best, hand) == -1 {
+        best_hand(hand, hands.rest)
+    } else {
+        best_hand(best, hands.rest)
+    }
+}

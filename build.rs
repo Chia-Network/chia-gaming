@@ -64,6 +64,14 @@ const RUE_PROGRAMS: &[(&str, &str)] = &[
         "puzzles/test/test_handcalc_micro.rue",
         "clsp/test/test_handcalc_micro",
     ),
+    (
+        "puzzles/test/space_hand_eval.rue",
+        "clsp/test/test_space_hand_eval_space_hand_eval",
+    ),
+    (
+        "puzzles/test/space_hand_calc.rue",
+        "clsp/test/test_space_hand_eval_space_hand_calc",
+    ),
 ];
 
 fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {

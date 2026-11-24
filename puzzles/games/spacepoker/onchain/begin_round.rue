@@ -1,0 +1,94 @@
+import project::games::spacepoker::deal::mover_opens;
+import project::games::spacepoker::states::*;
+import project::referee::types::*;
+
+// The mover opens a street by revealing their image of this round, followed by the amount that
+// they raise (which may be empty, to check).
+//
+// At round 4, a coin toss with both images 4 decides who opens. If the mover doesn't open, they
+// pong instead, which reveals their image 4 alone, and gives the waiter the turn to open. The toss
+// decides how the move is read before its shape is checked, since a move with no raise could
+// otherwise be either a check or a pong, and the mover could ignore a toss they lost by checking.
+//
+// There's no evidence.
+export fn main(
+    validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<OpenState, nil>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<SpaceState> | nil {
+    let game_move = params.turn.last_move.game_move;
+    if game_move.length < 32 {
+        return nil;
+    }
+
+    let mover_image = game_move[..32];
+    let raise_amount = game_move[32..] as Int;
+    let state = move.state;
+    let opens = if state.street.round == 4 {
+        mover_opens(mover_image, state.street.waiter_image)
+    } else {
+        true
+    };
+
+    // The toss is decided before anything else is checked, so it's checked first.
+    if opens {
+        let half_amount = params.coin.amount / 2;
+        if !(
+            pays_half_pot(params, state)
+                && reveals_image(state, mover_image)
+                && raise_amount >= 0
+                && state.stakes.half_pot
+                        + raise_amount
+                    <= half_amount
+        ) {
+            return nil;
+        }
+
+        validator_transition(
+            state.street.mid_hash,
+            RaiseState {
+                stakes: RaiseStakes {
+                    bet_unit: state.stakes.bet_unit,
+                    half_pot: state.stakes.half_pot,
+                    last_raise: raise_amount,
+                },
+                street: RaiseStreet {
+                    mover_image: state.street.waiter_image,
+                    waiter_image: mover_image,
+                    round: state.street.round,
+                },
+            },
+            42,
+        )
+    } else {
+        if !(pays_half_pot(params, state) && reveals_image(state, mover_image))
+            || game_move.length != 32
+        {
+            return nil;
+        }
+
+        // The pong gives the waiter the turn to open, with the images swapped.
+        validator_transition(
+            validator_hash,
+            OpenState {
+                stakes: OpenStakes {
+                    ...state.stakes,
+                    mover_image: sha256(state.street.waiter_image),
+                },
+                street: OpenStreet { ...state.street, waiter_image: mover_image },
+            },
+            42,
+        )
+    }
+}
+
+// The mover's share is what's left of their half of the amount after the pot.
+fn pays_half_pot(params: RefereeParameters, state: OpenState) -> Bool {
+    params.turn.mover_share == params.coin.amount / 2 - state.stakes.half_pot
+}
+
+// The move reveals the preimage of the mover's image.
+fn reveals_image(state: OpenState, mover_image: Bytes) -> Bool {
+    state.stakes.mover_image == sha256(mover_image)
+}

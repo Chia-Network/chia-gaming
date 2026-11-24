@@ -1,0 +1,438 @@
+// The off-chain handlers of Space Poker, for Alice (the proposer, who moves first) and Bob.
+//
+// Each player derives a chain of hashes from the entropy of their first move, and keeps it in the
+// closures of their handlers. Both players play the streets the same way, except that Bob opens
+// the first street when Alice pongs. At the start of each later street, the player who called
+// sends the image they reveal next as a message, so that the opener can show the street's cards
+// before the move that reveals it.
+
+import deal::*;
+import hand_calc::space_hand_calc;
+import hand_eval::deep_compare;
+import handler_types::*;
+import project::games::types::MessageParser;
+import readables::*;
+import states::*;
+
+type SpaceMyTurn = MyTurnHandler<SpaceState, Readable, Int>;
+type SpaceTheirTurn = TheirTurnHandler<SpaceState, Readable, Int>;
+type SpaceMyTurnMove = MyTurnMove<SpaceState, Readable, Int>;
+type SpaceTheirTurnMove = TheirTurnMove<SpaceState, Readable, Int>;
+
+enum Seat {
+    Alice,
+    Bob,
+}
+
+fn label(seat: Seat, action: String) -> String {
+    (inline if seat == Seat::Alice { "spacepoker_alice_" } else { "spacepoker_bob_" }) + action
+}
+
+// The host gives each handler the state that the validator of the latest move returned, and each
+// handler knows which validator that was from where it is in the game.
+fn commit_state(state: SpaceState) -> CommitState {
+    unchecked_cast::<CommitState>(state)
+}
+
+fn open_state(state: SpaceState) -> OpenState {
+    unchecked_cast::<OpenState>(state)
+}
+
+fn raise_state(state: SpaceState) -> RaiseState {
+    unchecked_cast::<RaiseState>(state)
+}
+
+fn end_state(state: SpaceState) -> EndState {
+    unchecked_cast::<EndState>(state)
+}
+
+// A player's preimage (the first 16 bytes of their entropy), followed by its five images.
+fn image_chain(preimage: Bytes) -> List<Bytes> {
+    let image_1 = sha256(preimage);
+    let image_2 = sha256(image_1);
+    let image_3 = sha256(image_2);
+    let image_4 = sha256(image_3);
+    [preimage, image_1, image_2, image_3, image_4, sha256(image_4)]
+}
+
+// The image at an index of the chain, where 0 is the preimage.
+fn image_at(chain: List<Bytes>, index: Int) -> Bytes {
+    assert !(chain is nil);
+    if index == 0 {
+        chain.first
+    } else {
+        image_at(chain.rest, index - 1)
+    }
+}
+
+// What each player wins, from the comparison of the mover's hand to the waiter's. The mover's
+// share is the waiter's when the mover makes the final move, since the move swaps them.
+fn waiter_share(amount: Int, half_pot: Int, result: Int) -> Int {
+    if result == 0 {
+        amount / 2
+    } else if result == 1 {
+        amount / 2 - half_pot
+    } else {
+        amount / 2 + half_pot
+    }
+}
+
+// Alice commits to the tip of her chain. Her local move is ignored.
+export fn alice_commit_a(
+    _local_move: Int,
+    amount: Int,
+    _state: SpaceState,
+    _mover_share: Int,
+    entropy: Bytes32,
+) -> SpaceMyTurnMove {
+    let chain = image_chain(entropy[..16]);
+    SpaceMyTurnMove {
+        label: "spacepoker_alice_commitA",
+        game_move: image_at(chain, 5),
+        mover_share: amount / 2,
+        their_turn_handler: alice_commit_b_their(chain),
+    }
+}
+
+// Bob committed to his image 4, which deals Alice's hole cards. Alice sends her image 4 as a
+// message, so that Bob can see his before she opens.
+fn alice_commit_b_their(chain: List<Bytes>) -> SpaceTheirTurn {
+    fn(_amount, _pre_state, state, _move, _program_hash, _mover_share) => {
+        let bob_image = open_state(state).street.waiter_image;
+        let hole_cards = hole_cards(image_at(chain, 0), bob_image);
+        let alice_image = image_at(chain, 4);
+        SpaceTheirTurnMove {
+            readable: DealReadable {
+                first_card: hole_cards.first,
+                second_card: hole_cards.second,
+                boost: hole_cards.boost,
+                opens: mover_opens(alice_image, bob_image),
+            },
+            evidence: nil,
+            next: [begin_round(Seat::Alice, chain), alice_image],
+        }
+    }
+}
+
+// Alice committed. Bob's next move is automatic.
+export fn bob_commit_a_their(
+    _amount: Int,
+    _pre_state: SpaceState,
+    _state: SpaceState,
+    _move: Bytes,
+    _validation_program_hash: Bytes32,
+    _mover_share: Int,
+) -> SpaceTheirTurnMove {
+    SpaceTheirTurnMove { readable: nil, evidence: nil, next: [bob_commit_b] }
+}
+
+// Bob commits to his image 4. His local move is ignored.
+fn bob_commit_b(
+    _local_move: Int,
+    amount: Int,
+    state: SpaceState,
+    _mover_share: Int,
+    entropy: Bytes32,
+) -> SpaceMyTurnMove {
+    let chain = image_chain(entropy[..16]);
+    SpaceMyTurnMove {
+        label: "spacepoker_bob_commitB",
+        game_move: image_at(chain, 4),
+        mover_share: amount / 2 - commit_state(state).bet_unit,
+        their_turn_handler: begin_round_their(Seat::Bob, chain),
+        message_parser: [bob_parse_deal(chain)],
+    }
+}
+
+// Alice's message is her image 4, which deals Bob's hole cards, and decides who opens.
+fn bob_parse_deal(chain: List<Bytes>) -> MessageParser<SpaceState> {
+    fn(alice_image, state, _amount) => {
+        assert sha256(alice_image) == open_state(state).stakes.mover_image;
+        let hole_cards = hole_cards(image_at(chain, 0), alice_image);
+        DealReadable {
+            first_card: hole_cards.first,
+            second_card: hole_cards.second,
+            boost: hole_cards.boost,
+            opens: !mover_opens(alice_image, image_at(chain, 4)),
+        }
+    }
+}
+
+// Opens a street by revealing our image of the round, followed by the amount that we raise (the
+// local move, which is nil to check). At round 4, if the coin toss says the opponent opens, we
+// pong instead.
+fn begin_round(seat: Seat, chain: List<Bytes>) -> SpaceMyTurn {
+    fn(local_move, amount, state, _mover_share, _entropy) => {
+        let state = open_state(state);
+        let round = state.street.round;
+        let image = image_at(chain, round);
+        let opens = if round == 4 {
+            mover_opens(image, state.street.waiter_image)
+        } else {
+            true
+        };
+        let mover_share = amount / 2 - state.stakes.half_pot;
+        if opens {
+            SpaceMyTurnMove {
+                label: label(seat, "begin_round"),
+                game_move: image + local_move as Bytes,
+                mover_share,
+                their_turn_handler: mid_round_their(seat, chain),
+            }
+        } else {
+            SpaceMyTurnMove {
+                label: label(seat, "begin_round pong"),
+                game_move: image,
+                mover_share,
+                their_turn_handler: begin_round_their(seat, chain),
+            }
+        }
+    }
+}
+
+// The opponent opened a street, or ponged.
+fn begin_round_their(seat: Seat, chain: List<Bytes>) -> SpaceTheirTurn {
+    fn(_amount, pre_state, _state, move, _program_hash, _mover_share) => {
+        if seat == Seat::Alice {
+            alice_begin_round_their(chain, open_state(pre_state), move)
+        } else {
+            bob_begin_round_their(chain, open_state(pre_state), move)
+        }
+    }
+}
+
+// Bob opened a street. Alice only learns her hole cards from his image 4, so his opening of the
+// first street shows nothing new.
+fn alice_begin_round_their(
+    chain: List<Bytes>,
+    pre_state: OpenState,
+    move: Bytes,
+) -> SpaceTheirTurnMove {
+    let round = pre_state.street.round;
+    let bob_image = move[..32];
+    let raise_amount = move[32..] as Int;
+    SpaceTheirTurnMove {
+        readable: OpenReadable {
+            raise_amount,
+            half_pot: pre_state.stakes.half_pot,
+            cards: if round == 4 {
+                nil
+            } else {
+                community_cards(image_at(chain, round), bob_image, round)
+            },
+        },
+        evidence: nil,
+        next: [mid_round(Seat::Alice, chain)],
+    }
+}
+
+// Alice opened a street, or ponged to give Bob the opening. Either way, her image 4 shows Bob's
+// hole cards at round 4.
+fn bob_begin_round_their(
+    chain: List<Bytes>,
+    pre_state: OpenState,
+    move: Bytes,
+) -> SpaceTheirTurnMove {
+    let round = pre_state.street.round;
+    let alice_image = move[..32];
+    let raise_amount = move[32..] as Int;
+    let opens = if round == 4 {
+        mover_opens(alice_image, pre_state.street.waiter_image)
+    } else {
+        true
+    };
+
+    if !opens {
+        let hole_cards = hole_cards(image_at(chain, 0), alice_image);
+        return SpaceTheirTurnMove {
+            readable: PongReadable {
+                first_card: hole_cards.first,
+                second_card: hole_cards.second,
+                boost: hole_cards.boost,
+            },
+            evidence: nil,
+            next: [begin_round(Seat::Bob, chain)],
+        };
+    }
+
+    let half_pot = pre_state.stakes.half_pot;
+    let readable = if round == 4 {
+        let hole_cards = hole_cards(image_at(chain, 0), alice_image);
+        HoleCardsOpenReadable {
+            raise_amount,
+            half_pot,
+            first_card: hole_cards.first,
+            second_card: hole_cards.second,
+            boost: hole_cards.boost,
+        }
+    } else {
+        OpenReadable {
+            raise_amount,
+            half_pot,
+            cards: community_cards(image_at(chain, round), alice_image, round),
+        }
+    };
+    SpaceTheirTurnMove { readable, evidence: nil, next: [mid_round(Seat::Bob, chain)] }
+}
+
+// Responds to a raise by raising (the local move), or calls if the local move is nil, by revealing
+// the image of the round before. A raise is padded to more than 32 bytes with entropy, which tells
+// it apart from a call.
+fn mid_round(seat: Seat, chain: List<Bytes>) -> SpaceMyTurn {
+    fn(local_move, amount, state, _mover_share, entropy) => {
+        let state = raise_state(state);
+        let mover_share = amount / 2 - (state.stakes.half_pot + state.stakes.last_raise);
+        if local_move != 0 {
+            return SpaceMyTurnMove {
+                label: label(seat, "mid_round raise"),
+                game_move: entropy[..32] + local_move as Bytes,
+                mover_share,
+                their_turn_handler: mid_round_their(seat, chain),
+            };
+        }
+
+        let round = state.street.round;
+        let preimage = image_at(chain, round - 1);
+        if round == 1 {
+            SpaceMyTurnMove {
+                label: label(seat, "mid_round call"),
+                game_move: preimage,
+                mover_share,
+                their_turn_handler: end_their(chain),
+            }
+        } else {
+            SpaceMyTurnMove {
+                label: label(seat, "mid_round call"),
+                game_move: preimage,
+                mover_share,
+                their_turn_handler: begin_round_their(seat, chain),
+                message_parser: [parse_open(chain)],
+            }
+        }
+    }
+}
+
+// The opener's message is the image that their opening will reveal, so that we can show the
+// street's community cards before it.
+fn parse_open(chain: List<Bytes>) -> MessageParser<SpaceState> {
+    fn(image, state, _amount) => {
+        let state = open_state(state);
+        assert image.length == 32;
+        assert sha256(image) == state.stakes.mover_image;
+        let round = state.street.round;
+        CardsReadable { cards: community_cards(image_at(chain, round), image, round) }
+    }
+}
+
+// The opponent raised, or called by revealing their image of the round before, which deals the
+// next street. After a call, we send the image that we reveal next as a message, so that the
+// opponent can show that street's cards before our opening does. A call of the river reveals the
+// opponent's preimage, and every card with it.
+fn mid_round_their(seat: Seat, chain: List<Bytes>) -> SpaceTheirTurn {
+    fn(_amount, pre_state, _state, move, _program_hash, _mover_share) => {
+        let pre_state = raise_state(pre_state);
+        if move.length > 32 {
+            return SpaceTheirTurnMove {
+                readable: RaiseReadable {
+                    raise_amount: move[32..] as Int,
+                    half_pot: pre_state.stakes.half_pot + pre_state.stakes.last_raise,
+                },
+                evidence: nil,
+                next: [mid_round(seat, chain)],
+            };
+        }
+
+        let round = pre_state.street.round;
+        let half_pot = pre_state.stakes.half_pot + pre_state.stakes.last_raise;
+        if round == 1 {
+            return SpaceTheirTurnMove {
+                readable: showdown(chain, move, half_pot, round),
+                evidence: nil,
+                next: [end(seat, chain)],
+            };
+        }
+
+        let image = image_at(chain, round - 1);
+        SpaceTheirTurnMove {
+            readable: CallReadable {
+                half_pot,
+                round,
+                cards: community_cards(image, move, round - 1),
+            },
+            evidence: nil,
+            next: [begin_round(seat, chain), image],
+        }
+    }
+}
+
+fn showdown(
+    chain: List<Bytes>,
+    opponent_preimage: Bytes,
+    half_pot: Int,
+    round: Int,
+) -> ShowdownReadable {
+    let deal = deal(image_at(chain, 0), opponent_preimage);
+    let best = space_hand_calc(deal.player.cards, deal.player.hole_cards.boost);
+    let opponent_best = space_hand_calc(deal.opponent.cards, deal.opponent.hole_cards.boost);
+    ShowdownReadable {
+        half_pot,
+        round,
+        cards: deal.player.cards,
+        boost: deal.player.hole_cards.boost,
+        opponent_cards: deal.opponent.cards,
+        opponent_boost: deal.opponent.hole_cards.boost,
+        selected: select_cards(deal.player.cards, best.bitfield),
+        ranking: best.ranking,
+        opponent_selected: select_cards(deal.opponent.cards, opponent_best.bitfield),
+        opponent_ranking: opponent_best.ranking,
+        result: deep_compare(best.ranking, opponent_best.ranking),
+    }
+}
+
+// Reveals our preimage, followed by the bitfield of our best hand. This ends the game, so the
+// mover share is the opponent's share, which the hands decide. The local move is ignored.
+fn end(seat: Seat, chain: List<Bytes>) -> SpaceMyTurn {
+    fn(_local_move, amount, state, _mover_share, _entropy) => {
+        let state = end_state(state);
+        let preimage = image_at(chain, 0);
+        let deal = deal(preimage, state.waiter_preimage);
+        let best = space_hand_calc(deal.player.cards, deal.player.hole_cards.boost);
+        let opponent_best = space_hand_calc(deal.opponent.cards, deal.opponent.hole_cards.boost);
+        SpaceMyTurnMove {
+            label: label(seat, "end"),
+            game_move: preimage + best.bitfield as Bytes,
+            mover_share: waiter_share(
+                amount,
+                state.half_pot,
+                deep_compare(best.ranking, opponent_best.ranking),
+            ),
+            their_turn_handler: nil,
+        }
+    }
+}
+
+// The opponent revealed their preimage and hand, which ends the game. Our own best hand is the
+// evidence, which slashes them if theirs doesn't beat it the way that the share they left us
+// implies.
+fn end_their(chain: List<Bytes>) -> SpaceTheirTurn {
+    fn(_amount, _pre_state, _state, move, _program_hash, _mover_share) => {
+        let deal = deal(image_at(chain, 0), move[..16]);
+        let best = space_hand_calc(deal.player.cards, deal.player.hole_cards.boost);
+        let opponent_best = space_hand_calc(deal.opponent.cards, deal.opponent.hole_cards.boost);
+        let opponent_hole_cards = deal.opponent.hole_cards;
+        SpaceTheirTurnMove {
+            readable: EndReadable {
+                selected: select_cards(deal.player.cards, best.bitfield),
+                ranking: best.ranking,
+                opponent_selected: select_cards(deal.opponent.cards, opponent_best.bitfield),
+                opponent_ranking: opponent_best.ranking,
+                result: deep_compare(best.ranking, opponent_best.ranking),
+                opponent_first_card: opponent_hole_cards.first,
+                opponent_second_card: opponent_hole_cards.second,
+                opponent_boost: opponent_hole_cards.boost,
+            },
+            evidence: [best.bitfield],
+            next: [nil],
+        }
+    }
+}

@@ -46,7 +46,7 @@ fn sha256_bytes(data: &[u8]) -> [u8; 32] {
     *Sha256Input::Bytes(data).hash().bytes()
 }
 
-// Replicates the CLVM coin toss in begin_round.clsp:
+// Replicates the CLVM coin toss in puzzles/games/spacepoker/deal.rue:
 // (= (> mover_image_N waiter_image_N) (logand (logxor mover_image_N waiter_image_N) 1))
 // CLVM `>` is signed two's-complement integer comparison; we replicate it
 // here by comparing as signed values.

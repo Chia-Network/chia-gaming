@@ -1,0 +1,11 @@
+import factory::{FactoryArgs, SpaceParameters};
+
+// Representative arguments for the factory, which registration runs it with to find the hash of
+// the first validator.
+fn main() -> FactoryArgs {
+    FactoryArgs {
+        proposer_reserve: 1,
+        accepter_reserve: 1,
+        parameters: SpaceParameters { stack_size: 1, minimum_raise: 1 },
+    }
+}

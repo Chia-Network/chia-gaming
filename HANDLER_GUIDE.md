@@ -547,10 +547,11 @@ can raise and make the illegal terminal move unslashable.
 The terminal validator therefore rejects a mover mask when bit 7 is set before
 selecting or evaluating cards, then separately requires exactly five set bits.
 The waiter's evidence mask follows the same range and popcount rules. Nil
-evidence returns `(validator-transition 0 0 0)` without comparing hands. Invalid non-nil evidence
-raises, rejecting that slash attempt. A well-formed waiter mask that does not
-prove overclaim also returns `(validator-transition 0 0 0)`. An invalid committed mover mask
-returns nil and is unconditionally slashable.
+evidence returns `validator_transition(nil, nil, 0)` without comparing hands.
+Invalid non-nil evidence raises, rejecting that slash attempt. A well-formed
+waiter mask that does not prove overclaim also returns
+`validator_transition(nil, nil, 0)`. An invalid committed mover mask returns nil
+and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -767,7 +768,7 @@ these during the "Shuffling..." phase.
 its curried chain and computes the optimal 5-card selection via
 `space_hand_calc`. It concatenates `preimage || bitfield` and sends it.
 The package dispatches a nil `make-move` intent for member index 0; the handler
-fills in the actual 17-byte move. On-chain, this move is validated by `end.clsp` which
+fills in the actual 17-byte move. On-chain, this move is validated by `end.rue` which
 independently derives all cards and checks the hand evaluation.
 
 ### Frontend Pattern
@@ -915,6 +916,6 @@ changing the authoritative move flow.
 
 **Key code:**
 
-- Handlers: `games/spacepoker/clsp/spacepoker_generate.clinc`
-- Validators: `games/spacepoker/clsp/onchain/*.clsp`
+- Handlers: `puzzles/games/spacepoker/handlers.rue`
+- Validators: `puzzles/games/spacepoker/onchain/*.rue`
 - Rust tests: `games/spacepoker/rust/tests/`

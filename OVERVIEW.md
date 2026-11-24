@@ -1252,8 +1252,8 @@ configured by `Rue.toml`, and its sources are in `puzzles/`.
 | `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
 | `puzzles/games/calpoker/onchain/{a,b,c,d,e}.rue`    | Calpoker validation programs (one per protocol step)           |
 | `puzzles/games/calpoker/handlers.rue`               | Off-chain calpoker handlers (Alice & Bob sides)                |
-| `games/spacepoker/clsp/onchain/*.clsp`              | Space Poker validation programs                                |
-| `games/spacepoker/clsp/spacepoker_generate.clinc`   | Off-chain Space Poker handlers                                 |
+| `puzzles/games/spacepoker/onchain/*.rue`            | Space Poker validation programs                                |
+| `puzzles/games/spacepoker/handlers.rue`             | Off-chain Space Poker handlers                                 |
 | `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                                      |
 | `games/krunk/clsp/krunk_generate.clinc`             | Off-chain Krunk handlers (Alice & Bob sides)                   |
 | `games/krunk/clsp/factory_args.clvm.bin`            | Generated factory curry arguments: `(pubkey signed_dict_tree)` |

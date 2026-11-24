@@ -1,0 +1,6 @@
+import project::games::spacepoker::hand_eval;
+
+// Ranks a five-card Space Poker hand, for the hand evaluation tests.
+fn main(cards: List<Int>, boost: Bool) -> List<Int> {
+    hand_eval::space_hand_eval(cards, boost)
+}
