@@ -48,6 +48,74 @@ describe('durable channel funding record', () => {
     channelFundingRuntime.retryCancelRequired();
   }
 
+  it('keeps funding inputs through confirmation and terminal cleanup until their spend is buried', () => {
+    const input = { coin_name: 'aa'.repeat(32), coin_string: 'bb'.repeat(72) };
+    installAggregateWallet([
+      {
+        owner,
+        purpose: { kind: 'funding', operationId: 'buried-funding' },
+        stage: 'awaiting-channel',
+        providerReservationId: 'buried-trade',
+        request: {
+          kind: 'funding',
+          canonical: { amount: '100', fee: '0', conditions: [], max_height: '200' },
+        },
+        reason: 'accepted',
+      },
+    ]);
+    channelFundingRuntime.recordFundingInputs('buried-trade', [input]);
+    channelFundingRuntime.channelCoinConfirmed(owner.installationPlayerId, owner.peerSessionId);
+    storageRepository.retireSessionWalletReservations(owner.peerSessionId);
+    expect(channelFundingRuntime.fundingCoinInterest()).toEqual([input]);
+    channelFundingRuntime.observeFundingCoinStates(
+      131n,
+      new Map([[input.coin_name, { spent_height: 100n }]]),
+    );
+    expect(channelFundingRuntime.fundingCoinInterest()).toEqual([input]);
+    channelFundingRuntime.observeFundingCoinStates(
+      132n,
+      new Map([[input.coin_name, { spent_height: null }]]),
+    );
+    expect(channelFundingRuntime.fundingCoinInterest()).toEqual([input]);
+    channelFundingRuntime.observeFundingCoinStates(
+      132n,
+      new Map([[input.coin_name, { spent_height: 100n }]]),
+    );
+    expect(channelFundingRuntime.fundingCoinInterest()).toEqual([]);
+    expect(storageRepository.channelFundingOperations()).toEqual([]);
+  });
+
+  it('retires funding inputs at offer expiration and cancels only when an input remains live', () => {
+    const input = { coin_name: 'cc'.repeat(32), coin_string: 'dd'.repeat(72) };
+    installAggregateWallet([
+      {
+        owner,
+        purpose: { kind: 'funding', operationId: 'expiring-funding' },
+        stage: 'awaiting-channel',
+        providerReservationId: 'expiring-trade',
+        request: {
+          kind: 'funding',
+          canonical: { amount: '100', fee: '0', conditions: [], max_height: '150' },
+        },
+        reason: 'accepted',
+      },
+    ]);
+    channelFundingRuntime.recordFundingInputs('expiring-trade', [input]);
+    channelFundingRuntime.channelCreationTimedOut(owner.installationPlayerId, owner.peerSessionId);
+    expect(storageRepository.channelFundingOperations()[0].stage).toBe('awaiting-channel');
+    channelFundingRuntime.observeFundingCoinStates(
+      149n,
+      new Map([[input.coin_name, { spent_height: null }]]),
+    );
+    expect(channelFundingRuntime.fundingCoinInterest()).toEqual([input]);
+    channelFundingRuntime.observeFundingCoinStates(
+      150n,
+      new Map([[input.coin_name, { spent_height: null }]]),
+    );
+    expect(channelFundingRuntime.fundingCoinInterest()).toEqual([]);
+    expect(storageRepository.channelFundingOperations()[0].stage).toBe('cancel-required');
+  });
+
   it('keeps a Rust funding request idle until an adapter establishes scope', async () => {
     const controller = new SessionController(
       null,

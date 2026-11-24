@@ -23,7 +23,7 @@
   "devDependencies": {
     "@types/node": "24.19.2",
     "@typescript/native": "npm:typescript@7.0.2",
-    "electron": "45.2.3",
+    "electron": "45.3.3",
     "electron-builder": "26.18.0",
     "esbuild": "0.28.2",
     "typescript": "npm:@typescript/typescript6@6.0.2",

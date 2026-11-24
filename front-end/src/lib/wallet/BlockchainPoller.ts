@@ -58,6 +58,7 @@ type BalanceCallbacks = {
 export class BlockchainPoller {
   readonly rpc: InternalBlockchainInterface;
   readonly channelFundingRuntime: ChannelFundingRuntime;
+  private fundingInterestUnsubscribe: (() => void) | null = null;
   private readonly adapter: InternalBlockchainInterface;
   private sourceWalletProvider: WalletOfferProvider | null = null;
   private sourceWalletProviderKey: string | null = null;
@@ -69,6 +70,7 @@ export class BlockchainPoller {
   private snapshotPending = new Set<PollingGameSession>();
   private registeredNames = new Set<string>();
   private running = false;
+  private sessionPollingRequested = false;
   private pollIntervalMs: number;
   private maxBackoffMs: number;
   private firstTick = false;
@@ -404,7 +406,8 @@ export class BlockchainPoller {
   retire(): void {
     this.detachProvider();
     this.stopBalanceInterest();
-    this.pauseChainPolling();
+    this.sessionPollingRequested = false;
+    this.stopChainPolling();
     this.connectionActive = false;
     this.pausePollingForDisconnect();
   }
@@ -500,8 +503,12 @@ export class BlockchainPoller {
   }
 
   start() {
+    this.sessionPollingRequested = true;
     if (this.running) return;
     this.running = true;
+    this.fundingInterestUnsubscribe = this.channelFundingRuntime.subscribe(() =>
+      this.refreshCoinInterest(),
+    );
     this.refreshProviderReadiness();
     this.firstTick = true;
     this.startedAt = performance.now();
@@ -569,11 +576,23 @@ export class BlockchainPoller {
   }
 
   /**
-   * Stop game-session height/coin watching. Does not stop wallet balance
-   * interest — that is wallet-lifetime (`stopBalanceInterest`).
+   * Stop game-session observations. A retained funding reservation keeps its
+   * own coin watch alive until expiration or sufficiently buried spending.
+   * Wallet balance interest has a separate lifetime.
    */
   pauseChainPolling() {
+    this.sessionPollingRequested = false;
+    if (this.channelFundingRuntime.fundingCoinInterest().length > 0) {
+      this.refreshCoinInterest();
+      return;
+    }
+    this.stopChainPolling();
+  }
+
+  private stopChainPolling(): void {
     this.running = false;
+    this.fundingInterestUnsubscribe?.();
+    this.fundingInterestUnsubscribe = null;
     this.heightPollingScheduler.stop();
     this.coinPollingScheduler.stop();
     this.releaseConnectionListenerIfIdle();
@@ -584,6 +603,8 @@ export class BlockchainPoller {
     coins: CoinPollInterest[];
     generation: number;
   }> {
+    // Explicit one-shot polls also drive detached test sessions before start().
+    if (this.running && !this.sessionPollingRequested) return [];
     return [...this.sessions].map((c) => ({
       c,
       coins: this.sessionCoins.get(c) ?? [],
@@ -592,11 +613,18 @@ export class BlockchainPoller {
   }
 
   private refreshCoinInterest(): void {
+    const fundingCoins = this.channelFundingRuntime.fundingCoinInterest();
+    if (!this.sessionPollingRequested && fundingCoins.length === 0) {
+      this.stopChainPolling();
+      return;
+    }
     if (!this.running || !this.isConnected()) {
       this.coinPollingScheduler.stop();
       return;
     }
-    const hasCoins = this.collectGameSessionCoins().some(({ coins }) => coins.length > 0);
+    const hasCoins =
+      this.collectGameSessionCoins().some(({ coins }) => coins.length > 0) ||
+      fundingCoins.length > 0;
     if (hasCoins) {
       this.coinPollingScheduler.start(this.pollIntervalMs);
     } else {
@@ -690,11 +718,13 @@ export class BlockchainPoller {
     if (!this.heightKnown || !this.isConnectionEpochActive(connectionEpoch)) return;
     try {
       const perSession = this.collectGameSessionCoins();
+      const fundingCoins = this.channelFundingRuntime.fundingCoinInterest();
 
       const allNames = new Set<string>();
       for (const { coins } of perSession) {
         for (const { coin_name } of coins) allNames.add(coin_name);
       }
+      for (const { coin_name } of fundingCoins) allNames.add(coin_name);
       const names = [...allNames];
       await this.ensureRegistered(names, connectionEpoch);
       if (!this.isConnectionEpochActive(connectionEpoch)) return;
@@ -723,6 +753,21 @@ export class BlockchainPoller {
           height,
           this.previousPeakForCoinReport,
         );
+        if (fundingCoins.every(({ coin_name }) => this.registeredNames.has(coin_name))) {
+          const fundingStates = new Map<string, { spent_height: bigint | null }>();
+          for (const { coin_name } of fundingCoins) {
+            const record = recordByName.get(coin_name);
+            const spent =
+              record &&
+              record.confirmedBlockIndex <= height &&
+              (record.spent || record.spentBlockIndex > 0n) &&
+              record.spentBlockIndex <= height
+                ? record.spentBlockIndex
+                : null;
+            fundingStates.set(coin_name, { spent_height: spent });
+          }
+          this.channelFundingRuntime.observeFundingCoinStates(height, fundingStates);
+        }
       }
       this.consecutiveFailures = 0;
     } catch (e) {
