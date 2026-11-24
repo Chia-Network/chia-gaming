@@ -49,6 +49,12 @@ jobs:
         run: |
           cargo fmt --version
           cargo fmt -- --files-with-diff --check
+      - name: Install Rue
+        run: |
+          rue_version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Rue.toml)
+          cargo install rue-cli --version "=${rue_version:?}" --locked
+      - name: rue fmt
+        run: rue fmt --check
 
   clippy:
     runs-on: ubuntu-22.04
