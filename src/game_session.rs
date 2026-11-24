@@ -2211,6 +2211,7 @@ mod sequencing_tests {
             was_stale: false,
             resolved_clean: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             game_payout_coins: Vec::new(),
         }));
         session

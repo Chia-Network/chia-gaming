@@ -69,6 +69,7 @@ pub struct OnChainPhase {
     was_stale: bool,
     resolved_clean: bool,
     terminal_reward_coin: Option<CoinString>,
+    confirmed_opponent_reward: Option<Amount>,
     game_payout_coins: Vec<(GameID, CoinString)>,
     advisory: Option<String>,
 }
@@ -100,6 +101,7 @@ pub struct OnChainPhaseArgs {
     pub was_stale: bool,
     pub resolved_clean: bool,
     pub terminal_reward_coin: Option<CoinString>,
+    pub confirmed_opponent_reward: Option<Amount>,
     pub game_payout_coins: Vec<(GameID, CoinString)>,
 }
 
@@ -218,6 +220,7 @@ impl OnChainPhase {
             was_stale: args.was_stale,
             resolved_clean: args.resolved_clean,
             terminal_reward_coin: args.terminal_reward_coin,
+            confirmed_opponent_reward: args.confirmed_opponent_reward,
             game_payout_coins: args.game_payout_coins,
             advisory: None,
         }
@@ -232,6 +235,7 @@ impl OnChainPhase {
         was_stale: bool,
         resolved_clean: bool,
         terminal_reward_coin: Option<CoinString>,
+        confirmed_opponent_reward: Option<Amount>,
         advisory: Option<String>,
     ) -> Self {
         OnChainPhase {
@@ -255,6 +259,7 @@ impl OnChainPhase {
             was_stale,
             resolved_clean,
             terminal_reward_coin,
+            confirmed_opponent_reward,
             game_payout_coins: Vec::new(),
             advisory,
         }
@@ -2096,7 +2101,11 @@ impl PeerLifecyclePhase for OnChainPhase {
             advisory: self.advisory.clone(),
             coin: self.terminal_reward_coin.clone(),
             our_balance: Some(self.my_out_of_game_balance.clone()),
-            their_balance: Some(self.their_out_of_game_balance.clone()),
+            their_balance: if self.resolved_clean {
+                Some(self.their_out_of_game_balance.clone())
+            } else {
+                self.confirmed_opponent_reward.clone()
+            },
             ..ChannelStatusSnapshot::new(state)
         })
     }
@@ -2146,6 +2155,33 @@ impl PeerLifecyclePhase for OnChainPhase {
 mod tests {
     use super::*;
     use crate::channel_state::types::TimeoutClaimState;
+
+    #[test]
+    fn stale_unroll_status_uses_confirmed_opponent_reward() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (_, referees, referee_ph) =
+            crate::games::debug::make_real_debug_referees(&mut allocator);
+        let coin = CoinString::from_parts(
+            &CoinString::default().to_coin_id(),
+            &referee_ph,
+            &Amount::new(100),
+        );
+        let mut phase = phase_with_referee(Rc::new(referees[0].clone()), &coin);
+        phase.was_stale = true;
+        phase.their_out_of_game_balance = Amount::new(100);
+        phase.confirmed_opponent_reward = Some(Amount::new(25));
+        let status = phase.channel_status_snapshot().unwrap();
+        assert_eq!(status.state, ChannelStatus::ResolvedStale);
+        assert_eq!(status.their_balance, Some(Amount::new(25)));
+
+        phase.confirmed_opponent_reward = Some(Amount::default());
+        assert_eq!(
+            phase.channel_status_snapshot().unwrap().their_balance,
+            Some(Amount::default())
+        );
+        phase.confirmed_opponent_reward = None;
+        assert_eq!(phase.channel_status_snapshot().unwrap().their_balance, None);
+    }
 
     fn game_state(game_id: GameID) -> OnChainGameState {
         OnChainGameState {
@@ -2204,6 +2240,7 @@ mod tests {
             was_stale: false,
             resolved_clean: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             game_payout_coins: Vec::new(),
         })
     }

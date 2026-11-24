@@ -79,6 +79,16 @@ fn delegated_path_puzzle_hash(
     Ok(Some(Node(delegated_puzzle).sha256tree(allocator)))
 }
 
+fn direct_reward_amount(conditions: &[CoinCondition], reward_ph: &PuzzleHash) -> Amount {
+    conditions
+        .iter()
+        .find_map(|condition| match condition {
+            CoinCondition::CreateCoin(ph, amount) if ph == reward_ph => Some(amount.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 enum SpendChannelCoinState {
     ChannelSpend {
@@ -113,6 +123,7 @@ pub struct SpendChannelCoinPhase {
     advisory: Option<String>,
     was_stale: bool,
     terminal_reward_coin: Option<CoinString>,
+    confirmed_opponent_reward: Option<Amount>,
     unroll_initiator: Option<UnrollInitiator>,
     timeout_finish_submitted: bool,
 
@@ -155,6 +166,7 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             unroll_initiator: Some(UnrollInitiator::Us),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: None,
@@ -188,6 +200,7 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             unroll_initiator: Some(UnrollInitiator::Opponent),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution,
@@ -222,6 +235,7 @@ impl SpendChannelCoinPhase {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             unroll_initiator: None,
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: Some(clean_shutdown_solution),
@@ -556,6 +570,7 @@ impl SpendChannelCoinPhase {
             self.was_stale,
             false,
             self.terminal_reward_coin.clone(),
+            self.confirmed_opponent_reward.clone(),
             self.advisory.clone(),
         );
         self.replacement = Some(Box::new(on_chain));
@@ -573,6 +588,7 @@ impl SpendChannelCoinPhase {
             self.was_stale,
             resolved_clean,
             self.terminal_reward_coin.clone(),
+            self.confirmed_opponent_reward.clone(),
             None,
         );
         self.replacement = Some(Box::new(on_chain));
@@ -858,7 +874,7 @@ impl SpendChannelCoinPhase {
         let (puzzle, solution) = puzzle_and_solution
             .ok_or_else(|| Error::StrErr("no conditions for unroll coin".to_string()))?;
 
-        let (mut game_map, on_chain_reward_coin, preempt_resolved) = {
+        let (mut game_map, on_chain_reward_coin, opponent_reward, preempt_resolved) = {
             let player_ch = self.base.channel_state_mut()?;
 
             let mut pre_game_ids: HashSet<GameID> = player_ch.live_game_ids().into_iter().collect();
@@ -882,6 +898,7 @@ impl SpendChannelCoinPhase {
                 }
                 None
             });
+            let opponent_reward = direct_reward_amount(&conditions, &their_reward_puzzle_hash);
             let is_stale = player_ch
                 .timeout_state_number()
                 .is_some_and(|t| on_chain_state + 1 < t);
@@ -938,10 +955,16 @@ impl SpendChannelCoinPhase {
             let preempt_resolved =
                 player_ch.drain_preempt_resolved_accept_settlements(&surviving_ids);
 
-            (game_map_inner, reward_coin, preempt_resolved)
+            (
+                game_map_inner,
+                reward_coin,
+                opponent_reward,
+                preempt_resolved,
+            )
         };
 
         self.terminal_reward_coin = on_chain_reward_coin.clone();
+        self.confirmed_opponent_reward = Some(opponent_reward);
 
         for (game_id, our_share, _game_finished) in &preempt_resolved {
             effects.push(Effect::Notify(GameNotification::game_settled(
@@ -1166,6 +1189,7 @@ impl SpendChannelCoinPhase {
             was_stale: self.was_stale,
             resolved_clean: false,
             terminal_reward_coin: self.terminal_reward_coin.clone(),
+            confirmed_opponent_reward: self.confirmed_opponent_reward.clone(),
             game_payout_coins: Vec::new(),
         });
         self.replacement = Some(Box::new(on_chain));
@@ -1536,6 +1560,27 @@ mod tests {
     }
 
     #[test]
+    fn direct_reward_comes_from_unroll_output_and_absence_means_zero() {
+        let our_ph = PuzzleHash::from_bytes([1; 32]);
+        let their_ph = PuzzleHash::from_bytes([2; 32]);
+        let game_ph = PuzzleHash::from_bytes([3; 32]);
+        let conditions = vec![
+            CoinCondition::CreateCoin(our_ph.clone(), Amount::new(60)),
+            CoinCondition::CreateCoin(their_ph.clone(), Amount::new(25)),
+            CoinCondition::CreateCoin(game_ph, Amount::new(15)),
+        ];
+        assert_eq!(direct_reward_amount(&conditions, &our_ph), Amount::new(60));
+        assert_eq!(
+            direct_reward_amount(&conditions, &their_ph),
+            Amount::new(25)
+        );
+        assert_eq!(
+            direct_reward_amount(&conditions[..1], &their_ph),
+            Amount::default()
+        );
+    }
+
+    #[test]
     fn clean_shutdown_classification_ignores_unsigned_solution_argument() {
         let mut allocator = AllocEncoder::new();
         let conditions = ().to_clvm(&mut allocator).into_gen().unwrap();
@@ -1697,6 +1742,7 @@ mod tests {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             unroll_initiator: Some(UnrollInitiator::Opponent),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: None,
@@ -1743,6 +1789,7 @@ mod tests {
             advisory: None,
             was_stale: false,
             terminal_reward_coin: None,
+            confirmed_opponent_reward: None,
             unroll_initiator: Some(UnrollInitiator::Us),
             timeout_finish_submitted: false,
             expected_clean_shutdown_solution: None,
