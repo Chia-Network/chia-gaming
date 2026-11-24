@@ -570,6 +570,32 @@ impl GameSession {
             .collect()
     }
 
+    /// Recognize direct change outputs of the pending cooperative channel spend.
+    pub fn pending_channel_change(
+        &self,
+        input: &CoinString,
+        output: &CoinString,
+    ) -> Option<CoinOfInterest> {
+        let channel = self.peer.channel_state().ok()?;
+        if input != channel.channel_coin()
+            || self.peer.channel_status_snapshot()?.state
+                != ChannelStatus::ShutdownTransactionPending
+        {
+            return None;
+        }
+        let (parent, puzzle_hash, _) = output.to_parts()?;
+        if parent != input.to_coin_id() {
+            return None;
+        }
+        if &puzzle_hash == channel.my_reward_puzzle_hash() {
+            Some(CoinOfInterest::OurChannelChange)
+        } else if &puzzle_hash == channel.their_reward_puzzle_hash() {
+            Some(CoinOfInterest::OpponentChannelChange)
+        } else {
+            None
+        }
+    }
+
     pub fn is_peer_disconnected(&self) -> bool {
         self.state.peer_disconnected
     }

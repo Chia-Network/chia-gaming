@@ -262,6 +262,14 @@ it(
         receiverCoins.map((coin) => coin.label),
         ['Funding coin (input)', 'Channel coin (expected output)'],
       );
+      await fakeBlockchainInfo.registerCoins([receiverCoins[0].id]);
+      const [receiverFundingRecord] = await fakeBlockchainInfo.getCoinRecordsByNames([
+        receiverCoins[0].id,
+      ]);
+      assert.ok(
+        receiverFundingRecord && !receiverFundingRecord.spent,
+        'the wallet funding input must exist and be unspent before the channel opens',
+      );
       const receiverChannelWatch = wasm_blob2.snapshotWatchedCoins();
       assert.equal(receiverChannelWatch.length, 1);
       assert.notEqual(receiverChannelWatch[0].coin_name, receiverCoins[0].id);
@@ -281,6 +289,14 @@ it(
       assert.deepEqual(
         initiatorCoins.map((coin) => coin.label),
         ['Funding coin (input)', 'Channel coin (expected output)'],
+      );
+      await fakeBlockchainInfo.registerCoins([initiatorCoins[0].id]);
+      const [initiatorFundingRecord] = await fakeBlockchainInfo.getCoinRecordsByNames([
+        initiatorCoins[0].id,
+      ]);
+      assert.ok(
+        initiatorFundingRecord && !initiatorFundingRecord.spent,
+        'the wallet funding input must exist and be unspent before the channel opens',
       );
       const initiatorChannelWatch = wasm_blob1.snapshotWatchedCoins();
       assert.equal(initiatorChannelWatch.length, 1);

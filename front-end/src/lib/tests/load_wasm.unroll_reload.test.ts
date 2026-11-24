@@ -234,6 +234,15 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
   }
   await flushWrapperDrain(adapters);
   assert.equal(lane.controller.lastChannelStatus?.state, 'ShutdownTransactionPending');
+  const receiverChange = lane.controller
+    .getCoinsOfInterest()
+    .find(({ label }) => label === 'Your change coin (expected output)');
+  const initiatorChange = lane.controller
+    .getCoinsOfInterest()
+    .find(({ label }) => label === "Opponent's change coin (expected output)");
+  assert.ok(receiverChange);
+  assert.ok(initiatorChange);
+  assert.notEqual(receiverChange.id, initiatorChange.id);
 
   lane = (
     await injectSessionReload(lane, poller, undefined, async () => {
@@ -243,6 +252,16 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
         adapters[initiatorIndex].deliver_message(response.msgno, response.msg);
       }
       await flushWrapperDrain(adapters);
+      const initiatorCoins = adapters[initiatorIndex].blob!.getCoinsOfInterest();
+      assert.equal(
+        initiatorCoins.find(({ label }) => label === 'Your change coin (expected output)')?.id,
+        initiatorChange.id,
+      );
+      assert.equal(
+        initiatorCoins.find(({ label }) => label === "Opponent's change coin (expected output)")
+          ?.id,
+        receiverChange.id,
+      );
       await fakeBlockchainInfo.farmBlock();
     })
   ).lane;
@@ -261,6 +280,10 @@ async function runCleanShutdownReloadAndLand(poller: BlockchainPoller): Promise<
     lane.controller.lastChannelStatus?.state,
     'ResolvedClean',
     `clean landing failed: advisory=${lane.controller.lastChannelStatus?.advisory ?? 'none'}\n${lane.controller.diagnosticLog.join('\n')}`,
+  );
+  assert.ok(
+    lane.controller.getCoinsOfInterest().some(({ id }) => id === receiverChange.id),
+    'the payout labeled as ours must match the resolved local reward',
   );
   await lane.controller.flushPendingWork();
   assert.equal(

@@ -24,7 +24,7 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    local_capabilities, raw_coin_conditions_to_clvm, validate_ab_payload,
+    local_capabilities, opening_wallet_input, raw_coin_conditions_to_clvm, validate_ab_payload,
     validate_assembled_channel_funding, CoinSpendRequest, HandshakePayloadB, HandshakePayloadC,
     HandshakePayloadD, HandshakeStepInfo, HandshakeStepWithSpend, RawCoinCondition,
     MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
@@ -1047,7 +1047,12 @@ impl PeerLifecyclePhase for HandshakeInitiatorPhase {
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
         let mut coins = Vec::with_capacity(2);
-        if let Some(coin) = &self.funding_coin {
+        if let Some(coin) = self
+            .channel_initiation_transaction
+            .as_ref()
+            .zip(self.funding_coin.as_ref())
+            .and_then(|(bundle, funding_coin)| opening_wallet_input(bundle, funding_coin))
+        {
             coins.push((CoinOfInterest::Funding, coin.clone()));
         }
         if let Some(channel) = &self.channel_state {

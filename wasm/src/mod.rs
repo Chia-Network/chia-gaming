@@ -2109,7 +2109,7 @@ mod gaming_wasm {
 
         /// Labeled coin ids (hex) to show above the protocol state.
         pub fn coins_of_interest(&self) -> Result<JsValue, JsValue> {
-            let (coins, transitions) = self.with_game(move |cradle: &mut Channel| {
+            let (coins, pending) = self.with_game(move |cradle: &mut Channel| {
                 let coins = cradle.cradle.coins_of_interest();
                 // Opening offers can contain expensive ephemeral wallet spends.
                 // Their final channel output is already known to the phase.
@@ -2119,16 +2119,22 @@ mod gaming_wasm {
                     .map(|(_, id)| id.clone())
                     .collect::<Vec<_>>();
                 let transitions = cradle.cradle.pending_coin_transitions(&active_inputs)?;
-                Ok((coins, transitions))
+                let mut pending =
+                    BTreeMap::<String, BTreeMap<String, Option<CoinOfInterest>>>::new();
+                for (input, outputs) in transitions {
+                    pending
+                        .entry(input.to_coin_id().to_string())
+                        .or_default()
+                        .extend(outputs.into_iter().map(|output| {
+                            let kind = cradle.cradle.pending_channel_change(&input, &output);
+                            (output.to_coin_id().to_string(), kind)
+                        }));
+                }
+                Ok((coins, pending))
             })?;
-            let mut pending = BTreeMap::<String, BTreeSet<String>>::new();
-            for (input, outputs) in transitions {
-                pending
-                    .entry(input.to_coin_id().to_string())
-                    .or_default()
-                    .extend(outputs.into_iter().map(|coin| coin.to_coin_id().to_string()));
-            }
-            let opening = coins.iter().any(|(kind, _)| *kind == CoinOfInterest::Funding);
+            let opening = coins
+                .iter()
+                .any(|(kind, _)| *kind == CoinOfInterest::Funding);
             let mut shown_ids: BTreeSet<String> = coins.iter().map(|(_, id)| id.clone()).collect();
             let mut entries: Vec<JsCoinOfInterest> = coins
                 .into_iter()
@@ -2160,13 +2166,16 @@ mod gaming_wasm {
             let mut expected = Vec::new();
             for entry in &entries {
                 if let Some(outputs) = pending.get(&entry.id) {
-                    for id in outputs {
+                    for (id, kind) in outputs {
                         if shown_ids.insert(id.clone()) {
                             expected.push(JsCoinOfInterest {
-                                label: format!(
-                                    "Expected output from {}",
-                                    entry.label.trim_end_matches(" (input)")
-                                ),
+                                label: match kind {
+                                    Some(kind) => format!("{} (expected output)", kind.label()),
+                                    None => format!(
+                                        "Expected output from {}",
+                                        entry.label.trim_end_matches(" (input)")
+                                    ),
+                                },
                                 id: id.clone(),
                                 game_id: entry.game_id.clone(),
                                 game_coin_kind: entry.game_coin_kind,

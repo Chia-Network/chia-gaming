@@ -23,10 +23,10 @@ use crate::session_phases::effects::{
     GameNotification, TimeoutClaimSemantic,
 };
 use crate::session_phases::handshake::{
-    local_capabilities, validate_ab_payload, validate_assembled_channel_funding, CoinSpendRequest,
-    HandshakePayloadB, HandshakePayloadBWithGenesis, HandshakePayloadD, HandshakeStepInfo,
-    HandshakeStepWithSpend, RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES,
-    MAX_QUEUED_PEER_MESSAGES,
+    local_capabilities, opening_wallet_input, validate_ab_payload,
+    validate_assembled_channel_funding, CoinSpendRequest, HandshakePayloadB,
+    HandshakePayloadBWithGenesis, HandshakePayloadD, HandshakeStepInfo, HandshakeStepWithSpend,
+    RawCoinCondition, MAX_PEER_MESSAGE_SIZE, MAX_QUEUED_PEER_BYTES, MAX_QUEUED_PEER_MESSAGES,
 };
 use crate::session_phases::handshake_initiator::validate_wallet_bundle_applies_conditions;
 use crate::session_phases::proposal::GameProposal;
@@ -1036,7 +1036,12 @@ impl PeerLifecyclePhase for HandshakeReceiverPhase {
     }
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)> {
         let mut coins = Vec::with_capacity(2);
-        if let Some(coin) = &self.funding_coin {
+        if let Some(coin) = self
+            .channel_finished_transaction
+            .as_ref()
+            .zip(self.funding_coin.as_ref())
+            .and_then(|(bundle, funding_coin)| opening_wallet_input(bundle, funding_coin))
+        {
             coins.push((CoinOfInterest::Funding, coin.clone()));
         }
         if let Some(channel) = &self.channel_state {
