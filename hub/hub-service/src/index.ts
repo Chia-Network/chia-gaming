@@ -127,6 +127,7 @@ const HUB_DISCONNECT_GRACE_MS = 3000;
 const GAME_KEEPALIVE_INTERVAL_MS = readPositiveIntegerEnv('GAME_KEEPALIVE_INTERVAL_MS', 15_000);
 const CONNECTION_TTL_MS = 60_000;
 const SWEEP_INTERVAL_MS = 15_000;
+const HUB_UPDATE_INTERVAL_MS = 250;
 const PLAYER_ID_BYTES = 16;
 const SESSION_ID_BYTES = 16;
 const MAX_ALIAS_BYTES = 128;
@@ -140,7 +141,7 @@ const MAX_CONNECTIONS_PER_IP = readPositiveIntegerEnv('HUB_MAX_CONNECTIONS_PER_I
 const MAX_PLAYERS = readPositiveIntegerEnv('HUB_MAX_PLAYERS', 1000);
 const MAX_PENDING_CHALLENGES_PER_PLAYER = readPositiveIntegerEnv(
   'HUB_MAX_PENDING_CHALLENGES_PER_PLAYER',
-  8,
+  1,
 );
 const MAX_CHALLENGES = readPositiveIntegerEnv('HUB_MAX_CHALLENGES', 4000);
 const MAX_RETAINED_SESSIONS = readPositiveIntegerEnv('HUB_MAX_RETAINED_SESSIONS', 10_000);
@@ -180,6 +181,17 @@ const MAX_TOTAL_GAME_OUTBOUND_BYTES = readPositiveIntegerEnv(
   'GAME_MAX_TOTAL_OUTBOUND_BYTES',
   256 * 1024 * 1024,
 );
+const MAX_HUB_OUTBOUND_BYTES_PER_CONNECTION = readPositiveIntegerEnv(
+  'HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION',
+  1024 * 1024,
+);
+const MAX_TOTAL_HUB_OUTBOUND_BYTES = readPositiveIntegerEnv(
+  'HUB_MAX_TOTAL_OUTBOUND_BYTES',
+  64 * 1024 * 1024,
+);
+const MAX_HUB_ROSTER_OUTBOUND_BYTES =
+  MAX_TOTAL_HUB_OUTBOUND_BYTES -
+  Math.min(1024 * 1024, Math.floor(MAX_TOTAL_HUB_OUTBOUND_BYTES / 8));
 if (HUB_CONTROL_MAX_WS_PAYLOAD_BYTES > 0x7fffffff) {
   throw new Error('HUB_CONTROL_MAX_WS_PAYLOAD_BYTES must be at most 2147483647');
 }
@@ -200,6 +212,8 @@ const connectionAttemptsByIp = new Map<string, ConnectionAttemptBudget>();
 let totalConnections = 0;
 const queuedGameBytes = new WeakMap<WebSocket, number>();
 let totalQueuedGameBytes = 0;
+const queuedHubBytes = new WeakMap<WebSocket, number>();
+let totalQueuedHubBytes = 0;
 
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -248,6 +262,10 @@ function trackConnection(ws: WebSocket, ip: string): void {
   connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
   ws.once('close', () => {
     totalConnections -= 1;
+    const released = queuedHubBytes.get(ws) ?? 0;
+    totalQueuedHubBytes -= released;
+    queuedHubBytes.delete(ws);
+    if (released > 0) flushDeferredHubUpdates();
     const remaining = (connectionsByIp.get(ip) ?? 1) - 1;
     if (remaining === 0) {
       connectionsByIp.delete(ip);
@@ -559,13 +577,60 @@ if (args.dir) {
   hubApp.use(express.static(args.dir));
 }
 
-function sendSerializedWs(ws: WebSocket, type: string, serialized: string): void {
+function sendSerializedWs(
+  ws: WebSocket,
+  type: string,
+  serialized: string,
+  onSent?: () => void,
+  deferWhenGloballyFull = false,
+): 'sent' | 'deferred' | 'closed' {
   if (ws.readyState !== WebSocket.OPEN) {
     logHub('send_ws_drop_not_open', { ws_id: wsId(ws), type, ready_state: ws.readyState });
-    return;
+    return 'closed';
   }
-  ws.send(serialized);
+  const bytes = Buffer.byteLength(serialized);
+  const queued = queuedHubBytes.get(ws) ?? 0;
+  if (
+    Math.max(queued, ws.bufferedAmount) + bytes > MAX_HUB_OUTBOUND_BYTES_PER_CONNECTION ||
+    bytes > MAX_TOTAL_HUB_OUTBOUND_BYTES
+  ) {
+    logHub('send_ws_backpressure', { ws_id: wsId(ws), type, bytes, queued });
+    ws.terminate();
+    return 'closed';
+  }
+  const globalLimit =
+    deferWhenGloballyFull && bytes <= MAX_HUB_ROSTER_OUTBOUND_BYTES
+      ? MAX_HUB_ROSTER_OUTBOUND_BYTES
+      : MAX_TOTAL_HUB_OUTBOUND_BYTES;
+  if (totalQueuedHubBytes + bytes > globalLimit) {
+    if (deferWhenGloballyFull) return 'deferred';
+    logHub('send_ws_backpressure', { ws_id: wsId(ws), type, bytes, queued });
+    ws.terminate();
+    return 'closed';
+  }
+  queuedHubBytes.set(ws, queued + bytes);
+  totalQueuedHubBytes += bytes;
+  try {
+    ws.send(serialized, (error) => {
+      const current = queuedHubBytes.get(ws);
+      if (current !== undefined) {
+        const remaining = current - bytes;
+        if (remaining > 0) queuedHubBytes.set(ws, remaining);
+        else queuedHubBytes.delete(ws);
+        totalQueuedHubBytes -= bytes;
+      }
+      if (error) logHub('send_ws_error', { ws_id: wsId(ws), type, error: error.message });
+      flushDeferredHubUpdates();
+      onSent?.();
+    });
+  } catch (error) {
+    if (queued > 0) queuedHubBytes.set(ws, queued);
+    else queuedHubBytes.delete(ws);
+    totalQueuedHubBytes -= bytes;
+    throw error;
+  }
   logHubVerbose('send_ws_ok', { ws_id: wsId(ws), type });
+  return 'sent';
 }
 
 function sendWs(ws: WebSocket, type: string, payload: unknown): void {
@@ -806,7 +871,9 @@ function unbindGameConnection(ws: WebSocket): void {
 }
 
 function replayPendingChallengesToPlayer(playerId: string): void {
+  let outgoingChallengeId: string | null = null;
   for (const challenge of hub.challenges.values()) {
+    if (challenge.from_id === playerId) outgoingChallengeId = challenge.id;
     if (challenge.target_id !== playerId) continue;
     const fromAlias = aliasForPlayer(challenge.from_id);
     sendHubEvent(playerId, 'challenge_received', {
@@ -819,6 +886,7 @@ function replayPendingChallengesToPlayer(playerId: string): void {
       unroll_timeout: challenge.unroll_timeout,
     });
   }
+  sendHubEvent(playerId, 'challenge_outgoing', { challenge_id: outgoingChallengeId });
 }
 
 function sendGameEvent(playerId: string, type: GameOutboundType, payload: unknown): void {
@@ -844,30 +912,71 @@ function withoutBusyReasons({ busy_reasons: _busyReasons, ...rest }: Player): Pl
   return rest;
 }
 
-/**
- * Busy reasons are visible only to the busy player. Every other recipient sees
- * a plain `busy` status.
- */
-function broadcastHubUpdate(): void {
-  const players = hub.getPlayers();
-  const publicSerialized = JSON.stringify({
-    type: 'hub_update',
-    players: players.map(withoutBusyReasons),
-  });
-  for (const [playerId, ws] of hubConnections) {
-    const serialized = hub.players[playerId]?.busy_reasons
-      ? JSON.stringify({
-          type: 'hub_update',
-          players: players.map((p) => (p.id === playerId ? p : withoutBusyReasons(p))),
-        })
-      : publicSerialized;
-    logHubVerbose('send_hub_event', {
-      player_id: playerId,
-      ws_id: wsId(ws),
-      type: 'hub_update',
-    });
-    sendSerializedWs(ws, 'hub_update', serialized);
+let hubUpdateTimer: ReturnType<typeof setTimeout> | undefined;
+let latestHubUpdate = '';
+let latestPrivatePlayers = new Map<string, { start: number; end: number; serialized: string }>();
+let hubUpdateVersion = 0;
+const hubUpdateInFlight = new WeakSet<WebSocket>();
+const deferredHubUpdates = new Map<WebSocket, string>();
+
+function flushDeferredHubUpdates(): void {
+  for (const [ws, playerId] of deferredHubUpdates) {
+    deferredHubUpdates.delete(ws);
+    sendLatestHubUpdate(playerId, ws);
+    if (deferredHubUpdates.has(ws)) break;
   }
+}
+
+function sendLatestHubUpdate(playerId: string, ws: WebSocket): void {
+  if (hubConnections.get(playerId) !== ws || hubUpdateInFlight.has(ws)) return;
+  const ownPlayer = latestPrivatePlayers.get(playerId);
+  const serialized = ownPlayer
+    ? latestHubUpdate.slice(0, ownPlayer.start) +
+      ownPlayer.serialized +
+      latestHubUpdate.slice(ownPlayer.end)
+    : latestHubUpdate;
+  const version = hubUpdateVersion;
+  hubUpdateInFlight.add(ws);
+  const result = sendSerializedWs(
+    ws,
+    'hub_update',
+    serialized,
+    () => {
+      hubUpdateInFlight.delete(ws);
+      if (hubConnections.get(playerId) === ws && hubUpdateVersion > version) {
+        sendLatestHubUpdate(playerId, ws);
+      }
+    },
+    true,
+  );
+  if (result !== 'sent') hubUpdateInFlight.delete(ws);
+  if (result === 'deferred') deferredHubUpdates.set(ws, playerId);
+}
+
+/** One current roster frame per socket; slow sockets skip superseded snapshots. */
+function broadcastHubUpdate(): void {
+  if (hubUpdateTimer) return;
+  hubUpdateTimer = setTimeout(() => {
+    hubUpdateTimer = undefined;
+    const players = hub.getPlayers();
+    const prefix = '{"type":"hub_update","players":[';
+    const publicPlayers = players.map((player) => JSON.stringify(withoutBusyReasons(player)));
+    const privatePlayers = new Map<string, { start: number; end: number; serialized: string }>();
+    let start = prefix.length;
+    for (const [index, player] of players.entries()) {
+      const end = start + publicPlayers[index].length;
+      if (player.busy_reasons) {
+        privatePlayers.set(player.id, { start, end, serialized: JSON.stringify(player) });
+      }
+      start = end + 1;
+    }
+    latestHubUpdate = prefix + publicPlayers.join(',') + ']}';
+    latestPrivatePlayers = privatePlayers;
+    hubUpdateVersion += 1;
+    for (const [playerId, ws] of hubConnections) {
+      sendLatestHubUpdate(playerId, ws);
+    }
+  }, HUB_UPDATE_INTERVAL_MS);
 }
 
 function cancelPendingHubLeave(playerId: string): void {
@@ -905,13 +1014,15 @@ function cancelPlayerChallenges(playerId: string): void {
     }
   }
   for (const { id, challenge } of toCancel) {
-    const otherId = challenge.from_id === playerId ? challenge.target_id : challenge.from_id;
     hub.removeChallenge(id);
-    sendHubEvent(otherId, 'challenge_resolved', { challenge_id: id, accepted: false });
+    const resolution = { challenge_id: id, accepted: false };
+    sendHubEvent(challenge.from_id, 'challenge_resolved', resolution);
+    sendHubEvent(challenge.target_id, 'challenge_resolved', resolution);
     logHub('challenge_cancelled_on_sweep', {
       challenge_id: id,
       swept_player: playerId,
-      notified_player: otherId,
+      challenger_id: challenge.from_id,
+      target_id: challenge.target_id,
     });
   }
 }
@@ -1037,8 +1148,8 @@ function onHubJoin(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'join'
   }
   setKnownAlias(sessionId, playerId, resolvedAlias);
   sendWs(ws, 'joined', { id: playerId, alias: resolvedAlias });
-  broadcastHubUpdate();
   replayPendingChallengesToPlayer(playerId);
+  broadcastHubUpdate();
 
   // If the game channel was already identified, apply busy status
   const gameWs = gameConnections.get(sessionId);
@@ -1058,6 +1169,7 @@ function onHubLeave(ws: WebSocket, _msg: Extract<HubInboundMessage, { type: 'lea
   logHub('hub_leave', { player_id: playerId });
   cancelPendingHubLeave(playerId);
   leaveHub(playerId);
+  sendWs(ws, 'hub_update', { players: hub.getPlayers().map(withoutBusyReasons) });
   if (hubConnections.get(playerId) === ws) {
     hubConnections.delete(playerId);
   }
@@ -1218,6 +1330,7 @@ function onChallenge(ws: WebSocket, msg: Extract<HubInboundMessage, { type: 'cha
     channel_timeout: challenge.channel_timeout,
     unroll_timeout: challenge.unroll_timeout,
   });
+  sendWs(ws, 'challenge_outgoing', { challenge_id: challenge.id });
   sendGameEvent(target_id, 'hub_attention', {});
 }
 
@@ -1358,8 +1471,8 @@ function onChallengeCancel(
     });
     hub.removeChallenge(id);
     sendHubEvent(challenge.target_id, 'challenge_resolved', { challenge_id: id, accepted: false });
+    sendWs(ws, 'challenge_resolved', { challenge_id: id, accepted: false });
   }
-  sendWs(ws, 'challenge_resolved', { challenge_id: null, accepted: false });
 }
 
 function onChangeAlias(
@@ -1677,7 +1790,7 @@ function parseGameInbound(raw: Buffer): GameInboundMessage | null {
 function setupHubKeepalive(ws: WebSocket): void {
   const kaTimer = setInterval(() => {
     if (ws.readyState === ws.OPEN) {
-      ws.send(JSON.stringify({ type: 'keepalive' }));
+      sendWs(ws, 'keepalive', {});
     }
   }, 15_000);
   wsKeepaliveTimers.set(ws, kaTimer);
@@ -1772,6 +1885,7 @@ hubWsServer.on('connection', (ws) => {
 
   ws.on('close', (code, reason) => {
     clearKeepalive(ws);
+    deferredHubUpdates.delete(ws);
     logHub('hub_ws_closed', { ws_id: currentWsId, code, reason: reason.toString() });
     const hubMeta = wsHubMeta.get(ws);
     if (hubMeta) {

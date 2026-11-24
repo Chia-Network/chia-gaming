@@ -419,14 +419,31 @@ Deployments may override these bounds with `HUB_RETAINED_SESSION_TTL_MS` and
 
 Pending lobby challenges are also bounded retained state. A player cannot
 challenge itself, repeat an unresolved challenge to the same target, or hold
-more than 8 outgoing challenges by default. The hub retains at most 4,000
-challenges globally, and unresolved challenges expire after 5 minutes; expiry
-removes the record and sends `challenge_resolved` with `accepted: false` to
-both players. The insertion and reconnect paths prune expired entries
-immediately, and the regular liveness sweep provides reclamation when no player
-traffic occurs. Deployments may override these limits with
-`HUB_MAX_PENDING_CHALLENGES_PER_PLAYER`, `HUB_MAX_CHALLENGES`, and
-`HUB_CHALLENGE_TTL_MS`.
+more than one outgoing challenge by default. The hub retains at most 4,000
+challenges globally; with the default 1,000-player limit, the global cap cannot
+be filled by pending challenges. Challenges do not expire on a timer. They are
+removed on acceptance, decline, cancellation, or when either player leaves or
+becomes busy. For an automatic removal, the hub sends `challenge_resolved` with
+`accepted: false` to both connected players. The hub sends the sender a
+`challenge_outgoing` message with its challenge ID on creation and on hub
+reconnection (or `null` when none is pending), so the UI can disable further
+challenge requests until that ID is resolved. Deployments may
+override the challenge limits with `HUB_MAX_PENDING_CHALLENGES_PER_PLAYER` and
+`HUB_MAX_CHALLENGES`.
+
+Lobby roster changes within 250 ms are combined into one current `hub_update`.
+Each hub socket has at most one roster update in flight; if it falls behind, the
+hub sends the latest snapshot when that write completes. The public roster is
+serialized once; a busy player's private reasons are inserted only into that
+player's `hub_update`. Hub control writes are limited to 1 MiB queued per socket
+and 64 MiB globally by default. A socket that exceeds its per-socket budget or
+tries to send a frame larger than the global budget is disconnected. When the
+global budget is temporarily full, roster updates wait and send the latest
+snapshot after capacity frees up; up to 1 MiB remains available for other hub
+control messages. Those other messages still disconnect on budget overflow.
+Deployments may override these
+budgets with `HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION` and
+`HUB_MAX_TOTAL_OUTBOUND_BYTES`.
 
 ### 8.2 Registration
 

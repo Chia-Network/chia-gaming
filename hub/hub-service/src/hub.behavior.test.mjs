@@ -56,7 +56,6 @@ async function startHub(env = {}, selfPath = '', extraArgs = []) {
         HUB_MAX_TOTAL_CONNECTIONS: '2000',
         HUB_MAX_CONNECTIONS_PER_IP: '8',
         HUB_MAX_PLAYERS: '1000',
-        HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '8',
         HUB_MAX_CHALLENGES: '4000',
         HUB_MAX_RETAINED_SESSIONS: '10000',
         HUB_RETAINED_SESSION_TTL_MS: '86400000',
@@ -65,6 +64,8 @@ async function startHub(env = {}, selfPath = '', extraArgs = []) {
         HUB_RATE_WINDOW_MS: '10000',
         HUB_MAX_MESSAGES_PER_WINDOW: '100',
         HUB_MAX_BYTES_PER_WINDOW: '1000000',
+        HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION: '1048576',
+        HUB_MAX_TOTAL_OUTBOUND_BYTES: '67108864',
         HUB_CONTROL_MAX_WS_PAYLOAD_BYTES: '65536',
         GAME_MAX_WS_PAYLOAD_BYTES: '11534336',
         GAME_MAX_MESSAGES_PER_WINDOW: '1000',
@@ -831,7 +832,6 @@ test('busy reasons sent on identify apply when the player joins the hub', async 
 
 test('challenge creation rejects self, duplicate, per-player, and global overflow', async () => {
   const hub = await startHub({
-    HUB_MAX_PENDING_CHALLENGES_PER_PLAYER: '1',
     HUB_MAX_CHALLENGES: '2',
   });
   try {
@@ -853,9 +853,11 @@ test('challenge creation rejects self, duplicate, per-player, and global overflo
     challenge(alice.ws, alice.id);
     assert.match((await errorPromise).error, /yourself/);
 
+    const outgoing = nextJson(alice.ws, (msg) => msg.type === 'challenge_outgoing');
     let receivedPromise = nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
     challenge(alice.ws, bob.id);
-    await receivedPromise;
+    const first = await receivedPromise;
+    assert.equal((await outgoing).challenge_id, first.challenge_id);
 
     errorPromise = nextJson(alice.ws, (msg) => msg.type === 'error');
     challenge(alice.ws, bob.id);
@@ -879,6 +881,56 @@ test('challenge creation rejects self, duplicate, per-player, and global overflo
     await closeWs(aliceGame);
     await closeWs(bobGame);
     await closeWs(carolGame);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('outgoing challenge state survives reconnect and clears on resolution', async () => {
+  const hub = await startHub();
+  try {
+    const alice = await joinHub(hub.origin, 'outgoing-replay-alice', 'Alice');
+    const bob = await joinHub(hub.origin, 'outgoing-replay-bob', 'Bob');
+    const bobGame = await identifyGame(hub.origin, 'outgoing-replay-bob');
+    const received = nextJson(bob.ws, (msg) => msg.type === 'challenge_received');
+    sendJson(alice.ws, {
+      type: 'challenge',
+      target_id: bob.id,
+      challenger_amount: '100',
+      target_amount: '100',
+    });
+    const challenge = await received;
+
+    const reconnected = await openWs(hub.origin, '/ws/hub');
+    const replay = nextJson(reconnected, (msg) => msg.type === 'challenge_outgoing');
+    sendJson(reconnected, {
+      type: 'join',
+      session_id: sessionKey('outgoing-replay-alice'),
+      alias: 'Alice',
+    });
+    assert.equal((await replay).challenge_id, challenge.challenge_id);
+
+    const resolved = nextJson(
+      reconnected,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === challenge.challenge_id,
+    );
+    sendJson(bob.ws, { type: 'challenge_decline', challenge_id: challenge.challenge_id });
+    assert.equal((await resolved).accepted, false);
+
+    await closeWs(reconnected);
+    const later = await openWs(hub.origin, '/ws/hub');
+    const empty = nextJson(later, (msg) => msg.type === 'challenge_outgoing');
+    sendJson(later, {
+      type: 'join',
+      session_id: sessionKey('outgoing-replay-alice'),
+      alias: 'Alice',
+    });
+    assert.equal((await empty).challenge_id, null);
+
+    await closeWs(alice.ws);
+    await closeWs(later);
+    await closeWs(bob.ws);
+    await closeWs(bobGame);
   } finally {
     await hub.stop();
   }
@@ -949,9 +1001,14 @@ test('leaving the hub atomically cancels challenges and notifies counterparts', 
       bob.ws,
       (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === challenge.challenge_id,
     );
+    const senderResolved = nextJson(
+      alice.ws,
+      (msg) => msg.type === 'challenge_resolved' && msg.challenge_id === challenge.challenge_id,
+    );
 
     sendJson(alice.ws, { type: 'leave' });
     assert.equal((await resolved).accepted, false);
+    assert.equal((await senderResolved).accepted, false);
 
     await closeWs(alice.ws);
     await closeWs(bob.ws);
@@ -1207,6 +1264,74 @@ test('one hub socket cannot join more than one player', async () => {
     assert.deepEqual(update.players, [{ id: joined.id, alias: 'Alice Again', status: 'waiting' }]);
 
     await closeWs(ws);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('bursty alias changes deliver one current roster snapshot', async () => {
+  const hub = await startHub();
+  try {
+    const alice = await joinHub(hub.origin, 'coalesced-alias', 'Alice');
+    await nextJson(alice.ws, (msg) => msg.type === 'hub_update');
+    const updates = [];
+    const recordUpdate = (raw) => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'hub_update') updates.push(message);
+    };
+    alice.ws.on('message', recordUpdate);
+    sendJson(alice.ws, { type: 'change_alias', newAlias: 'One' });
+    sendJson(alice.ws, { type: 'change_alias', newAlias: 'Two' });
+    sendJson(alice.ws, { type: 'change_alias', newAlias: 'Three' });
+    await nextJson(
+      alice.ws,
+      (msg) => msg.type === 'hub_update' && msg.players[0]?.alias === 'Three',
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(updates.length, 1);
+    alice.ws.off('message', recordUpdate);
+    await closeWs(alice.ws);
+  } finally {
+    await hub.stop();
+  }
+});
+
+test('roster fan-out waits for global outbound capacity without disconnecting players', async () => {
+  const hub = await startHub({ HUB_MAX_TOTAL_OUTBOUND_BYTES: '900' });
+  const players = [];
+  try {
+    for (let index = 0; index < 5; index++) {
+      players.push(await joinHub(hub.origin, `roster-budget-${index}`, `Player ${index}`));
+    }
+    const updates = players.map(({ ws }) =>
+      nextJson(
+        ws,
+        (msg) =>
+          msg.type === 'hub_update' &&
+          msg.players.length === players.length &&
+          msg.players.some((player) => player.alias === 'Updated player'),
+      ),
+    );
+    sendJson(players[0].ws, { type: 'change_alias', newAlias: 'Updated player' });
+    await Promise.all(updates);
+    assert.ok(players.every(({ ws }) => ws.readyState === WebSocket.OPEN));
+  } finally {
+    for (const { ws } of players) await closeWs(ws);
+    await hub.stop();
+  }
+});
+
+test('hub control outbound budget disconnects an overloaded socket', async () => {
+  const hub = await startHub({ HUB_MAX_OUTBOUND_BYTES_PER_CONNECTION: '64' });
+  try {
+    const ws = await openWs(hub.origin, '/ws/hub');
+    const closed = nextClose(ws);
+    sendJson(ws, {
+      type: 'join',
+      session_id: sessionKey('bounded-hub-outbound'),
+      alias: 'Alice',
+    });
+    assert.equal((await closed).code, 1006);
   } finally {
     await hub.stop();
   }

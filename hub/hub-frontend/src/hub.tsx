@@ -146,7 +146,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
   }
 
   function submitChallenge() {
-    if (!challengeTarget || !timeoutsValid) return;
+    if (!challengeTarget || !timeoutsValid || challengeSent) return;
     const myAmt = asymmetricAmounts ? challengerAmount : challengeAmount;
     const theirAmt = asymmetricAmounts ? targetAmount : challengeAmount;
     sendChallenge(
@@ -373,7 +373,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
               color="primary"
               size="sm"
               onClick={submitChallenge}
-              disabled={!timeoutsValid}
+              disabled={!timeoutsValid || challengeSent}
             >
               Send Challenge
             </Button>
