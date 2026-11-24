@@ -32,6 +32,8 @@ export type ChannelFundingAwaitingEntry = ChannelFundingEntryBase & {
   stage: 'awaiting-channel';
   providerReservationId: string;
   request: ChannelFundingRecoveryRequest;
+  /** External wallet inputs of the accepted offer; older saves may lack them. */
+  inputs?: { coin_name: string; coin_string: string }[];
 };
 export type ChannelFundingCancellationUncertainEntry = ChannelFundingEntryBase & {
   stage: 'best-effort-cancellation-uncertain';

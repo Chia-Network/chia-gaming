@@ -544,6 +544,67 @@ fn test_krunk_clue_nonterminal_happy() {
     assert_false_slash_with_common_evidence(&mut allocator, &clue, &[0x42], 0, state);
 }
 
+fn test_krunk_zero_clue_is_one_byte_and_survives_reveal() {
+    let mut allocator = AllocEncoder::new();
+    let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
+    let dict_pubkey = make_dict_pubkey(&mut allocator);
+    let salt = [0x77; 16];
+    let word = b"ABUSE";
+    let commit = make_commit_for(&salt, word);
+
+    // ABUSE against SAUCE is yellow, yellow, green, gray, green: 128 - 128 = 0.
+    let first_guess = words_to_list(&mut allocator, &[b"SAUCE"]);
+    let clue_state = make_state_with_guesses(
+        &mut allocator,
+        dict_pubkey,
+        first_guess,
+        NodePtr::NIL,
+        commit,
+    );
+    let (code, _) = run_validator_step(
+        &mut allocator,
+        &clue,
+        &[0x00],
+        21,
+        0,
+        clue_state,
+        NodePtr::NIL,
+    )
+    .unwrap();
+    assert_eq!(code, MoveCode::MakeMove, "one-byte zero clue must be accepted");
+
+    let guesses = words_to_list(&mut allocator, &[b"ABUSE", b"SAUCE"]);
+    let zero_clue = allocator.allocator().new_atom(&[0x00]).unwrap();
+    let clues = allocator
+        .allocator()
+        .new_pair(zero_clue, NodePtr::NIL)
+        .unwrap();
+    let reveal_state = make_state_with_guesses(&mut allocator, dict_pubkey, guesses, clues, commit);
+    let mut reveal_move = salt.to_vec();
+    reveal_move.extend_from_slice(word);
+    let evidence = allocator.allocator().new_atom(&[0x00]).unwrap();
+
+    let (code, _) = run_validator_step(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        21,
+        BASE_UNIT * 100,
+        reveal_state,
+        evidence,
+    )
+    .unwrap();
+    assert_eq!(code, MoveCode::MakeMove, "correct zero clue must not slash");
+    assert_referee_slash_rejected(
+        &mut allocator,
+        &clue,
+        &reveal_move,
+        BASE_UNIT * 100,
+        reveal_state,
+        evidence,
+    );
+}
+
 fn test_krunk_clue_blocks_5th_clue() {
     let mut allocator = AllocEncoder::new();
     let clue = read_hex_puzzle(&mut allocator, "games/krunk/clsp/onchain/clue.hex").unwrap();
@@ -1405,6 +1466,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_krunk_clue_nonterminal_happy",
             &test_krunk_clue_nonterminal_happy,
+        ),
+        (
+            "test_krunk_zero_clue_is_one_byte_and_survives_reveal",
+            &test_krunk_zero_clue_is_one_byte_and_survives_reveal,
         ),
         (
             "test_krunk_clue_blocks_5th_clue",
