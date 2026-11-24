@@ -111,6 +111,7 @@
     (assert
         (>= stack_size 0)
         (> minimum_raise 0)
+        (= minimum_raise (+ minimum_raise 0))
         (deep=
             _args
             (li proposer_reserve accepter_reserve (li stack_size minimum_raise))
