@@ -18,7 +18,7 @@ export fn process_subsets(card: Int, index: Int, entries: List<Subset>) -> List<
             remaining
         };
         if count < 5 {
-            ([(card, sel_cards), sel_bits | (1 >>> (-index)), count + 1], after_skip)
+            ([(card, sel_cards), sel_bits | (1 << index), count + 1], after_skip)
         } else {
             after_skip
         }
@@ -33,25 +33,10 @@ export fn choose_subsets(index: Int, cards: List<Int>) -> List<Subset> {
     }
 }
 
-// Evaluate one subset entry, return (hand_value bitfield)
-export fn eval_subset(boost: Bool, sel_cards: List<Int>, sel_bits: Int, _count: Int) -> [
-    List<Int>,
-    Int,
-] {
-    [space_hand_eval(sel_cards, boost), sel_bits]
-}
-
-// Map eval_subset over all subsets
-export fn eval_all_subsets(boost: Bool, subsets: List<Subset>) -> List<[List<Int>, Int]> {
-    if subsets is nil {
-        nil
-    } else {
-        let [sel_cards, sel_bits, count, ..._] = subsets.first;
-        (eval_subset(boost, sel_cards, sel_bits, count), eval_all_subsets(boost, subsets.rest))
-    }
-}
-
 // Evaluate all 5-card subsets of the given cards, return (best_value best_bitfield).
 export fn space_hand_calc(cards: List<Int>, boost: Bool) -> [List<Int>, Int] {
-    maximum(deep_lt, eval_all_subsets(boost, choose_subsets(0, cards)))
+    let hands = for [selected_cards, bitfield, _] in choose_subsets(0, cards) {
+        [space_hand_eval(selected_cards, boost), bitfield]
+    };
+    maximum(deep_lt, hands)
 }
