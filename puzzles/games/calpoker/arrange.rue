@@ -25,7 +25,7 @@ struct Split {
 }
 
 // Splits the cards by a mask, whose lowest bit is for the first card. A set bit discards a card.
-export fn split_cards(mask: Int, cards: List<Int>, kept: List<Int>, discarded: List<Int>) -> Split {
+fn split_cards(mask: Int, cards: List<Int>, kept: List<Int>, discarded: List<Int>) -> Split {
     if cards is nil {
         Split { kept, discarded }
     } else if mask & 1 != 0 {
