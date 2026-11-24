@@ -260,7 +260,7 @@ that a release build drops isn't needed.
 1. **Pick the midpoint** of the suspected code path.
 2. **Add a check** at that point that fails on the input you're debugging,
    such as `assert value.length == 32;`, or `raise;` at the end of a branch.
-3. **Rebuild** (`./cb.sh`; it runs `tools/build-chialisp.sh` first).
+3. **Rebuild** (`./cb.sh`; it runs `tools/build-rue.sh` first).
 4. **Run the failing test** (`./ct.sh -o test_name`).
 5. **Interpret:**
    - If the stack trace now ends at your `raise` → execution reached that
@@ -281,7 +281,7 @@ Each Rue change requires:
    test binary)
 2. Run the test
 
-`tools/build-chialisp.sh` automatically rebuilds when source content changes or
+`tools/build-rue.sh` automatically rebuilds when source content changes or
 when any generated `.hex` file is missing or modified. Any Rue error or warning
 fails the build. Do not delete cache files or run `cargo clean`; ordinary Cargo
 commands intentionally do not compile the puzzles.

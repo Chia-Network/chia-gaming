@@ -56,7 +56,7 @@ trap cleanup EXIT INT TERM
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
     if [ "$SKIP_NATIVE" -eq 0 ]; then
-        "$SCRIPT_DIR/build-chialisp.sh"
+        "$SCRIPT_DIR/build-rue.sh"
     fi
 
     echo "=== Building WASM (nodejs target for tests, profile $WASM_PROFILE) ==="

@@ -99,8 +99,8 @@ if [ "$FORCE_BUILD" -eq 1 ]; then
 fi
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-    echo "=== Building chialisp (if needed) ==="
-    ./tools/build-chialisp.sh
+    echo "=== Building Rue puzzles (if needed) ==="
+    ./tools/build-rue.sh
     echo "=== Building simulator ==="
     cargo build --bin chia-gaming-sim --features sim-server
     echo "=== Building WASM (web target) ==="

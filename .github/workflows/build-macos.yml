@@ -50,7 +50,7 @@ jobs:
       - name: Build hex files
         run: |
           export PATH=~/.cargo/bin:$PATH
-          tools/build-chialisp.sh
+          tools/build-rue.sh
 
       - name: Run tests on macOS ARM
         run: |

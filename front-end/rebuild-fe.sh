@@ -24,8 +24,8 @@ build_nonce() {
   fi
 }
 
-echo "=== Building chialisp (if needed) ==="
-"$REPO_ROOT/tools/build-chialisp.sh"
+echo "=== Building Rue puzzles (if needed) ==="
+"$REPO_ROOT/tools/build-rue.sh"
 
 echo "=== Building gaming-fe ==="
 (cd "$FE_DIR" && pnpm run build)

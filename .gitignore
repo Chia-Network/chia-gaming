@@ -1,9 +1,12 @@
-#Chialisp / CLVM output
+# Rue build and CLVM output
 *.hex
 *.sym
 *.clvm.bin
 !games/krunk/clsp/factory_args.clvm.bin
 games/package_manifest.json
+.build-rue.state
+
+# Legacy puzzle build state and cache
 .build-chialisp.state
 .build-chialisp.cache
 

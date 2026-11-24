@@ -278,7 +278,7 @@ Run commands from the repo root unless noted.
 ### 1. Puzzles
 
 ```bash
-./tools/build-chialisp.sh
+./tools/build-rue.sh
 ```
 
 This is the sole entry point for compiling the puzzles, which are a Rue
@@ -292,8 +292,9 @@ build. For each game it also curries any factory arguments,
 runs the build-only probe, records the protocol ID, and emits one prepared
 runtime factory. It content-hashes the sources, compiler inputs, and generated
 outputs, rebuilding only when an input changes or an output is missing or
-modified. Ordinary Cargo commands do not compile the puzzles. Only prepared
-factories and core runtime programs are loaded by the WASM module over HTTP.
+modified. The script sets `RUE_COMPILE` to trigger puzzle compilation in Cargo.
+Ordinary Cargo commands do not compile the puzzles. The WASM module loads
+prepared factories and core runtime programs over HTTP.
 The gitignored `games/package_manifest.json` caches the generated protocol IDs
 for subsequent Rust builds; it is build output, not a hand-edited catalog.
 

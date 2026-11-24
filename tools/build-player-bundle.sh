@@ -1,8 +1,8 @@
 #!/bin/bash
 # Build the relocatable player-app bundle into front-end/dist/app.
 #
-# Produces the chialisp .hex files, the release WASM engine, and the bundled
-# React app, in that order. The output directory is position-independent: it
+# Builds the Rue puzzle artifacts, the release WASM engine, and the React
+# bundle, in that order. The output directory is position-independent: it
 # contains no absolute paths and no page shell, so each consumer stages it its
 # own way.
 #
@@ -44,10 +44,10 @@ FE_DIR="$ROOT_DIR/front-end"
 WASM_DIR="$ROOT_DIR/wasm"
 CLSP_DIR="$ROOT_DIR/clsp"
 
-# ── 1. Chialisp ──────────────────────────────────────────────────────
+# ── 1. Rue puzzles ───────────────────────────────────────────────────
 
-echo "=== Building chialisp (.hex files) ==="
-"$SCRIPT_DIR/build-chialisp.sh"
+echo "=== Building Rue puzzles (.hex files) ==="
+"$SCRIPT_DIR/build-rue.sh"
 
 # ── 2. WASM (release, browser target) ────────────────────────────────
 

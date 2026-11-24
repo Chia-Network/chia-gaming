@@ -71,8 +71,8 @@ jobs:
 
       # ── Build (mirrors ct.sh + run-local-demo.sh) ──────────────────
 
-      - name: Build chialisp (hex files)
-        run: tools/build-chialisp.sh
+      - name: Build Rue puzzles (hex files)
+        run: tools/build-rue.sh
 
       - name: Build WASM (web + nodejs targets)
         run: |

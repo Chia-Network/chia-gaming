@@ -14,8 +14,8 @@ else
     RUN_AUX_TESTS=1
 fi
 
-echo "=== Building chialisp ==="
-./tools/build-chialisp.sh
+echo "=== Building Rue puzzles ==="
+./tools/build-rue.sh
 
 echo "=== Building simulator ==="
 cargo build --bin chia-gaming-sim --features sim-server

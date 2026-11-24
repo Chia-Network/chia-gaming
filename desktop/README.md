@@ -14,9 +14,9 @@ installers:
 tools/build-electron.sh --platform=mac   # or --platform=win / --platform=linux
 ```
 
-That runs `tools/build-player-bundle.sh` (chialisp, the release WASM engine, and
-the bundled React app, shared with `tools/build-deploy.sh`) and then packages the
-Electron app.
+That runs `tools/build-player-bundle.sh` to build the Rue puzzles, release WASM
+engine, and React app, then packages the Electron app. `tools/build-deploy.sh`
+uses the same player bundle.
 
 Release CI builds a universal macOS app plus x64 Windows and Linux packages:
 
