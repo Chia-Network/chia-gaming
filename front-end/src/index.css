@@ -321,7 +321,7 @@
   --color-foreground: var(--canvas-text-contrast);
   --color-muted-foreground: var(--canvas-solid);
   --color-input: var(--canvas-border);
-  --color-ring: var(--primary-solid);
+  --color-ring: var(--canvas-text);
   --color-primary: var(--primary-solid);
   --color-primary-foreground: var(--primary-on-primary);
   --color-destructive: var(--alert-solid);

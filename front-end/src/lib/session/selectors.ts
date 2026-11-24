@@ -166,9 +166,9 @@ const CHANNEL_STATUS_LABELS: Record<ChannelStatus, string> = {
   ShutdownTransactionPending: 'Shutting Down',
   GoingOnChain: 'Going On Chain',
   Unrolling: 'Unrolling',
-  ResolvedClean: 'Resolved Clean',
-  ResolvedUnrolled: 'Resolved Unrolled',
-  ResolvedStale: 'Resolved Stale',
+  ResolvedClean: 'Finalizing clean shutdown',
+  ResolvedUnrolled: 'Unrolled to chain',
+  ResolvedStale: 'Unrolled to chain',
   Failed: 'Failed',
 };
 
@@ -323,6 +323,7 @@ export function selectGameTabConnected(args: {
 
 export interface GameDashboardSelectorOptions {
   hasSession?: boolean;
+  sessionFinalized?: boolean;
   setupPending?: boolean;
   actionsBlocked?: boolean;
   cleanShutdownGraceActive?: boolean;
@@ -359,6 +360,16 @@ function selectBannerTone(
   return 'playing';
 }
 
+function channelStatusLabel(channel: ChannelStatusModel, sessionFinalized: boolean): string {
+  if (channel.sessionDisposition === 'Abandoned') return 'Abandoned';
+  if (channel.sessionDisposition === 'AwaitOutboundTerminal') return 'Waiting for Peer';
+  if (sessionFinalized) {
+    if (channel.state === 'ResolvedClean') return 'Clean shutdown successful';
+    if (UNROLL_COMPLETED_HAND_STATES.has(channel.state)) return 'All games complete';
+  }
+  return unrollActionLabel(channel) ?? CHANNEL_STATUS_LABELS[channel.state];
+}
+
 function channelStatusDetail(model: SessionModel): string | null {
   const channel = model.channel.status;
   if (channel.sessionDisposition === 'Abandoned') {
@@ -378,6 +389,8 @@ function channelStatusDetail(model: SessionModel): string | null {
         return channel.advisory ? `${stateDetail}: ${channel.advisory}` : stateDetail;
       }
       return channel.advisory;
+    case 'ResolvedStale':
+      return channel.advisory ? `Stale channel state: ${channel.advisory}` : 'Stale channel state';
     case 'Failed':
       return channel.advisory ?? model.restore.error ?? 'Channel failed';
     default:
@@ -629,12 +642,7 @@ export function selectGameDashboardView(
 
   return {
     bannerTone,
-    channelStatusLabel:
-      channel.sessionDisposition === 'Abandoned'
-        ? 'Abandoned'
-        : channel.sessionDisposition === 'AwaitOutboundTerminal'
-          ? 'Waiting for Peer'
-          : (unrollActionLabel(channel) ?? CHANNEL_STATUS_LABELS[channel.state]),
+    channelStatusLabel: channelStatusLabel(channel, options.sessionFinalized ?? false),
     channelDetail: channelStatusDetail(model),
     havePotato: channel.havePotato === true,
     handStatusLabel: collapsedHandStatusLabel(model),
