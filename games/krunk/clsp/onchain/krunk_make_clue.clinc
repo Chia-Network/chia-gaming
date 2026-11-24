@@ -4,7 +4,8 @@
     (assign
         (krunk-green not_green_word not_green_guess green) (make_green (expand_word word) (expand_word guess))
         yellow (make_yellow not_green_word not_green_guess)
-        (- (merge_colors green yellow 0) 128)
+        clue (- (merge_colors green yellow 0) 128)
+        (if (= clue 0) 0x00 clue)
     )
 )
 

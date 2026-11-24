@@ -13,7 +13,7 @@ import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
 import type { ProviderOwner } from './providerKeys';
 import { SessionRuntimeRetiredError } from './sessionMachineTypes';
 
-type SubmissionOutcome = 'acknowledged' | 'unavailable' | 'rejected' | 'local-failure' | 'skipped';
+type SubmissionOutcome = WalletSubmitOutcome['status'] | 'local-failure' | 'skipped';
 
 interface SubmissionCompletion {
   readonly outcome: SubmissionOutcome;
@@ -132,7 +132,12 @@ export class SubmissionPump {
       entry.retired = true;
       if (entry.state.kind !== 'launched') this.entries.delete(id);
     }
-    this.feeAttachments.retireSubmission(id);
+    this.feeAttachments.stopSubmission(id);
+  }
+
+  retireFee(id: string, feeSpent: boolean): void {
+    if (feeSpent) this.feeAttachments.forgetSpentSubmission(id);
+    else this.feeAttachments.retireSubmission(id);
   }
 
   retireAll(): void {
@@ -354,6 +359,7 @@ export class SubmissionPump {
         if (feeOfferCreated && feeOwner) {
           if (finalized.fee_source_disposition === 'attached') {
             this.feeAttachments.retain(feeOwner, submission.id);
+            this.ports.requestFreshSync();
           } else {
             this.feeAttachments.cancel(
               feeOwner,
@@ -395,7 +401,7 @@ export class SubmissionPump {
               const reported = outcome!;
               if (reported.status === 'acknowledged') {
                 activeCradle.acknowledge_submission_attempt(submission.attempt_token);
-              } else if (reported.status === 'unavailable') {
+              } else if (reported.status === 'unavailable' || reported.status === 'provisional') {
                 activeCradle.submission_attempt_unavailable(submission.attempt_token);
               } else if (isPastDeadlineRejection(reported.detail)) {
                 activeCradle.abandon_submission_attempt(submission.attempt_token);
@@ -428,7 +434,10 @@ export class SubmissionPump {
       if (!abandoned && !this.isInactive(submission) && outcome.status === 'rejected') {
         this.ports.reportWarning(`Wallet rejected transaction ${submission.id}: ${outcome.detail}`);
       }
-      return this.completion(outcome.status, outcome.status === 'unavailable');
+      return this.completion(
+        outcome.status,
+        outcome.status === 'unavailable' || outcome.status === 'provisional',
+      );
     } catch (error) {
       if (this.isInactive(submission)) return this.completion('skipped', false);
       if (feeOfferCreated && feeOwner && finalizedDisposition !== 'attached') {

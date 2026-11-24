@@ -2,7 +2,7 @@
 
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Sha256Input};
-use crate::utils::proper_list;
+use crate::utils::{enlist, proper_list};
 
 use clvm_traits::ToClvm;
 use clvmr::allocator::{NodePtr, SExp};
@@ -801,6 +801,16 @@ fn test_spacepoker_factory_requires_canonical_parameters() {
     assert!(
         !factory_succeeds(&mut allocator, zero_bet_unit),
         "bet_unit must be positive"
+    );
+
+    let padded_bet_unit = allocator.allocator().new_atom(&[0, BET_UNIT as u8]).unwrap();
+    let stack = (BET_SIZE / BET_UNIT).to_clvm(&mut allocator).unwrap();
+    let parameters = enlist(allocator.allocator(), &[stack, padded_bet_unit]).unwrap();
+    let reserve = BET_SIZE.to_clvm(&mut allocator).unwrap();
+    let padded_args = enlist(allocator.allocator(), &[reserve, reserve, parameters]).unwrap();
+    assert!(
+        !factory_succeeds(&mut allocator, padded_args),
+        "positive but noncanonical bet_unit must not enter the initial state"
     );
 
     let negative_stack = (BET_SIZE, (BET_SIZE, (((-1i64, (BET_UNIT, ())), ()))))
