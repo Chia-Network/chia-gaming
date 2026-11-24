@@ -32,6 +32,30 @@ use crate::session_phases::types::{
 };
 use crate::utils::non_nil;
 
+fn actions_for_unrolled_games(
+    queue: &mut VecDeque<GameAction>,
+    surviving_ids: &HashSet<GameID>,
+) -> (VecDeque<GameAction>, Vec<Effect>) {
+    let mut kept = VecDeque::new();
+    let mut effects = Vec::new();
+    while let Some(action) = queue.pop_front() {
+        if let Some((id, action_kind)) = super::failed_game_action_context(&action) {
+            if !surviving_ids.contains(&id) {
+                effects.push(Effect::Notify(GameNotification::ActionFailed {
+                    id: Some(id),
+                    action: Some(action_kind),
+                    reason: "game absent from unrolled state".to_string(),
+                }));
+                continue;
+            }
+        }
+        if !matches!(action, GameAction::CleanShutdown) {
+            kept.push_back(action);
+        }
+    }
+    (kept, effects)
+}
+
 fn delegated_path_puzzle_hash(
     allocator: &mut crate::common::types::AllocEncoder,
     solution: &Program,
@@ -1125,13 +1149,10 @@ impl SpendChannelCoinPhase {
             }
         }
 
-        let mut on_chain_queue = VecDeque::new();
-        while let Some(action) = self.base.game_action_queue.pop_front() {
-            match &action {
-                GameAction::CleanShutdown => {}
-                _ => on_chain_queue.push_back(action),
-            }
-        }
+        let surviving_ids: HashSet<GameID> = game_map.values().map(|state| state.game_id).collect();
+        let (on_chain_queue, discarded_action_effects) =
+            actions_for_unrolled_games(&mut self.base.game_action_queue, &surviving_ids);
+        effects.extend(discarded_action_effects);
 
         let mut player_ch = self
             .base
@@ -1152,8 +1173,16 @@ impl SpendChannelCoinPhase {
             their_out_of_game_balance: player_ch.their_out_of_game_balance(),
             my_allocated_balance: player_ch.my_allocated_balance(),
             their_allocated_balance: player_ch.their_allocated_balance(),
-            live_games: player_ch.take_live_games(),
-            pending_settlements: player_ch.take_pending_settlements(),
+            live_games: player_ch
+                .take_live_games()
+                .into_iter()
+                .filter(|game| surviving_ids.contains(&game.game_id))
+                .collect(),
+            pending_settlements: player_ch
+                .take_pending_settlements()
+                .into_iter()
+                .filter(|game| surviving_ids.contains(&game.game_id))
+                .collect(),
             unroll_advance_timeout: player_ch.unroll_advance_timeout().clone(),
             is_initial_potato: player_ch.is_initial_potato(),
             state_number: player_ch.state_number(),
@@ -1578,6 +1607,29 @@ mod tests {
             Timeout::new(10),
             Timeout::new(5),
         )
+    }
+
+    #[test]
+    fn unrolled_queue_discards_actions_for_missing_games() {
+        let survivor = GameID(1);
+        let missing = GameID(2);
+        let mut queue = VecDeque::from([
+            GameAction::AcceptSettlement(missing),
+            GameAction::AcceptSettlement(survivor),
+            GameAction::CleanShutdown,
+        ]);
+        let (kept, effects) = actions_for_unrolled_games(&mut queue, &HashSet::from([survivor]));
+        assert!(queue.is_empty());
+        assert!(matches!(kept.front(), Some(GameAction::AcceptSettlement(id)) if *id == survivor));
+        assert_eq!(kept.len(), 1);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Notify(GameNotification::ActionFailed {
+                id: Some(id),
+                action: Some(FailedGameAction::AcceptSettlement),
+                ..
+            })] if *id == missing
+        ));
     }
 
     #[test]

@@ -293,6 +293,11 @@ it(
         'Unrolling',
         'the simulator must definitively observe the fee-bearing channel spend',
       );
+      assert.equal(storageRepository.feeAttachments()[0]?.stage, 'retained-for-replay');
+      assert.deepEqual(cancellationOutcomes, []);
+      for (let block = 0; block < 34; block += 1) {
+        await fakeBlockchainInfo.farmBlock();
+      }
       for (
         let attempt = 0;
         attempt < 20 && storageRepository.feeAttachments().length > 0;
@@ -303,11 +308,7 @@ it(
         await lane.controller.flushPendingWork();
         await lane.runtime.flush();
       }
-      assert.deepEqual(
-        cancellationOutcomes,
-        [{ status: 'already-terminal', detail: 'simulator fee offer was spent' }],
-        `landed fee cleanup stalled: ledger=${JSON.stringify(storageRepository.feeAttachments())} diagnostics=${lane.controller.diagnosticLog.join('|')}`,
-      );
+      assert.deepEqual(cancellationOutcomes, []);
       assert.deepEqual(storageRepository.feeAttachments(), []);
       assert.deepEqual((await readApplicationState())?.feeAttachments, []);
     } finally {

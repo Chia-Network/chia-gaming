@@ -725,7 +725,19 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
           return;
         }
         try {
-          this.processResultNow(requireWasmResult(result));
+          const accepted = requireWasmResult(result);
+          if (
+            outcome.kind === 'created-reserved' &&
+            accepted.actionSucceeded &&
+            accepted.fundingInputs &&
+            pending.request.max_height
+          ) {
+            this.requireFundingRuntime().recordFundingInputs(
+              outcome.tradeId,
+              accepted.fundingInputs,
+            );
+          }
+          this.processResultNow(accepted);
           if (outcome.material.kind === 'offer') this.flushDeferredWork();
         } catch (error) {
           this.reportAuthoritativeCompletionError('funding material', error);
@@ -1209,6 +1221,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       this.submitTransaction(submission);
     }
     this.handleRetiredSubmissionIds(drained.retired_submission_ids);
+    for (const retirement of drained.fee_retirements) {
+      this.submissionPump.retireFee(retirement.id, retirement.fee_spent);
+    }
+    if (drained.fee_retirements.length) this.blockchain?.updateCoinInterest(this);
     this.handleSubmissionDrainFailures(drained.failures);
   }
 
@@ -1343,6 +1359,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
 
   private stopProtocolWork(): void {
     this.protocolStopped = true;
+    this.blockchain?.detachGameSession(this);
     this.blockchain?.pauseChainPolling();
     this.stopKeepaliveTimer();
     // A terminal drain is a replacement boundary, not an append-only update:
