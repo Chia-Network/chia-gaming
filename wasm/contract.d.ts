@@ -126,6 +126,7 @@ export interface SubmissionDrainFailure {
 export interface SubmissionDrain {
   submissions: TransactionSubmission[];
   retired_submission_ids: string[];
+  fee_retirements: Array<{ id: string; fee_spent: boolean }>;
   failures: SubmissionDrainFailure[];
 }
 
@@ -347,6 +348,8 @@ export interface WasmResult {
   events: GameSessionEvent[];
   watchCoins: WatchedCoinEntry[];
   unwatchCoins: WatchedCoinEntry[];
+  /** External wallet inputs of a successfully accepted funding offer. */
+  fundingInputs?: WatchedCoinEntry[];
   actionSucceeded: boolean;
   disposition: WasmDisposition;
   id?: string;

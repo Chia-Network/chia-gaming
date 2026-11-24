@@ -499,6 +499,25 @@ describe('SageBlockchainInterface', () => {
       });
     });
 
+    it('keeps a Sage pending receipt provisional', async () => {
+      jest.mocked(sageRpc.sendTransaction).mockResolvedValue({ status: 2n, error: null });
+      const sage = await connectedSage();
+      await expect(sage.spend('', bundle, '', 'test')).resolves.toEqual({
+        status: 'provisional',
+        detail: 'PENDING',
+      });
+    });
+
+    it('keeps a Coinset pending receipt provisional after Sage fallback', async () => {
+      jest.mocked(sageRpc.sendTransaction).mockResolvedValue({ status: 3n, error: null });
+      mockFetchJson({ success: true, status: 'PENDING' });
+      const sage = await connectedSage();
+      await expect(sage.spend('', bundle, '', 'test')).resolves.toEqual({
+        status: 'provisional',
+        detail: 'PENDING',
+      });
+    });
+
     it('falls back to Coinset when no Sage peer answered', async () => {
       jest.mocked(sageRpc.sendTransaction).mockResolvedValue({ status: 3n, error: null });
       const fetchMock = mockFetchJson({ success: true, status: 'SUCCESS' });

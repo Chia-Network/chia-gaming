@@ -64,7 +64,13 @@ export function retireWalletReservations(
   peerSessionId?: string,
 ): DurableApplicationState {
   const retired = (entry: ChannelFundingEntry | FeeAttachment) =>
-    peerSessionId === undefined || entry.owner.peerSessionId === peerSessionId;
+    (peerSessionId === undefined || entry.owner.peerSessionId === peerSessionId) &&
+    !(
+      peerSessionId !== undefined &&
+      !('submissionId' in entry) &&
+      entry.stage === 'awaiting-channel' &&
+      entry.inputs !== undefined
+    );
   cancelRetiredWalletReservations(
     [...state.channelFundingOperations, ...state.feeAttachments].filter(retired),
   );

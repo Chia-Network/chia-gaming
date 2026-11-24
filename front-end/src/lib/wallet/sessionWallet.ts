@@ -29,4 +29,5 @@ export type SessionFunding = Pick<
   | 'cancelIdentifiedReservation'
   | 'channelCoinConfirmed'
   | 'channelCreationTimedOut'
+  | 'recordFundingInputs'
 >;
