@@ -128,6 +128,10 @@ impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
 }
 
 impl SubmissionBook {
+    pub(super) fn submitted(&self) -> &[SubmittedTx] {
+        &self.submitted
+    }
+
     /// A genuine process restore has no surviving host delivery consumers. Keep
     /// their tokens as predecessors, but let the fresh snapshot reclaim them.
     pub(super) fn restore_runtime(&mut self) {

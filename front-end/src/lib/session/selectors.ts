@@ -243,17 +243,19 @@ export function selectDashboardCoins(
   model: SessionModel,
   coins: readonly CoinOfInterestEntry[],
 ): CoinOfInterestEntry[] {
-  const activeIds = new Set(model.game.activeIds);
   return coins.flatMap((coin) => {
     const gameId = coin.game_id;
     if (!gameId || !coin.game_coin_kind) return [{ ...coin }];
-    if (coin.game_coin_kind === 'current' && !activeIds.has(gameId)) return [];
     const handIndex = model.game.currentHandIds.indexOf(gameId);
     if (handIndex < 0) return [{ ...coin }];
+    const inputSuffix = coin.label.endsWith(' (input)') ? ' (input)' : '';
+    const expectedPrefix = coin.label.startsWith('Expected output from ')
+      ? 'Expected output from '
+      : '';
     return [
       {
         ...coin,
-        label: `Hand ${handIndex + 1} ${coin.game_coin_kind === 'reward' ? 'reward coin' : 'coin'}`,
+        label: `${expectedPrefix}Hand ${handIndex + 1} ${coin.game_coin_kind === 'reward' ? 'reward coin' : 'coin'}${inputSuffix}`,
       },
     ];
   });
