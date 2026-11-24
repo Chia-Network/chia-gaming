@@ -2006,7 +2006,12 @@ describe('wallet fee attachment on submission', () => {
       },
     ]);
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-      submissionDrain([], ['retired-submission']),
+      submissionDrain(
+        [],
+        ['retired-submission'],
+        [],
+        [{ id: 'retired-submission', fee_spent: false }],
+      ),
     );
 
     blob.processResult(wasmResult());

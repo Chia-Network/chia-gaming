@@ -1489,6 +1489,16 @@ impl OnChainPhase {
     ) -> Result<Vec<Effect>, Error> {
         let mut effects = Vec::new();
         while let Some(action) = self.game_action_queue.pop_front() {
+            if let Some((id, action_kind)) = super::failed_game_action_context(&action) {
+                if self.get_game_coin(&id).is_none() {
+                    effects.push(Effect::Notify(GameNotification::ActionFailed {
+                        id: Some(id),
+                        action: Some(action_kind),
+                        reason: "game no longer has an on-chain coin".to_string(),
+                    }));
+                    continue;
+                }
+            }
             if let GameAction::AcceptSettlement(id) = action {
                 if self.my_move_in_game(&id) == Some(false) {
                     effects.push(Effect::Notify(GameNotification::ActionFailed {
@@ -2196,6 +2206,37 @@ mod tests {
             terminal_reward_coin: None,
             game_payout_coins: Vec::new(),
         })
+    }
+
+    #[test]
+    fn queued_action_for_removed_game_does_not_block_surviving_coin() {
+        let mut allocator = crate::common::types::AllocEncoder::new();
+        let (_, referees, referee_ph) =
+            crate::games::debug::make_real_debug_referees(&mut allocator);
+        let coin = CoinString::from_parts(
+            &CoinString::default().to_coin_id(),
+            &referee_ph,
+            &Amount::new(100),
+        );
+        let mut phase = phase_with_referee(Rc::new(referees[0].clone()), &coin);
+        phase
+            .game_action_queue
+            .push_back(GameAction::AcceptSettlement(GameID(8)));
+        let mut env = ChannelEnv::new(&mut allocator).unwrap();
+        let effects = phase.process_queued_action(&mut env).unwrap();
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::Notify(GameNotification::ActionFailed {
+                id: Some(GameID(8)),
+                action: Some(FailedGameAction::AcceptSettlement),
+                ..
+            })]
+        ));
+        assert_eq!(phase.get_game_coin(&GameID(7)), Some(coin));
+        assert_eq!(
+            phase.register_initial_game_coins(&mut env).unwrap().len(),
+            1
+        );
     }
 
     #[test]

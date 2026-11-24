@@ -101,6 +101,15 @@ export function requireWasmResult(value: WasmResult | undefined): WasmResult {
     throw new Error('cradle returned an incomplete WasmResult');
   }
   value.events.forEach(requireGameSessionEvent);
+  if (
+    value.fundingInputs !== undefined &&
+    (!Array.isArray(value.fundingInputs) ||
+      value.fundingInputs.some(
+        (coin) => typeof coin.coin_name !== 'string' || typeof coin.coin_string !== 'string',
+      ))
+  ) {
+    throw new Error('cradle returned invalid funding inputs');
+  }
   const disposition = value.disposition;
   if (
     typeof disposition !== 'object' ||
@@ -210,6 +219,7 @@ export type SubmissionFinalizationResult = WasmContract.SubmissionFinalizationRe
 
 export type WalletSubmitOutcome =
   | { status: 'acknowledged'; detail?: string }
+  | { status: 'provisional'; detail: string }
   | { status: 'unavailable'; detail: string }
   | { status: 'rejected'; detail: string };
 
