@@ -23,7 +23,7 @@ clvm-utils = "=0.54.0"
 clvmr = { version = "=0.22.0", features = ["pre-eval"] }
 hex = "=0.4.3"
 lol_alloc = "=0.4.1"
-rand = "=0.10.3"
+rand = "=0.10.4"
 rand_chacha = "=0.10.0"
 bencodex = { path = "../bencodex" }
 serde = "=1.0.228"
@@ -31,7 +31,7 @@ serde_json = "=1.0.154"
 serde-wasm-bindgen = "=0.6.5"
 bech32 = "=0.12.0"
 chia-protocol = { version = "=0.54.0", default-features = false }
-chia-puzzles = "=0.20.3"
+chia-puzzles = "=0.20.5"
 chia-traits = "=0.54.0"
 flate2 = { version = "=1.1.11", default-features = false, features = ["zlib-rs"] }
 getrandom = { version = "=0.4.3", features = ["wasm_js"] }
