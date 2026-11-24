@@ -16,13 +16,8 @@ import { normalizeHex } from './cloudWalletOAuth';
  */
 export type CoinsetCall = <T>(endpoint: string, request: Record<string, unknown>) => Promise<T>;
 
-const ACCEPTED_BROADCAST_STATUSES = new Set([
-  'SUCCESS',
-  'SUBMITTED',
-  'PENDING',
-  'PROCESSING',
-  'OK',
-]);
+const ACCEPTED_BROADCAST_STATUSES = new Set(['SUCCESS', 'OK']);
+const PROVISIONAL_BROADCAST_STATUSES = new Set(['SUBMITTED', 'PENDING', 'PROCESSING']);
 const REJECTED_BROADCAST_STATUSES = new Set(['FAILED', 'REJECTED', 'REFUSED']);
 
 type CoinsetCoinRecord = {
@@ -165,19 +160,19 @@ export class CoinsetClient {
         : typeof status === 'string'
           ? status
           : jsonStringify(response);
-    if (response.success === true) {
-      return { status: 'acknowledged', detail };
-    }
+    const normalizedStatus = typeof status === 'string' ? status.toUpperCase() : '';
     if (isExactDuplicateTransaction(detail)) {
       return { status: 'acknowledged', detail };
     }
-    if (response.success !== false) {
-      return {
-        status: 'rejected',
-        detail: 'Malformed Coinset push_tx response',
-      };
+    if (response.success !== true && response.success !== false) {
+      return { status: 'rejected', detail: 'Malformed Coinset push_tx response' };
     }
-    const normalizedStatus = typeof status === 'string' ? status.toUpperCase() : '';
+    if (PROVISIONAL_BROADCAST_STATUSES.has(normalizedStatus)) {
+      return { status: 'provisional', detail: normalizedStatus };
+    }
+    if (response.success === true) {
+      return { status: 'acknowledged', detail };
+    }
     if (ACCEPTED_BROADCAST_STATUSES.has(normalizedStatus)) {
       return { status: 'acknowledged', detail: normalizedStatus };
     }

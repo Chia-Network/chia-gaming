@@ -28,6 +28,29 @@ import {
 } from './message_protocol.harness';
 
 describe('terminal protocol cleanup', () => {
+  it('pauses session polling when a terminal drain detaches the channel', () => {
+    const blockchain = new BlockchainPoller(mockRpc, 60000);
+    const blob = new SessionController(
+      blockchain,
+      'terminal-polling',
+      100n,
+      100n,
+      makePeerConn([], []),
+    );
+    setActiveBlob(blob);
+    blob.loadWasm(mockWasmConnection);
+    blob.setGameSession(makeMockCradle());
+    blob.setWallet(blockchain);
+    const detach = jest.spyOn(blockchain, 'detachGameSession');
+    const pause = jest.spyOn(blockchain, 'pauseChainPolling');
+
+    blob.processResult({ ...wasmResult(), disposition: { kind: 'terminal' } });
+
+    expect(detach).toHaveBeenCalledWith(blob);
+    expect(pause).toHaveBeenCalledTimes(1);
+    blob.cleanup();
+  });
+
   // Reliable terminal handoff permutations are covered by peer_session::session::tests.
   it('replaces queued presentation work with terminal notifications', () => {
     const sentMessages: Array<{ msgno: number; msg: Uint8Array }> = [];

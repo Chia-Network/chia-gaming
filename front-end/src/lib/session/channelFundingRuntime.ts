@@ -46,6 +46,9 @@ interface FundingFlight extends ProviderFlight {
   retired?: boolean;
 }
 
+// Match the transaction manager's DEFAULT_CONFIRMATION_DEPTH for retained inputs.
+const FUNDING_CONFIRMATION_DEPTH = 32n;
+
 export class ChannelFundingRuntime {
   private readonly inFlight = new Map<string, FundingFlight>();
   private readonly listeners = new Set<() => void>();
@@ -104,6 +107,7 @@ export class ChannelFundingRuntime {
     const next = entries.filter(
       (entry) =>
         entry.stage !== 'awaiting-channel' ||
+        entry.inputs !== undefined ||
         entry.owner.installationPlayerId !== installationPlayerId ||
         entry.owner.peerSessionId !== peerSessionId,
     );
@@ -128,6 +132,7 @@ export class ChannelFundingRuntime {
         return entry;
       }
       if (entry.stage === 'awaiting-channel') {
+        if (entry.inputs !== undefined) return entry;
         const { request: _request, ...identified } = entry;
         cancellations.push(entry.providerReservationId);
         changed = true;
@@ -155,6 +160,52 @@ export class ChannelFundingRuntime {
       return warning;
     }
     return null;
+  }
+
+  recordFundingInputs(tradeId: string, inputs: { coin_name: string; coin_string: string }[]): void {
+    const entry = this.reservation(tradeId);
+    if (!entry || entry.stage !== 'awaiting-channel') {
+      throw new Error('accepted funding offer has no awaiting wallet reservation');
+    }
+    if (!entry.request.canonical.max_height || inputs.length === 0) {
+      throw new Error('accepted funding offer lacks an expiration or external wallet inputs');
+    }
+    this.replace(entry, { ...entry, inputs: structuredClone(inputs) });
+  }
+
+  fundingCoinInterest(): { coin_name: string; coin_string: string }[] {
+    const coins = new Map<string, { coin_name: string; coin_string: string }>();
+    for (const entry of this.entries()) {
+      if (entry.stage !== 'awaiting-channel') continue;
+      for (const coin of entry.inputs ?? []) coins.set(coin.coin_name, coin);
+    }
+    return [...coins.values()];
+  }
+
+  observeFundingCoinStates(
+    height: bigint,
+    records: ReadonlyMap<string, { spent_height: bigint | null }>,
+  ): void {
+    for (const entry of this.entries()) {
+      if (entry.stage !== 'awaiting-channel' || !entry.inputs?.length) continue;
+      if (entry.inputs.some((coin) => !records.has(coin.coin_name))) continue;
+      const spent = entry.inputs.map((coin) => records.get(coin.coin_name)?.spent_height ?? null);
+      const allSpent = spent.every((at) => at !== null);
+      const buried = spent.every((at) => at !== null && at + FUNDING_CONFIRMATION_DEPTH <= height);
+      const expired = height >= BigInt(entry.request.canonical.max_height!);
+      if (!buried && !expired) continue;
+      if (allSpent) {
+        this.replace(entry, null);
+      } else {
+        const { request: _request, inputs: _inputs, ...identified } = entry;
+        this.replace(entry, {
+          ...identified,
+          stage: 'cancel-required',
+          reason: 'channel-creation-timed-out',
+        });
+        void this.scheduleCancellation(entry.providerReservationId);
+      }
+    }
   }
   async createOffer(
     owner: ChannelFundingOwner,
