@@ -16,8 +16,6 @@ if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh"
     echo "build-chialisp.sh must not use find's GNU-only early-exit primary" >&2
     exit 1
 fi
-printf '%s\n' '(mod ())' > "$REPO/clsp/example.clsp"
-printf '%s\n' '[compile]' > "$REPO/chialisp.toml"
 printf '%s\n' 'fn main() {}' > "$REPO/puzzles/example.rue"
 printf '%s\n' '[compiler]' > "$REPO/Rue.toml"
 printf '%s\n' 'fn main() {}' > "$REPO/build.rs"
@@ -30,9 +28,9 @@ cat > "$FAKE_BIN/cargo" <<'EOF'
 set -e
 : "${CHIALISP_COMPILE:?build-chialisp.sh must explicitly request compilation}"
 echo compile >> "$FAKE_CARGO_LOG"
-git hash-object clsp/example.clsp > clsp/example.hex
+git hash-object puzzles/example.rue > clsp/example.hex
 printf '\200' > clsp/example.clvm.bin
-printf 'debug:%s\n' "$(git hash-object clsp/example.clsp)" > clsp/example.debug.clvm.bin
+printf 'debug:%s\n' "$(git hash-object puzzles/example.rue)" > clsp/example.debug.clvm.bin
 EOF
 chmod +x "$FAKE_BIN/cargo"
 
@@ -79,7 +77,7 @@ assert_count 1
 run_github_actions_build
 assert_count 2
 
-printf '%s\n' '(mod (X) X)' > "$REPO/clsp/example.clsp"
+printf '%s\n' 'fn main(x: Int) -> Int { x }' > "$REPO/puzzles/example.rue"
 run_build
 assert_count 3
 
@@ -111,8 +109,12 @@ printf '%s\n' 'fn main() -> Int { 1 }' > "$REPO/puzzles/example.rue"
 run_build
 assert_count 10
 
-printf '%s\n' '[compiler]' 'entrypoint = "puzzles"' > "$REPO/Rue.toml"
+printf '%s\n' 'fn helper() -> Int { 1 }' > "$REPO/puzzles/helper.rue"
 run_build
 assert_count 11
+
+printf '%s\n' '[compiler]' 'entrypoint = "puzzles"' > "$REPO/Rue.toml"
+run_build
+assert_count 12
 
 echo "build-chialisp regression tests passed"

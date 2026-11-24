@@ -51,8 +51,10 @@ struct DebugReadable {
     mover_share: Int,
 }
 
-type DebugMyTurn = MyTurnHandler<DebugState, DebugReadable | nil, DebugMove | nil>;
-type DebugTheirTurn = TheirTurnHandler<DebugState, DebugReadable | nil, DebugMove | nil>;
+type DebugMyTurn = MyTurnHandler<DebugMove | nil, DebugState, DebugMyTurnMove>;
+type DebugTheirTurn = TheirTurnHandler<DebugState, DebugState, DebugTheirTurnMove>;
+type DebugMyTurnMove = MyTurnMove<DebugTheirTurn, Never>;
+type DebugTheirTurnMove = TheirTurnMove<DebugReadable | nil, Bytes, [DebugMyTurn | nil]>;
 
 struct ValidatorArgs {
     validator_hash: Bytes32,
@@ -150,10 +152,7 @@ fn byteify(value: Int) -> Bytes {
     inline if value != 0 { value as Bytes } else { 0x00 }
 }
 
-fn my_turn(
-    args: DebugCurry,
-    ...my_turn_args: MyTurnArgs,
-) -> MyTurnMove<DebugState, DebugReadable | nil, DebugMove | nil> {
+fn my_turn(args: DebugCurry, ...my_turn_args: MyTurnArgs) -> DebugMyTurnMove {
     // A nil local move makes us emit a local slash, so that it can be tested.
     let local_move = my_turn_args.local_move;
     assert !(local_move is nil), "my turn local slash";
@@ -161,7 +160,7 @@ fn my_turn(
     let { prefix, count, mover_share, slash } = local_move;
     assert count == args.count, ["count not equal for this move", count, args.count];
 
-    MyTurnMove::<DebugState, DebugReadable | nil, DebugMove | nil> {
+    DebugMyTurnMove {
         label: "debug game: move",
         game_move: prefix + byteify(mover_share) + slash,
         mover_share,
@@ -185,19 +184,12 @@ struct IntegerRead {
     position: Int,
 }
 
-fn their_turn(
-    args: DebugCurry,
-    ...their_turn_args: TheirTurnArgs,
-) -> TheirTurnMove<DebugState, DebugReadable | nil, DebugMove | nil> {
+fn their_turn(args: DebugCurry, ...their_turn_args: TheirTurnArgs) -> DebugTheirTurnMove {
     let { state, move, validation_program_hash, mover_share: split } = their_turn_args;
     let move_length = move.length;
 
     if 1 > move_length {
-        return TheirTurnMove::<DebugState, DebugReadable | nil, DebugMove | nil> {
-            readable: nil,
-            evidence: nil,
-            next: [nil],
-        };
+        return DebugTheirTurnMove { readable: nil, evidence: nil, next: [nil] };
     }
 
     // Skipping the last byte and the mover share, there should be a count.
@@ -212,7 +204,7 @@ fn their_turn(
     assert split == state.mover_share, "their turn: wrong mover share in state";
     assert state.slashable == slash_byte, "their turn: wrong slash byte in state";
 
-    TheirTurnMove::<DebugState, DebugReadable | nil, DebugMove | nil> {
+    DebugTheirTurnMove {
         readable: DebugReadable {
             count: state.count,
             slashable: state.slashable,
@@ -227,7 +219,7 @@ fn their_turn(
 
 fn factory(
     ...factory_args: FactoryArgs,
-) -> FactoryResult<DebugState, List<Int>, DebugReadable | nil, DebugMove | nil> {
+) -> FactoryResult<DebugState, List<Int>, DebugMyTurn, DebugTheirTurn> {
     let { proposer_reserve, accepter_reserve, curry: args } = factory_args;
     assert proposer_reserve > 0;
     assert accepter_reserve > 0;
@@ -235,8 +227,8 @@ fn factory(
     let proposer_contribution = inline if proposer_reserve > 100 { 100 } else { proposer_reserve };
     let accepter_contribution = inline if accepter_reserve > 100 { 100 } else { accepter_reserve };
 
-    FactorySuccess::<DebugState, List<Int>, DebugReadable | nil, DebugMove | nil> {
-        records: [GameRecord::<DebugState, List<Int>, DebugReadable | nil, DebugMove | nil> {
+    FactorySuccess::<DebugState, List<Int>, DebugMyTurn, DebugTheirTurn> {
+        records: [GameRecord::<DebugState, List<Int>, DebugMyTurn, DebugTheirTurn> {
             proposer_contribution,
             accepter_contribution,
             proposer_goes_first: true,

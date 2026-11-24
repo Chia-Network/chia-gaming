@@ -1,8 +1,8 @@
 # Game Handler and Validation System
 
-Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
-`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
-their syntax and assumptions.
+The handlers and validators are written in Rue, whose docs are at
+<https://github.com/xch-dev/rue-docs>. Their shared types are in
+`puzzles/games/types.rue`.
 
 This document explains the off-chain handler and on-chain validation system
 used by the game framework. It covers how game logic is structured, how
@@ -12,7 +12,7 @@ connect through the referee puzzle.
 For adding a game (package layout, registry, host APIs), see
 `GAME_WRITING_GUIDE.md`. For the broader architecture (state channels, potato
 protocol, dispute resolution), see `OVERVIEW.md`. For the raw calling
-conventions, see `clsp/handler_api.md`. For DoS considerations (move size
+conventions, see `puzzles/games/handler_api.md`. For DoS considerations (move size
 bounds, validation program cost, argument checking), see `CLVM_DOS.md`.
 
 ## Table of Contents
@@ -40,8 +40,8 @@ Games are driven by two cooperating systems:
 
 - **Handlers** run off-chain on each player's machine. They produce moves,
   interpret the opponent's moves, and decide what to display in the UI. They
-  are CLVM programs (written in Chialisp or Rue), curried with game-specific
-  state.
+  are CLVM programs (written in Rue), curried with game-specific state, as
+  Rue's closures are.
 
 - **Validators** enforce the rules of each move. They are CLVM programs, one
   per protocol step (e.g. `a.rue` through `e.rue` for calpoker). They
@@ -409,10 +409,10 @@ not carry validator programs between turns.
 
 ## Validators
 
-Validators are chialisp programs that enforce the rules for a single step of
-the game protocol. They run both **on-chain** (inside the referee puzzle
-during disputes) and **off-chain** (called by the Rust code during normal
-play).
+Validators are CLVM programs, written in Rue, that enforce the rules for a
+single step of the game protocol. They run both **on-chain** (inside the
+referee puzzle during disputes) and **off-chain** (called by the Rust code
+during normal play).
 
 A validator takes the move, current state, and optional evidence and returns an
 untagged result:
@@ -898,7 +898,7 @@ agreement signals that the game is over.
 - Rust-side handler invocation: `src/channel_state/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
-- Handler API reference: `clsp/handler_api.md`
+- Handler API reference: `puzzles/games/handler_api.md`
 
 ### Space Poker
 

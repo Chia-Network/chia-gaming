@@ -1,8 +1,7 @@
 # On-Chain Resolution
 
-Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
-`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
-their syntax and assumptions.
+The referee and unroll puzzles are written in Rue, in `puzzles/`. The Rue docs
+are at <https://github.com/xch-dev/rue-docs>.
 
 For the conceptual overview (state channels, coin hierarchy, potato protocol),
 see `OVERVIEW.md`. For off-chain game proposals and flow, see
@@ -601,7 +600,7 @@ RefereePuzzleArgs {
         validation_program_hash,  // optional raw validator program hash when known
     },
     previous_validation_info_hash,  // ValidationInfoHash: Initial sentinel, or previous validation info hash
-    validation_program,     // the chialisp program that validates moves
+    validation_program,     // the CLVM program that validates moves
     nonce,                  // role-namespaced counter; also serves as the GameID
     referee_coin_puzzle_hash, // puzzle hash of the referee puzzle itself
 }
@@ -615,11 +614,12 @@ its successor-coin hash calculation, and every validator:
   MOVE MAX_MOVE_SIZE INFOHASH_B MOVER_SHARE INFOHASH_A)
 ```
 
-Chialisp’s `#(...)` reader syntax selects the balanced layout automatically.
+In this `#(...)` notation, each node splits its fields at half of their count,
+with no terminating nil.
 Every field is at most four tree edges from the argument root.
 `RefereePuzzleArgs::to_clvm` encodes this shape; do not encode these fields as a proper list. The tree and the solution
-shapes are declared in `puzzles/referee/types.rue` (and, for the validators not yet
-ported from Chialisp, `clsp/referee/onchain/shapes.clinc`), and have no terminating list nils. This layout is
+shapes are declared in `puzzles/referee/types.rue`, as structs whose last field
+is spread, and have no terminating list nils. This layout is
 part of the on-chain puzzle interface and changes the referee and validator
 hashes; an already-created coin must still be spent with its original puzzle.
 
@@ -720,7 +720,7 @@ These accessors are exposed on `Referee` (and delegated through
 stores corresponding current/next args fields.
 
 **Off-chain**, game coins are *virtual*: they don't exist on the blockchain,
-but their spends are validated by running real chialisp execution exactly as
+but their spends are validated by running real CLVM execution exactly as
 if they were on-chain. The two sets of args stay in sync because the unroll
 commitment is updated at each move. If the channel unrolls, these virtual
 coins become real on-chain coins.

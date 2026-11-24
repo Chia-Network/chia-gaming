@@ -2,15 +2,20 @@
 // until he finds the word or runs out of guesses, and then she reveals the word.
 
 import dictionary::*;
-import project::games::types::MoveRejection;
+import project::games::types::*;
 import rules::*;
 import state::*;
-import types::*;
 
-export type KrunkMyTurn = MyTurnHandler<KrunkStates, KrunkReadable, Bytes>;
-export type KrunkTheirTurn = TheirTurnHandler<KrunkStates, KrunkReadable, Bytes>;
-type KrunkMyTurnMove = MyTurnMove<KrunkStates, KrunkReadable, Bytes>;
-type KrunkTheirTurnMove = TheirTurnMove<KrunkStates, KrunkReadable, Bytes>;
+// Every handler sees the state as `KrunkStates`, and the local move is a word.
+export type KrunkMyTurn = MyTurnHandler<Bytes, KrunkStates, KrunkMyTurnMove | MoveRejection>;
+export type KrunkTheirTurn = TheirTurnHandler<KrunkStates, KrunkStates, KrunkTheirTurnMove>;
+type KrunkMyTurnMove = MyTurnMove<KrunkTheirTurn | nil, Never>;
+
+type KrunkTheirTurnMove = TheirTurnMove<
+    KrunkReadable,
+    SignedEvidence | Bytes,
+    TheirTurnNext<KrunkMyTurn>,
+>;
 
 // What a player sees of the opponent's move: a guess or the revealed word with its clue, or the
 // digits of a clue.

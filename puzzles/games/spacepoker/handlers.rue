@@ -9,15 +9,18 @@
 import deal::*;
 import hand_calc::space_hand_calc;
 import hand_eval::deep_compare;
-import handler_types::*;
-import project::games::types::MessageParser;
+import project::games::types::*;
 import readables::*;
 import states::*;
 
-type SpaceMyTurn = MyTurnHandler<SpaceState, Readable, Int>;
-type SpaceTheirTurn = TheirTurnHandler<SpaceState, Readable, Int>;
-type SpaceMyTurnMove = MyTurnMove<SpaceState, Readable, Int>;
-type SpaceTheirTurnMove = TheirTurnMove<SpaceState, Readable, Int>;
+// Every handler sees the state as a `SpaceState`, and the local move is the amount to raise.
+export type SpaceMyTurn = MyTurnHandler<Int, SpaceState, SpaceMyTurnMove>;
+export type SpaceTheirTurn = TheirTurnHandler<SpaceState, SpaceState, SpaceTheirTurnMove>;
+type SpaceMyTurnMove = MyTurnMove<SpaceTheirTurn | nil, SpaceMessageParser>;
+type SpaceTheirTurnMove = TheirTurnMove<Readable, Int, TheirTurnNext<SpaceMyTurn>>;
+
+// A message shows the hole cards when the cards are dealt, or the community cards of a street.
+type SpaceMessageParser = MessageParser<SpaceState, DealReadable | CardsReadable>;
 
 enum Seat {
     Alice,
@@ -145,7 +148,7 @@ fn bob_commit_b(
 }
 
 // Alice's message is her image 4, which deals Bob's hole cards, and decides who opens.
-fn bob_parse_deal(chain: List<Bytes>) -> MessageParser<SpaceState> {
+fn bob_parse_deal(chain: List<Bytes>) -> SpaceMessageParser {
     fn(alice_image, state, _amount) => {
         assert sha256(alice_image) == open_state(state).stakes.mover_image;
         let hole_cards = hole_cards(image_at(chain, 0), alice_image);
@@ -314,7 +317,7 @@ fn mid_round(seat: Seat, chain: List<Bytes>) -> SpaceMyTurn {
 
 // The opener's message is the image that their opening will reveal, so that we can show the
 // street's community cards before it.
-fn parse_open(chain: List<Bytes>) -> MessageParser<SpaceState> {
+fn parse_open(chain: List<Bytes>) -> SpaceMessageParser {
     fn(image, state, _amount) => {
         let state = open_state(state);
         assert image.length == 32;

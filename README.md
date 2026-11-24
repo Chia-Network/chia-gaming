@@ -29,7 +29,7 @@ Chia Gaming is a way for two people to play each other for XCH with nobody in th
 
 You and your opponent each put your stake into a shared coin on the Chia blockchain. From then on, every card you play and every bet you make is a signed message sent straight to the other player, so turns happen as fast as you can click. When you're finished, you both sign off on the final balances and the coin pays out. A whole session of play usually needs two transactions: one to open and one to close.
 
-Each game's rules are written in Chialisp, which the blockchain itself can check. If your opponent tries an illegal move, you can prove it on-chain and take their stake. If they disappear halfway through a hand, a timeout lets you finish the game without them. You don't have to trust your opponent or any server along the way.
+Each game's rules are written in [Rue](https://github.com/xch-dev/rue-docs), which compiles to programs the blockchain itself can check. If your opponent tries an illegal move, you can prove it on-chain and take their stake. If they disappear halfway through a hand, a timeout lets you finish the game without them. You don't have to trust your opponent or any server along the way.
 
 ## A breakthrough for state channels
 
@@ -115,7 +115,7 @@ PORT=5801 node service.js --self https://hub.example.com/ --dir .
 
 ## Add your own game
 
-A game is a package under [`games/`](games) with its rules written in Chialisp. Those rules define every legal move, and they're what the blockchain checks if players end up in a dispute. Alongside them sit Rust tests that run the rules through the simulator and a React UI that talks to the player app through a small host API.
+A game is a package under [`games/`](games), with its rules written in Rue under [`puzzles/games/`](puzzles/games). Those rules define every legal move, and they're what the blockchain checks if players end up in a dispute. Alongside them sit Rust tests that run the rules through the simulator and a React UI that talks to the player app through a small host API.
 
 The simplest way to start is to copy the game closest to your idea. [`calpoker`](games/calpoker) is the smallest complete example. [`spacepoker`](games/spacepoker) shows several betting rounds, and [`krunk`](games/krunk) creates two linked games from one proposal. Add your package to [`games/registry.json`](games/registry.json) and it shows up in the app.
 
@@ -125,8 +125,8 @@ The simplest way to start is to copy the game closest to your idea. [`calpoker`]
 
 ```
 src/            Rust core: channel state, potato protocol, referee, on-chain dispute handling
-puzzles/        Rue puzzles, replacing the Chialisp ones (configured by Rue.toml)
-clsp/           Chialisp puzzles for the referee and shared libraries, and the compiled puzzles
+puzzles/        Rue puzzles: the unroll puzzle, the referee and the games (configured by Rue.toml)
+clsp/           The compiled puzzles
 games/          Game packages (rules, tests, UI) and the game host API
 wasm/           WebAssembly bindings so the Rust core runs in the browser
 front-end/      The player app (React)
@@ -151,7 +151,7 @@ tools/          Build, release and test scripts
 
 ## Get involved
 
-There's plenty to do, and you don't need to be a Chialisp expert to help.
+There's plenty to do, and you don't need to be a Rue or CLVM expert to help.
 
 - **Play** a few games and [open an issue](https://github.com/Chia-Network/chia-gaming/issues) when something breaks or feels off.
 - **Run a hub** for your community.

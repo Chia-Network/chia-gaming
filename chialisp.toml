@@ -1,4 +1,0 @@
-[compile]
-deep-compare = "clsp/test/deep_compare.clsp"
-test-shapes = "clsp/test/test_shapes.clsp"
-test-make = "clsp/test/test_make.clsp"

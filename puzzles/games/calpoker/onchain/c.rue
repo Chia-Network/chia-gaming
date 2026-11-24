@@ -7,7 +7,7 @@ import super::types::{Deal, Seeds};
 export fn main(
     _validator_hash: Bytes32,
     params: RefereeParameters,
-    move: ValidatorMove<Seeds, Any>,
+    move: ValidatorMove<Seeds, nil>,
     ..._payout: Bytes32 | nil,
 ) -> ValidatorResult<Deal> | nil {
     let game_move = params.turn.last_move.game_move;

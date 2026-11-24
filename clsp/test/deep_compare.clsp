@@ -1,4 +1,0 @@
-(include *standard-cl-26*)
-(import std.deep_compare)
-
-(export (A B) (deep_compare A B))

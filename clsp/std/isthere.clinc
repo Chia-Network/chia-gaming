@@ -1,1 +1,0 @@
-(defmac isthere (X) (qq (@ (unquote X) 1)))

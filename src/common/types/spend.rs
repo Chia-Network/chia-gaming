@@ -1039,7 +1039,7 @@ mod consensus_validation_tests {
         reset_consensus_replay_attempts();
         reset_diagnostics_for_test();
         let opts: Rc<dyn CompilerOpts> = DefaultCompilerOpts::new("consensus_failure.clsp")
-            .set_search_paths(&[concat!(env!("CARGO_MANIFEST_DIR"), "/clsp").to_string()]);
+            .set_search_paths(&[crate::tests::chialisp_fixture_search_path()]);
         let artifact = compile_with_debug(
             opts,
             "(include *standard-cl-26*) (defun fail (Y) (f Y)) (export (X) (fail X))",

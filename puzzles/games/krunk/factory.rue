@@ -1,12 +1,10 @@
 import dictionary::DictTree;
 import handlers::*;
 import onchain::{clue, commit, guess};
-import project::games::types::FactoryShort;
-import project::referee::types::Validator;
+import project::games::types::*;
 import state::*;
-import types::*;
 
-type KrunkFactoryResult = FactoryResult<KrunkStates, Int, KrunkReadable, Bytes>;
+type KrunkFactoryResult = FactoryResult<KrunkInitial, Int, KrunkMyTurn, KrunkTheirTurn>;
 
 // The game parameters are the stake that each player puts in, a multiple of 100.
 struct FactoryArgs {
@@ -42,18 +40,16 @@ fn main(dict_pubkey: PublicKey, dict_tree: DictTree, ...args: FactoryArgs) -> Kr
     };
     let alice_handler = alice_commit(dict_tree);
     let bob_handler = bob_commit(dict_tree);
-    // Each validator trusts the layout of its state and evidence, which the referee's commitments
-    // establish, so it takes a narrower move than the `Validator` that the referee calls it as.
     let validation_programs = [
-        unchecked_cast::<Validator>(commit::main),
-        unchecked_cast::<Validator>(guess::main),
-        unchecked_cast::<Validator>(clue::main),
+        as_validator(commit::main),
+        as_validator(guess::main),
+        as_validator(clue::main),
     ];
 
-    FactorySuccess::<KrunkStates, Int, KrunkReadable, Bytes> {
+    FactorySuccess::<KrunkInitial, Int, KrunkMyTurn, KrunkTheirTurn> {
         records: [
             // The proposer picks the word, and stakes what the accepter can win by guessing it.
-            GameRecord::<KrunkStates, Int, KrunkReadable, Bytes> {
+            GameRecord::<KrunkInitial, Int, KrunkMyTurn, KrunkTheirTurn> {
                 proposer_contribution: requested_stake,
                 accepter_contribution: 0,
                 proposer_goes_first: true,
@@ -67,7 +63,7 @@ fn main(dict_pubkey: PublicKey, dict_tree: DictTree, ...args: FactoryArgs) -> Kr
                 readable_parameters: requested_stake,
             },
             // The accepter picks the word, and stakes what the proposer can win.
-            GameRecord::<KrunkStates, Int, KrunkReadable, Bytes> {
+            GameRecord::<KrunkInitial, Int, KrunkMyTurn, KrunkTheirTurn> {
                 proposer_contribution: 0,
                 accepter_contribution: requested_stake,
                 proposer_goes_first: false,

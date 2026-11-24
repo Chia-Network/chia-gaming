@@ -5,7 +5,7 @@ import super::types::Seeds;
 export fn main(
     _validator_hash: Bytes32,
     params: RefereeParameters,
-    move: ValidatorMove<Bytes, Any>,
+    move: ValidatorMove<Bytes, nil>,
     ..._payout: Bytes32 | nil,
 ) -> ValidatorResult<Seeds> | nil {
     let bob_seed = params.turn.last_move.game_move;

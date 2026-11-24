@@ -1,10 +1,6 @@
 import hand_eval::deep_compare;
-import handler_types::*;
 import handlers::*;
-import project::games::types::FactoryShort;
-import project::referee::types::*;
-import readables::Readable;
-import states::SpaceState;
+import project::games::types::*;
 
 // The arguments of the factory: both players' reserves, and the game parameters that the
 // proposal converts from Bencodex.
@@ -22,7 +18,7 @@ export struct SpaceParameters {
     minimum_raise: Int,
 }
 
-type SpaceFactoryResult = FactoryResult<SpaceState, SpaceParameters, Readable, Int>;
+type SpaceFactoryResult = FactoryResult<Int, SpaceParameters, SpaceMyTurn, SpaceTheirTurn>;
 
 // Creates one game, where both players put in the same stake, and Alice (the proposer) goes first.
 fn main(...args: FactoryArgs) -> SpaceFactoryResult {
@@ -62,8 +58,8 @@ fn main(...args: FactoryArgs) -> SpaceFactoryResult {
         };
     }
 
-    FactorySuccess::<SpaceState, SpaceParameters, Readable, Int> {
-        records: [GameRecord::<SpaceState, SpaceParameters, Readable, Int> {
+    FactorySuccess::<Int, SpaceParameters, SpaceMyTurn, SpaceTheirTurn> {
+        records: [GameRecord::<Int, SpaceParameters, SpaceMyTurn, SpaceTheirTurn> {
             proposer_contribution: stake,
             accepter_contribution: stake,
             proposer_goes_first: true,
@@ -74,11 +70,11 @@ fn main(...args: FactoryArgs) -> SpaceFactoryResult {
             my_turn_handler: alice_commit_a,
             their_turn_handler: bob_commit_a_their,
             validation_programs: [
-                validator(onchain::commitA::main),
-                validator(onchain::commitB::main),
-                validator(onchain::begin_round::main),
-                validator(onchain::mid_round::main),
-                validator(onchain::end::main),
+                as_validator(onchain::commitA::main),
+                as_validator(onchain::commitB::main),
+                as_validator(onchain::begin_round::main),
+                as_validator(onchain::mid_round::main),
+                as_validator(onchain::end::main),
             ],
             readable_parameters: SpaceParameters {
                 stack_size: stake / minimum_raise,
@@ -86,17 +82,4 @@ fn main(...args: FactoryArgs) -> SpaceFactoryResult {
             },
         }],
     }
-}
-
-// Each validator reads the state and evidence that it expects, which the referee doesn't check,
-// since the state is the one that the previous validator committed to.
-fn validator<S, E, R>(
-    program: fn(
-        validator_hash: Bytes32,
-        params: RefereeParameters,
-        move: ValidatorMove<S, E>,
-        ...payout: Bytes32 | nil,
-    ) -> ValidatorResult<R> | nil,
-) -> Validator {
-    unchecked_cast::<Validator>(program)
 }

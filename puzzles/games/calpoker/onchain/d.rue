@@ -6,7 +6,7 @@ import super::types::*;
 export fn main(
     _validator_hash: Bytes32,
     params: RefereeParameters,
-    move: ValidatorMove<Deal, Any>,
+    move: ValidatorMove<Deal, nil>,
     ..._payout: Bytes32 | nil,
 ) -> ValidatorResult<DiscardState> | nil {
     let bob_discards = params.turn.last_move.game_move;

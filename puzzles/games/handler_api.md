@@ -1,14 +1,15 @@
 # Handler API
 
-Before reading the Chialisp code, read [Shapes and pack](std/shapes.md) for
-`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
-their syntax and assumptions.
+The Rue types for everything here are in [`types.rue`](types.rue): the
+factory result and game record, the my-turn and their-turn handlers and their
+moves, message parsers, and `as_validator`, which a factory uses to list its
+validators.
 
 ## Scope
 This describes the calling convention and return shapes for off-chain
-"handler" functions used by the game framework. Handlers are chialisp
-programs that drive the game logic on each player's side. They are not
-game-specific — calpoker is one implementation.
+"handler" functions used by the game framework. Handlers are CLVM
+programs, written in Rue, that drive the game logic on each player's side.
+They are not game-specific — calpoker is one implementation.
 
 
 ## Game Factory

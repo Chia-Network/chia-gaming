@@ -38,10 +38,19 @@ At the start of each conversation, read `OVERVIEW.md` in full before diving
 into the task. It provides the conceptual foundation and links to detailed
 docs. Read the linked docs as they become relevant to the task at hand.
 
-Before reading, reviewing, or editing Chialisp (`.clsp` / `.clinc`), read
-[Shapes and pack](clsp/std/shapes.md). It explains the construction, invocation,
-dispatch, and field-access macros used throughout the referee and games,
-including their compile-time checks and runtime assumptions.
+The puzzles are written in Rue. Its docs, at
+<https://github.com/xch-dev/rue-docs>, cover the language, its type system, and
+its CLI. The Rue project is
+configured by `Rue.toml`, and its sources are in `puzzles/`: the unroll puzzle,
+the referee and the layouts it shares with validators
+(`puzzles/referee/types.rue`), the games under `puzzles/games/<key>/`, and test
+programs under `puzzles/test/`. Before writing or reviewing a game's handlers
+or factory, read `puzzles/games/types.rue`, which has the shared factory,
+handler, and validator types, and
+[`puzzles/games/handler_api.md`](puzzles/games/handler_api.md), which describes
+their calling conventions. Use those types rather than local copies. `build.rs`
+compiles the programs to `clsp/` and `games/<key>/clsp/`; format with
+`rue fmt`.
 
 **Build/test commands:** Use `./cb.sh` for builds, `./ct.sh` for targeted or
 interactive test runs, and `./ct-automation.sh` for automated/LLM full-suite

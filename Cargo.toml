@@ -67,7 +67,6 @@ rue-diagnostic = { git = "https://github.com/xch-dev/rue", rev = "9faa0bd544dd91
 rue-options = { git = "https://github.com/xch-dev/rue", rev = "9faa0bd544dd9148d15323b48c945fde14c3f13f" }
 serde_json = "=1.0.154"
 sha2 = "=0.11.1"
-toml = "=1.2.1"
 
 [[bin]]
 name = "chia-gaming-sim"

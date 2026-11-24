@@ -1,8 +1,9 @@
 # How to Add a Game
 
-Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
-`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
-their syntax and assumptions.
+A game's CLVM rules are written in Rue, whose docs are at
+<https://github.com/xch-dev/rue-docs>. The factory, handler, and validator
+types that every game shares are in
+[`puzzles/games/types.rue`](puzzles/games/types.rue).
 
 This guide explains the pieces you need to add a game and how they fit
 together. Start with the package layout and the step-by-step checklist. The API
@@ -24,7 +25,7 @@ interface so it remains independent of this particular frontend.
 If state channels are new to you, read [`OVERVIEW.md`](OVERVIEW.md) first. For
 deeper protocol rationale and advanced CLVM patterns, use
 [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) and
-[`clsp/handler_api.md`](clsp/handler_api.md). This guide includes the contracts
+[`puzzles/games/handler_api.md`](puzzles/games/handler_api.md). This guide includes the contracts
 and examples needed to connect a game to the host; those documents explain why
 the referee and validator design works.
 
@@ -58,16 +59,18 @@ building:
 ## Directory structure
 
 Put the new game in `games/<key>/`, where `<key>` is a short lowercase name
-such as `calpoker`.
+such as `calpoker`, and its Rue sources in `puzzles/games/<key>/`.
 
 ```text
+puzzles/games/<key>/
+  factory.rue             # Creates the initial game program and state
+  factory_probe.rue       # Returns one representative valid parameter value
+  handlers.rue            # Handles moves while the game is off-chain
+  onchain/                # Checks moves during an on-chain dispute
 games/<key>/
   clsp/
-    factory.clsp          # Creates the initial game program and state
-    factory_probe.clsp    # Returns one representative valid parameter value
     factory_args.clvm.bin # Optional generated curry arguments
-    onchain/              # Checks moves during an on-chain dispute
-    *_generate.clinc      # Handles moves while the game is off-chain
+                          # (compiled outputs are also written here)
   rust/                   # Optional; omit when using a non-Rust test harness
     mod.rs                # Rust helpers and test module declaration
     tests/                # Optional Rust CLVM/handler/validator/simulator tests
@@ -112,20 +115,20 @@ and the factory preset list for every production package. When `rust/mod.rs` or
 `rust/tests/mod.rs` exists, it also generates the corresponding Rust module or
 internal test-suite aggregation.
 
-The catalog key must equal the `games/<key>/` directory name. The build
-automatically compiles `clsp/factory.clsp`, `clsp/factory_probe.clsp`, and
-production `.clsp` files below `clsp/onchain/`; do not add package entries to
-`chialisp.toml`. A package written in Rue instead keeps its sources in
-`puzzles/games/<key>/`: `factory.rue`, an optional `factory_probe.rue`, and its
-validators in `onchain/`, each a file whose `main` function is the program.
-The build writes their outputs to the package's `clsp/` directory, as
-`factory`, `factory_probe`, and `onchain/<name>`. The factory and handler
-calling conventions are typed in `puzzles/games/types.rue`. Run `./cb.sh` before the first frontend build so the generated
-prepared factory exists for the frontend registry generator.
+The catalog key must equal the `games/<key>/` directory name. A package keeps
+its sources in `puzzles/games/<key>/`: `factory.rue`, a `factory_probe.rue`
+(required for production packages), and its validators in `onchain/` (except
+`test_` files), each a file whose `main` function is the program. The build
+compiles them automatically; do not add package entries to `build.rs`. The
+build writes their outputs to the package's `clsp/` directory, as `factory`,
+`factory_probe`, and `onchain/<name>`. The factory and handler calling
+conventions are typed in `puzzles/games/types.rue`. Run `./cb.sh` before the
+first frontend build so the generated prepared factory exists for the frontend
+registry generator.
 
 Do not edit or check in compiled `.hex` files, prepared factory binaries, or
 `games/package_manifest.json`; they are generated implementation artifacts.
-Game packages maintain their `.clsp` sources and, when needed, the optional
+Game packages maintain their Rue sources and, when needed, the optional
 `factory_args.clvm.bin` input.
 
 Two identifiers appear in the code:
@@ -154,11 +157,6 @@ and must get the same result.
 Most factories create one game. A factory may create several games that must
 be accepted or cancelled together; the code calls these an atomic group.
 Krunk is the reference example for that case.
-
-In a Chialisp package, `factory.clsp` is normally only an exported entry point.
-Module paths start at a repository include root, so package modules use names
-such as `games.<key>.clsp.<module>`. The factory implementation may live in a
-`.clinc` module so handlers and tests can import the same definitions.
 
 California Poker is written in Rue. Its factory is the `main` function of
 [`puzzles/games/calpoker/factory.rue`](puzzles/games/calpoker/factory.rue),
@@ -256,7 +254,7 @@ total amount. Return every validator program in field 9's proper, nonempty regis
 the host derives their tree hashes. Its first program is initially current and
 later programs are resolved by tree hash, independent of list order. The first
 member's first-validator hash is the package's protocol identity. See
-[the factory return format](clsp/handler_api.md#game-factory).
+[the factory return format](puzzles/games/handler_api.md#game-factory).
 
 During play, the engine uses:
 
@@ -309,12 +307,14 @@ on-chain actuation consumes that prepared output to apply/curry/sign/send; it
 never reruns your handler.
 Post-application redo caching is a separate protocol mechanism.
 
-In Chialisp, import validators using their compiled `program` export; in Rue,
-refer to each validator's exported `main`, as Calpoker's factory does. Factory
-field 9 contains the proper nonempty list of those program values; handlers do
-not return validators. Handler functions are also program values; use
-`(curry handler captured_value...)` in Chialisp, or a closure in Rue, when the
-next phase needs a secret or other role-specific data.
+Refer to each validator's exported `main`, and convert it to a `Validator` with
+`as_validator`, as Calpoker's factory does. Factory field 9 contains the proper
+nonempty list of those program values; handlers do not return validators.
+Handler functions are also program values; use a closure when the next phase
+needs a secret or other role-specific data. Each handler type names the states
+it reads and the handler that follows it, so the types can follow the game
+step by step (as Calpoker's do), or name one recursive type for every step (as
+Space Poker's and Krunk's do).
 
 A their-turn handler returns:
 
@@ -459,13 +459,12 @@ California Poker's
 [`onchain/`](puzzles/games/calpoker/onchain) directory for the complete validator
 registry and sequence, [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md) for handler flow,
 nil-move, evidence, and conditional-slash examples,
-[`clsp/handler_api.md`](clsp/handler_api.md) for the full return contracts, and
+[`puzzles/games/handler_api.md`](puzzles/games/handler_api.md) for the full return contracts, and
 [`CLVM_DOS.md`](CLVM_DOS.md) for cost and size limits.
 
 ## Step 3: Add the factory probe
 
-Add `games/<key>/clsp/factory_probe.clsp` (or `puzzles/games/<key>/factory_probe.rue`
-in a Rue package), a no-argument program that returns one representative valid
+Add `puzzles/games/<key>/factory_probe.rue`, a no-argument program that returns one representative valid
 complete factory argument list: contributions for the proposer and accepter
 reserves followed by the game parameters. Calpoker's current probe is:
 
@@ -1265,7 +1264,7 @@ The following are frontend implementation details, not APIs for games:
 ## Testing checklist
 
 After adding or changing package files, run `./cb.sh` first. It compiles
-Chialisp, prepares factory binaries, regenerates Rust-side package artifacts,
+the puzzles, prepares factory binaries, regenerates Rust-side package artifacts,
 and builds the Rust project in the required order. Then run `./ct.sh` for the
 full Rust, frontend, and simulator-backed test suite. The frontend test/build
 step runs `generate:games`, which regenerates

@@ -3,7 +3,7 @@
 // It is the player-app deploy bundle (front-end/dist/app) plus the desktop HTML
 // entry, which replaces the browser bootstrap so the document needs no inline
 // script. Floor checks at the end fail the build loudly rather than shipping a
-// bundle whose wasm or chialisp assets are missing.
+// bundle whose wasm or CLVM assets are missing.
 
 import {
   copyFileSync,

@@ -4,7 +4,7 @@ import project::referee::types::*;
 export fn main(
     _validator_hash: Bytes32,
     params: RefereeParameters,
-    _move: ValidatorMove<nil, Any>,
+    _move: ValidatorMove<nil, nil>,
     ..._payout: Bytes32 | nil,
 ) -> ValidatorResult<Bytes> | nil {
     let seed_commit = params.turn.last_move.game_move;

@@ -75,7 +75,7 @@ export interface KrunkBoardNotice {
   kind: 'error' | 'win' | 'info';
 }
 
-// Mirrors KRUNK_PAYOUTS in clsp/onchain/clue.clsp: a correct guess pays the
+// Mirrors PAYOUTS in puzzles/games/krunk/rules.rue: a correct guess pays the
 // guesser (pot / 100) * schedule[guesses - 1].
 const KRUNK_PAYOUT_SCHEDULE = [100n, 100n, 20n, 5n, 1n] as const;
 

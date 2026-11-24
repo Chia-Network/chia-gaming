@@ -24,10 +24,10 @@ find_chialisp() {
 
 clsp_sources() {
     {
-        find_chialisp -type f \( -name '*.clsp' -o -name '*.clinc' -o -name '*.rue' \) -print
+        find_chialisp -type f -name '*.rue' -print
         find_chialisp -type f -name 'factory_args.clvm.bin' -print
         for file in \
-            build.rs Cargo.toml Cargo.lock chialisp.toml Rue.toml \
+            build.rs Cargo.toml Cargo.lock Rue.toml \
             games/registry.json \
             tools/build-chialisp.sh
         do

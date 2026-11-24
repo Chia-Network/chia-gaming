@@ -27,7 +27,7 @@ type LocalGameCommand =
   | { type: 'accept-settlement' }
   | { type: 'cheat'; moverShare: bigint };
 
-// These mirror the handler names in the Chialisp. The durable reducer advances
+// These mirror the handler names in the Rue handlers. The durable reducer advances
 // this state for protocol inputs, while accepted local intents commit their
 // candidate state through the live game port.
 export const SpHandler = {

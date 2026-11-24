@@ -1,8 +1,11 @@
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Node, Sha256Input};
 
+use std::cmp::Ordering;
+
 use clvm_traits::ToClvm;
-use clvmr::{run_program, ChiaDialect};
+use clvmr::allocator::{NodePtr, SExp};
+use clvmr::{run_program, Allocator, ChiaDialect};
 
 use crate::utils::first;
 
@@ -693,8 +696,6 @@ fn test_handcalc() {
 
     let program =
         read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
-    let deep_compare =
-        read_hex_puzzle(&mut allocator, "clsp/test/deep_compare.hex").expect("should read");
 
     let to_mod52 = |cards: Vec<(i32, i32)>| -> Vec<i32> {
         cards
@@ -735,28 +736,33 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            let deep_compare_args = [
-                Node(first(allocator.allocator(), result_1).expect("ok")),
-                Node(first(allocator.allocator(), result_2).expect("ok")),
-            ]
-            .to_clvm(&mut allocator)
-            .expect("should build");
-            let deep_compare_program = deep_compare.to_clvm(&mut allocator).expect("should work");
-            let compare_result = run_program(
-                allocator.allocator(),
-                &chia_dialect(),
-                deep_compare_program,
-                deep_compare_args,
-                0,
-            )
-            .expect("should run")
-            .1;
-            let compare_res_hex = Node(compare_result).to_hex(&mut allocator).expect("cvt");
+            let hand_1 = first(allocator.allocator(), result_1).expect("ok");
+            let hand_2 = first(allocator.allocator(), result_2).expect("ok");
+            let ordering = deep_compare(allocator.allocator(), hand_1, hand_2);
+            let compare_res_hex = match ordering {
+                Ordering::Greater => "01",
+                Ordering::Equal => "80",
+                Ordering::Less => "ff",
+            };
             assert_eq!(compare_res_hex, expected_relationship);
         };
 
     for test in examples.into_iter() {
         test_handcalc_with_example(test);
+    }
+}
+
+/// Compares two values the way calpoker compares hands: atoms as integers, and less than pairs,
+/// which compare by their first and then their rest.
+fn deep_compare(allocator: &Allocator, a: NodePtr, b: NodePtr) -> Ordering {
+    match (allocator.sexp(a), allocator.sexp(b)) {
+        (SExp::Pair(a_first, a_rest), SExp::Pair(b_first, b_rest)) => {
+            deep_compare(allocator, a_first, b_first)
+                .then_with(|| deep_compare(allocator, a_rest, b_rest))
+        }
+        (SExp::Pair(..), SExp::Atom) => Ordering::Greater,
+        (SExp::Atom, SExp::Pair(..)) => Ordering::Less,
+        (SExp::Atom, SExp::Atom) => allocator.number(a).cmp(&allocator.number(b)),
     }
 }
 

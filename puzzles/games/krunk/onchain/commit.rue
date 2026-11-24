@@ -7,7 +7,7 @@ import super::state::*;
 export fn main(
     _validator_hash: Bytes32,
     params: RefereeParameters,
-    move: ValidatorMove<KrunkInitial, Any>,
+    move: ValidatorMove<KrunkInitial, nil>,
     ..._payout: Bytes32 | nil,
 ) -> ValidatorResult<KrunkState> | nil {
     let { last_move, mover_share } = params.turn;

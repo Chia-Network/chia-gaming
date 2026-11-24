@@ -177,7 +177,7 @@ pub enum ParsedRefereeSolution {
 }
 
 impl ParsedRefereeSolution {
-    /// Parse the layouts declared in `clsp/referee/onchain/shapes.clinc`.
+    /// Parse the layouts declared by `RefereeSolution` in `puzzles/referee/types.rue`.
     /// Slash classification does not inspect the payload or optional evidence.
     pub fn parse(allocator: &mut AllocEncoder, solution: &Program) -> Result<Self, Error> {
         let node = solution.to_nodeptr(allocator)?;

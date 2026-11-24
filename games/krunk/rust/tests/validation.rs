@@ -367,7 +367,7 @@ fn words_to_list(allocator: &mut AllocEncoder, words: &[&[u8; 5]]) -> NodePtr {
     tail
 }
 
-// --- commit.clsp tests ---
+// --- commit.rue tests ---
 
 fn test_krunk_commit_happy() {
     let mut allocator = AllocEncoder::new();
@@ -429,7 +429,7 @@ fn test_krunk_commit_slash_bad_move_size() {
     assert!(result.is_err() || result.unwrap().0 == MoveCode::Slash);
 }
 
-// --- guess.clsp tests ---
+// --- guess.rue tests ---
 
 fn test_krunk_guess_happy() {
     let mut allocator = AllocEncoder::new();
@@ -514,7 +514,7 @@ fn test_krunk_guess_bad_range_doesnt_bracket() {
     assert_referee_slash_rejected(&mut allocator, &guess, b"crane", 0, state, evidence);
 }
 
-// --- clue.clsp tests ---
+// --- clue.rue tests ---
 
 fn test_krunk_clue_nonterminal_happy() {
     let mut allocator = AllocEncoder::new();
