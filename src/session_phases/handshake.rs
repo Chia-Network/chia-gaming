@@ -12,8 +12,8 @@ use crate::common::constants::{
 };
 use crate::common::standard_coin::verify_reward_payout_signature;
 use crate::common::types::{
-    is_reserved_agg_sig_unsafe_suffix, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID, Error,
-    Hash, IntoErr, Node, PublicKey, PuzzleHash, SpendBundle,
+    is_reserved_agg_sig_unsafe_suffix, Aggsig, AllocEncoder, Amount, CoinCondition, CoinID,
+    CoinString, Error, Hash, IntoErr, Node, PublicKey, PuzzleHash, SpendBundle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,28 @@ const PEER_PROTOCOL_VERSION: u32 = 3;
 pub(crate) const MAX_PEER_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_QUEUED_PEER_MESSAGES: usize = 1024;
 pub(crate) const MAX_QUEUED_PEER_BYTES: usize = 64 * 1024 * 1024;
+
+/// Recover the wallet input from the stored opening bundle. The protocol
+/// funding coin is created by that input directly or through a settlement coin.
+pub(super) fn opening_wallet_input<'a>(
+    bundle: &'a SpendBundle,
+    funding_coin: &CoinString,
+) -> Option<&'a CoinString> {
+    let find_coin = |id: CoinID| {
+        bundle
+            .spends
+            .iter()
+            .map(|spend| &spend.coin)
+            .find(|coin| coin.to_coin_id() == id)
+    };
+    let (parent_id, _, _) = funding_coin.to_parts()?;
+    let parent = find_coin(parent_id)?;
+    let (grandparent_id, puzzle_hash, _) = parent.to_parts()?;
+    if puzzle_hash.bytes() == chia_puzzles::SETTLEMENT_PAYMENT_HASH {
+        return find_coin(grandparent_id);
+    }
+    Some(parent)
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct HandshakePayloadB {

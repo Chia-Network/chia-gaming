@@ -306,6 +306,8 @@ pub enum GameNotification {
 pub enum CoinOfInterest {
     Funding,
     Channel,
+    OurChannelChange,
+    OpponentChannelChange,
     Unroll,
     UnrollChange,
     CurrentGame(GameID),
@@ -317,6 +319,8 @@ impl CoinOfInterest {
         match self {
             CoinOfInterest::Funding => "Funding coin".to_string(),
             CoinOfInterest::Channel => "Channel coin".to_string(),
+            CoinOfInterest::OurChannelChange => "Your change coin".to_string(),
+            CoinOfInterest::OpponentChannelChange => "Opponent's change coin".to_string(),
             CoinOfInterest::Unroll => "Unroll coin".to_string(),
             CoinOfInterest::UnrollChange => "Unroll change coin".to_string(),
             CoinOfInterest::CurrentGame(id) => format!("Game {id} coin"),
