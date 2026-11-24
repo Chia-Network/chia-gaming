@@ -1,13 +1,12 @@
 import krunk_dict_tree::Dictionary;
-import krunk_generate::{FactoryArgs, krunk_factory};
+import krunk_generate::{FactoryArgs, GameRecord, krunk_factory};
 
 import handler_types::FactoryResult;
-import krunk_shapes::Initial;
 
 fn main(
     dict_key: PublicKey,
     dict_tree: Dictionary,
     ...args: FactoryArgs,
-) -> FactoryResult<Initial, Int> {
+) -> FactoryResult<GameRecord> {
     krunk_factory(dict_key, dict_tree, ...args)
 }

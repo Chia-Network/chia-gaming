@@ -11,7 +11,7 @@ fn main(
     params: RefereeParams,
     _witness: Any,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<Bytes> {
     let move = params.move_data.move;
     if move.length == 32 {
         validator_transition(calpoker_b_hash, move, 16)

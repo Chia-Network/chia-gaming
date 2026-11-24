@@ -12,6 +12,7 @@ struct CurryArgs {
 }
 
 type State = (Int, (Bytes, Int));
+type GameRecord = FactoryRecord<State, [Int, Int], CurriedProgram>;
 
 fn validator_hash(args: CurryArgs) -> Bytes32 {
     let nil_hash = tree_hash(nil);
@@ -41,7 +42,7 @@ fn validator(
     params: RefereeParams,
     (state, (_, evidence)): (State, (Any, Bytes)),
     ..._payout: Any,
-) -> nil | ValidatorTransition {
+) -> nil | ValidatorTransition<State> {
     let {
         coin: { pubkeys: { mover, waiter }, timeout, amount, mod_hash },
         move_data: { nonce, move },
@@ -147,7 +148,7 @@ fn theirturn(
     [[count, slashable, state_share], [0, slash_byte], next_handler(args, "myturn")]
 }
 
-fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> FactoryResult<State, [Int, Int]> {
+fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> FactoryResult<GameRecord> {
     assert proposer > 0 && accepter > 0;
     let a = if proposer > 100 {
         100
@@ -161,7 +162,7 @@ fn factory(proposer: Int, accepter: Int, args: CurryArgs) -> FactoryResult<State
     };
     [
         1,
-        [FactoryRecord::<State, [Int, Int], CurriedProgram> {
+        [GameRecord {
             proposer_contribution: a,
             accepter_contribution: b,
             proposer_goes_first: true,

@@ -6,8 +6,9 @@ import artifacts::{
     spacepoker_mid_round_program,
 };
 import curry::curry_program;
-import handler_types::{FactoryRecord, FactoryResult, MyTurnResult, TheirTurnResult};
+import handler_types::{FactoryRecord, FactoryResult, MyTurnResult, OpeningHandler, TheirTurnResult};
 import space_hand_calc::*;
+import spacepoker_begin_round::{mover_opens_round, wins_opening_toss};
 import spacepoker_cards::{
     community_cards_for_pos,
     deal_hole_cards,
@@ -36,14 +37,27 @@ export fn image_at(chain: List<Bytes>, n: Int) -> Bytes {
     }
 }
 
+// Both players receive the opener's preimage to reveal the next community cards.
+export fn parse_open_message(
+    curried_chain: List<Bytes>,
+    message: Bytes,
+    state: Open,
+    _amount: Int,
+) -> [String, ...List<Int>] {
+    let [(_, (_, mover_image_next)), _, round, ..._] = state;
+    assert message.length == 32;
+    assert sha256(message) == mover_image_next;
+    ("cards", community_cards_for_pos(image_at(curried_chain, round), message, round))
+}
+
 // ─── deterministic factory ───────────────────────────────────────────
 // Acceptance arguments:
 // (proposer_reserve accepter_reserve (stack_size minimum_raise)).
 // stack_size=0 selects the largest common stack rounded down to minimum_raise.
-type Record = FactoryRecord<Int, [Int, Int], Any>;
+export type GameRecord = FactoryRecord<Int, [Int, Int], OpeningHandler<Int>>;
 export type FactoryArgs = [Int, Int, (Int, (Int, Any)), ...Any];
 
-export fn spacepoker_factory(...args: FactoryArgs) -> FactoryResult<Int, [Int, Int]> {
+export fn spacepoker_factory(...args: FactoryArgs) -> FactoryResult<GameRecord> {
     let [proposer_reserve, accepter_reserve, (stack_size, (minimum_raise, _)), ..._] = args;
     assert stack_size >= 0;
     assert minimum_raise > 0;
@@ -79,7 +93,7 @@ export fn spacepoker_factory(...args: FactoryArgs) -> FactoryResult<Int, [Int, I
     } else {
         [
             1,
-            [Record {
+            [GameRecord {
                 proposer_contribution: requested_stake,
                 accepter_contribution: requested_stake,
                 proposer_goes_first: true,
@@ -142,9 +156,7 @@ export fn spacepoker_alice_handler_commitB(
     let alice_pre = image_at(curried_chain, 0);
     let alice_i4 = image_at(curried_chain, 4);
     let ([ah1, ah2], alice_boost) = deal_hole_cards(alice_pre, bob_i4);
-    let alice_opens = (((alice_i4 as Int) > (bob_i4 as Int)) as Int) == (
-        ((alice_i4 as Int) ^ (bob_i4 as Int)) & 1
-    );
+    let alice_opens = wins_opening_toss(alice_i4, bob_i4);
     [
         ["deal", ah1, ah2, alice_boost, alice_opens],
         nil,
@@ -169,13 +181,7 @@ export fn spacepoker_alice_begin_round(
 ) -> MyTurnResult {
     let [(_, (half_pot, _)), waiter_image_n, round, ..._mid_hash] = state;
     let image_n = image_at(curried_chain, round);
-    let mover_opens = if round == 4 {
-        (((image_n as Int) > (waiter_image_n as Int)) as Int) == (
-            ((image_n as Int) ^ (waiter_image_n as Int)) & 1
-        )
-    } else {
-        true
-    };
+    let mover_opens = mover_opens_round(round, image_n, waiter_image_n);
     if mover_opens {
         let raise_amount = local_move;
         let move_bytes = image_n + (raise_amount as Bytes);
@@ -313,7 +319,7 @@ export fn spacepoker_alice_mid_round(
         let parser = if round == 1 {
             nil
         } else {
-            [curry_program(spacepoker_alice_parse_open_message, [curried_chain])]
+            [curry_program(parse_open_message, [curried_chain])]
         };
         ["spacepoker_alice_mid_round call", preimage, new_mover_share, next_handler, ...parser]
     }
@@ -420,22 +426,6 @@ export fn spacepoker_alice_handler_end_their(
     ]
 }
 
-// message parser for Alice: receives the opener's preimage from a
-// begin_round message and derives the newly revealed community cards.
-// (message state amount) where message = opponent's image_n.
-// state = begin_round state = (bet_unit half_pot mover_image_next waiter_image_n N mid_hash).
-export fn spacepoker_alice_parse_open_message(
-    curried_chain: List<Bytes>,
-    message: Bytes,
-    state: Open,
-    _amount: Int,
-) -> [String, ...List<Int>] {
-    let [(_bet_unit, (_half_pot, mover_image_next)), _waiter_image_n, round, ..._mid_hash] = state;
-    assert message.length == 32;
-    assert sha256(message) == mover_image_next;
-    ("cards", community_cards_for_pos(image_at(curried_chain, round), message, round))
-}
-
 // ─── Bob handlers (responder, goes second) ───────────────────────────
 // their-turn: Bob receives Alice's commitA
 export fn spacepoker_bob_handler_commitA(
@@ -467,25 +457,9 @@ export fn spacepoker_bob_parse_deal_message(
     let bob_pre = image_at(curried_chain, 0);
     let bob_i4 = image_at(curried_chain, 4);
     let ([bh1, bh2], bob_boost) = deal_hole_cards(bob_pre, alice_i4);
-    let alice_opens = (((alice_i4 as Int) > (bob_i4 as Int)) as Int) == (
-        ((alice_i4 as Int) ^ (bob_i4 as Int)) & 1
-    );
+    let alice_opens = wins_opening_toss(alice_i4, bob_i4);
     let bob_opens = !alice_opens;
     ["deal", bh1, bh2, bob_boost, bob_opens]
-}
-
-// message parser for Bob: receives the opener's preimage from a
-// begin_round message and derives the newly revealed community cards.
-export fn spacepoker_bob_parse_open_message(
-    curried_chain: List<Bytes>,
-    message: Bytes,
-    state: Open,
-    _amount: Int,
-) -> [String, ...List<Int>] {
-    let [(_bet_unit, (_half_pot, mover_image_next)), _waiter_image_n, round, ..._mid_hash] = state;
-    assert message.length == 32;
-    assert sha256(message) == mover_image_next;
-    ("cards", community_cards_for_pos(image_at(curried_chain, round), message, round))
 }
 
 // my-turn: Bob commits his hash-chain tip
@@ -526,13 +500,7 @@ export fn spacepoker_bob_handler_begin_round_their(
     let [(_bet_unit, (_half_pot, _mover_next)), waiter_image_n, round, ..._mid_hash] = pre_state;
     let mover_image_n = move[0..32];
     let raise_amount = move[32..move.length];
-    let mover_opens = if round == 4 {
-        (((mover_image_n as Int) > (waiter_image_n as Int)) as Int) == (
-            ((mover_image_n as Int) ^ (waiter_image_n as Int)) & 1
-        )
-    } else {
-        true
-    };
+    let mover_opens = mover_opens_round(round, mover_image_n, waiter_image_n);
     if mover_opens {
         let readable = if round == 4 {
             let bob_pre = image_at(curried_chain, 0);
@@ -599,7 +567,7 @@ export fn spacepoker_bob_mid_round(
         let parser = if round == 1 {
             nil
         } else {
-            [curry_program(spacepoker_bob_parse_open_message, [curried_chain])]
+            [curry_program(parse_open_message, [curried_chain])]
         };
         ["spacepoker_bob_mid_round call", preimage, new_mover_share, next_handler, ...parser]
     }
@@ -690,13 +658,7 @@ export fn spacepoker_bob_begin_round(
 ) -> MyTurnResult {
     let [(_, (half_pot, _)), waiter_image_n, round, ..._mid_hash] = state;
     let image_n = image_at(curried_chain, round);
-    let mover_opens = if round == 4 {
-        (((image_n as Int) > (waiter_image_n as Int)) as Int) == (
-            ((image_n as Int) ^ (waiter_image_n as Int)) & 1
-        )
-    } else {
-        true
-    };
+    let mover_opens = mover_opens_round(round, image_n, waiter_image_n);
     if mover_opens {
         let raise_amount = local_move;
         let move_bytes = image_n + (raise_amount as Bytes);

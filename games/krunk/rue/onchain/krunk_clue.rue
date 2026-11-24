@@ -29,7 +29,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<State, Bytes>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<State | 0> {
     let { move_data: { move }, mover_share } = params;
     let (
         { guesses: { dict_pubkey, base_unit, bob_guesses }, alice_clues, alice_commit, ...state },

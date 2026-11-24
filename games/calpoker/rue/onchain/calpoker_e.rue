@@ -35,7 +35,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<DiscardState, Bytes>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<0> {
     let {
         move_data: { move },
         coin: { amount: curried_amount },
@@ -60,7 +60,7 @@ fn main(
             bob_cards,
             bob_discards,
         );
-        let alice_hand_value = onehandcalc(pull_out_cards(
+        let alice_hand_value = onehandcalc(pull_out_cards_inner(
             alice_card_selections as Int,
             alice_final_cards,
         ));

@@ -11,17 +11,17 @@ import calpoker_make_cards::*;
 import calpoker_onehandcalc::*;
 import calpoker_shapes::{Deal, DiscardState, Seeds};
 import curry::curry_program;
-import handler_types::{FactoryRecord, FactoryResult, MyTurnResult, TheirTurnResult};
+import handler_types::{FactoryRecord, FactoryResult, MyTurnResult, OpeningHandler, TheirTurnResult};
 import std_deep_compare::*;
 import std_list_compare::*;
 import std_popcount::*;
 
 // Acceptance factory arguments: (proposer_reserve accepter_reserve requested_stake).
 // Returns `(1 records)` or `(0 proposer_short accepter_short)`.
-type Record = FactoryRecord<0, Int, Any>;
+export type GameRecord = FactoryRecord<0, Int, OpeningHandler<0>>;
 export type FactoryArgs = [Int, Int, Int, ...Any];
 
-export fn calpoker_factory(...args: FactoryArgs) -> FactoryResult<0, Int> {
+export fn calpoker_factory(...args: FactoryArgs) -> FactoryResult<GameRecord> {
     let [proposer_reserve, accepter_reserve, requested_stake, ..._] = args;
     assert requested_stake > 0;
     assert deep_eq(args, [proposer_reserve, accepter_reserve, requested_stake]);
@@ -30,7 +30,7 @@ export fn calpoker_factory(...args: FactoryArgs) -> FactoryResult<0, Int> {
     } else {
         [
             1,
-            [Record {
+            [GameRecord {
                 proposer_contribution: requested_stake,
                 accepter_contribution: requested_stake,
                 proposer_goes_first: true,

@@ -1,7 +1,7 @@
-import spacepoker_generate::{FactoryArgs, spacepoker_factory};
+import spacepoker_generate::{FactoryArgs, GameRecord, spacepoker_factory};
 
 import handler_types::FactoryResult;
 
-fn main(...args: FactoryArgs) -> FactoryResult<Int, [Int, Int]> {
+fn main(...args: FactoryArgs) -> FactoryResult<GameRecord> {
     spacepoker_factory(...args)
 }

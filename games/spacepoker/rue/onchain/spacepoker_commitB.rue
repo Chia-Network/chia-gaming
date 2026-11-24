@@ -10,7 +10,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Commit, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<Open> {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let ((bet_unit, alice_image_5), _) = witness;
     if (move.length == 32) && (mover_share == ((amount / 2) - bet_unit)) {

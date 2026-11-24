@@ -1,7 +1,7 @@
-import calpoker_generate::{FactoryArgs, calpoker_factory};
+import calpoker_generate::{FactoryArgs, GameRecord, calpoker_factory};
 
 import handler_types::FactoryResult;
 
-fn main(...args: FactoryArgs) -> FactoryResult<0, Int> {
+fn main(...args: FactoryArgs) -> FactoryResult<GameRecord> {
     calpoker_factory(...args)
 }

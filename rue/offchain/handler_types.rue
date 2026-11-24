@@ -2,6 +2,14 @@
 export type MyTurnResult = [String, Bytes, Int, Any, ...nil | [Any]];
 export type TheirTurnResult = [Any, List<Any>, Any, ...nil | [Bytes]];
 
+export type OpeningHandler<S> = fn(
+    local_move: Any,
+    amount: Int,
+    state: S,
+    mover_share: Int,
+    entropy: Bytes,
+) -> MyTurnResult;
+
 // Field order is the factory record decoded by Rust. States, game parameters,
 // and the initial my-turn function are specific to each game.
 export struct FactoryRecord<S, P, H> {
@@ -18,4 +26,4 @@ export struct FactoryRecord<S, P, H> {
     readable_parameters: P,
 }
 
-export type FactoryResult<S, P> = [0, Bool, Bool] | [1, List<FactoryRecord<S, P, Any>>];
+export type FactoryResult<R> = [0, Bool, Bool] | [1, List<R>];

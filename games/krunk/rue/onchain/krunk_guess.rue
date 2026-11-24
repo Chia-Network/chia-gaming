@@ -12,7 +12,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<State, Bytes>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<State> {
     let { move_data: { move }, mover_share } = params;
     let (state, (_, evidence)) = witness;
     if (move.length == 5) && (mover_share == 0) {

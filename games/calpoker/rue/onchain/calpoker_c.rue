@@ -15,7 +15,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Seeds, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<Deal> {
     let { coin: { amount }, move_data: { move } } = params;
     let ((alice_commit, bob_seed), _) = witness;
     if move.length != 48 {

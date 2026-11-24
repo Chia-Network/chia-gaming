@@ -11,7 +11,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Bytes, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<Seeds> {
     let move = params.move_data.move;
     let (alice_commit, _) = witness;
     if move.length == 16 {

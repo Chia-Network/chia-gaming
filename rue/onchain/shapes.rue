@@ -26,23 +26,23 @@ export struct RefereeMove {
     ...max_move_size: Int,
 }
 
-export type ValidatorResult = 0 | ValidatorTransition;
-export type ValidatorTransition = ((Bytes, Any), (Int, List<Any>));
+export type ValidatorResult<S> = 0 | ValidatorTransition<S>;
+export type ValidatorTransition<S> = ((Bytes, S), (Int, List<Any>));
 
-export inline fn validator_result(
+export inline fn validator_result<S>(
     next_validator_hash: Bytes,
-    new_state: Any,
+    new_state: S,
     max_move_size: Int,
     extra_conditions: List<Any>,
-) -> ValidatorTransition {
+) -> ValidatorTransition<S> {
     ((next_validator_hash, new_state), (max_move_size, extra_conditions))
 }
 
-export inline fn validator_transition(
+export inline fn validator_transition<S>(
     next_validator_hash: Bytes,
-    new_state: Any,
+    new_state: S,
     max_move_size: Int,
-) -> ValidatorTransition {
+) -> ValidatorTransition<S> {
     validator_result(next_validator_hash, new_state, max_move_size, nil)
 }
 

@@ -5,7 +5,7 @@ fn main(
     params: RefereeParams,
     _witness: Any,
     ..._unused_payout: Any,
-) -> ValidatorTransition {
+) -> ValidatorTransition<String> {
     if params.validation_info_hash != nil {
         raise ["committed validator execution"];
     } else {

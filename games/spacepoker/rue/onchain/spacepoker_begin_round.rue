@@ -1,18 +1,25 @@
 import shapes::*;
 import spacepoker_shapes::*;
 
+// Swapping distinct images after a pong flips the comparison and preserves the XOR bit.
+export inline fn wins_opening_toss(mover_image: Bytes, waiter_image: Bytes) -> Bool {
+    let mover = mover_image as Int;
+    let waiter = waiter_image as Int;
+    ((mover > waiter) as Int) == ((mover ^ waiter) & 1)
+}
+
+export inline fn mover_opens_round(round: Int, mover_image: Bytes, waiter_image: Bytes) -> Bool {
+    if round == 4 {
+        wins_opening_toss(mover_image, waiter_image)
+    } else {
+        true
+    }
+}
+
 // state is (bet_unit half_pot mover_image_next waiter_image_n N mid_hash)
 // mid_hash is curried into begin_round's state by commitB (and by mid_round
 // on callback), avoiding a circular import: mid_round imports begin_round
 // directly, and begin_round gets mid_hash from state instead.
-//
-// At N=4, a coin toss decides who opens the first betting round. With both
-// image_4s revealed, the toss is:
-// mover_opens = (> mover_image_n waiter_image_n) ==
-// (logand (logxor mover_image_n waiter_image_n) 1)
-// The xor bit is invariant under mover/waiter swap, while (>) flips, so
-// the toss flips exactly under swap -- after a pong, the new mover always
-// opens.
 //
 // The coin toss decides interpretation of MOVE BEFORE move shape is
 // inspected. A bare 32-byte move is ambiguous (could be "check" or "pong");
@@ -31,7 +38,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Open, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<Raise | Open> {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (((bet_unit, (half_pot, mover_image_next)), (waiter_image_n, (n, mid_hash))), _) = witness;
     if move.length < 32 {
@@ -39,13 +46,7 @@ fn main(
     } else {
         let mover_image_n = move[0..32];
         let raise_amount = move[32..move.length];
-        let mover_opens = if n == 4 {
-            (((mover_image_n as Int) > (waiter_image_n as Int)) as Int) == (
-                ((mover_image_n as Int) ^ (waiter_image_n as Int)) & 1
-            )
-        } else {
-            true
-        };
+        let mover_opens = mover_opens_round(n, mover_image_n, waiter_image_n);
         if (mover_share == ((amount / 2) - half_pot))
             && (mover_image_next == sha256(mover_image_n))
         {

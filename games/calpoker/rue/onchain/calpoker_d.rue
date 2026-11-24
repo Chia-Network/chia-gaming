@@ -12,7 +12,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Deal, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<DiscardState> {
     let bob_discards = params.move_data.move;
     let ((alice_commit, (alice_cards, bob_cards)), _) = witness;
     if (bob_discards.length == 1) && (popcount(bob_discards as Int) == 4) {

@@ -14,7 +14,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Initial, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<State> {
     let { move_data: { move }, mover_share } = params;
     let ((dict_pubkey, (base_unit, clue_hash)), _) = witness;
     if (move.length == 32) && (mover_share == 0) {

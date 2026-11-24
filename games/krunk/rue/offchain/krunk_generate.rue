@@ -12,14 +12,14 @@ export const MIN_WORD: Int = -(1 << 39);
 
 export const MAX_WORD: Int = (1 << 39) - 1;
 
-type Record = FactoryRecord<Initial, Int, CurriedProgram>;
+export type GameRecord = FactoryRecord<Initial, Int, CurriedProgram>;
 export type FactoryArgs = [Int, Int, Int, ...Any];
 
 export fn krunk_factory(
     dict_pubkey: PublicKey,
     dict_tree: Dictionary,
     ...args: FactoryArgs,
-) -> FactoryResult<Initial, Int> {
+) -> FactoryResult<GameRecord> {
     let [proposer_reserve, accepter_reserve, requested_stake, ..._] = args;
     assert requested_stake > 0;
     assert (requested_stake % 100) == 0;
@@ -35,7 +35,7 @@ export fn krunk_factory(
         );
         let alice_handler = curry_program(krunk_alice_handler_commit, [dict_tree]);
         let bob_handler = curry_program(krunk_bob_handler_commit, [dict_tree]);
-        let proposer_game = Record {
+        let proposer_game = GameRecord {
             proposer_contribution: requested_stake,
             accepter_contribution: 0,
             proposer_goes_first: true,
@@ -48,7 +48,7 @@ export fn krunk_factory(
             validation_programs: [krunk_commit_program, krunk_guess_program, krunk_clue_program],
             readable_parameters: requested_stake,
         };
-        let accepter_game = Record {
+        let accepter_game = GameRecord {
             ...proposer_game,
             proposer_contribution: 0,
             accepter_contribution: requested_stake,

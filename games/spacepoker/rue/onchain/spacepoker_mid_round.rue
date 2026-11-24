@@ -22,7 +22,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<Raise, Any>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<Raise | End | Open> {
     let { coin: { amount }, move_data: { move }, mover_share } = params;
     let (
         ((bet_unit, (half_pot, last_raise_amount)), (mover_image_n, (waiter_image_n, n))),

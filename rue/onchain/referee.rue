@@ -4,7 +4,7 @@ type Move = ((Bytes, Bytes), (Int, Int));
 type Timeout = (Bytes, Bytes);
 
 type Validator = fn(hash: Bytes32, params: RefereeParams, ...solution: Any) -> Bytes
-    | ValidatorTransition;
+    | ValidatorTransition<Any>;
 
 type Slash = ((Any, (Validator, Any)), Bytes);
 

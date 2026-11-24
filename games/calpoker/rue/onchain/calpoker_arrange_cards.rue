@@ -1,8 +1,7 @@
 import calpoker_shapes::*;
 import std_append::*;
-import std_deep_compare::*;
+import std_atomsort::atomsort;
 import std_popcount::*;
-import std_sort::*;
 
 export fn split_cards(mask: Int, cards: List<Int>) -> Hands {
     split_cards_inner(mask, cards, nil, nil)
@@ -42,6 +41,11 @@ export fn pull_out_cards(selections: Int, cards: List<Int>) -> List<Int> {
     }
 }
 
+// Selection bits index full card IDs in ascending order (rank, then suit).
+inline fn canonical_hand(kept: List<Int>, received: List<Int>) -> List<Int> {
+    reverse(atomsort(append_list(kept, received)))
+}
+
 export fn get_final_cards_in_canonical_order(
     alice_cards: List<Int>,
     alice_picks: Bytes,
@@ -50,7 +54,7 @@ export fn get_final_cards_in_canonical_order(
 ) -> Hands {
     let (my_cards_me, my_cards_bob) = split_cards(alice_picks as Int, alice_cards);
     let (bob_cards_bob, bob_cards_me) = split_cards(bob_picks as Int, bob_cards);
-    let my_all_cards = sort_list(deep_lt, append_list(my_cards_me, bob_cards_me));
-    let bob_all_cards = sort_list(deep_lt, append_list(bob_cards_bob, my_cards_bob));
+    let my_all_cards = canonical_hand(my_cards_me, bob_cards_me);
+    let bob_all_cards = canonical_hand(bob_cards_bob, my_cards_bob);
     make_calpoker_hands(my_all_cards, bob_all_cards)
 }

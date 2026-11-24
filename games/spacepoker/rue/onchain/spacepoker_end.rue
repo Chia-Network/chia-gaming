@@ -13,7 +13,7 @@ fn main(
     params: RefereeParams,
     witness: Witness<End, Bytes>,
     ..._unused_payout: Any,
-) -> ValidatorResult {
+) -> ValidatorResult<0> {
     let { coin: { amount }, move_data: { move }, mover_share, validation_info_hash } = params;
     let ((half_pot, (mover_image, waiter_preimage)), (_, evidence)) = witness;
     if (move.length == 17) && validation_info_hash is nil && (mover_image == sha256(move[0..16])) {
