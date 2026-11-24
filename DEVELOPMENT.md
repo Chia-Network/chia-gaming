@@ -175,7 +175,10 @@ workflow commit in `RELEASE-SOURCE.txt` and the per-platform source records.
    then publishes it. It will not overwrite assets on an existing release.
 5. The release workflow deploys the already prepared player archive to
    https://Chia-Network.github.io/chia-gaming/. Each published release (including
-   prereleases) replaces the hosted site. No hub or Node server is started.
+   prereleases) becomes the default player. Pages keeps the versioned assets
+   from up to three previous published releases with player archives, so
+   already-open tabs can keep fetching their original build. No hub or Node
+   server is started.
 6. Confirm every asset uses the tag version and smoke-test the native packages
    on clean target systems.
 

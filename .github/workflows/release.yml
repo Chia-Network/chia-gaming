@@ -12,8 +12,8 @@ on:
         type: string
 
 concurrency:
-  group: release-${{ github.event.inputs.release_tag || github.ref_name }}
-  cancel-in-progress: false
+  group: release
+  queue: max
 
 permissions:
   contents: read
@@ -79,6 +79,11 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           name: chia-gaming-${{ needs.resolve.outputs.tag }}
@@ -92,6 +97,30 @@ jobs:
             "player-archive/chia-gaming-${RELEASE_TAG}.tgz" \
             pages \
             "https://github.com/${REPOSITORY}/releases/tag/${RELEASE_TAG}"
+      - name: Retain previous player bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tags=$(gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |
+            jq -r --arg current "$RELEASE_TAG" '
+              add | map(select(
+                (.draft | not) and .published_at != null and .tag_name != $current
+                and (.tag_name as $tag | any(.assets[]; .name == "chia-gaming-\($tag).tgz"))
+              )) | sort_by(.published_at) | reverse | .[:3][] | .tag_name
+            ')
+          if [[ -z "$tags" ]]; then
+            exit 0
+          fi
+          archives=()
+          while IFS= read -r tag; do
+            archive="chia-gaming-${tag}.tgz"
+            gh release download --pattern "$archive" --dir player-archive -- "$tag"
+            archives+=("player-archive/$archive")
+          done <<< "$tags"
+          python3 release-tools/tools/retain-pages-builds.py pages/player "${archives[@]}"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
