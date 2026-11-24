@@ -1,5 +1,5 @@
+import project::games::poker::popcount;
 import project::referee::types::*;
-import super::cards::popcount;
 import super::types::*;
 
 // Bob discards four of his cards. The move is a byte with a bit set for each card he discards.

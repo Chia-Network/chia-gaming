@@ -1,3 +1,5 @@
+import project::games::poker::{atomsort, group_ranks};
+
 // Ranks a five-card Space Poker hand, so that comparing two rankings with `deep_compare` compares
 // the hands. There are no flushes, and an ace is only high.
 //
@@ -27,59 +29,8 @@ export fn space_hand_eval(cards: List<Int>, boost: Bool) -> List<Int> {
         };
     }
 
-    let groups = atomsort(group_runs(ranks.rest, high, 1));
+    let groups = atomsort(group_ranks(ranks.rest, high, 1));
     [...for group in groups { group >>> 4 }, boost as Int, ...for group in groups { group & 15 }]
-}
-
-// Groups the runs of equal ranks in a sorted hand, as `16 * count + rank`.
-fn group_runs(ranks: List<Int>, rank: Int, count: Int) -> List<Int> {
-    if ranks is nil {
-        [(count << 4) | rank]
-    } else if ranks.first == rank {
-        group_runs(ranks.rest, rank, count + 1)
-    } else {
-        [(count << 4) | rank, ...group_runs(ranks.rest, ranks.first, 1)]
-    }
-}
-
-// Sorts integers in descending order, with an insertion sort, which is small and fast enough for
-// five cards. Equal integers end up in the reverse of their order in the list.
-fn atomsort(values: List<Int>) -> List<Int> {
-    for value in values fold sorted: List<Int> = nil { insert(value, sorted) }
-}
-
-// Inserts an integer into a list in descending order, after any integers that are equal to it.
-// The fold inserts the last integer first.
-fn insert(value: Int, sorted: List<Int>) -> List<Int> {
-    if sorted is nil || value > sorted.first {
-        [value, ...sorted]
-    } else {
-        [sorted.first, ...insert(value, sorted.rest)]
-    }
-}
-
-// Compares two values: 1 if the first is greater, -1 if it's less, and 0 if they're equal. Pairs
-// are greater than atoms, atoms are compared as integers, and pairs are compared by their first
-// values, then their rest.
-export fn deep_compare(left: Any, right: Any) -> Int {
-    if left is (Any, Any) {
-        if right is (Any, Any) {
-            let first = deep_compare(left.first, right.first);
-            if first != 0 {
-                first
-            } else {
-                deep_compare(left.rest, right.rest)
-            }
-        } else {
-            1
-        }
-    } else if right is (Any, Any) {
-        -1
-    } else if left as Int > right as Int {
-        1
-    } else {
-        -((right as Int > left as Int) as Int)
-    }
 }
 
 // Compares two rankings from `space_hand_eval` like `deep_compare`. Rankings with the same counts

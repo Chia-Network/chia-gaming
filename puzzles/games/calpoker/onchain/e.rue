@@ -1,6 +1,6 @@
+import project::games::poker::{popcount, select_cards};
 import project::referee::types::*;
-import super::arrange::{final_cards, pick_cards, pull_out_cards};
-import super::cards::popcount;
+import super::arrange::{final_cards, pull_out_cards};
 import super::hand::{compare_hands, onehandcalc};
 import super::types::*;
 
@@ -31,7 +31,7 @@ export fn main(
     let { left: { bob_discards, alice_cards }, right: { bob_cards, discard_commit } } = move.state;
     // The state carries the dealt card IDs. Alice's five selection bits index her hand after the exchange.
     let final = final_cards(alice_cards, alice_discards as Int, bob_cards, bob_discards as Int);
-    let alice_hand = onehandcalc(pick_cards(alice_picks as Int, final.alice_cards));
+    let alice_hand = onehandcalc(select_cards(final.alice_cards, alice_picks as Int));
 
     let bob_picks = move.evidence;
     let valid = sha256(alice_salted_discards) == discard_commit

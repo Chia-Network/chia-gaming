@@ -11,10 +11,11 @@
 //
 // Each handler's state, readable move, and next handler are typed by step.
 
-import arrange::{deep_compare, final_cards, pull_out_cards};
-import cards::{make_cards, popcount};
+import arrange::{final_cards, pull_out_cards};
+import cards::deal;
 import hand::{compare_hands, onehandcalc};
 import handcalc::handcalc;
+import project::games::poker::{deep_compare, popcount};
 import project::games::types::*;
 import types::*;
 
@@ -90,9 +91,7 @@ fn alice_handler_b(
     amount: Int,
     bob_seed: Bytes,
 ) -> TheirTurnMove<DealtCards, Bytes, [AliceC, Bytes]> {
-    let { alice_cards, bob_cards } = make_cards(
-        sha256(alice_seed + bob_seed + amount as Bytes) as Int,
-    );
+    let { alice_cards, bob_cards } = deal(alice_seed, bob_seed, amount);
     TheirTurnMove::<DealtCards, Bytes, [AliceC, Bytes]> {
         readable: DealtCards { alice_cards, bob_cards },
         evidence: nil,
@@ -118,7 +117,7 @@ fn alice_handler_c(
     state: Seeds,
     entropy: Bytes32,
 ) -> MyTurnMove<AliceD, Never> {
-    let hands = make_cards(sha256(alice_seed + state.bob_seed + amount as Bytes) as Int);
+    let hands = deal(alice_seed, state.bob_seed, amount);
     let discards = cards_to_bitfield(discards, hands.alice_cards);
     let salt = entropy[..16];
     let discard_commit = sha256(salt + discards);
@@ -229,9 +228,7 @@ fn bob_handler_b(
 // Reads Alice's seed from her message, which deals the cards.
 fn parse_message(alice_seed: Bytes, state: Seeds, amount: Int) -> DealtCards {
     assert sha256(alice_seed) == state.seed_commit;
-    let { alice_cards, bob_cards } = make_cards(
-        sha256(alice_seed[..16] + state.bob_seed[..16] + amount as Bytes) as Int,
-    );
+    let { alice_cards, bob_cards } = deal(alice_seed[..16], state.bob_seed[..16], amount);
     DealtCards { alice_cards, bob_cards }
 }
 

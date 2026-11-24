@@ -1,6 +1,7 @@
 // Finds the best five-card hand out of a player's cards, off chain.
 
-import hand_eval::{deep_compare, space_hand_eval};
+import hand_eval::space_hand_eval;
+import project::games::poker::deep_compare;
 
 // A hand's ranking, and the bitfield of the cards that make it, where bit 0 is the first card.
 export struct BestHand {

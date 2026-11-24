@@ -1,5 +1,4 @@
-import cards::popcount;
-import hand::sort_into;
+import project::games::poker::{popcount, select_cards, sort_into};
 import types::Hands;
 
 // Each player's final eight cards, given each player's discards: the cards that a player keeps,
@@ -43,44 +42,11 @@ fn split_cards(mask: Int, cards: List<Int>, kept: List<Int>, discarded: List<Int
 // is for the first card.
 export fn pull_out_cards(selections: Int, cards: List<Int>) -> List<Int> {
     assert popcount(selections) == 5, "pull_out_cards got bad data";
-    pick_cards(selections, cards)
-}
-
-export fn pick_cards(selections: Int, cards: List<Int>) -> List<Int> {
-    if cards is nil {
-        return nil;
-    }
-
-    let picked = pick_cards(selections >>> 1, cards.rest);
-    inline if selections & 1 != 0 { [cards.first, ...picked] } else { picked }
+    select_cards(cards, selections)
 }
 
 // Selection bits index the card IDs in ascending order. This is `atomsort` of the kept cards
 // followed by the received ones, reversed, without joining the lists first.
 inline fn ascending_card_ids(kept: List<Int>, received: List<Int>) -> List<Int> {
     reverse(sort_into(kept, sort_into(received, nil)))
-}
-
-// Compare atoms as integers and pairs lexicographically, with atoms before pairs.
-export fn deep_compare(a: Any, b: Any) -> Int {
-    if a is (Any, Any) {
-        if b is (Any, Any) {
-            let first = deep_compare(a.first, b.first);
-            if first != 0 {
-                first
-            } else {
-                deep_compare(a.rest, b.rest)
-            }
-        } else {
-            1
-        }
-    } else if b is (Any, Any) {
-        -1
-    } else if a as Int > b as Int {
-        1
-    } else if b as Int > a as Int {
-        -1
-    } else {
-        0
-    }
 }

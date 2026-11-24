@@ -1,0 +1,77 @@
+// Helpers that calpoker and Space Poker share for sorting and ranking cards.
+
+// Sorts numbers into descending order, with an insertion sort, which is small and fast enough
+// for the short lists here. Equal numbers end up in the reverse of their order in the list.
+export inline fn atomsort(list: List<Int>) -> List<Int> {
+    sort_into(list, nil)
+}
+
+// Sorts the numbers into a list that's already in descending order, which is the same as sorting
+// the numbers followed by the items of that list. The fold inserts the last number first.
+export fn sort_into(list: List<Int>, sorted: List<Int>) -> List<Int> {
+    for value in list fold sorted = sorted { insert(value, sorted) }
+}
+
+// Inserts a number into a list in descending order, after any numbers that are equal to it.
+fn insert(value: Int, sorted: List<Int>) -> List<Int> {
+    if sorted is nil || value > sorted.first {
+        [value, ...sorted]
+    } else {
+        [sorted.first, ...insert(value, sorted.rest)]
+    }
+}
+
+// Groups the runs of equal ranks in a sorted hand, starting with `count` of `rank`. Each group is
+// its count shifted left by four bits, combined with its rank.
+export fn group_ranks(ranks: List<Int>, rank: Int, count: Int) -> List<Int> {
+    if ranks is nil {
+        [(count << 4) | rank]
+    } else if ranks.first == rank {
+        group_ranks(ranks.rest, rank, count + 1)
+    } else {
+        [(count << 4) | rank, ...group_ranks(ranks.rest, ranks.first, 1)]
+    }
+}
+
+// Compares two values: 1 if the first is greater, -1 if it's less, and 0 if they're equal. Pairs
+// are greater than atoms, atoms are compared as integers, and pairs are compared by their first
+// values, then their rest.
+export fn deep_compare(left: Any, right: Any) -> Int {
+    if left is (Any, Any) {
+        if right is (Any, Any) {
+            let first = deep_compare(left.first, right.first);
+            if first != 0 {
+                first
+            } else {
+                deep_compare(left.rest, right.rest)
+            }
+        } else {
+            1
+        }
+    } else if right is (Any, Any) {
+        -1
+    } else if left as Int > right as Int {
+        1
+    } else {
+        -((right as Int > left as Int) as Int)
+    }
+}
+
+// The cards whose bits are set in a bitfield, where bit 0 is the first card.
+export fn select_cards(cards: List<Int>, bitfield: Int) -> List<Int> {
+    if cards is nil {
+        return nil;
+    }
+
+    let selected = select_cards(cards.rest, bitfield >>> 1);
+    inline if bitfield & 1 != 0 { [cards.first, ...selected] } else { selected }
+}
+
+// The number of bits that are set in a bitfield.
+export fn popcount(bitfield: Int) -> Int {
+    if bitfield != 0 {
+        (bitfield & 1) + popcount(bitfield >>> 1)
+    } else {
+        0
+    }
+}

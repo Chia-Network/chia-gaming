@@ -1,4 +1,5 @@
-import project::games::spacepoker::deal::{deal, popcount, select_cards};
+import project::games::poker::{popcount, select_cards};
+import project::games::spacepoker::deal::deal;
 import project::games::spacepoker::hand_eval::{compare_rankings, space_hand_eval};
 import project::games::spacepoker::states::EndState;
 import project::referee::types::*;

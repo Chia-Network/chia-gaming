@@ -83,25 +83,6 @@ export fn deal(preimage: Bytes, opponent_preimage: Bytes) -> Deal {
     }
 }
 
-// The cards whose bits are set in a bitfield, where bit 0 is the first card.
-export fn select_cards(cards: List<Int>, bitfield: Int) -> List<Int> {
-    if cards is nil {
-        return nil;
-    }
-
-    let selected = select_cards(cards.rest, bitfield >>> 1);
-    inline if bitfield & 1 != 0 { [cards.first, ...selected] } else { selected }
-}
-
-// The number of bits that are set in a bitfield.
-export fn popcount(bitfield: Int) -> Int {
-    if bitfield != 0 {
-        (bitfield & 1) + popcount(bitfield >>> 1)
-    } else {
-        0
-    }
-}
-
 // Decides who opens the first street, once both players' images 4 are revealed. Comparing the
 // images gives the opposite answer when the players swap, and the last bit of their exclusive or
 // doesn't, so the answer is the opposite for the other player.

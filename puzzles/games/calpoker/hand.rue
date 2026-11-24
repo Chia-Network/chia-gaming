@@ -1,3 +1,5 @@
+import project::games::poker::{atomsort, group_ranks};
+
 // Evaluates the best poker hand of five cards, as a list of numbers that compares with
 // `compare_hands`. The hands are:
 //
@@ -52,39 +54,6 @@ struct Card {
 fn to_card(card: Int) -> Card {
     let (rank, suit) = divmod(card, 4);
     Card { rank: rank + 2, suit: suit + 1 }
-}
-
-// Groups equal ranks, which are in descending order. Each group is its count shifted left by four
-// bits, combined with its rank.
-fn group_ranks(ranks: List<Int>, last: Int, count: Int) -> List<Int> {
-    if ranks is nil {
-        [(count << 4) | last]
-    } else if ranks.first == last {
-        group_ranks(ranks.rest, last, count + 1)
-    } else {
-        [(count << 4) | last, ...group_ranks(ranks.rest, ranks.first, 1)]
-    }
-}
-
-// Sorts numbers into descending order, with an insertion sort, which is small and fast enough
-// for the short lists here. Equal numbers end up in the reverse of their order in the list.
-export fn atomsort(list: List<Int>) -> List<Int> {
-    sort_into(list, nil)
-}
-
-// Sorts the numbers into a list that's already in descending order, which is the same as sorting
-// the numbers followed by the items of that list. The fold inserts the last number first.
-export fn sort_into(list: List<Int>, sorted: List<Int>) -> List<Int> {
-    for value in list fold sorted = sorted { insert(value, sorted) }
-}
-
-// Inserts a number into a list in descending order, after any numbers that are equal to it.
-fn insert(value: Int, sorted: List<Int>) -> List<Int> {
-    if sorted is nil || value > sorted.first {
-        [value, ...sorted]
-    } else {
-        [sorted.first, ...insert(value, sorted.rest)]
-    }
 }
 
 // Compares two hands, returning 1 if the first is better, -1 if the second is, and 0 if they tie.
