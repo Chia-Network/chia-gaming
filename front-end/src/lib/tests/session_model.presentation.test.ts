@@ -304,7 +304,7 @@ describe('session model dashboard and on-chain presentation contracts', () => {
         }),
       ),
     ).toMatchObject({
-      channelStatusLabel: 'Resolved Clean',
+      channelStatusLabel: 'Finalizing clean shutdown',
       actionLabel: 'Done',
       actionEnabled: false,
       actionKind: 'none',
@@ -346,6 +346,32 @@ describe('session model dashboard and on-chain presentation contracts', () => {
       { label: 'Opp', value: '40' },
     ]);
   });
+
+  it.each([
+    ['ResolvedClean', 'Finalizing clean shutdown', 'Clean shutdown successful', null],
+    ['ResolvedUnrolled', 'Unrolled to chain', 'All games complete', null],
+    ['ResolvedStale', 'Unrolled to chain', 'All games complete', 'Stale channel state'],
+  ] as const)(
+    'distinguishes channel resolution from session finalization for %s',
+    (state, waiting, complete, channelDetail) => {
+      const channel = { status: { ...INITIAL_CHANNEL_STATUS_MODEL, state } };
+      const awaitingFinalization = createSessionModel({
+        channel,
+        game: { activeIds: state === 'ResolvedClean' ? [] : ['7'] },
+      });
+      expect(selectGameDashboardView(awaitingFinalization)).toMatchObject({
+        channelStatusLabel: waiting,
+        channelDetail,
+      });
+
+      const finalized = createSessionModel({ channel, game: { activeIds: [] } });
+      expect(selectGameDashboardView(finalized).channelStatusLabel).toBe(waiting);
+      expect(selectGameDashboardView(finalized, { sessionFinalized: true })).toMatchObject({
+        channelStatusLabel: complete,
+        channelDetail,
+      });
+    },
+  );
 
   it('normalizes Rust channel status once for persistence and presentation', async () => {
     expect(

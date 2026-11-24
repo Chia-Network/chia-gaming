@@ -146,6 +146,20 @@ function isSessionAbandonable(model: SessionModel | null, abandonEnabled: boolea
     (model?.game.activeIds.length ?? 0) > 0,
   );
 }
+function savedTab(tab: string | undefined): TabId {
+  switch (tab) {
+    case 'session':
+      return 'game';
+    case 'wallet':
+    case 'hub':
+    case 'game':
+    case 'history':
+    case 'log':
+      return tab;
+    default:
+      return 'wallet';
+  }
+}
 function savedChannelStatus(
   save: DurableApplicationState,
 ): SessionModel['channel']['status']['state'] | null {
@@ -249,12 +263,7 @@ export function createApplication() {
     hubConnectionError: string | null;
   } = {
     sessionId: storageRepository.loadState().identity.sessionId ?? '',
-    activeTab: (() => {
-      const saved = storageRepository.query('activeTab');
-      if (saved === 'session') return 'game';
-      const valid: TabId[] = ['wallet', 'hub', 'game', 'history', 'log'];
-      return saved && valid.includes(saved as TabId) ? (saved as TabId) : 'wallet';
-    })(),
+    activeTab: savedTab(storageRepository.query('activeTab')),
     transactionPublishNerfed: false,
     terminalPresentation: null,
     finishedSessionIdentity: null,
@@ -527,8 +536,6 @@ export function createApplication() {
       onSessionId: (value) => update('sessionId', value),
       onRestore: async (save, source) => {
         const bootstrap = rehydrateDurableApplicationState(save);
-        const resumeTab = save.session !== null ? 'game' : null;
-        if (resumeTab) setActiveTab(resumeTab);
         const hasLiveSession =
           save.session?.phase === 'live' || save.session?.phase === 'pre-handshake';
         if (hasLiveSession) {
@@ -1857,7 +1864,7 @@ export function createApplication() {
       throw new Error('Garbled terminal save: missing frozen coin list');
     }
     const terminal = save.session.terminal;
-    setActiveTab('game');
+    update('activeTab', savedTab(save.preferences.activeTab));
     const channelState = savedChannelStatus(save);
     const hasError = channelState === 'Failed' || channelState === 'ResolvedStale';
     sessionFinishedCleanup = true;
@@ -1882,7 +1889,12 @@ export function createApplication() {
   };
   const performResume = (bootstrap: RehydratedDurableApplicationState) => {
     const save = bootstrap.state;
-    setActiveTab('game');
+    const restoredChannelStatus = savedChannelStatus(save);
+    if (restoredChannelStatus === 'ResolvedClean') {
+      update('activeTab', savedTab(save.preferences.activeTab));
+    } else {
+      setActiveTab('game');
+    }
     const bcType =
       save.preferences.blockchainType ?? (isElectronDistribution() ? 'walletconnect' : 'simulator');
     setRestoreStatus('restoring');
@@ -1954,7 +1966,6 @@ export function createApplication() {
       clearTimeout(abandonTimer);
       abandonTimer = null;
     }
-    const restoredChannelStatus = savedChannelStatus(save);
     const restoredPresentation = save.session?.phase === 'live' ? save.session.presentation : null;
     const presentationTimingOwner = sessionController;
     if (

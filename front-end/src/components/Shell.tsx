@@ -161,7 +161,7 @@ function GameDashboard({
               onClick={() => setExpanded((prev) => !prev)}
               aria-expanded={expanded}
               aria-label={expanded ? 'Hide dashboard details' : 'Show dashboard details'}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-solid"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-canvas-text transition-colors hover:bg-canvas-bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span
                 aria-hidden="true"
@@ -759,6 +759,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
   const hasLiveSessionModel = dashboardSessionModel !== null && sessionPhase !== 'resolved';
   const dashboardView: GameDashboardViewModel = selectGameDashboardView(dashboardSessionModel, {
     hasSession: dashboardSessionModel !== null,
+    sessionFinalized: sessionPhase === 'resolved',
     setupPending: shouldSynthesizeSetupPending(sessionPaneTransition, hasLiveSessionModel),
     actionsBlocked: bootState.kind !== 'ready',
     cleanShutdownGraceActive,
@@ -885,6 +886,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
         >
           <Tabs
             value={activeTab}
+            activationMode="manual"
             onValueChange={(value) => {
               const tab = TAB_DEFS.find((def) => def.id === value);
               if (tab) dispatch({ type: 'tab', tab: tab.id });
@@ -928,6 +930,14 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     id={`tab-${tab.id}`}
                     aria-controls={`panel-${tab.id}`}
                     aria-label={pipeLabel}
+                    onMouseDownCapture={(event) => {
+                      // Let the browser focus the tab from this pointer event.
+                      // Radix's programmatic focus can inherit keyboard focus styling.
+                      if (event.button === 0 && !event.ctrlKey) event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      if (!event.ctrlKey && !active) dispatch({ type: 'tab', tab: tab.id });
+                    }}
                     style={
                       active
                         ? {
@@ -939,7 +949,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                         : { display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }
                     }
                     className={
-                      'relative h-auto flex-none px-3 py-1.5 text-sm font-medium rounded-t-md rounded-b-none transition-colors group-data-[variant=default]/tabs-list:data-[state=active]:shadow-none ' +
+                      'relative h-auto flex-none px-3 py-1.5 text-sm font-medium rounded-t-md rounded-b-none transition-colors focus-visible:border-canvas-border focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-[-4px] group-data-[variant=default]/tabs-list:data-[state=active]:shadow-none ' +
                       (active
                         ? 'text-canvas-text-contrast border border-b-0 border-canvas-border -mb-px'
                         : 'text-canvas-text dark:text-canvas-text hover:text-canvas-text-contrast hover:bg-canvas-bg-hover')

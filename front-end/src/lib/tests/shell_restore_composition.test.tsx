@@ -26,6 +26,7 @@ import {
   TERMINAL_INSTANCE,
   activeSave,
   baseSave,
+  liveSave,
 } from './session_save_envelope.fixtures';
 
 import { expectConsoleError } from '../../../scripts/testSetup';
@@ -273,7 +274,7 @@ describe('Shell production restore composition', () => {
         renderer = create(React.createElement(Shell, { application }));
         stop = application.start();
       });
-      await waitForText(renderer!, 'Resolved Clean');
+      await waitForText(renderer!, 'Clean shutdown successful');
       for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
       await act(async () => {
         if (kind === 'advisory') {
@@ -592,7 +593,7 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
     });
-    await waitForText(renderer!, 'Resolved Clean');
+    await waitForText(renderer!, 'Clean shutdown successful');
     expect(application.snapshot().walletView.walletIdentity).toEqual(first);
     expect(application.snapshot().walletSwitchAllowed).toBe(true);
     await act(async () => {
@@ -602,6 +603,36 @@ describe('Shell production restore composition', () => {
     expect(application.snapshot().walletView.walletIdentity).toEqual(second);
     expect(storageRepository.loadState().session?.phase).toBe('terminal');
   });
+
+  it.each([false, true])(
+    'preserves the saved tab after restoring a cleanly closed channel with live save=%s',
+    async (live) => {
+      await storageRepository.claimApplicationState();
+      const fields = {
+        activeTab: 'history',
+        channelStatus: { state: 'ResolvedClean' as const },
+      };
+      const save = live
+        ? liveSave(fields)
+        : baseSave({ ...fields, coinsOfInterest: [], terminalIStarted: true });
+      await storageRepository.write(storageRepository.patchApplicationState(() => save));
+      markSavedSession();
+      releaseLeaseIfOwner();
+      storageRepository._resetForTests();
+
+      const application = createApplication();
+      act(() => {
+        renderer = create(React.createElement(Shell, { application }));
+        stop = application.start();
+      });
+      await waitForAutoResume(application);
+
+      expect(application.snapshot().activeTab).toBe('history');
+      expect(storageRepository.query('activeTab')).toBe('history');
+      if (live) expect(application.snapshot().sessionConfig?.restoring).toBe(true);
+      else expect(application.snapshot().sessionPhase).toBe('resolved');
+    },
+  );
 
   it('presents locally restored game state while wallet and hub promises stay unresolved', async () => {
     await storageRepository.claimApplicationState();
@@ -640,7 +671,7 @@ describe('Shell production restore composition', () => {
     });
     expect(renderer!.root.findByProps({ children: 'Loading Chia Gaming…' })).toBeDefined();
 
-    await waitForText(renderer!, 'Resolved Clean');
+    await waitForText(renderer!, 'Clean shutdown successful');
 
     expect(
       renderer!.root.findByProps({ 'data-testid': 'finished-session-game-view' }),
@@ -1254,7 +1285,7 @@ describe('Shell production restore composition', () => {
         renderer = create(React.createElement(Shell, { application }));
         stop = application.start();
       });
-      await waitForText(renderer!, 'Resolved Clean');
+      await waitForText(renderer!, 'Clean shutdown successful');
       for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
       expect(mockHub).not.toBeNull();
       const frames: Uint8Array[] = [];
@@ -1316,7 +1347,7 @@ describe('Shell production restore composition', () => {
         await storageRepository.inspect();
       });
       expect(renderer!.root.findAllByProps({ children: 'Accept' })).toHaveLength(0);
-      await waitForText(renderer!, 'Resolved Clean');
+      await waitForText(renderer!, 'Clean shutdown successful');
       // Cancellation keeps the lobby busy until the pending checkpoint drains.
       for (let attempt = 0; attempt < 30 && mockHub!.getPresence().busy; attempt++) {
         await flushEffects();
@@ -1434,7 +1465,7 @@ describe('Shell production restore composition', () => {
       renderer = create(React.createElement(Shell, { application }));
       stop = application.start();
     });
-    await waitForText(renderer!, 'Resolved Clean');
+    await waitForText(renderer!, 'Clean shutdown successful');
     for (let n = 0; n < 30 && !mockHub; n++) await flushEffects();
     await flushEffects();
     expect(mockHub).not.toBeNull();
