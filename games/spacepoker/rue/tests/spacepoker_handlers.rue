@@ -1,5 +1,6 @@
 import artifacts::{spacepoker_commitA_hash, spacepoker_factory_program};
 import factory_record::first_record;
+import spacepoker_end::showdown_mover_share;
 
 test fn factory_links_first_validator_and_opens_with_chain_tip() {
     let record = first_record(spacepoker_factory_program(...[100, 100, [5, 2]]));
@@ -13,4 +14,12 @@ test fn factory_links_first_validator_and_opens_with_chain_tip() {
     assert label == "spacepoker_alice_commitA";
     assert move == sha256(sha256(sha256(sha256(sha256(entropy[..16])))));
     assert share == 10;
+}
+
+test fn showdown_sets_the_opponents_share() {
+    let higher = [1, 1, 14];
+    let lower = [1, 1, 13];
+    assert showdown_mover_share(101, 10, higher, lower) == 40;
+    assert showdown_mover_share(101, 10, higher, higher) == 50;
+    assert showdown_mover_share(101, 10, lower, higher) == 60;
 }

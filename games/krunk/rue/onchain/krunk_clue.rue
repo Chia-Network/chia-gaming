@@ -50,7 +50,7 @@ fn main(
     } else {
         let revealed_word = move[16..21];
         if (mover_share == reveal_mover_share(base_unit, bob_guesses, revealed_word))
-            && (alice_commit == sha256(move[0..16] + revealed_word))
+            && (alice_commit == sha256(move))
             && (
                 (evidence.length != 1)
                     || {

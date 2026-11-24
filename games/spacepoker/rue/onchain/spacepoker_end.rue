@@ -5,6 +5,17 @@ import spacepoker_shapes::*;
 import std_deep_compare::*;
 import std_popcount::*;
 
+export inline fn showdown_mover_share(
+    amount: Int,
+    half_pot: Int,
+    mover_hand: List<Int>,
+    waiter_hand: List<Int>,
+) -> Int {
+    // The move sets the opponent's share. A winning mover leaves them half the pot less.
+    let result = deep_compare(mover_hand, waiter_hand);
+    (amount / 2) - result * half_pot
+}
+
 // state is (space-end)
 // MOVE is mover's preimage (16 bytes) concatenated with card selection bitfield (1 byte)
 // evidence is waiter's card selection bitfield
@@ -34,19 +45,12 @@ fn main(
                 assert ((evidence as Int) & (0x80 as Int)) == 0;
                 assert popcount(evidence as Int) == 5;
                 let waiter_selected = pull_from_bitfield(waiter_cards, evidence as Int);
-                let fair_share = {
-                    let result = deep_compare(
-                        space_hand_eval(mover_selected, mover_boost),
-                        space_hand_eval(waiter_selected, waiter_boost),
-                    );
-                    if result == 0 {
-                        amount / 2
-                    } else if result == 1 {
-                        (amount / 2) - half_pot
-                    } else {
-                        (amount / 2) + half_pot
-                    }
-                };
+                let fair_share = showdown_mover_share(
+                    amount,
+                    half_pot,
+                    space_hand_eval(mover_selected, mover_boost),
+                    space_hand_eval(waiter_selected, waiter_boost),
+                );
                 if mover_share < fair_share {
                     0
                 } else {

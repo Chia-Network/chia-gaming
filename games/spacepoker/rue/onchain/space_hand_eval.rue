@@ -3,11 +3,11 @@ import std_atomsort::*;
 
 export fn group_by_count_inner(items: List<Int>, last: Int, count: Int) -> List<Int> {
     if items is nil {
-        [(16 * count) + last]
+        [(count << 4) | last]
     } else if items.first == last {
         group_by_count_inner(items.rest, last, count + 1)
     } else {
-        (((16 * count) + last), group_by_count_inner(items.rest, items.first, 1))
+        (((count << 4) | last), group_by_count_inner(items.rest, items.first, 1))
     }
 }
 

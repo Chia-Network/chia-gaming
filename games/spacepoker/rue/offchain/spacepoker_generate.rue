@@ -15,6 +15,7 @@ import spacepoker_cards::{
     make_all_cards,
     pull_from_bitfield,
 };
+import spacepoker_end::showdown_mover_share;
 import spacepoker_shapes::{Commit, End, Open, Raise};
 import std_deep_compare::*;
 
@@ -375,14 +376,7 @@ export fn spacepoker_alice_handler_end(
     let (alice_hand, (alice_bitfield, _)) = space_hand_calc(alice_cards, alice_boost);
     let (bob_hand, _) = space_hand_calc(bob_cards, bob_boost);
     let move_bytes = pre + (alice_bitfield as Bytes);
-    let result = deep_compare(alice_hand, bob_hand);
-    let final_mover_share = if result == 0 {
-        amount / 2
-    } else if result == 1 {
-        (amount / 2) - half_pot
-    } else {
-        (amount / 2) + half_pot
-    };
+    let final_mover_share = showdown_mover_share(amount, half_pot, alice_hand, bob_hand);
     ["spacepoker_alice_end", move_bytes, final_mover_share, 0]
 }
 
@@ -707,14 +701,7 @@ export fn spacepoker_bob_handler_end(
     let (mover_hand, (mover_bitfield, _)) = space_hand_calc(mover_cards, mover_boost);
     let (waiter_hand, _) = space_hand_calc(waiter_cards, waiter_boost);
     let move_bytes = pre + (mover_bitfield as Bytes);
-    let result = deep_compare(mover_hand, waiter_hand);
-    let final_mover_share = if result == 0 {
-        amount / 2
-    } else if result == 1 {
-        (amount / 2) - half_pot
-    } else {
-        (amount / 2) + half_pot
-    };
+    let final_mover_share = showdown_mover_share(amount, half_pot, mover_hand, waiter_hand);
     ["spacepoker_bob_end", move_bytes, final_mover_share, 0]
 }
 
