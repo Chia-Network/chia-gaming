@@ -234,9 +234,8 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
       log(
         `[sage-blockchain] sendTransaction from=${from} status=${status} error=${error ?? 'none'} spends=${bundle.coin_spends.length} fee=${fee}`,
       );
-      if (status === 1n || status === 2n) {
-        return { status: 'acknowledged', detail: status === 1n ? 'SUCCESS' : 'PENDING' };
-      }
+      if (status === 1n) return { status: 'acknowledged', detail: 'SUCCESS' };
+      if (status === 2n) return { status: 'provisional', detail: 'PENDING' };
       if (error) {
         return isExactDuplicateTransaction(error)
           ? { status: 'acknowledged', detail: error }

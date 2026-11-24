@@ -1592,6 +1592,23 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             .filter(|rec| rec.created_height.is_none() && rec.spent_height.is_none())
             .map(|rec| rec.coin.clone())
             .collect::<HashSet<_>>();
+        // A complete snapshot that explicitly loses a previously live coin
+        // proves its creation disappeared, even if the replacement tip is as
+        // high as the old one. A missing record alone is not this evidence.
+        for coin in explicitly_absent.intersection(&self.present_coins) {
+            if let Some(watched) = self.watched_coins.get_mut(coin) {
+                let was_claim_submitted = watched.claim_submitted;
+                watched.birthday = None;
+                watched.spent_confirmed_at = None;
+                watched.claim_submitted = false;
+                if was_claim_submitted {
+                    if let Some(semantic) = watched.timeout_claim_semantic {
+                        rearmed_timeout_claims.push(semantic);
+                    }
+                }
+                self.vanished_coins.insert(coin.clone());
+            }
+        }
         let explicitly_live_input_ids = records
             .iter()
             .filter(|rec| rec.created_height.is_some() && rec.spent_height.is_none())
@@ -4487,6 +4504,77 @@ mod tests {
         assert_eq!(observations[1], (8, vec![]));
         // The coin's spend was not recorded either.
         assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
+    }
+
+    #[test]
+    fn explicit_absence_at_equal_or_higher_tip_is_not_a_spend() {
+        for replacement_height in [12, 13] {
+            let mut allocator = AllocEncoder::new();
+            let coin = test_coin(replacement_height as u8);
+            let mut mock = MockGameSession::default();
+            mock.queue_drain(vec![watch_event(&coin, 50)]);
+            let mut mgr = TransactionManager::new(mock);
+            mgr.flush_and_collect(&mut allocator).expect("register");
+
+            mgr.report_coin_states(
+                &mut allocator,
+                12,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(12),
+                    spent_height: None,
+                }],
+            )
+            .expect("created");
+            mgr.report_coin_states(
+                &mut allocator,
+                replacement_height,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: None,
+                    spent_height: None,
+                }],
+            )
+            .expect("creation vanished");
+            assert!(mgr.vanished_coins().contains(&coin));
+            assert_eq!(mgr.watched_coin(&coin).unwrap().birthday, None);
+            assert_eq!(mgr.watched_coin(&coin).unwrap().spent_confirmed_at, None);
+            assert_eq!(
+                mgr.cradle().seen_observations.last(),
+                Some(&(replacement_height, vec![]))
+            );
+
+            mgr.report_coin_states(
+                &mut allocator,
+                replacement_height + 1,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(replacement_height + 1),
+                    spent_height: None,
+                }],
+            )
+            .expect("recreated");
+            assert!(!mgr.vanished_coins().contains(&coin));
+            assert_eq!(
+                mgr.watched_coin(&coin).unwrap().birthday,
+                Some(replacement_height + 1)
+            );
+
+            mgr.report_coin_states(
+                &mut allocator,
+                replacement_height + 2,
+                &[CoinStateRecord {
+                    coin: coin.clone(),
+                    created_height: Some(replacement_height + 1),
+                    spent_height: Some(replacement_height + 2),
+                }],
+            )
+            .expect("genuine spend");
+            assert_eq!(
+                mgr.cradle().seen_observations.last(),
+                Some(&(replacement_height + 2, vec![CoinObservation::Spent(coin)]))
+            );
+        }
     }
 
     #[test]

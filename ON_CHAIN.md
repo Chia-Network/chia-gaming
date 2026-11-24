@@ -974,11 +974,12 @@ forward on the tracked successor. A confirmed timeout emits the terminal
 
 ### Moves for Finished Games Are Discarded
 
+At the unroll transition, hands without a surviving game coin receive a
+terminal status. Their queued game actions receive `ActionFailed` and are not
+carried into the on-chain phase; only hands with a surviving coin remain live.
+
 When a game coin's resolving spend is observed, the game is removed from
 `game_map` and `live_games`. If a user-queued `Move` for that game is still on
-the `game_action_queue`, it is discarded when popped: `do_on_chain_action` checks
-`get_current_coin` and falls through to `process_queued_action` if the game is gone, and
-`do_on_chain_move` checks `my_move_in_game` — returning `None` (game absent)
-causes a discard, while `Some(false)` (game alive, not our turn) causes a
-requeue. This prevents stale moves from crashing or looping after a legitimate
-timeout.
+the `game_action_queue`, `process_queued_action` drops it with `ActionFailed`
+when popped. The same check applies to a queued settlement acceptance or cheat
+for a game with no on-chain coin. Actions for surviving games continue normally.
