@@ -97,6 +97,63 @@ describe('BlockchainPoller', () => {
     storageRepository._resetForTests();
   });
 
+  it('polls a retained funding input after its session has detached', async () => {
+    const fundingRuntime = new ChannelFundingRuntime();
+    const originalState = storageRepository.loadState();
+    const coinRecord = { ...makeCoinRecord(7), spent: true, spentBlockIndex: 100n };
+    const coinName = await coinRecordToName(coinRecord);
+    expect(coinName).not.toBeNull();
+    const input = { coin_name: coinName!, coin_string: 'ab'.repeat(72) };
+    storageRepository._replaceApplicationStateForTests({
+      ...originalState,
+      walletContext: fundingOperation.owner.providerScope,
+    });
+    storageRepository.replaceChannelFunding([
+      {
+        ...fundingOperation,
+        stage: 'awaiting-channel',
+        providerReservationId: 'retained-funding-input',
+        request: {
+          kind: 'funding',
+          canonical: { amount: '1', fee: '0', conditions: [], max_height: '200' },
+        },
+        reason: 'accepted',
+        inputs: [input],
+      },
+    ]);
+    const getCoinRecordsByNames = jest.fn().mockResolvedValue([coinRecord]);
+    let height = 131n;
+    const poller = new BlockchainPoller(
+      {
+        ...makeRpc([131n]),
+        getHeightInfo: () => Promise.resolve(height),
+        getCoinRecordsByNames,
+        isConnected: () => true,
+        onConnectionChange: () => () => {},
+      } as InternalBlockchainInterface,
+      1000,
+      undefined,
+      fundingRuntime,
+    );
+    try {
+      poller.start();
+      poller.pauseChainPolling();
+      expect((poller as unknown as { running: boolean }).running).toBe(true);
+      await pollOnce(poller);
+      expect(getCoinRecordsByNames).toHaveBeenCalledWith([coinName]);
+      expect(fundingRuntime.fundingCoinInterest()).toEqual([input]);
+      height = 132n;
+      await pollOnce(poller);
+      expect(fundingRuntime.fundingCoinInterest()).toEqual([]);
+      expect(storageRepository.channelFundingOperations()).toEqual([]);
+      expect((poller as unknown as { running: boolean }).running).toBe(false);
+    } finally {
+      poller.retire();
+      storageRepository._replaceApplicationStateForTests(originalState);
+      fundingRuntime.resetForTests();
+    }
+  });
+
   it('reports a decreased height to the cradle (reorg signal not clamped)', async () => {
     // Height goes up then drops: a reorg.  The poller must forward the lower
     // height so the transaction manager can detect the rollback.
