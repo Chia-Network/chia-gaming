@@ -60,6 +60,7 @@ const RUE_PROGRAMS: &[(&str, &str)] = &[
         "puzzles/test/space_hand_eval.rue",
         "clsp/test/test_space_hand_eval_space_hand_eval",
     ),
+    ("puzzles/test/space_deal.rue", "clsp/test/test_space_deal"),
     (
         "puzzles/test/test_dict_lookup.rue",
         "clsp/test/test_dict_lookup",

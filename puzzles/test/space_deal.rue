@@ -1,0 +1,50 @@
+import project::games::spacepoker::deal::{HoleCards, PlayerCards, community_cards, deal};
+
+// Space Poker's cards for both players' preimages, for the dealing tests. Each street is also
+// dealt on its own from the images of the round before it, the way the handlers deal it mid-hand.
+// The output is a fixed list layout, so that the test doesn't depend on how `deal.rue` stores its
+// structs.
+struct DealtCards {
+    deal: [DealtPlayer, DealtPlayer],
+    flop: List<Int>,
+    turn: List<Int>,
+    river: List<Int>,
+}
+
+struct DealtPlayer {
+    hole_cards: DealtHoleCards,
+    cards: List<Int>,
+}
+
+struct DealtHoleCards {
+    first: Int,
+    second: Int,
+    boost: Bool,
+}
+
+fn main(preimage: Bytes, opponent_preimage: Bytes) -> DealtCards {
+    let image_1 = sha256(preimage);
+    let image_2 = sha256(image_1);
+    let image_3 = sha256(image_2);
+    let opponent_image_1 = sha256(opponent_preimage);
+    let opponent_image_2 = sha256(opponent_image_1);
+    let opponent_image_3 = sha256(opponent_image_2);
+    let { player, opponent } = deal(preimage, opponent_preimage);
+
+    DealtCards {
+        deal: [dealt_player(player), dealt_player(opponent)],
+        flop: community_cards(image_3, opponent_image_3, 3),
+        turn: community_cards(image_2, opponent_image_2, 2),
+        river: community_cards(image_1, opponent_image_1, 1),
+    }
+}
+
+fn dealt_player(player: PlayerCards) -> DealtPlayer {
+    let { hole_cards, cards } = player;
+    DealtPlayer { hole_cards: dealt_hole_cards(hole_cards), cards }
+}
+
+fn dealt_hole_cards(hole_cards: HoleCards) -> DealtHoleCards {
+    let { first, second, boost } = hole_cards;
+    DealtHoleCards { first, second, boost }
+}

@@ -852,58 +852,131 @@ fn test_spacepoker_mid_round_raise_zero_is_not_slashable() {
     );
 }
 
-#[test]
-fn test_spacepoker_begin_round_slash_bad_image() {
+// Find a waiter image 4 for which the coin toss gives the same outcome with
+// either mover image, so a move revealing either one is read the same way.
+fn find_waiter_value_for_both(
+    mover_i4: &[u8; 32],
+    other_mover_i4: &[u8; 32],
+    mover_opens: bool,
+) -> [u8; 32] {
+    for seed in 0u64..1_000_000 {
+        let candidate = sha256_bytes(&seed.to_be_bytes());
+        if compute_mover_opens(mover_i4, &candidate) == mover_opens
+            && compute_mover_opens(other_mover_i4, &candidate) == mover_opens
+        {
+            return candidate;
+        }
+    }
+    panic!("could not find waiter value for mover_opens={mover_opens}");
+}
+
+// Run a begin_round move that reveals `revealed_image`, against a state where
+// Alice committed to `alice_image_4` and Bob's image 4 is `bob_image_4`. The
+// toss must give `mover_opens` for the revealed image. An opening appends a
+// zero raise; a pong is the bare image. A move that's accepted must take the
+// path that the toss chose.
+fn run_begin_round_reveal(
+    alice_image_4: &[u8; 32],
+    bob_image_4: &[u8; 32],
+    revealed_image: &[u8; 32],
+    mover_opens: bool,
+    mover_share: i64,
+    expected: MoveCode,
+) {
+    assert_eq!(compute_mover_opens(revealed_image, bob_image_4), mover_opens);
     let mut a = AllocEncoder::new();
     let lib = load_validators(&mut a);
-    let init = make_initial(&mut a, &lib);
-    let alice_image_5 = sha256_bytes(&[0x11; 32]);
+    let after_b = drive_to_begin_round(&mut a, &lib, alice_image_4, bob_image_4);
 
-    let after_a = run_step_and_check(
-        &mut a,
-        &lib,
-        &init,
-        &make_step(
-            &alice_image_5,
-            AMOUNT / 2,
-            None,
-            MoveCode::MakeMove,
-            false,
-            "commitA",
-        ),
-    )
-    .unwrap();
-    let after_b = run_step_and_check(
-        &mut a,
-        &lib,
-        &after_a,
-        &make_step(
-            &[0xBB; 32],
-            AMOUNT / 2 - BET_UNIT,
-            None,
-            MoveCode::MakeMove,
-            false,
-            "commitB",
-        ),
-    )
-    .unwrap();
-
-    let mut move_bytes = [0xFF_u8; 32].to_vec();
-    move_bytes.push(0);
-
-    run_step_and_check(
+    let mut move_bytes = revealed_image.to_vec();
+    if mover_opens {
+        move_bytes.push(0);
+    }
+    let result = run_step_and_check(
         &mut a,
         &lib,
         &after_b,
         &make_step(
             &move_bytes,
-            AMOUNT / 2 - BET_UNIT,
+            mover_share,
             None,
-            MoveCode::Slash,
+            expected,
             false,
             "begin_round",
         ),
     );
+    if let Some(r) = result {
+        let next = lib.by_hash.get(&r.next_validator_hash.unwrap()).unwrap();
+        let expected_next = if mover_opens { "mid_round" } else { "begin_round" };
+        assert_eq!(next.name, expected_next);
+    }
+}
+
+// Reveals a wrong image and then the committed one, in the same state, where
+// the toss reads both moves the same way, so only the image differs.
+fn check_begin_round_image(alice_image_4: &[u8; 32], mover_opens: bool) {
+    let wrong_image = sha256_bytes(alice_image_4);
+    let bob_image_4 = find_waiter_value_for_both(alice_image_4, &wrong_image, mover_opens);
+    let share = AMOUNT / 2 - BET_UNIT;
+    run_begin_round_reveal(
+        alice_image_4,
+        &bob_image_4,
+        &wrong_image,
+        mover_opens,
+        share,
+        MoveCode::Slash,
+    );
+    run_begin_round_reveal(
+        alice_image_4,
+        &bob_image_4,
+        alice_image_4,
+        mover_opens,
+        share,
+        MoveCode::MakeMove,
+    );
+}
+
+// Reveals the committed image with mover shares above and below the one that
+// begin_round requires, which is half the amount less the half pot.
+fn check_begin_round_wrong_share(alice_image_4: &[u8; 32], mover_opens: bool) {
+    let bob_image_4 = find_waiter_value_for_outcome(alice_image_4, mover_opens);
+    let share = AMOUNT / 2 - BET_UNIT;
+    for wrong_share in [share - 1, share + 1, AMOUNT / 2] {
+        run_begin_round_reveal(
+            alice_image_4,
+            &bob_image_4,
+            alice_image_4,
+            mover_opens,
+            wrong_share,
+            MoveCode::Slash,
+        );
+    }
+}
+
+// An opening that doesn't reveal the image Alice committed to is slashable,
+// and the same opening with the committed image is not.
+#[test]
+fn test_spacepoker_begin_round_slash_bad_image() {
+    check_begin_round_image(&sha256_bytes(&[0x11; 16]), true);
+}
+
+// A pong that doesn't reveal the image Alice committed to is slashable, and
+// the same pong with the committed image is not.
+#[test]
+fn test_spacepoker_begin_round_pong_slash_bad_image() {
+    check_begin_round_image(&sha256_bytes(&[0x13; 16]), false);
+}
+
+// An opening must leave the mover half the amount less the half pot.
+#[test]
+fn test_spacepoker_begin_round_slash_wrong_mover_share() {
+    check_begin_round_wrong_share(&sha256_bytes(&[0x15; 16]), true);
+}
+
+// A pong must leave the mover half the amount less the half pot.
+#[test]
+fn test_spacepoker_begin_round_pong_slash_wrong_mover_share() {
+    check_begin_round_wrong_share(&sha256_bytes(&[0x16; 16]), false);
 }
 
 // Coin toss says mover opens: open path with bare 32-byte move (check).
@@ -1305,6 +1378,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_spacepoker_begin_round_slash_bad_image",
             &test_spacepoker_begin_round_slash_bad_image,
+        ),
+        (
+            "test_spacepoker_begin_round_pong_slash_bad_image",
+            &test_spacepoker_begin_round_pong_slash_bad_image,
+        ),
+        (
+            "test_spacepoker_begin_round_slash_wrong_mover_share",
+            &test_spacepoker_begin_round_slash_wrong_mover_share,
+        ),
+        (
+            "test_spacepoker_begin_round_pong_slash_wrong_mover_share",
+            &test_spacepoker_begin_round_pong_slash_wrong_mover_share,
         ),
         (
             "test_spacepoker_begin_round_coin_toss_mover_opens_check",
