@@ -19,8 +19,8 @@ export fn space_hand_eval(cards: List<Int>, boost: Bool) -> List<Int> {
     // The hand selection supplies five ranks, and atomsort preserves their count.
     let ranks = unchecked_cast::<[Int, Int, Int, Int, Int, ...List<Int>]>(ranks);
     let [high, second, third, fourth, low, ..._] = ranks;
-    if high != second && second != third && third != fourth && fourth != low {
-        return if high - low == 4 {
+    if (high != second) & (second != third) & (third != fourth) & (fourth != low) {
+        return inline if high - low == 4 {
             [3, 3, boost as Int, high]
         } else {
             [1, 1, 1, 1, 1, boost as Int, ...ranks]
@@ -42,60 +42,19 @@ fn group_runs(ranks: List<Int>, rank: Int, count: Int) -> List<Int> {
     }
 }
 
-// Sorts integers in descending order, sorting three at a time and merging them, which is fast for
-// short lists.
+// Sorts integers in descending order, with an insertion sort, which is small and fast enough for
+// five cards. Equal integers end up in the reverse of their order in the list.
 fn atomsort(values: List<Int>) -> List<Int> {
-    if values is nil {
-        return nil;
-    }
-
-    let rest = values.rest;
-    if rest is nil {
-        return values;
-    }
-
-    let first = values.first;
-    let second = rest.first;
-    if rest.rest is nil {
-        return if first > second {
-            values
-        } else {
-            [second, first]
-        };
-    }
-
-    let third = rest.rest.first;
-    let sorted = if first > second {
-        if second > third {
-            [first, second, third]
-        } else if first > third {
-            [first, third, second]
-        } else {
-            [third, first, second]
-        }
-    } else if first > third {
-        [second, first, third]
-    } else if second > third {
-        [second, third, first]
-    } else {
-        [third, second, first]
-    };
-    merge(sorted, atomsort(rest.rest.rest))
+    for value in values fold sorted: List<Int> = nil { insert(value, sorted) }
 }
 
-fn merge(left: List<Int>, right: List<Int>) -> List<Int> {
-    if left is nil {
-        return right;
-    }
-
-    if right is nil {
-        return left;
-    }
-
-    if left.first > right.first {
-        [left.first, ...merge(left.rest, right)]
+// Inserts an integer into a list in descending order, after any integers that are equal to it.
+// The fold inserts the last integer first.
+fn insert(value: Int, sorted: List<Int>) -> List<Int> {
+    if sorted is nil || value > sorted.first {
+        [value, ...sorted]
     } else {
-        [right.first, ...merge(left, right.rest)]
+        [sorted.first, ...insert(value, sorted.rest)]
     }
 }
 
@@ -120,5 +79,20 @@ export fn deep_compare(left: Any, right: Any) -> Int {
         1
     } else {
         -((right as Int > left as Int) as Int)
+    }
+}
+
+// Compares two rankings from `space_hand_eval` like `deep_compare`. Rankings with the same counts
+// have the same length, and no list of counts is the start of another, so the rankings differ
+// before either of them ends, or they're the same length.
+export fn compare_rankings(left: List<Int>, right: List<Int>) -> Int {
+    if left is nil {
+        return 0;
+    }
+    assert right is (Int, List<Int>);
+    if left.first != right.first {
+        inline if left.first > right.first { 1 } else { -1 }
+    } else {
+        compare_rankings(left.rest, right.rest)
     }
 }

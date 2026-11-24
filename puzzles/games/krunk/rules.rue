@@ -41,7 +41,7 @@ export fn make_clue(word: Bytes, guess: Bytes) -> Bytes {
 
 struct Place {
     letter: Bytes,
-    green: Bool,
+    ...green: Bool,
 }
 
 fn letters(word: Bytes) -> List<Bytes> {
@@ -55,13 +55,14 @@ fn score(places: List<Place>, unmatched: List<Bytes>, value: Int) -> Int {
         return value;
     }
     let { letter, green } = places.first;
-    if green {
-        score(places.rest, unmatched, value * 3 + GREEN)
-    } else if contains(unmatched, letter) {
-        score(places.rest, remove_first(unmatched, letter), value * 3 + YELLOW)
-    } else {
-        score(places.rest, unmatched, value * 3 + GRAY)
-    }
+    let yellow = !green && contains(unmatched, letter);
+    // Both branches of each `inline if` are evaluated, which is smaller, and none of them can fail.
+    let digit = inline if green { GREEN } else { inline if yellow { YELLOW } else { GRAY } };
+    score(
+        places.rest,
+        inline if yellow { remove_first(unmatched, letter) } else { unmatched },
+        value * 3 + digit,
+    )
 }
 
 // The list without the first occurrence of the letter.

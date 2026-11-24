@@ -9,18 +9,18 @@
 export struct HoleCards {
     first: Int,
     second: Int,
-    boost: Bool,
+    ...boost: Bool,
 }
 
 // A player's hole cards, and the seven cards that they make their hand from.
 export struct PlayerCards {
     hole_cards: HoleCards,
-    cards: List<Int>,
+    ...cards: List<Int>,
 }
 
 export struct Deal {
     player: PlayerCards,
-    opponent: PlayerCards,
+    ...opponent: PlayerCards,
 }
 
 // Hashes two images, one from each player, into a seed to draw cards from.

@@ -20,7 +20,7 @@ fn main(
 
     let sequence_number = conditions.sequence.sequence_number;
     assert sequence_number > OLD_SEQUENCE_NUMBER;
-    assert (sequence_number ^ OLD_SEQUENCE_NUMBER) & 1 == 1;
+    assert (sequence_number ^ OLD_SEQUENCE_NUMBER) & 1 != 0;
 
     Preemption {
         signature: AggSigUnsafe { public_key: SHARED_PUBKEY, message: conditions_hash },

@@ -34,9 +34,7 @@ fn mergeover(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
     }
 
     let first = inner.first + offset;
-    if outer is nil {
-        [first, ...mergeover(nil, inner.rest, offset)]
-    } else if outer.first <= first {
+    if !(outer is nil) && outer.first <= first {
         mergeover(outer.rest, inner, offset + 1)
     } else {
         [first, ...mergeover(outer, inner.rest, offset)]
@@ -51,9 +49,7 @@ export fn mergein(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> 
     }
 
     let first = inner.first + offset;
-    if outer is nil {
-        [first, ...mergein(nil, inner.rest, offset)]
-    } else if outer.first <= first {
+    if !(outer is nil) && outer.first <= first {
         [outer.first, ...mergein(outer.rest, inner, offset + 1)]
     } else {
         [first, ...mergein(outer, inner.rest, offset)]

@@ -91,11 +91,9 @@ inline fn check_reveal(
 // finding it, and otherwise his payout for the number of guesses he made.
 inline fn reveal_mover_share(base_unit: Int, bob_guesses: List<Bytes>, word: Bytes) -> Int {
     let guess_count = length(bob_guesses);
-    if guess_count != 5 {
-        payout_share(base_unit, guess_count)
-    } else if nth(bob_guesses, 0) == word {
-        payout_share(base_unit, 5)
-    } else {
+    if guess_count == 5 && nth(bob_guesses, 0) != word {
         0
+    } else {
+        payout_share(base_unit, guess_count)
     }
 }

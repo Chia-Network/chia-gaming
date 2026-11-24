@@ -1,5 +1,5 @@
 import project::games::spacepoker::deal::{deal, popcount, select_cards};
-import project::games::spacepoker::hand_eval::{deep_compare, space_hand_eval};
+import project::games::spacepoker::hand_eval::{compare_rankings, space_hand_eval};
 import project::games::spacepoker::states::EndState;
 import project::referee::types::*;
 
@@ -30,7 +30,7 @@ export fn main(
     }
 
     let mover_bitfield = game_move[16..17] as Int;
-    if !(mover_bitfield & -128 == 0 && popcount(mover_bitfield) == 5) {
+    if !((mover_bitfield & -128 == 0) & (popcount(mover_bitfield) == 5)) {
         return nil;
     }
 
@@ -44,13 +44,13 @@ export fn main(
     let mover_selected = select_cards(deal.player.cards, mover_bitfield);
 
     // Evidence that isn't a valid selection fails the slash.
-    assert evidence.length == 1;
     let waiter_bitfield = evidence as Int;
-    assert waiter_bitfield & -128 == 0;
-    assert popcount(waiter_bitfield) == 5;
+    assert (evidence.length == 1)
+        & (waiter_bitfield & -128 == 0)
+        & (popcount(waiter_bitfield) == 5);
 
     let waiter_selected = select_cards(deal.opponent.cards, waiter_bitfield);
-    let result = deep_compare(
+    let result = compare_rankings(
         space_hand_eval(mover_selected, deal.player.hole_cards.boost),
         space_hand_eval(waiter_selected, deal.opponent.hole_cards.boost),
     );

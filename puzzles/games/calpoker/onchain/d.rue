@@ -10,7 +10,7 @@ export fn main(
     ..._payout: Bytes32 | nil,
 ) -> ValidatorResult<DiscardState> | nil {
     let bob_discards = params.turn.last_move.game_move;
-    if bob_discards.length == 1 && popcount(bob_discards as Int) == 4 {
+    if (bob_discards.length == 1) & (popcount(bob_discards as Int) == 4) {
         let { discard_commit, hands: { alice_cards, bob_cards } } = move.state;
         validator_transition(
             const { tree_hash(e::main) },
