@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to build from (the public release must not exist)
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.event.inputs.release_tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Resolve immutable application source
+        id: source
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || exit 1
+          git init -q source
+          cd source
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          git fetch -q --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          sha="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          test -n "$sha"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: resolve
+    uses: ./.github/workflows/build-test.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.sha }}
+      release_tag: ${{ needs.resolve.outputs.tag }}
+
+  frontend:
+    needs: resolve
+    uses: ./.github/workflows/frontend.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.sha }}
+
+  macos_tests:
+    needs: resolve
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.sha }}
+
+  desktop:
+    needs: resolve
+    uses: ./.github/workflows/build-electron.yml
+    secrets: inherit
+    with:
+      source_sha: ${{ needs.resolve.outputs.sha }}
+      release_tag: ${{ needs.resolve.outputs.tag }}
+
+  prepare_pages:
+    needs: [resolve, linux]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: chia-gaming-${{ needs.resolve.outputs.tag }}
+          path: player-archive
+      - name: Assemble site from tagged player
+        env:
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          ./tools/build-pages.sh \
+            "player-archive/chia-gaming-${RELEASE_TAG}.tgz" \
+            pages \
+            "https://github.com/${REPOSITORY}/releases/tag/${RELEASE_TAG}"
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: pages
+
+  publish:
+    needs: [resolve, linux, frontend, macos_tests, desktop, prepare_pages]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: chia-gaming-*
+          path: artifacts
+      - name: Verify complete release and publish draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.tag }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.sha }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          git init -q source
+          cd source
+          git remote add origin "https://github.com/${GH_REPO}.git"
+          git fetch -q --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"
+          cd ..
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "::error::A release already exists for $RELEASE_TAG; publication will not replace its assets"
+            exit 1
+          fi
+          mkdir release
+          for artifact in \
+            "chia-gaming-${RELEASE_TAG}" \
+            "chia-gaming-hub-${RELEASE_TAG}" \
+            chia-gaming-electron-macos \
+            chia-gaming-electron-windows \
+            chia-gaming-electron-linux; do
+            test -d "artifacts/$artifact"
+            find "artifacts/$artifact" -maxdepth 1 -type f -exec cp {} release/ \;
+          done
+          cd release
+          for file in \
+            "chia-gaming-${RELEASE_TAG}.tgz" "chia-gaming-${RELEASE_TAG}.zip" \
+            "chia-gaming-hub-${RELEASE_TAG}.tgz" "chia-gaming-hub-${RELEASE_TAG}.zip" \
+            SHA256SUMS-web.txt SHA256SUMS-mac.txt SHA256SUMS-win.txt SHA256SUMS-linux.txt \
+            SOURCE-web.txt SOURCE-mac.txt SOURCE-win.txt SOURCE-linux.txt; do
+            test -s "$file"
+          done
+          shopt -s nullglob
+          for extension in dmg exe AppImage deb; do
+            files=(*."$extension")
+            test "${#files[@]}" -eq 1
+          done
+          files=(*.zip)
+          test "${#files[@]}" -eq 3
+          for platform in web mac win linux; do
+            test "$(sed -n '1p' "SOURCE-${platform}.txt")" = "source_sha=$SOURCE_SHA"
+            test "$(sed -n '2p' "SOURCE-${platform}.txt")" = "workflow_sha=$WORKFLOW_SHA"
+            sha256sum -c "SHA256SUMS-${platform}.txt"
+          done
+          printf 'tag=%s\nsource_sha=%s\nworkflow_sha=%s\n' "$RELEASE_TAG" "$SOURCE_SHA" "$WORKFLOW_SHA" > RELEASE-SOURCE.txt
+          cd ..
+          args=(--draft --verify-tag --generate-notes --title "$RELEASE_TAG")
+          if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" release/* "${args[@]}"
+          gh release edit "$RELEASE_TAG" --draft=false
+
+  deploy_pages:
+    needs: [publish, prepare_pages]
+    runs-on: ubuntu-22.04
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy prepared site
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -6,19 +6,20 @@ on:
     branches:
       - base
       - dev
-    tags:
-      - "**"
-  release:
-    types: [published]
   pull_request:
     branches:
       - "**"
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
 
 env:
   RUST_VERSION: 1.97.1
 
 concurrency:
-  group: ${{ github.ref }}-${{ github.workflow }}-${{ github.event_name }}--${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
+  group: ${{ github.ref }}-build-macos-${{ github.event_name }}-${{ inputs.source_sha != '' && github.run_id || '' }}-${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/heads/long_lived/')) && github.sha || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -39,6 +40,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Set up rust
         run: |
