@@ -19,6 +19,7 @@ export type SessionIntent = Extract<
       | 'start-clean-shutdown'
       | 'go-on-chain'
       | 'dismiss-channel'
+      | 'retry-channel'
       | 'dismiss-game-notification';
   }
 >;

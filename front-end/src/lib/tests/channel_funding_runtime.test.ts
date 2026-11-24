@@ -219,6 +219,85 @@ describe('durable channel funding record', () => {
     }
   });
 
+  it('offers a retry when the wallet refuses funding and asks the wallet again', async () => {
+    const begin = jest
+      .fn()
+      .mockResolvedValueOnce({ kind: 'failure', reason: 'Operation cancelled by user' })
+      .mockResolvedValue({
+        kind: 'created-reserved',
+        material: { kind: 'offer', offer: 'offer1retried' },
+        tradeId: 'retried-trade',
+      });
+    const { controller, cradle, blockchain } = setup(jest.fn(), bestEffortWalletRpc(begin));
+    cradle.provide_offer_bech32 = jest.fn(() => wasmResult());
+    cradle.wallet_callback_failed = jest.fn(() => wasmResult());
+    try {
+      commitRuntime(controller, new ControlledRuntime());
+      controller.setWallet(blockchain);
+      const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(cradle.wallet_callback_failed).not.toHaveBeenCalled();
+      expect(controller.getState().model.channel.queue).toEqual([
+        expect.objectContaining({
+          kind: 'infra-error',
+          retry: 'channel-funding',
+          message: expect.stringContaining('Operation cancelled by user'),
+        }),
+      ]);
+      // Wallet readiness changes do not ask again while the user decides.
+      controller.flushDeferredWork();
+      await controller.flushPendingWork();
+      expect(begin).toHaveBeenCalledTimes(1);
+
+      controller.frontend.dispatch({ type: 'retry-channel' });
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+      await controller.flushPendingWork();
+
+      expect(controller.getState().model.channel.queue).not.toContainEqual(
+        expect.objectContaining({ retry: 'channel-funding' }),
+      );
+      expect(begin).toHaveBeenCalledTimes(2);
+      expect(cradle.provide_offer_bech32).toHaveBeenCalledWith('offer1retried');
+      expect(cradle.wallet_callback_failed).not.toHaveBeenCalled();
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+    }
+  });
+
+  it('fails the funding request when the user dismisses the refused-funding notice', async () => {
+    const begin = jest
+      .fn()
+      .mockResolvedValue({ kind: 'failure', reason: 'Operation cancelled by user' });
+    const { controller, cradle, blockchain } = setup(jest.fn(), bestEffortWalletRpc(begin));
+    cradle.wallet_callback_failed = jest.fn(() => wasmResult());
+    try {
+      commitRuntime(controller, new ControlledRuntime());
+      controller.setWallet(blockchain);
+      const request = canonicalizeFundingRequest({ amount: '100', fee: '0', conditions: [] });
+      controller.processResult(wasmResult({ events: [{ NeedCoinSpend: request }] }));
+      await controller.flushPendingWork();
+      await channelFundingRuntime.flush();
+      expect(cradle.wallet_callback_failed).not.toHaveBeenCalled();
+
+      controller.frontend.dispatch({ type: 'dismiss-channel' });
+      await controller.flushPendingWork();
+
+      expect(controller.getState().model.channel.queue).toEqual([]);
+      expect(cradle.wallet_callback_failed).toHaveBeenCalledTimes(1);
+      expect(cradle.wallet_callback_failed).toHaveBeenCalledWith('Operation cancelled by user');
+      expect(begin).toHaveBeenCalledTimes(1);
+    } finally {
+      controller.cleanup();
+      blockchain.detachProvider();
+    }
+  });
+
   it('keeps the session while a replacement wallet resumes monitoring and funds new work', async () => {
     const { controller, cradle } = setup(jest.fn());
     commitRuntime(controller, new ControlledRuntime());

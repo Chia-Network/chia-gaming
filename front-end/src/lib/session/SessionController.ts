@@ -295,6 +295,8 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     request: CanonicalFundingRequest;
     effect?: Promise<void>;
     materialReady?: boolean;
+    /** The wallet refused this request; the user chooses to retry or give up. */
+    failure?: string;
   } | null = null;
   private fundingInFlight: NonNullable<SessionController['pendingFunding']> | null = null;
   private fundingEffectSequence = 0;
@@ -554,7 +556,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
       }
     }
     let pending = this.pendingFunding;
-    if (!pending) return;
+    if (!pending || pending.failure !== undefined) return;
     const connected = this.currentProviderOwnerForRead();
     // Completed material belongs to this session even if its wallet disconnects
     // while authoritative delivery is queued behind a checkpoint.
@@ -659,9 +661,15 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
           !storageRepository.isGenerationCurrent(generation)
         )
           return;
-        this.pendingFunding = null;
-        this.reportFundingWarning(outcome.reason);
-        if (this.cradle) this.processResultNow(this.cradle.wallet_callback_failed(outcome.reason));
+        // Keep the request open: the user can retry it or dismiss to give up.
+        pending.failure = outcome.reason;
+        log(`[wasm] ${outcome.reason}`);
+        this.dispatch({
+          type: 'enqueue-error',
+          kind: 'infra-error',
+          message: `The wallet did not fund the channel: ${outcome.reason}. Retry to ask the wallet again, or dismiss to cancel this session.`,
+          retry: 'channel-funding',
+        });
         this.requestCommit();
       });
       return;
@@ -747,6 +755,25 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
         if (this.pendingFunding === pending) this.pendingFunding = null;
         this.requestCommit();
       }
+    });
+  }
+
+  private retryFunding(): void {
+    const pending = this.pendingFunding;
+    if (!pending || pending.failure === undefined) return;
+    delete pending.failure;
+    this.scheduleFunding();
+  }
+
+  private abandonFunding(): void {
+    const pending = this.pendingFunding;
+    if (!pending || pending.failure === undefined) return;
+    const reason = pending.failure;
+    this.enqueueStimulus(() => {
+      if (this.pendingFunding !== pending || this.retired || !this.cradle) return;
+      this.pendingFunding = null;
+      this.processResultNow(this.cradle.wallet_callback_failed(reason));
+      this.requestCommit();
     });
   }
 
@@ -2849,6 +2876,12 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
         );
         return;
       }
+      case 'controller-retry-funding':
+        this.retryFunding();
+        return;
+      case 'controller-abandon-funding':
+        this.abandonFunding();
+        return;
       case 'request-coin-enrichment':
         void coinIdHex(effect.coin)
           .then((coinHex) => {

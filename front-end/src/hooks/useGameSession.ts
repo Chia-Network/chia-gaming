@@ -91,6 +91,7 @@ export function useGameSession(
     channelQueue: view.channelQueue,
     gameQueue: view.gameQueue,
     dismissChannel: () => dispatch({ type: 'dismiss-channel' }),
+    retryChannel: () => dispatch({ type: 'retry-channel' }),
     dismissGame: () => dispatch({ type: 'dismiss-game-notification' }),
     gameSpecificView,
   };

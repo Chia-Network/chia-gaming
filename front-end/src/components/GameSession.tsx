@@ -334,9 +334,10 @@ function ChannelStatusContent({ info }: { info: ChannelStatusModel }) {
   );
 }
 
-function NotificationOverlay({
+export function NotificationOverlay({
   notification,
   onDismiss,
+  onRetry,
   boundsRef,
   zClass,
   focusBoundaryPriority,
@@ -344,6 +345,7 @@ function NotificationOverlay({
 }: {
   notification: QueuedNotification;
   onDismiss: () => void;
+  onRetry?: () => void;
   boundsRef: RefObject<HTMLElement | null>;
   zClass: string;
   focusBoundaryPriority: number;
@@ -354,8 +356,13 @@ function NotificationOverlay({
   });
   const dragControls = useDragControls();
   const dismissButtonRef = useRef<HTMLButtonElement>(null);
+  const retryButtonRef = useRef<HTMLButtonElement>(null);
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
+  const retry = notification.retry && onRetry ? onRetry : undefined;
+  const onRetryRef = useRef(retry);
+  onRetryRef.current = retry;
+  const retryable = retry !== undefined;
   const isError =
     notification.kind === 'infra-error' ||
     notification.kind === 'action-failed' ||
@@ -366,15 +373,18 @@ function NotificationOverlay({
     if (!ownsKeyboard) return;
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dismissButtonRef.current?.focus();
-    const unbind = bindNotificationOverlayDismissKeys(() => onDismissRef.current());
+    (retryable ? retryButtonRef : dismissButtonRef).current?.focus();
+    const unbind = bindNotificationOverlayDismissKeys(
+      () => onDismissRef.current(),
+      retryable ? () => onRetryRef.current?.() : undefined,
+    );
     return () => {
       unbind();
       if (previouslyFocused?.isConnected && previouslyFocused !== document.body) {
         previouslyFocused.focus();
       }
     };
-  }, [ownsKeyboard, notification.id]);
+  }, [ownsKeyboard, notification.id, retryable]);
 
   return (
     <motion.div
@@ -416,14 +426,22 @@ function NotificationOverlay({
               {notification.message}
             </p>
           )}
-          <Button
-            ref={dismissButtonRef}
-            size="sm"
-            onClick={onDismiss}
-            className="self-center min-w-[96px]"
-          >
-            Dismiss
-          </Button>
+          <div className="flex gap-2 self-center">
+            {retry && (
+              <Button ref={retryButtonRef} size="sm" onClick={retry} className="min-w-[96px]">
+                Retry
+              </Button>
+            )}
+            <Button
+              ref={dismissButtonRef}
+              size="sm"
+              variant={retry ? 'outline' : 'default'}
+              onClick={onDismiss}
+              className="min-w-[96px]"
+            >
+              Dismiss
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </motion.div>
@@ -701,6 +719,7 @@ const GameSession: React.FC<GameSessionProps> = ({
         <NotificationOverlay
           notification={session.channelQueue[0]}
           onDismiss={session.dismissChannel}
+          onRetry={session.retryChannel}
           boundsRef={channelOverlayBoundsRef}
           zClass="z-50"
           focusBoundaryPriority={50}

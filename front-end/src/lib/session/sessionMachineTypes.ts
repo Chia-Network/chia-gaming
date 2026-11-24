@@ -9,6 +9,7 @@ import type {
   GameTerminalModel,
   HandProposal,
   LocalActionKind,
+  NotificationRetry,
   PendingProposalLifecycle,
   PendingProposalModel,
   QueuedNotificationModel,
@@ -49,6 +50,8 @@ export type SessionMachineEffect =
   | { type: 'controller-propose-game'; handProposal: HandProposal }
   | { type: 'controller-clean-shutdown' }
   | { type: 'controller-go-on-chain' }
+  | { type: 'controller-retry-funding' }
+  | { type: 'controller-abandon-funding' }
   | {
       type: 'request-coin-enrichment';
       target: 'channel' | 'game' | 'settlement';
@@ -80,6 +83,7 @@ export type SessionMachineEvent =
   | { type: 'remove-game-notifications'; kind: QueuedNotificationModel['kind'] }
   | { type: 'dismiss-channel-notification' }
   | { type: 'dismiss-channel' }
+  | { type: 'retry-channel' }
   | { type: 'dismiss-game-notification' }
   | { type: 'set-between-hand-mode'; mode: BetweenHandModeModel }
   | { type: 'upsert-pending-proposal'; proposal: PendingProposalModel }
@@ -151,6 +155,7 @@ export type SessionMachineEvent =
       type: 'enqueue-error';
       kind: 'infra-error' | 'action-failed' | 'recoverable-internal-error' | 'durability-error';
       message: string;
+      retry?: NotificationRetry;
     }
   | {
       type: 'coin-enrichment-completed';

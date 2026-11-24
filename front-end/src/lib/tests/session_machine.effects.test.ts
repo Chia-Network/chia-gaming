@@ -6,7 +6,11 @@ import { createSessionMachineState } from '../session/sessionMachine';
 import { SessionRuntimeRetiredError } from '../session/sessionMachineTypes';
 
 import { observeSessionProjection } from './session_frontend.harness';
-import { runSessionMachineTransition, send } from './session_machine.harness';
+import {
+  reduceSessionMachineForTest,
+  runSessionMachineTransition,
+  send,
+} from './session_machine.harness';
 
 function deferred() {
   let resolve!: () => void;
@@ -577,5 +581,46 @@ describe('session machine behavior sequences', () => {
 
       terminal: { type: 'settled', myReward: '20' },
     });
+  });
+});
+
+describe('retryable channel notifications', () => {
+  const failed = () =>
+    send(createSessionMachineState(createSessionModel()), {
+      type: 'enqueue-error',
+      kind: 'infra-error',
+      message: 'The wallet did not fund the channel',
+      retry: 'channel-funding',
+    });
+
+  it('keeps the retry marker on the queued notification', () => {
+    expect(failed().model.channel.queue).toEqual([
+      expect.objectContaining({ kind: 'infra-error', retry: 'channel-funding' }),
+    ]);
+  });
+
+  it('retries the failed operation and removes the notification', () => {
+    const transition = reduceSessionMachineForTest(failed(), { type: 'retry-channel' });
+    expect(transition.state.model.channel.queue).toEqual([]);
+    expect(transition.effects).toEqual([{ type: 'controller-retry-funding' }]);
+  });
+
+  it('gives the operation up when the notification is dismissed', () => {
+    const transition = reduceSessionMachineForTest(failed(), { type: 'dismiss-channel' });
+    expect(transition.state.model.channel.queue).toEqual([]);
+    expect(transition.effects).toEqual([{ type: 'controller-abandon-funding' }]);
+  });
+
+  it('ignores retry for an ordinary notification and dismisses it without effects', () => {
+    const ordinary = send(createSessionMachineState(createSessionModel()), {
+      type: 'enqueue-error',
+      kind: 'infra-error',
+      message: 'something failed',
+    });
+    expect(ordinary.model.channel.queue[0]).not.toHaveProperty('retry');
+    const retried = reduceSessionMachineForTest(ordinary, { type: 'retry-channel' });
+    expect(retried.state).toBe(ordinary);
+    expect(retried.effects).toEqual([]);
+    expect(reduceSessionMachineForTest(ordinary, { type: 'dismiss-channel' }).effects).toEqual([]);
   });
 });
