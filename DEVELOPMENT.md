@@ -172,10 +172,11 @@ workflow commit in `RELEASE-SOURCE.txt` and the per-platform source records.
    - SHA-256 checksum files
 4. After every required job succeeds, the workflow verifies the complete asset
    set and source revisions, creates a draft GitHub Release with all assets,
-   then publishes it. It will not overwrite assets on an existing release.
+   then publishes it as a regular GitHub release. This includes beta tags
+   such as `0.4.0-beta.3`. It will not overwrite assets on an existing release.
 5. The release workflow deploys the already prepared player archive to
-   https://Chia-Network.github.io/chia-gaming/. Each published release (including
-   prereleases) becomes the default player. Pages keeps the versioned assets
+   https://Chia-Network.github.io/chia-gaming/. Each published release
+   becomes the default player. Pages keeps the versioned assets
    from up to three previous published releases with player archives, so
    already-open tabs can keep fetching their original build. No hub or Node
    server is started.
@@ -210,8 +211,8 @@ testing, and `tools/run-production.sh` starts local player and hub servers.
 The Pages root serves the project landing page from `project-page/index.html`; the
 production player app is hosted at `player/`. `tools/build-pages.sh <player.tgz>
 <empty-output-directory> [release-url]` assembles both. The release workflow passes
-the published release URL so the landing page links to the exact build, including
-prereleases. Local previews default to the releases list.
+the published release URL so the landing page links to the exact build. Local
+previews default to the releases list.
 Neither local staging nor running servers is required for Pages publication.
 
 To test the production build under directories on another machine:

@@ -188,9 +188,7 @@ jobs:
           done
           printf 'tag=%s\nsource_sha=%s\nworkflow_sha=%s\n' "$RELEASE_TAG" "$SOURCE_SHA" "$WORKFLOW_SHA" > RELEASE-SOURCE.txt
           cd ..
-          args=(--draft --verify-tag --generate-notes --title "$RELEASE_TAG")
-          if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
-          gh release create "$RELEASE_TAG" release/* "${args[@]}"
+          gh release create "$RELEASE_TAG" release/* --draft --verify-tag --generate-notes --title "$RELEASE_TAG"
           gh release edit "$RELEASE_TAG" --draft=false
 
   deploy_pages:
