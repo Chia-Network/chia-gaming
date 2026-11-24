@@ -448,6 +448,8 @@ pub enum GameSessionEvent {
         /// Optional UI context emitted only when the manager submits `spend`.
         semantic: Option<TimeoutClaimSemantic>,
     },
+    /// A terminal game with no local payout has no remaining claim on this coin.
+    RetireGameCoin(CoinString),
 }
 
 /// Collect GameSessionEvents in insertion order.
@@ -468,6 +470,7 @@ pub enum Effect {
     /// This zero-payout local session has no remaining claim to pursue, so it
     /// can terminate without submitting a channel or unroll spend.
     CompleteZeroPayoutShutdown,
+    RetireGameCoin(CoinString),
     /// Escalate a peer protocol failure through `GameSession`, which owns the
     /// zero-payout abandonment policy.
     GoOnChainAfterPeerError,
@@ -524,6 +527,11 @@ pub fn apply_effects(
                 ));
             }
             Effect::CompleteZeroPayoutShutdown => {}
+            Effect::RetireGameCoin(_) => {
+                return Err(crate::common::types::Error::StrErr(
+                    "game-coin retirement must be intercepted by GameSession".to_string(),
+                ));
+            }
             Effect::GoOnChainAfterPeerError => {
                 return Err(crate::common::types::Error::StrErr(
                     "peer-error escalation must be intercepted by GameSession".to_string(),

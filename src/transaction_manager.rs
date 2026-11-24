@@ -873,6 +873,22 @@ pub struct TransactionManager<C> {
 }
 
 impl TransactionManager<GameSession> {
+    /// Keep a positive clean close recoverable until its channel input is
+    /// buried and evicted from the watch set. The visible channel status can
+    /// already be ResolvedClean during this interval.
+    pub fn is_fully_resolved(&self) -> bool {
+        self.cradle.is_fully_resolved()
+            && self
+                .cradle
+                .clean_close_recovery_input()
+                .is_none_or(|input| {
+                    !self
+                        .watched_coins
+                        .keys()
+                        .any(|coin| coin.to_coin_id() == input)
+                })
+    }
+
     pub fn restore_runtime(&mut self) {
         self.submission_book.restore_runtime();
         self.cradle.restore_runtime();
@@ -1280,6 +1296,15 @@ impl<C> TransactionManager<C> {
                 } => {
                     self.pending_watch_coins.push(coin_string.clone());
                     self.register_watch(coin_string, timeout, spend, semantic);
+                }
+                GameSessionEvent::RetireGameCoin(coin) => {
+                    let coin_id = coin.to_coin_id();
+                    self.watched_coins.remove(&coin);
+                    self.present_coins.remove(&coin);
+                    self.vanished_coins.remove(&coin);
+                    self.pending_watch_coins.retain(|watched| watched != &coin);
+                    self.pending_unwatch_coins.push(coin);
+                    self.retain_submitted(|tx| !tx.spent_coin_ids().any(|input| input == coin_id));
                 }
                 other => {
                     self.pending_events.push_back(other);
@@ -2469,6 +2494,24 @@ mod tests {
         assert_eq!(watched.timeout_blocks, Timeout::new(100));
         assert_eq!(watched.birthday, None);
         assert_eq!(mgr.snapshot_watched_coins(), vec![coin]);
+    }
+
+    #[test]
+    fn terminal_zero_share_retires_its_watch_immediately() {
+        let mut allocator = AllocEncoder::new();
+        let coin = test_coin(91);
+        let mut mock = MockGameSession::default();
+        mock.queue_drain(vec![watch_event(&coin, 100)]);
+        let mut mgr = TransactionManager::new(mock);
+        mgr.flush_and_collect(&mut allocator)
+            .expect("register watch");
+        assert!(mgr.snapshot_watched_coins().contains(&coin));
+
+        mgr.absorb_events(std::collections::VecDeque::from([
+            GameSessionEvent::RetireGameCoin(coin.clone()),
+        ]));
+        assert!(!mgr.snapshot_watched_coins().contains(&coin));
+        assert_eq!(mgr.pending_unwatch_coins, vec![coin]);
     }
 
     #[test]

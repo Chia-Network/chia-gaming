@@ -1251,6 +1251,9 @@ mod gaming_wasm {
             GameSessionEvent::WatchCoin { .. } => Err(types::Error::StrErr(
                 "WatchCoin should be intercepted before JS event serialization".to_string(),
             )),
+            GameSessionEvent::RetireGameCoin(_) => Err(types::Error::StrErr(
+                "RetireGameCoin should be intercepted before JS event serialization".to_string(),
+            )),
         }
     }
 

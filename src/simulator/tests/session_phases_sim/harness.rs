@@ -1251,6 +1251,7 @@ impl SimulationHarness {
                     GameSessionEvent::ChannelCoinConfirmed
                     | GameSessionEvent::ChannelCreationTimedOut => {}
                     GameSessionEvent::WatchCoin { .. } => {}
+                    GameSessionEvent::RetireGameCoin(_) => {}
                 }
             }
 
