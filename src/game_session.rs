@@ -165,6 +165,12 @@ pub trait PeerLifecyclePhase {
     /// game-change), each tagged with its kind.
     fn coins_of_interest(&self) -> Vec<(CoinOfInterest, CoinString)>;
 
+    /// Game move inputs and their expected successors while the confirmed
+    /// spend has yet to be processed by the game.
+    fn pending_game_move_coins(&self) -> Vec<(CoinString, CoinString)> {
+        Vec::new()
+    }
+
     #[cfg(test)]
     fn off_chain_phase_for_testing(&mut self) -> Option<&mut OffChainPhase> {
         None
@@ -568,6 +574,10 @@ impl GameSession {
             .into_iter()
             .map(|(kind, coin)| (kind, coin.to_coin_id().to_string()))
             .collect()
+    }
+
+    pub fn pending_game_move_coins(&self) -> Vec<(CoinString, CoinString)> {
+        self.peer.pending_game_move_coins()
     }
 
     /// Recognize direct change outputs of the pending cooperative channel spend.

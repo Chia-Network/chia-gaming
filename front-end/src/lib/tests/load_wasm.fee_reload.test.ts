@@ -518,6 +518,54 @@ it.each(['channel spend', 'on-chain game move'])(
       );
       assert.equal(storageRepository.feeAttachments()[0]?.stage, 'retained-for-replay');
       assert.equal(storageRepository.feeAttachments()[0]?.submissionId, feeSubmissionIds[0]);
+
+      if (gameId) {
+        const coins = controller.getCoinsOfInterest().filter((coin) => coin.game_id === gameId);
+        const input = coins.find(({ label }) => label.endsWith(' (input)'));
+        const output = coins.find(({ label }) => label.startsWith('Expected output from '));
+        assert.ok(input, 'a pending move must show its input');
+        assert.ok(output, 'a pending move must show its expected output');
+        const watched = controller
+          .snapshotWatchedCoins()
+          .find(({ coin_name }) => coin_name === input.id);
+        assert.ok(watched);
+
+        const originalGetPuzzleAndSolution = fakeBlockchainInfo.getPuzzleAndSolution;
+        let releaseSolution!: () => void;
+        const solutionGate = new Promise<void>((resolve) => {
+          releaseSolution = resolve;
+        });
+        fakeBlockchainInfo.getPuzzleAndSolution = async (...args) => {
+          await solutionGate;
+          return originalGetPuzzleAndSolution.apply(fakeBlockchainInfo, args);
+        };
+        try {
+          const height = await fakeBlockchainInfo.farmBlock();
+          await fakeBlockchainInfo.registerCoins([input.id]);
+          const [record] = await fakeBlockchainInfo.getCoinRecordsByNames([input.id]);
+          assert.ok(record?.spent, 'the move must land in the simulator');
+          await controller.reportCoinStates(height, [
+            {
+              coin: watched.coin_string,
+              created_height: record.confirmedBlockIndex,
+              spent_height: record.spentBlockIndex,
+            },
+          ]);
+          assert.deepEqual(
+            controller.getCoinsOfInterest().filter((coin) => coin.game_id === gameId),
+            coins,
+            'keep the move input and expected output visible until its spend is processed',
+          );
+        } finally {
+          releaseSolution();
+          fakeBlockchainInfo.getPuzzleAndSolution = originalGetPuzzleAndSolution;
+          await flushWrapperDrain(adapters);
+        }
+        const confirmed = controller.getCoinsOfInterest().filter((coin) => coin.game_id === gameId);
+        assert.equal(confirmed.length, 1);
+        assert.equal(confirmed[0].id, output.id);
+        assert.ok(!confirmed[0].label.startsWith('Expected output from '));
+      }
     } finally {
       approve();
       for (const adapter of adapters) {

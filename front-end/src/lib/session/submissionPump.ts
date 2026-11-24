@@ -8,10 +8,12 @@ import type {
   WalletSubmitOutcome,
 } from '../../types/ChiaGaming';
 import { spend_bundle_to_clvm } from '../../util';
-import { isPastDeadlineRejection } from '../../util/walletSubmit';
+import { isPastDeadlineRejection, rateLimitedSubmissionDelayMs } from '../../util/walletSubmit';
 import { FeeAttachmentRuntime } from './feeAttachmentRuntime';
 import type { ProviderOwner } from './providerKeys';
 import { SessionRuntimeRetiredError } from './sessionMachineTypes';
+
+const MAX_BROADCAST_RETRY_DELAY_MS = 10_000;
 
 type SubmissionOutcome = WalletSubmitOutcome['status'] | 'local-failure' | 'skipped';
 
@@ -385,13 +387,32 @@ export class SubmissionPump {
             const appliedFee = BigInt(finalized.applied_fee);
             log(`[wasm] submitTransaction blobLen=${blob.length}`);
             if (finalized.warning) this.ports.reportWarning(finalized.warning);
-            outcome = await activeBlockchain.rpc.spend(
-              blob,
-              finalized.bundle,
-              rewardPuzzleHash,
-              'submitTransaction',
-              appliedFee || undefined,
-            );
+            const send = () =>
+              activeBlockchain.rpc.spend(
+                blob,
+                finalized.bundle,
+                rewardPuzzleHash,
+                'submitTransaction',
+                appliedFee || undefined,
+              );
+            outcome = await send();
+            const retryDelay =
+              outcome.status === 'rejected' ? rateLimitedSubmissionDelayMs(outcome.detail) : null;
+            if (retryDelay !== null && retryDelay <= MAX_BROADCAST_RETRY_DELAY_MS) {
+              await new Promise<void>((resolve) => setTimeout(resolve, retryDelay));
+              if (this.isInactive(submission)) return;
+              if (
+                this.ports.getBlockchain() === activeBlockchain &&
+                activeBlockchain.rpc.isReadyForPlay?.() !== false
+              ) {
+                outcome = await send();
+              } else {
+                outcome = {
+                  status: 'unavailable',
+                  detail: 'Wallet became unavailable before the broadcast retry',
+                };
+              }
+            }
             await this.ports.enqueueResult(() => {
               if (this.isInactive(submission)) return;
               const activeCradle = this.ports.getCradle();
@@ -434,10 +455,9 @@ export class SubmissionPump {
       if (!abandoned && !this.isInactive(submission) && outcome.status === 'rejected') {
         this.ports.reportWarning(`Wallet rejected transaction ${submission.id}: ${outcome.detail}`);
       }
-      return this.completion(
-        outcome.status,
-        outcome.status === 'unavailable' || outcome.status === 'provisional',
-      );
+      // A pending broadcast stays eligible for replay on a later fresh
+      // snapshot. Requesting one here would immediately rebroadcast it.
+      return this.completion(outcome.status, outcome.status === 'unavailable');
     } catch (error) {
       if (this.isInactive(submission)) return this.completion('skipped', false);
       if (feeOfferCreated && feeOwner && finalizedDisposition !== 'attached') {

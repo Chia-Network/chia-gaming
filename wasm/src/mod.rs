@@ -2130,6 +2130,15 @@ mod gaming_wasm {
                             (output.to_coin_id().to_string(), kind)
                         }));
                 }
+                // A chain snapshot can retire a submission before the game
+                // receives the input's puzzle and solution.
+                for (input, output) in cradle.cradle.pending_game_move_coins() {
+                    pending
+                        .entry(input.to_coin_id().to_string())
+                        .or_default()
+                        .entry(output.to_coin_id().to_string())
+                        .or_insert(None);
+                }
                 Ok((coins, pending))
             })?;
             let opening = coins
