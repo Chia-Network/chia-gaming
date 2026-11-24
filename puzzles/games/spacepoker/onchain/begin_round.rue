@@ -40,7 +40,7 @@ export fn main(
         return nil;
     }
     if opens {
-        if raise_amount < 0 || state.stakes.half_pot + raise_amount > half_amount {
+        if (raise_amount < 0) | (state.stakes.half_pot + raise_amount > half_amount) {
             return nil;
         }
 

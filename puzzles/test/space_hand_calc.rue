@@ -1,6 +1,0 @@
-import project::games::spacepoker::hand_calc::{BestHand, space_hand_calc};
-
-// Finds the best five-card Space Poker hand out of a player's cards, for the hand tests.
-fn main(cards: List<Int>, boost: Bool) -> BestHand {
-    space_hand_calc(cards, boost)
-}

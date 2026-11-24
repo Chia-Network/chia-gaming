@@ -11,7 +11,7 @@ export fn main(
 ) -> ValidatorResult<KrunkState> | nil {
     let { last_move, mover_share } = params.turn;
     let alice_commit = last_move.game_move;
-    if !(alice_commit is Bytes32) || mover_share != 0 {
+    if !(alice_commit is Bytes32) | (mover_share != 0) {
         return nil;
     }
 

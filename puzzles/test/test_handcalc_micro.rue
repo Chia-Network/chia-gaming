@@ -1,21 +1,12 @@
-import project::games::calpoker::arrange::{final_cards, pull_out_cards, split_cards};
-import project::games::calpoker::cards::make_cards;
-import project::games::calpoker::hand::onehandcalc;
+import project::games::calpoker::arrange::{final_cards, pull_out_cards};
 import project::games::calpoker::handcalc::handcalc;
 
 // Runs one of calpoker's card helpers, chosen by `kind`, for `src/tests/chialisp.rs`. The test
 // passes the arguments that the helper expects.
 fn main(kind: Bytes, ...arguments: Any) -> Any {
-    if kind == "onehandcalc" {
-        onehandcalc(unchecked_cast::<CardsArgs>(arguments).cards)
-    } else if kind == "make_cards" {
-        make_cards(unchecked_cast::<MakeCardsArgs>(arguments).randomness)
-    } else if kind == "pull_out_cards" {
+    if kind == "pull_out_cards" {
         let { selections, cards } = unchecked_cast::<PullOutCardsArgs>(arguments);
         pull_out_cards(selections, cards)
-    } else if kind == "split_cards" {
-        let { mask, cards } = unchecked_cast::<SplitCardsArgs>(arguments);
-        split_cards(mask, cards, nil, nil)
     } else if kind == "get_final_cards_in_canonical_order" {
         let {
             alice_cards,
@@ -35,17 +26,8 @@ struct CardsArgs {
     cards: List<Int>,
 }
 
-struct MakeCardsArgs {
-    randomness: Int,
-}
-
 struct PullOutCardsArgs {
     selections: Int,
-    cards: List<Int>,
-}
-
-struct SplitCardsArgs {
-    mask: Int,
     cards: List<Int>,
 }
 

@@ -37,25 +37,15 @@ inline fn timeout(params: RefereeParameters, solution: RefereeTimeout) -> List<C
     let { mover_payout_ph, waiter_payout_ph } = solution;
     let waiter_share = coin.amount - turn.mover_share;
 
-    inline let waiter_payout = if waiter_share != 0 {
-        [
-            CreateCoin { puzzle_hash: waiter_payout_ph, amount: waiter_share },
-            AggSigUnsafe {
-                public_key: coin.players.waiter_pubkey,
-                message: "x" + waiter_payout_ph,
-            },
-        ]
+    let waiter_payout = if waiter_share != 0 {
+        signed_payout(waiter_payout_ph, waiter_share, coin.players.waiter_pubkey, nil)
     } else {
         assert (waiter_payout_ph as Bytes) is nil;
         nil
     };
 
     let payouts = if turn.mover_share != 0 {
-        [
-            CreateCoin { puzzle_hash: mover_payout_ph, amount: turn.mover_share } as Condition,
-            AggSigUnsafe { public_key: coin.players.mover_pubkey, message: "x" + mover_payout_ph },
-            ...waiter_payout,
-        ]
+        signed_payout(mover_payout_ph, turn.mover_share, coin.players.mover_pubkey, waiter_payout)
     } else {
         assert (mover_payout_ph as Bytes) is nil;
         [Remark {} as Condition, Remark {}, ...waiter_payout]
@@ -70,10 +60,7 @@ inline fn slash(params: RefereeParameters, solution: RefereeSlash) -> List<Condi
     let validator_hash = tree_hash(validator);
     let result = validator(validator_hash, params, move, ...mover_payout_ph);
 
-    let payout = [
-        CreateCoin { puzzle_hash: mover_payout_ph, amount: coin.amount },
-        AggSigUnsafe { public_key: coin.players.mover_pubkey, message: "x" + mover_payout_ph },
-    ];
+    let payout = signed_payout(mover_payout_ph, coin.amount, coin.players.mover_pubkey, nil);
 
     assert turn.infohash_a as Bytes == sha256(validator_hash + tree_hash(move.state));
 
@@ -84,7 +71,8 @@ inline fn slash(params: RefereeParameters, solution: RefereeSlash) -> List<Condi
             max_move_size,
             extra_conditions,
         } => {
-            let committed_infohash = if next_validator_hash is nil {
+            // Hashing for a nil hash can't fail, so both branches are evaluated.
+            let committed_infohash = inline if next_validator_hash is nil {
                 nil
             } else {
                 sha256(next_validator_hash as Bytes + tree_hash(new_state))
@@ -103,6 +91,20 @@ inline fn slash(params: RefereeParameters, solution: RefereeSlash) -> List<Condi
             [...extra_conditions, ...payout]
         }
     }
+}
+
+// Pays the amount to the puzzle hash, which the public key signs, followed by the rest.
+fn signed_payout(
+    puzzle_hash: Bytes32,
+    amount: Int,
+    public_key: PublicKey,
+    rest: List<Condition>,
+) -> List<Condition> {
+    [
+        CreateCoin { puzzle_hash, amount },
+        AggSigUnsafe { public_key, message: "x" + puzzle_hash },
+        ...rest,
+    ]
 }
 
 inline fn make_move(params: RefereeParameters, solution: RefereeMove) -> List<Condition> {
@@ -129,22 +131,39 @@ inline fn make_move(params: RefereeParameters, solution: RefereeMove) -> List<Co
             infohash_a: turn.infohash_b,
         },
     };
-    let new_puzzle_hash = curry_tree_hash(coin.mod_hash, [tree_hash(new_params)]);
+    let new_puzzle_hash = curry_one_tree_hash(coin.mod_hash, tree_hash(new_params));
 
-    assert !(turn.infohash_b is nil);
-    assert new_move.length <= turn.last_move.max_move_size;
-    assert new_max_move_size.length <= 2;
-    assert new_max_move_size >= 0;
-    assert new_max_move_size == new_max_move_size + 0;
-    assert new_mover_share <= coin.amount;
-    assert new_mover_share >= 0;
-    assert new_mover_share == new_mover_share + 0;
-    assert (infohash_c is nil) || ((infohash_c as Bytes).length == 32);
-    assert !(infohash_c is nil) || (new_max_move_size == 0);
+    // Every check is evaluated, which is smaller than an assert for each. Each one only fails or is
+    // false where a separate assert would fail.
+    assert (!(turn.infohash_b is nil))
+        & (new_move.length <= turn.last_move.max_move_size)
+        & (new_max_move_size.length <= 2)
+        & (new_max_move_size >= 0)
+        & (new_max_move_size == new_max_move_size + 0)
+        & (new_mover_share <= coin.amount)
+        & (new_mover_share >= 0)
+        & (new_mover_share == new_mover_share + 0)
+        & ((infohash_c is nil) | ((infohash_c as Bytes).length == 32))
+        & (!(infohash_c is nil) | (new_max_move_size == 0));
 
     [
         AssertBeforeHeightRelative { height: coin.timeout },
         CreateCoin { puzzle_hash: new_puzzle_hash, amount: coin.amount },
         AggSigMe { public_key: coin.players.mover_pubkey, message: tree_hash(solution) },
     ]
+}
+
+// `curry_tree_hash(mod_hash, [argument_hash])`, for the referee's single curried argument: the hash
+// of `(a (q . MOD) (c (q . ARGUMENT) 1))`.
+fn curry_one_tree_hash(mod_hash: Bytes32, argument_hash: Bytes32) -> Bytes32 {
+    let quote = tree_hash_atom(1 as Bytes);
+    let nil_hash = tree_hash_atom(nil);
+    let environment = tree_hash_pair(
+        tree_hash_atom(4 as Bytes),
+        tree_hash_pair(tree_hash_pair(quote, argument_hash), tree_hash_pair(quote, nil_hash)),
+    );
+    tree_hash_pair(
+        tree_hash_atom(2 as Bytes),
+        tree_hash_pair(tree_hash_pair(quote, mod_hash), tree_hash_pair(environment, nil_hash)),
+    )
 }

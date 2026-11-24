@@ -1,5 +1,5 @@
 import project::referee::types::*;
-import super::cards::make_cards;
+import super::cards::deal;
 import super::types::{Deal, Seeds};
 
 // Alice reveals her seed, and commits to her discards. The move is the 16 byte seed, followed by
@@ -17,7 +17,7 @@ export fn main(
 
     let alice_seed = game_move[..16];
     let { seed_commit, bob_seed } = move.state;
-    let hands = make_cards(sha256(alice_seed + bob_seed + params.coin.amount as Bytes) as Int);
+    let hands = deal(alice_seed, bob_seed, params.coin.amount);
     let deal = Deal { discard_commit: game_move[16..48], hands };
 
     // The deal is evaluated even if the seed doesn't match, so a malformed seed or amount fails

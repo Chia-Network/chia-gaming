@@ -94,7 +94,7 @@ fn validator(args: DebugCurry, ...validator_args: ValidatorArgs) -> ValidatorRes
     let game_move = turn.last_move.game_move;
 
     let count = state.count + 0;
-    let own_hash = validator_hash(args);
+    let own_hash = validator_hash(args.self_hash);
     let counter_data = coin.players.waiter_pubkey as Bytes
         + coin.players.mover_pubkey as Bytes
         + coin.mod_hash
@@ -125,7 +125,7 @@ fn validator(args: DebugCurry, ...validator_args: ValidatorArgs) -> ValidatorRes
     }
 
     validator_transition(
-        validator_hash(DebugCurry { ...args, count: args.count + 1 }),
+        validator_hash(args.self_hash),
         DebugState {
             count: count + 1,
             slashable: slash_byte,
@@ -136,15 +136,12 @@ fn validator(args: DebugCurry, ...validator_args: ValidatorArgs) -> ValidatorRes
 }
 
 // The hash of this program curried as the validator, with a count of zero.
-fn validator_hash(args: DebugCurry) -> Bytes32 {
+fn validator_hash(self_hash: Bytes32) -> Bytes32 {
     let curry_hash = tree_hash_pair(
         tree_hash_atom(nil),
-        tree_hash_pair(
-            tree_hash_atom(args.self_hash),
-            tree_hash_pair(args.self_hash, tree_hash_atom(nil)),
-        ),
+        tree_hash_pair(tree_hash_atom(self_hash), tree_hash_pair(self_hash, tree_hash_atom(nil))),
     );
-    curry_tree_hash(args.self_hash, [tree_hash_atom("validator"), curry_hash])
+    curry_tree_hash(self_hash, [tree_hash_atom("validator"), curry_hash])
 }
 
 // Makes a value at least one byte long.
@@ -198,7 +195,7 @@ fn their_turn(args: DebugCurry, ...their_turn_args: TheirTurnArgs) -> DebugTheir
     let move_count = read_over_integer(move, nil, mover_share.position - 1);
 
     assert move_count.value as Int + 0 == args.count, "their turn: mismatched count";
-    assert validator_hash(args) == validation_program_hash,
+    assert validator_hash(args.self_hash) == validation_program_hash,
         "their turn: mismatched validator program";
     assert split == mover_share.value as Int + 0, "their turn: wrong mover share";
     assert split == state.mover_share, "their turn: wrong mover share in state";

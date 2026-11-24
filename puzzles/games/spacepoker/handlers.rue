@@ -8,8 +8,8 @@
 
 import deal::*;
 import hand_calc::space_hand_calc;
-import hand_eval::deep_compare;
 import onchain::end::waiter_share;
+import project::games::poker::{deep_compare, select_cards};
 import project::games::types::*;
 import readables::*;
 import states::*;

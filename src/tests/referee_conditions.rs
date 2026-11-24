@@ -214,6 +214,139 @@ fn run_referee_move_with_max_size(new_max_move_size: &[u8]) -> Result<NodePtr, S
     }
 }
 
+/// Run the referee timeout path with the given mover share, and return its conditions as lists
+/// of atoms.
+fn run_referee_timeout(
+    mover_share: i64,
+    mover_payout_ph: Option<&[u8; 32]>,
+    waiter_payout_ph: Option<&[u8; 32]>,
+) -> Result<Vec<Vec<Vec<u8>>>, String> {
+    let mut allocator = AllocEncoder::new();
+    let referee = load_referee_puzzle(&mut allocator);
+    let referee_clvm = referee.to_clvm(&mut allocator).expect("referee to clvm");
+    let referee_hash: [u8; 32] = *referee.sha256tree(&mut allocator).hash().bytes();
+
+    let mover_pk = allocator.allocator().new_atom(&[0x11; 48]).unwrap();
+    let waiter_pk = allocator.allocator().new_atom(&[0x22; 48]).unwrap();
+    let timeout = 10i64.to_clvm(&mut allocator).unwrap();
+    let amount = AMOUNT.to_clvm(&mut allocator).unwrap();
+    let mod_hash = hash_to_node(&mut allocator, &referee_hash);
+    let nonce = 1i64.to_clvm(&mut allocator).unwrap();
+    let last_move = allocator.allocator().new_atom(&[0x44]).unwrap();
+    let max_move_size = 5i64.to_clvm(&mut allocator).unwrap();
+    let infohash_b = allocator.allocator().new_atom(&[0x55; 32]).unwrap();
+    let mover_share = mover_share.to_clvm(&mut allocator).unwrap();
+    let infohash_a = allocator.allocator().new_atom(&[0x66; 32]).unwrap();
+    let curried_args = crate::referee::types::encode_referee_args(
+        &mut allocator,
+        [
+            mover_pk,
+            waiter_pk,
+            timeout,
+            amount,
+            mod_hash,
+            nonce,
+            last_move,
+            max_move_size,
+            infohash_b,
+            mover_share,
+            infohash_a,
+        ],
+    )
+    .expect("referee argument tree");
+
+    let mover_payout_ph = mover_payout_ph
+        .map(|hash| hash_to_node(&mut allocator, hash))
+        .unwrap_or(NodePtr::NIL);
+    let waiter_payout_ph = waiter_payout_ph
+        .map(|hash| hash_to_node(&mut allocator, hash))
+        .unwrap_or(NodePtr::NIL);
+    let timeout_args = (Node(mover_payout_ph), Node(waiter_payout_ph))
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let args = allocator
+        .allocator()
+        .new_pair(curried_args, timeout_args)
+        .expect("build referee args");
+
+    let conditions = run_program(
+        allocator.allocator(),
+        &chia_dialect(),
+        referee_clvm,
+        args,
+        0,
+    )
+    .map_err(|error| format!("CLVM error: {error:?}"))?
+    .1;
+    let conditions = proper_list(allocator.allocator(), conditions, true).expect("conditions");
+    Ok(conditions
+        .iter()
+        .map(|condition| {
+            proper_list(allocator.allocator(), *condition, true)
+                .expect("condition")
+                .iter()
+                .map(|atom| allocator.allocator_ref().atom(*atom).to_vec())
+                .collect()
+        })
+        .collect())
+}
+
+/// A timeout where the mover gets nothing pays the waiter the whole coin, with two remarks that
+/// stand in for the mover's payout and keep the waiter's payout at the same condition index.
+#[test]
+fn test_referee_timeout_zero_mover_share() {
+    let waiter_ph = [0xaa; 32];
+    let conditions = run_referee_timeout(0, None, Some(&waiter_ph)).expect("timeout");
+    assert_eq!(
+        conditions,
+        vec![
+            vec![vec![82], vec![10]],
+            vec![vec![1]],
+            vec![vec![1]],
+            vec![vec![51], waiter_ph.to_vec(), vec![0x00, 0xc8]],
+            vec![
+                vec![49],
+                vec![0x22; 48],
+                [b"x".as_slice(), &waiter_ph].concat()
+            ],
+        ]
+    );
+}
+
+/// A timeout where the mover gets the whole coin pays only the mover.
+#[test]
+fn test_referee_timeout_full_mover_share() {
+    let mover_ph = [0x99; 32];
+    let conditions = run_referee_timeout(AMOUNT, Some(&mover_ph), None).expect("timeout");
+    assert_eq!(
+        conditions,
+        vec![
+            vec![vec![82], vec![10]],
+            vec![vec![51], mover_ph.to_vec(), vec![0x00, 0xc8]],
+            vec![
+                vec![49],
+                vec![0x11; 48],
+                [b"x".as_slice(), &mover_ph].concat()
+            ],
+        ]
+    );
+}
+
+/// A player with no share must not name a payout puzzle hash, so there's one timeout solution.
+#[test]
+fn test_referee_timeout_rejects_payout_ph_for_zero_share() {
+    let mover_ph = [0x99; 32];
+    let waiter_ph = [0xaa; 32];
+    assert!(
+        run_referee_timeout(0, Some(&mover_ph), Some(&waiter_ph)).is_err(),
+        "a mover with no share must not name a payout puzzle hash"
+    );
+    assert!(
+        run_referee_timeout(AMOUNT, Some(&mover_ph), Some(&waiter_ph)).is_err(),
+        "a waiter with no share must not name a payout puzzle hash"
+    );
+}
+
 /// Exercise the Rust encoder, CLVM successor hash, and timeout reader together.
 #[test]
 fn test_referee_tree_move_and_timeout_agree_with_rust() {
@@ -621,6 +754,18 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_referee_tree_move_and_timeout_agree_with_rust",
             &test_referee_tree_move_and_timeout_agree_with_rust,
+        ),
+        (
+            "test_referee_timeout_zero_mover_share",
+            &test_referee_timeout_zero_mover_share,
+        ),
+        (
+            "test_referee_timeout_full_mover_share",
+            &test_referee_timeout_full_mover_share,
+        ),
+        (
+            "test_referee_timeout_rejects_payout_ph_for_zero_share",
+            &test_referee_timeout_rejects_payout_ph_for_zero_share,
         ),
         ("test_slash_succeeds_nil", &test_slash_succeeds_nil),
         (

@@ -1,5 +1,5 @@
-import arrange::deep_compare;
 import hand::onehandcalc;
+import project::games::poker::deep_compare;
 
 // The best hand of five of the cards, and the indices of its cards in ascending order.
 export struct ScoredHand {

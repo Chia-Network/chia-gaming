@@ -1679,8 +1679,9 @@ dependencies = [
 
 [[package]]
 name = "rue-ast"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "449a6cbf4e09e8cfe32974e828996b9750ae5c971e9e7de6f9f07371bf06671b"
 dependencies = [
  "paste",
  "rue-parser",
@@ -1688,8 +1689,9 @@ dependencies = [
 
 [[package]]
 name = "rue-clvm"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f6afa2e911bcdf863257e54444f793e5143d68f433fb5b66a89fa75516de964"
 dependencies = [
  "clvmr",
  "hex",
@@ -1699,8 +1701,9 @@ dependencies = [
 
 [[package]]
 name = "rue-compiler"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffa5c8522f99485c8228ae8a72910e40ea011c5810ff2fe2a7c71827ef8e8eb5"
 dependencies = [
  "clvmr",
  "hex",
@@ -1726,8 +1729,9 @@ dependencies = [
 
 [[package]]
 name = "rue-diagnostic"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2394fbe2ac7b522102d25fecb218df2a80901440919d2f13e5de985592a69679"
 dependencies = [
  "serde",
  "thiserror",
@@ -1735,8 +1739,9 @@ dependencies = [
 
 [[package]]
 name = "rue-hir"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e4fbbd30bfb54e4ebc4e3227c2fea34c8344cc3d22a52885f935177e0ebb45f"
 dependencies = [
  "clvmr",
  "derive_more",
@@ -1753,13 +1758,15 @@ dependencies = [
 
 [[package]]
 name = "rue-lexer"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b249f82939bc492c3a4f700e3551a92881b0b63908de5fbfb03a41276e4bc297"
 
 [[package]]
 name = "rue-lint"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82164f073b53dbfbfd368a7ec1d6bd061847d1f41851cfa8334db63cb5d17f7e"
 dependencies = [
  "num-bigint 0.4.8",
  "rowan",
@@ -1774,8 +1781,9 @@ dependencies = [
 
 [[package]]
 name = "rue-lir"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "779bd6c3aa092d947f1cf8a5dd80ee2b40ac54568c93f047b227bf0f80d260b6"
 dependencies = [
  "clvm-traits 0.55.0",
  "clvmr",
@@ -1792,8 +1800,9 @@ dependencies = [
 
 [[package]]
 name = "rue-options"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bbe25586c081f21cbf293b28179411e9de464e790be68691542270ab0af32a2"
 dependencies = [
  "rue-diagnostic",
  "serde",
@@ -1803,8 +1812,9 @@ dependencies = [
 
 [[package]]
 name = "rue-parser"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "641eeaa2d29b1866d9dc913f42a3dd0ef464fa97ade318d8511a8ff1be72efb4"
 dependencies = [
  "derive_more",
  "indexmap",
@@ -1817,8 +1827,9 @@ dependencies = [
 
 [[package]]
 name = "rue-types"
-version = "0.13.0"
-source = "git+https://github.com/xch-dev/rue?rev=9faa0bd544dd9148d15323b48c945fde14c3f13f#9faa0bd544dd9148d15323b48c945fde14c3f13f"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae5a9a98f6da47fc1e7770caaf109500977ddb0131068d61e90d5dd1df320c07"
 dependencies = [
  "clvmr",
  "derive_more",

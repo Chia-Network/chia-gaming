@@ -9,18 +9,18 @@
 export struct HoleCards {
     first: Int,
     second: Int,
-    boost: Bool,
+    ...boost: Bool,
 }
 
 // A player's hole cards, and the seven cards that they make their hand from.
 export struct PlayerCards {
     hole_cards: HoleCards,
-    cards: List<Int>,
+    ...cards: List<Int>,
 }
 
 export struct Deal {
     player: PlayerCards,
-    opponent: PlayerCards,
+    ...opponent: PlayerCards,
 }
 
 // Hashes two images, one from each player, into a seed to draw cards from.
@@ -80,25 +80,6 @@ export fn deal(preimage: Bytes, opponent_preimage: Bytes) -> Deal {
             hole_cards: opponent,
             cards: [opponent.first, opponent.second, ...board],
         },
-    }
-}
-
-// The cards whose bits are set in a bitfield, where bit 0 is the first card.
-export fn select_cards(cards: List<Int>, bitfield: Int) -> List<Int> {
-    if cards is nil {
-        return nil;
-    }
-
-    let selected = select_cards(cards.rest, bitfield >>> 1);
-    inline if bitfield & 1 != 0 { [cards.first, ...selected] } else { selected }
-}
-
-// The number of bits that are set in a bitfield.
-export fn popcount(bitfield: Int) -> Int {
-    if bitfield != 0 {
-        (bitfield & 1) + popcount(bitfield >>> 1)
-    } else {
-        0
     }
 }
 

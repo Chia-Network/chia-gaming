@@ -60,10 +60,7 @@ const RUE_PROGRAMS: &[(&str, &str)] = &[
         "puzzles/test/space_hand_eval.rue",
         "clsp/test/test_space_hand_eval_space_hand_eval",
     ),
-    (
-        "puzzles/test/space_hand_calc.rue",
-        "clsp/test/test_space_hand_eval_space_hand_calc",
-    ),
+    ("puzzles/test/space_deal.rue", "clsp/test/test_space_deal"),
     (
         "puzzles/test/test_dict_lookup.rue",
         "clsp/test/test_dict_lookup",
@@ -142,14 +139,15 @@ fn rue_package_dir(key: &str) -> Option<PathBuf> {
     dir.join("factory.rue").is_file().then_some(dir)
 }
 
-/// The programs of the game packages, with where their outputs are written. A package has a `factory.rue`, an optional `factory_probe.rue`, and its validators in `onchain/`
-/// (except for `test_` files). Their outputs are written to the package's `clsp/` directory.
+/// The programs of the game packages, with where their outputs are written. A package has a
+/// `factory.rue`, an optional `factory_probe.rue`, and its validators in `onchain/`. Their outputs
+/// are written to the package's `clsp/` directory. Every package has been validated, so each has a
+/// factory.
 fn rue_package_programs(registry: &GameRegistry) -> Vec<(String, String)> {
     let mut programs = Vec::new();
     for key in registry.production.iter().chain(registry.test.iter()) {
-        let Some(dir) = rue_package_dir(key) else {
-            continue;
-        };
+        let dir =
+            rue_package_dir(key).unwrap_or_else(|| panic!("game package {key} has no Rue factory"));
         let output = PathBuf::from("games").join(key).join("clsp");
         for name in ["factory", "factory_probe"] {
             let source = dir.join(format!("{name}.rue"));
@@ -167,11 +165,6 @@ fn rue_package_programs(registry: &GameRegistry) -> Vec<(String, String)> {
                 .flatten()
                 .map(|e| e.path())
                 .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rue"))
-                .filter(|p| {
-                    p.file_stem()
-                        .and_then(|s| s.to_str())
-                        .is_some_and(|stem| !stem.starts_with("test_"))
-                })
                 .collect();
             files.sort();
             for file in files {

@@ -1,5 +1,5 @@
-import hand_eval::deep_compare;
 import handlers::*;
+import project::games::poker::deep_compare;
 import project::games::types::*;
 
 // The arguments of the factory: both players' reserves, and the game parameters that the

@@ -1,5 +1,4 @@
-import cards::popcount;
-import hand::atomsort;
+import project::games::poker::{popcount, select_cards, sort_into};
 import types::Hands;
 
 // Each player's final eight cards, given each player's discards: the cards that a player keeps,
@@ -13,8 +12,8 @@ export fn final_cards(
     let alice = split_cards(alice_discards, alice_cards, nil, nil);
     let bob = split_cards(bob_discards, bob_cards, nil, nil);
     Hands {
-        alice_cards: ascending_card_ids([...alice.kept, ...bob.discarded]),
-        bob_cards: ascending_card_ids([...bob.kept, ...alice.discarded]),
+        alice_cards: ascending_card_ids(alice.kept, bob.discarded),
+        bob_cards: ascending_card_ids(bob.kept, alice.discarded),
     }
 }
 
@@ -25,60 +24,29 @@ struct Split {
 }
 
 // Splits the cards by a mask, whose lowest bit is for the first card. A set bit discards a card.
-export fn split_cards(mask: Int, cards: List<Int>, kept: List<Int>, discarded: List<Int>) -> Split {
+fn split_cards(mask: Int, cards: List<Int>, kept: List<Int>, discarded: List<Int>) -> Split {
     if cards is nil {
-        Split { kept, discarded }
-    } else if mask & 1 != 0 {
-        split_cards(mask >>> 1, cards.rest, kept, [cards.first, ...discarded])
-    } else {
-        split_cards(mask >>> 1, cards.rest, [cards.first, ...kept], discarded)
+        return Split { kept, discarded };
     }
+
+    let discard = mask & 1 != 0;
+    split_cards(
+        mask >>> 1,
+        cards.rest,
+        inline if discard { kept } else { [cards.first, ...kept] },
+        inline if discard { [cards.first, ...discarded] } else { discarded },
+    )
 }
 
 // The cards that the selections pick, which must be five of them. The lowest bit of the selections
 // is for the first card.
 export fn pull_out_cards(selections: Int, cards: List<Int>) -> List<Int> {
     assert popcount(selections) == 5, "pull_out_cards got bad data";
-    pick_cards(selections, cards)
+    select_cards(cards, selections)
 }
 
-export fn pick_cards(selections: Int, cards: List<Int>) -> List<Int> {
-    if cards is nil {
-        return nil;
-    }
-
-    if selections & 1 != 0 {
-        [cards.first, ...pick_cards(selections >>> 1, cards.rest)]
-    } else {
-        pick_cards(selections >>> 1, cards.rest)
-    }
-}
-
-// Selection bits index the dealt card IDs in ascending order. atomsort is descending.
-inline fn ascending_card_ids(cards: List<Int>) -> List<Int> {
-    reverse(atomsort(cards))
-}
-
-// Compare atoms as integers and pairs lexicographically, with atoms before pairs.
-export fn deep_compare(a: Any, b: Any) -> Int {
-    if a is (Any, Any) {
-        if b is (Any, Any) {
-            let first = deep_compare(a.first, b.first);
-            if first != 0 {
-                first
-            } else {
-                deep_compare(a.rest, b.rest)
-            }
-        } else {
-            1
-        }
-    } else if b is (Any, Any) {
-        -1
-    } else if a as Int > b as Int {
-        1
-    } else if b as Int > a as Int {
-        -1
-    } else {
-        0
-    }
+// Selection bits index the card IDs in ascending order. This is `atomsort` of the kept cards
+// followed by the received ones, reversed, without joining the lists first.
+inline fn ascending_card_ids(kept: List<Int>, received: List<Int>) -> List<Int> {
+    reverse(sort_into(kept, sort_into(received, nil)))
 }

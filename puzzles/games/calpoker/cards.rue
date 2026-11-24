@@ -1,5 +1,11 @@
 import types::Hands;
 
+// Deals the cards from both players' seeds and the amount, which the `c` validator and the handlers
+// must do the same way.
+export inline fn deal(alice_seed: Bytes, bob_seed: Bytes, amount: Int) -> Hands {
+    make_cards(sha256(alice_seed + bob_seed + amount as Bytes) as Int)
+}
+
 // Deals eight cards to each player from the randomness, each hand in ascending order.
 export fn make_cards(randomness: Int) -> Hands {
     let alice = choose(52, 8, randomness);
@@ -34,9 +40,7 @@ fn mergeover(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
     }
 
     let first = inner.first + offset;
-    if outer is nil {
-        [first, ...mergeover(nil, inner.rest, offset)]
-    } else if outer.first <= first {
+    if !(outer is nil) && outer.first <= first {
         mergeover(outer.rest, inner, offset + 1)
     } else {
         [first, ...mergeover(outer, inner.rest, offset)]
@@ -51,20 +55,9 @@ export fn mergein(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> 
     }
 
     let first = inner.first + offset;
-    if outer is nil {
-        [first, ...mergein(nil, inner.rest, offset)]
-    } else if outer.first <= first {
+    if !(outer is nil) && outer.first <= first {
         [outer.first, ...mergein(outer.rest, inner, offset + 1)]
     } else {
         [first, ...mergein(outer, inner.rest, offset)]
-    }
-}
-
-// The number of set bits.
-export fn popcount(mask: Int) -> Int {
-    if mask == 0 {
-        0
-    } else {
-        (mask & 1) + popcount(mask >>> 1)
     }
 }

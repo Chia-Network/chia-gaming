@@ -38,9 +38,6 @@ struct SignedEvidence {
 // counting from the latest, as a single byte.
 const CLUE_INDICES: List<Bytes> = [0x00, 0x01, 0x02, 0x03, 0x04];
 
-// The clue for a correct guess.
-const CORRECT_CLUE: Bytes = 0x72;
-
 fn signed_evidence(gap: DictGap) -> SignedEvidence {
     SignedEvidence { range: gap.left_bound + gap.right_bound, signature: gap.signature }
 }
@@ -174,7 +171,7 @@ fn bob_reveal(
 ) -> KrunkTheirTurnMove {
     let word = reveal[16..21];
     let clue = if mover_share != 0 {
-        expand_clue(CORRECT_CLUE)
+        expand_clue(ALL_GREEN_CLUE as Bytes)
     } else {
         // A reveal follows a guess, so this is the state after Alice's commitment.
         assert pre_state is KrunkState;

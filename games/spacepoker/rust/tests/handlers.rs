@@ -1304,6 +1304,137 @@ fn test_boost_wins_within_same_hand_type() {
     );
 }
 
+// A player's hole cards and boost, and the community cards, as Space Poker deals them.
+#[derive(Debug, PartialEq, Eq)]
+struct SpaceDeal {
+    alice_hole: (i64, i64, bool),
+    bob_hole: (i64, i64, bool),
+    flop: [i64; 3],
+    turn: i64,
+    river: i64,
+}
+
+fn int_list(allocator: &mut AllocEncoder, node: NodePtr) -> Vec<i64> {
+    let items = proper_list(allocator.allocator(), node, true).expect("card list");
+    items.iter().map(|n| int_from_node(allocator, *n)).collect()
+}
+
+fn hole_cards(allocator: &mut AllocEncoder, node: NodePtr) -> (i64, i64, bool) {
+    let fields = proper_list(allocator.allocator(), node, true).expect("hole cards");
+    assert_eq!(fields.len(), 3, "hole cards are (first second boost)");
+    (
+        int_from_node(allocator, fields[0]),
+        int_from_node(allocator, fields[1]),
+        fields[2] != NodePtr::NIL,
+    )
+}
+
+// The expected cards are from the Chialisp build before the Rue rewrite
+// (`make_all_cards` in games/spacepoker/clsp/onchain/end.clsp and
+// `community_cards_for_pos` in spacepoker_generate.clinc at 8b058e6e), so this
+// pins that the rewrite deals the same cards.
+#[test]
+fn test_spacepoker_deal_fixed_cards() {
+    let cases = [
+        (
+            [0x11; 16],
+            [0x22; 16],
+            SpaceDeal {
+                alice_hole: (12, 11, false),
+                bob_hole: (5, 12, true),
+                flop: [3, 2, 6],
+                turn: 8,
+                river: 5,
+            },
+        ),
+        (
+            [0x00; 16],
+            [0xff; 16],
+            SpaceDeal {
+                alice_hole: (13, 2, false),
+                bob_hole: (10, 9, true),
+                flop: [6, 8, 9],
+                turn: 12,
+                river: 5,
+            },
+        ),
+        (
+            [
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+                0x0f, 0x10,
+            ],
+            [
+                0xf0, 0xe0, 0xd0, 0xc0, 0xb0, 0xa0, 0x90, 0x80, 0x70, 0x60, 0x50, 0x40, 0x30, 0x20,
+                0x10, 0x00,
+            ],
+            SpaceDeal {
+                alice_hole: (11, 2, false),
+                bob_hole: (11, 5, false),
+                flop: [6, 6, 6],
+                turn: 14,
+                river: 11,
+            },
+        ),
+        (
+            [0xee; 16],
+            [0x01; 16],
+            SpaceDeal {
+                alice_hole: (3, 14, true),
+                bob_hole: (9, 10, true),
+                flop: [13, 4, 5],
+                turn: 13,
+                river: 3,
+            },
+        ),
+    ];
+
+    let mut a = AllocEncoder::new();
+    let program = read_hex_puzzle(&mut a, "clsp/test/test_space_deal.hex").expect("load space_deal");
+    let program_clvm = program.to_clvm(&mut a).unwrap();
+    for (alice_pre, bob_pre, expected) in cases {
+        let alice_pre_node = a.allocator().new_atom(&alice_pre).unwrap();
+        let bob_pre_node = a.allocator().new_atom(&bob_pre).unwrap();
+        let args = enlist(a.allocator(), &[alice_pre_node, bob_pre_node]).unwrap();
+        let result = run_clvm(&mut a, program_clvm, args);
+        let [deal, flop, turn, river] = proper_list(a.allocator(), result, true)
+            .expect("dealt cards")
+            .try_into()
+            .expect("dealt cards are (deal flop turn river)");
+        let [alice, bob] = proper_list(a.allocator(), deal, true)
+            .expect("deal")
+            .try_into()
+            .expect("deal is (player opponent)");
+        let [alice_hole, alice_cards] = proper_list(a.allocator(), alice, true)
+            .expect("player cards")
+            .try_into()
+            .expect("player cards are (hole_cards cards)");
+        let [bob_hole, bob_cards] = proper_list(a.allocator(), bob, true)
+            .expect("opponent cards")
+            .try_into()
+            .expect("opponent cards are (hole_cards cards)");
+
+        let flop = int_list(&mut a, flop);
+        let turn = int_list(&mut a, turn);
+        let river = int_list(&mut a, river);
+        let actual = SpaceDeal {
+            alice_hole: hole_cards(&mut a, alice_hole),
+            bob_hole: hole_cards(&mut a, bob_hole),
+            flop: flop.clone().try_into().expect("the flop is three cards"),
+            turn: turn[0],
+            river: river[0],
+        };
+        assert_eq!(actual, expected, "deal for {alice_pre:02x?} and {bob_pre:02x?}");
+        assert_eq!(turn.len(), 1, "the turn is one card");
+        assert_eq!(river.len(), 1, "the river is one card");
+
+        let board = [flop, turn, river].concat();
+        let (a1, a2, _) = expected.alice_hole;
+        let (b1, b2, _) = expected.bob_hole;
+        assert_eq!(int_list(&mut a, alice_cards), [vec![a1, a2], board.clone()].concat());
+        assert_eq!(int_list(&mut a, bob_cards), [vec![b1, b2], board].concat());
+    }
+}
+
 #[test]
 fn test_evil_path_wrong_mover_share() {
     let mut allocator = AllocEncoder::new();
@@ -2128,6 +2259,10 @@ pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
         (
             "test_boost_wins_within_same_hand_type",
             &test_boost_wins_within_same_hand_type,
+        ),
+        (
+            "test_spacepoker_deal_fixed_cards",
+            &test_spacepoker_deal_fixed_cards,
         ),
         (
             "test_evil_path_wrong_mover_share",
