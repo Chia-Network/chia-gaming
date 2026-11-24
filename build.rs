@@ -309,6 +309,9 @@ fn compile_rue() -> Result<(), String> {
     for (source, output) in RUE_PROGRAMS {
         let kind =
             normalize_path(&root.join(source)).map_err(|e| format!("resolving {source}: {e}"))?;
+        if let Some(dir) = Path::new(output).parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+        }
         let (program, metadata) = tree
             .main_with_debug_metadata(&mut ctx, &mut allocator, &kind, root.clone())
             .map_err(|e| format!("compiling {source}: {e}"))?
