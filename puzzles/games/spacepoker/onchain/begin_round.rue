@@ -31,17 +31,16 @@ export fn main(
         true
     };
 
-    // The toss is decided before anything else is checked, so it's checked first.
+    // Both an opening and a pong must reveal the image and leave the same share.
+    let half_amount = params.coin.amount / 2;
+    if params.turn.mover_share != half_amount
+            - state.stakes.half_pot
+        || state.stakes.mover_image != sha256(mover_image)
+    {
+        return nil;
+    }
     if opens {
-        let half_amount = params.coin.amount / 2;
-        if !(
-            pays_half_pot(params, state)
-                && reveals_image(state, mover_image)
-                && raise_amount >= 0
-                && state.stakes.half_pot
-                        + raise_amount
-                    <= half_amount
-        ) {
+        if raise_amount < 0 || state.stakes.half_pot + raise_amount > half_amount {
             return nil;
         }
 
@@ -62,9 +61,7 @@ export fn main(
             42,
         )
     } else {
-        if !(pays_half_pot(params, state) && reveals_image(state, mover_image))
-            || game_move.length != 32
-        {
+        if game_move.length != 32 {
             return nil;
         }
 
@@ -81,14 +78,4 @@ export fn main(
             42,
         )
     }
-}
-
-// The mover's share is what's left of their half of the amount after the pot.
-fn pays_half_pot(params: RefereeParameters, state: OpenState) -> Bool {
-    params.turn.mover_share == params.coin.amount / 2 - state.stakes.half_pot
-}
-
-// The move reveals the preimage of the mover's image.
-fn reveals_image(state: OpenState, mover_image: Bytes) -> Bool {
-    state.stakes.mover_image == sha256(mover_image)
 }

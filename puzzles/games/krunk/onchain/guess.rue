@@ -1,5 +1,4 @@
 import project::referee::types::*;
-import super::rules::is_zero;
 import super::state::*;
 
 // Alice challenging Bob's guess, which is a five-letter word. The evidence that it isn't in the
@@ -13,7 +12,7 @@ export fn main(
 ) -> ValidatorResult<KrunkState> | nil {
     let { last_move, mover_share } = params.turn;
     let guess = last_move.game_move;
-    if guess.length != 5 || !is_zero(mover_share) {
+    if guess.length != 5 || mover_share != 0 {
         return nil;
     }
 

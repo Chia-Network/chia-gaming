@@ -23,38 +23,37 @@ export struct Deal {
     opponent: PlayerCards,
 }
 
-struct Draw {
-    card: Int,
-    ...rest: Int,
-}
-
 // Hashes two images, one from each player, into a seed to draw cards from.
 fn seed(image: Bytes, opponent_image: Bytes) -> Int {
     sha256((image as Int ^ opponent_image as Int) as Bytes) as Int
 }
 
-// Draws a card from a seed, and returns what's left of the seed to draw the next one from.
-fn draw(seed: Int) -> Draw {
-    let (rest, rank) = divmod(seed, 13);
-    Draw { card: rank + 2, rest }
+// The last draw only needs the remainder.
+fn card_rank(seed: Int) -> Int {
+    seed % 13 + 2
+}
+
+inline fn flop(seed: Int) -> [Int, Int, Int] {
+    let (rest, first) = divmod(seed, 13);
+    let (last, second) = divmod(rest, 13);
+    [first + 2, second + 2, card_rank(last)]
 }
 
 // Deals a player's hole cards and boost, from their preimage and the opponent's image 4.
 export fn hole_cards(preimage: Bytes, opponent_image: Bytes) -> HoleCards {
     let seed = seed(preimage, opponent_image);
-    let first = draw(seed);
-    HoleCards { first: first.card, second: draw(first.rest).card, boost: seed % 3 == 0 }
+    let (rest, first) = divmod(seed, 13);
+    HoleCards { first: first + 2, second: card_rank(rest), boost: seed % 3 == 0 }
 }
 
 // Deals the community cards of a street from both players' images of the round before it: three
 // for the flop (from images 3), and one for the turn or the river (from images 2 or 1).
 export fn community_cards(image: Bytes, opponent_image: Bytes, round: Int) -> List<Int> {
-    let first = draw(seed(image, opponent_image));
+    let seed = seed(image, opponent_image);
     if round == 3 {
-        let second = draw(first.rest);
-        [first.card, second.card, draw(second.rest).card]
+        flop(seed)
     } else {
-        [first.card]
+        [card_rank(seed)]
     }
 }
 
@@ -68,20 +67,18 @@ export fn deal(preimage: Bytes, opponent_preimage: Bytes) -> Deal {
     let opponent_image_2 = sha256(opponent_image_1);
     let opponent_image_3 = sha256(opponent_image_2);
 
-    let flop = community_cards(image_3, opponent_image_3, 3);
-    let turn = community_cards(image_2, opponent_image_2, 2);
-    let river = community_cards(image_1, opponent_image_1, 1);
+    let [first, second, third] = flop(seed(image_3, opponent_image_3));
+    let turn = card_rank(seed(image_2, opponent_image_2));
+    let river = card_rank(seed(image_1, opponent_image_1));
+    let board = [first, second, third, turn, river];
     let player = hole_cards(preimage, sha256(opponent_image_3));
     let opponent = hole_cards(opponent_preimage, sha256(image_3));
 
     Deal {
-        player: PlayerCards {
-            hole_cards: player,
-            cards: [player.first, player.second, ...flop, ...turn, ...river],
-        },
+        player: PlayerCards { hole_cards: player, cards: [player.first, player.second, ...board] },
         opponent: PlayerCards {
             hole_cards: opponent,
-            cards: [opponent.first, opponent.second, ...flop, ...turn, ...river],
+            cards: [opponent.first, opponent.second, ...board],
         },
     }
 }
@@ -93,11 +90,7 @@ export fn select_cards(cards: List<Int>, bitfield: Int) -> List<Int> {
     }
 
     let selected = select_cards(cards.rest, bitfield >>> 1);
-    if bitfield & 1 != 0 {
-        [cards.first, ...selected]
-    } else {
-        selected
-    }
+    inline if bitfield & 1 != 0 { [cards.first, ...selected] } else { selected }
 }
 
 // The number of bits that are set in a bitfield.

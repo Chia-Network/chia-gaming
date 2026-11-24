@@ -15,43 +15,30 @@
 // | Pair            | `2 1 1 1 boost pair k1 k2 k3`  |
 // | High card       | `1 1 1 1 1 boost h k1 k2 k3 k4` |
 export fn space_hand_eval(cards: List<Int>, boost: Bool) -> List<Int> {
-    // Each group is a rank and how many times it appears, as `16 * count + rank`, so sorting the
-    // groups puts the largest groups first, and the highest ranks first among groups of a size.
-    let groups = atomsort(group_by_count(atomsort(cards)));
-    let ranking = [
-        ...for group in groups { group >>> 4 },
-        boost as Int,
-        ...for group in groups { group & 15 },
-    ];
-
-    // The ranking is never empty, since it has the boost in it.
-    if ranking is nil || ranking.first != 1 {
-        return ranking;
+    let ranks = atomsort(cards);
+    // The hand selection supplies five ranks, and atomsort preserves their count.
+    let ranks = unchecked_cast::<[Int, Int, Int, Int, Int, ...List<Int>]>(ranks);
+    let [high, second, third, fourth, low, ..._] = ranks;
+    if high != second && second != third && third != fourth && fourth != low {
+        return if high - low == 4 {
+            [3, 3, boost as Int, high]
+        } else {
+            [1, 1, 1, 1, 1, boost as Int, ...ranks]
+        };
     }
 
-    // Five different ranks, which are a straight if they're consecutive.
-    assert ranking is [Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, ...List<Int>];
-    let [_, _, _, _, _, _, high, _, _, _, low, ..._] = ranking;
-    if low == high - 4 {
-        [3, 3, boost as Int, high]
-    } else {
-        ranking
-    }
+    let groups = atomsort(group_runs(ranks.rest, high, 1));
+    [...for group in groups { group >>> 4 }, boost as Int, ...for group in groups { group & 15 }]
 }
 
 // Groups the runs of equal ranks in a sorted hand, as `16 * count + rank`.
-fn group_by_count(ranks: List<Int>) -> List<Int> {
-    assert !(ranks is nil);
-    group_runs(ranks, ranks.first, 0)
-}
-
 fn group_runs(ranks: List<Int>, rank: Int, count: Int) -> List<Int> {
     if ranks is nil {
-        [16 * count + rank]
+        [(count << 4) | rank]
     } else if ranks.first == rank {
         group_runs(ranks.rest, rank, count + 1)
     } else {
-        [16 * count + rank, ...group_runs(ranks.rest, ranks.first, 1)]
+        [(count << 4) | rank, ...group_runs(ranks.rest, ranks.first, 1)]
     }
 }
 

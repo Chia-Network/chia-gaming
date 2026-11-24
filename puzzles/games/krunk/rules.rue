@@ -10,19 +10,18 @@ export fn payout_share(base_unit: Int, guess_count: Int) -> Int {
 
 // The item at `index`, which raises if there isn't one, including if the index is negative.
 export fn nth<T>(list: List<T>, index: Int) -> T {
-    let rest = drop(list, index);
-    assert !(rest is nil);
-    rest.first
+    assert !(list is nil);
+    if index == 0 {
+        list.first
+    } else {
+        nth(list.rest, index - 1)
+    }
 }
 
-// The list without its first `count` items, which raises if it doesn't have that many.
-fn drop<T>(list: List<T>, count: Int) -> List<T> {
-    if count == 0 {
-        return list;
-    }
-    assert !(list is nil);
-    drop(list.rest, count - 1)
-}
+const GREEN: Int = 2;
+const YELLOW: Int = 1;
+const GRAY: Int = 0;
+export const ALL_GREEN_CLUE: Int = const { make_clue("AAAAA", "AAAAA") as Int };
 
 // The clue for a guess: a digit for each letter, which is 2 if the word has the letter in the same
 // place, 1 if it has the letter in another place (that isn't already accounted for), and 0
@@ -57,11 +56,11 @@ fn score(places: List<Place>, unmatched: List<Bytes>, value: Int) -> Int {
     }
     let { letter, green } = places.first;
     if green {
-        score(places.rest, unmatched, value * 3 + 2)
+        score(places.rest, unmatched, value * 3 + GREEN)
     } else if contains(unmatched, letter) {
-        score(places.rest, remove_first(unmatched, letter), value * 3 + 1)
+        score(places.rest, remove_first(unmatched, letter), value * 3 + YELLOW)
     } else {
-        score(places.rest, unmatched, value * 3)
+        score(places.rest, unmatched, value * 3 + GRAY)
     }
 }
 
@@ -88,11 +87,4 @@ fn clue_digits(value: Int, count: Int) -> List<Int> {
     } else {
         [value % 3, ...clue_digits(value / 3, count - 1)]
     }
-}
-
-// Whether the value is nil, which raises if it's a pair. A comparison such as `value != 0` is
-// optimized to a truthiness check instead, which doesn't raise, but `strlen` does, like the `=` of
-// the Chialisp validators did.
-export inline fn is_zero(value: Int) -> Bool {
-    (value as Bytes).length == 0
 }

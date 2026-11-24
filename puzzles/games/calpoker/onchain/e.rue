@@ -1,5 +1,5 @@
 import project::referee::types::*;
-import super::arrange::{final_cards, pull_out_cards};
+import super::arrange::{final_cards, pick_cards, pull_out_cards};
 import super::cards::popcount;
 import super::hand::{compare_hands, onehandcalc};
 import super::types::*;
@@ -29,10 +29,9 @@ export fn main(
     let alice_picks = game_move[17..18];
 
     let { left: { bob_discards, alice_cards }, right: { bob_cards, discard_commit } } = move.state;
-    // Alice's hand is evaluated before her commitment is checked, so that malformed cards fail
-    // either way. It's evaluated even though it's only used with evidence, since it can raise.
+    // The state carries the dealt card IDs. Alice's five selection bits index her hand after the exchange.
     let final = final_cards(alice_cards, alice_discards as Int, bob_cards, bob_discards as Int);
-    let alice_hand = onehandcalc(pull_out_cards(alice_picks as Int, final.alice_cards));
+    let alice_hand = onehandcalc(pick_cards(alice_picks as Int, final.alice_cards));
 
     let bob_picks = move.evidence;
     let valid = sha256(alice_salted_discards) == discard_commit
@@ -68,10 +67,8 @@ fn alice_claims_small_enough(
     let result = compare_hands(alice_hand, bob_hand);
     let earned = if result == 0 {
         amount / 2
-    } else if result == 1 {
-        0
     } else {
-        amount
+        inline if result == 1 { 0 } else { amount }
     };
     mover_share >= earned
 }

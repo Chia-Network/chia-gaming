@@ -13,38 +13,35 @@
 export fn onehandcalc(cards: List<Int>) -> List<Int> {
     let cards = for card in cards { to_card(card) };
 
-    // Only the first five cards count.
-    assert cards is [Card, Card, Card, Card, Card, ...List<Card>];
+    // Each selected card maps to one Card, so the five-card selection still has five entries.
+    let cards = unchecked_cast::<[Card, Card, Card, Card, Card, ...List<Card>]>(cards);
     let [card1, card2, card3, card4, card5, ..._] = cards;
 
     let ranks = atomsort([card1.rank, card2.rank, card3.rank, card4.rank, card5.rank]);
-    let groups = atomsort(group_by_count(ranks));
-
-    // The counts of the groups from the largest, followed by their ranks.
-    let hand = [...for group in groups { group >>> 4 }, ...for group in groups { group & 15 }];
-    assert hand is [Int, Int, ...List<Int>];
-    let [first_count, second_count, ..._] = hand;
+    // atomsort preserves all five ranks supplied above.
+    let ranks = unchecked_cast::<[Int, Int, Int, Int, Int, ...List<Int>]>(ranks);
+    let [high, second, third, fourth, low, ..._] = ranks;
+    // Five cards from one deck with a repeated rank cannot form a straight or a flush.
+    if high == second || second == third || third == fourth || fourth == low {
+        let groups = atomsort(group_ranks(ranks.rest, high, 1));
+        return [...for group in groups { group >>> 4 }, ...for group in groups { group & 15 }];
+    }
 
     let flush = (card1.suit == card2.suit)
         & (card1.suit == card3.suit)
         & (card1.suit == card4.suit)
         & (card1.suit == card5.suit);
-    let straight = straight_high(hand);
-
-    if straight != 0 {
-        if flush {
-            [5, straight]
-        } else if (first_count == 4) | ((first_count == 3) & (second_count == 2)) {
-            hand
-        } else {
-            [3, 1, 2, straight]
-        }
-    } else if flush & ((first_count < 3) | ((first_count == 3) & (second_count < 2))) {
-        assert hand is [Int, Int, Int, Int, Int, ...List<Int>];
-        let [_, _, _, _, _, ...flush_ranks] = hand;
-        [3, 1, 3, ...flush_ranks]
+    let straight = if high - low == 4 {
+        high
     } else {
-        hand
+        inline if high == 14 && second == 5 { 5 } else { 0 }
+    };
+    if straight != 0 {
+        inline if flush { [5, straight] } else { [3, 1, 2, straight] }
+    } else if flush {
+        [3, 1, 3, ...ranks]
+    } else {
+        [1, 1, 1, 1, 1, ...ranks]
     }
 }
 
@@ -59,32 +56,8 @@ fn to_card(card: Int) -> Card {
     Card { rank: rank + 2, suit: suit + 1 }
 }
 
-// The high card of a straight, or 0 if the hand isn't one. A hand of five different ranks is
-// `(1 1 1 1 1 rank1 rank2 rank3 rank4 rank5)`, in descending order, and an ace can be low.
-fn straight_high(hand: [Int, ...List<Int>]) -> Int {
-    if hand.first != 1 {
-        return 0;
-    }
-
-    assert hand is [Int, Int, Int, Int, Int, Int, Int, Int, Int, Int, ...List<Int>];
-    let [_, _, _, _, _, rank1, rank2, _, _, rank5, ..._] = hand;
-
-    if rank5 == rank1 - 4 {
-        rank1
-    } else if rank1 == 14 {
-        inline if rank2 == 5 { 5 } else { 0 }
-    } else {
-        0
-    }
-}
-
 // Groups equal ranks, which are in descending order. Each group is its count shifted left by four
 // bits, combined with its rank.
-fn group_by_count(ranks: List<Int>) -> List<Int> {
-    assert ranks is [Int, ...List<Int>];
-    group_ranks(ranks, ranks.first, 0)
-}
-
 fn group_ranks(ranks: List<Int>, last: Int, count: Int) -> List<Int> {
     if ranks is nil {
         [(count << 4) | last]

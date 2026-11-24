@@ -24,19 +24,15 @@ export fn main(
 
 // Alice gave a clue for Bob's latest guess, so it's his turn to guess again. The clue is a signed
 // byte below the clue for a correct guess, which is a reveal instead.
-fn check_clue(clue: Bytes, mover_share: Int, state: KrunkState) -> ValidatorResult<KrunkState | nil>
-    | nil
-{
+inline fn check_clue(
+    clue: Bytes,
+    mover_share: Int,
+    state: KrunkState,
+) -> ValidatorResult<KrunkState | nil> | nil {
     let { guesses, clues } = state;
-    if !is_zero(mover_share) || length(clues.alice_clues) >= 4 || clue as Int >= 114 {
+    if mover_share != 0 || length(clues.alice_clues) >= 4 || clue as Int >= ALL_GREEN_CLUE {
         return nil;
     }
-
-    // The Chialisp validator rebuilt the records from their fields, which raised unless each of
-    // them has all three. Rue reuses a record that's rebuilt from its own fields as it is.
-    let guess_record: Any = guesses;
-    let clue_record: Any = clues;
-    assert guess_record is (Any, (Any, Any)) && clue_record is (Any, (Any, Any));
 
     validator_transition(
         const { tree_hash(guess::main) },
@@ -52,7 +48,7 @@ fn check_clue(clue: Bytes, mover_share: Int, state: KrunkState) -> ValidatorResu
 // one-byte index of a clue that doesn't match the word (counting from the latest), or a range
 // `left_bound + right_bound` that contains the word, which the players signed as a gap between the
 // words of the dictionary. The slash is conditional on that signature.
-fn check_reveal(
+inline fn check_reveal(
     reveal: Bytes,
     mover_share: Int,
     state: KrunkState,
@@ -60,20 +56,21 @@ fn check_reveal(
 ) -> ValidatorResult<KrunkState | nil> | nil {
     let { guesses, clues } = state;
     let word = reveal[16..21];
-    if mover_share != reveal_mover_share(guesses.base_unit, guesses.bob_guesses, word) {
+    let valid = mover_share == reveal_mover_share(guesses.base_unit, guesses.bob_guesses, word)
+        && clues.alice_commit == sha256(reveal)
+        && (
+            evidence.length != 1
+                || {
+                    // The byte 0x00 indexes the most recent clue, for the guess before the latest.
+                    let index = evidence as Int + 0;
+                    make_clue(word, nth(guesses.bob_guesses, index + 1)) == nth(
+                        clues.alice_clues,
+                        index,
+                    )
+                }
+        );
+    if !valid {
         return nil;
-    }
-    if clues.alice_commit != sha256(reveal[..16] + word) {
-        return nil;
-    }
-
-    // The index counts from the latest clue, which is for the guess before the latest. Adding zero
-    // makes the index an integer, so that 0x00 is zero.
-    if evidence.length == 1 {
-        let guess = nth(guesses.bob_guesses, evidence as Int + 1);
-        if make_clue(word, guess) != nth(clues.alice_clues, evidence as Int + 0) {
-            return nil;
-        }
     }
 
     if evidence.length != 10 {
@@ -92,7 +89,7 @@ fn check_reveal(
 
 // The share that Alice claims by revealing her word: nothing if Bob used all five guesses without
 // finding it, and otherwise his payout for the number of guesses he made.
-fn reveal_mover_share(base_unit: Int, bob_guesses: List<Bytes>, word: Bytes) -> Int {
+inline fn reveal_mover_share(base_unit: Int, bob_guesses: List<Bytes>, word: Bytes) -> Int {
     let guess_count = length(bob_guesses);
     if guess_count != 5 {
         payout_share(base_unit, guess_count)

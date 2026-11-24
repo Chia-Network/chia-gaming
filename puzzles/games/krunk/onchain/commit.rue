@@ -1,6 +1,5 @@
 import guess;
 import project::referee::types::*;
-import super::rules::is_zero;
 import super::state::*;
 
 // Bob challenging Alice's commitment, which is `sha256(salt + word)`.
@@ -12,7 +11,7 @@ export fn main(
 ) -> ValidatorResult<KrunkState> | nil {
     let { last_move, mover_share } = params.turn;
     let alice_commit = last_move.game_move;
-    if !(alice_commit is Bytes32) || !is_zero(mover_share) {
+    if !(alice_commit is Bytes32) || mover_share != 0 {
         return nil;
     }
 

@@ -9,6 +9,7 @@
 import deal::*;
 import hand_calc::space_hand_calc;
 import hand_eval::deep_compare;
+import onchain::end::waiter_share;
 import project::games::types::*;
 import readables::*;
 import states::*;
@@ -65,18 +66,6 @@ fn image_at(chain: List<Bytes>, index: Int) -> Bytes {
         chain.first
     } else {
         image_at(chain.rest, index - 1)
-    }
-}
-
-// What each player wins, from the comparison of the mover's hand to the waiter's. The mover's
-// share is the waiter's when the mover makes the final move, since the move swaps them.
-fn waiter_share(amount: Int, half_pot: Int, result: Int) -> Int {
-    if result == 0 {
-        amount / 2
-    } else if result == 1 {
-        amount / 2 - half_pot
-    } else {
-        amount / 2 + half_pot
     }
 }
 

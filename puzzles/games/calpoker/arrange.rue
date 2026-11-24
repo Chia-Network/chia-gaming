@@ -1,4 +1,5 @@
 import cards::popcount;
+import hand::atomsort;
 import types::Hands;
 
 // Each player's final eight cards, given each player's discards: the cards that a player keeps,
@@ -12,8 +13,8 @@ export fn final_cards(
     let alice = split_cards(alice_discards, alice_cards, nil, nil);
     let bob = split_cards(bob_discards, bob_cards, nil, nil);
     Hands {
-        alice_cards: sort([...alice.kept, ...bob.discarded]),
-        bob_cards: sort([...bob.kept, ...alice.discarded]),
+        alice_cards: ascending_card_ids([...alice.kept, ...bob.discarded]),
+        bob_cards: ascending_card_ids([...bob.kept, ...alice.discarded]),
     }
 }
 
@@ -41,62 +42,24 @@ export fn pull_out_cards(selections: Int, cards: List<Int>) -> List<Int> {
     pick_cards(selections, cards)
 }
 
-fn pick_cards(selections: Int, cards: List<Int>) -> List<Int> {
+export fn pick_cards(selections: Int, cards: List<Int>) -> List<Int> {
     if cards is nil {
         return nil;
     }
 
-    let picked = pick_cards(selections >>> 1, cards.rest);
     if selections & 1 != 0 {
-        [cards.first, ...picked]
+        [cards.first, ...pick_cards(selections >>> 1, cards.rest)]
     } else {
-        picked
+        pick_cards(selections >>> 1, cards.rest)
     }
 }
 
-// Sorts the cards into ascending order, with a stable merge sort.
-fn sort(cards: List<Int>) -> List<Int> {
-    if cards is nil {
-        return nil;
-    }
-
-    if cards.rest is nil {
-        return cards;
-    }
-
-    let halves = split(cards, nil, nil);
-    merge(sort(halves.kept), sort(halves.discarded), nil)
+// Selection bits index the dealt card IDs in ascending order. atomsort is descending.
+inline fn ascending_card_ids(cards: List<Int>) -> List<Int> {
+    reverse(atomsort(cards))
 }
 
-// Deals the cards into two halves, alternating between them.
-fn split(cards: List<Int>, left: List<Int>, right: List<Int>) -> Split {
-    if cards is nil {
-        Split { kept: left, discarded: right }
-    } else {
-        split(cards.rest, right, [cards.first, ...left])
-    }
-}
-
-// Merges two ascending lists, prepending what's merged so far (in reverse) to the rest.
-fn merge(a: List<Int>, b: List<Int>, merged: List<Int>) -> List<Int> {
-    if a is nil {
-        prepend_reversed(merged, b)
-    } else if b is nil {
-        prepend_reversed(merged, a)
-    } else if deep_compare(a.first, b.first) == -1 {
-        merge(a.rest, b, [a.first, ...merged])
-    } else {
-        merge(a, b.rest, [b.first, ...merged])
-    }
-}
-
-fn prepend_reversed(reversed: List<Int>, rest: List<Int>) -> List<Int> {
-    [...reverse(reversed), ...rest]
-}
-
-// Compares two values of any shape, returning -1, 0, or 1. Atoms compare as numbers, and are
-// less than pairs, which compare by their first and then their rest. Cards are compared this way
-// so that a malformed card can't make sorting fail.
+// Compare atoms as integers and pairs lexicographically, with atoms before pairs.
 export fn deep_compare(a: Any, b: Any) -> Int {
     if a is (Any, Any) {
         if b is (Any, Any) {
