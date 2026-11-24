@@ -12,6 +12,7 @@ import {
 
 import { startLoopbackCallback, type LoopbackCallback } from './cloudWalletLoopback';
 import { authorizeRequestState, cloudWalletUrl, isCloudWalletTokenUrl } from './cloudWalletPolicy';
+import { relayCloudWalletToken } from './cloudWalletTokenRelay';
 import { describeSender, isPlayerDocumentSender } from './ipcSender';
 import { log } from './log';
 import { type PolicyRef } from './networkPolicy';
@@ -133,16 +134,7 @@ export function installCloudWalletBrowser(policy: PolicyRef): void {
         log.warn(`refused Cloud Wallet token request to ${String(tokenUrl)}`);
         return { transportError: 'Cloud Wallet token request is not allowed' };
       }
-      try {
-        const response = await net.fetch(tokenUrl as string, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body,
-        });
-        return { status: response.status, text: await response.text() };
-      } catch (error) {
-        return { transportError: (error as Error).message };
-      }
+      return relayCloudWalletToken(tokenUrl as string, body, (url, init) => net.fetch(url, init));
     },
   );
 
