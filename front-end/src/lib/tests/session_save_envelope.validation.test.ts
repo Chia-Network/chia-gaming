@@ -1,4 +1,5 @@
 import { decodeDurableApplicationState } from '../session/persistence';
+import { decodeChannelFundingEntry } from '../session/channelFundingValidation';
 import type { DurableApplicationState } from '../session/saveEnvelope';
 import type { ChannelFundingEntry } from '../session/channelFundingStore';
 import type { FeeAttachment } from '../session/feeAttachmentStore';
@@ -210,6 +211,22 @@ function expectWholeRootRejection(
 }
 
 describe('DurableApplicationState strict validation', () => {
+  it('accepts a funding input with a variable-length encoded coin amount', () => {
+    const input = {
+      coin_name: 'aa'.repeat(32),
+      coin_string: 'bb'.repeat(32) + 'cc'.repeat(32) + '16cb4b6dec',
+    };
+    const entry: ChannelFundingEntry = {
+      ...obligation,
+      request: {
+        ...obligation.request,
+        canonical: { ...obligation.request.canonical, max_height: '5006111' },
+      },
+      inputs: [input],
+    };
+    expect(decodeChannelFundingEntry(entry)).toEqual(entry);
+  });
+
   it('round-trips no-session state as the same aggregate root', () => {
     const state = baseSave();
     expect(decodeDurableApplicationState(state).save).toEqual(state);

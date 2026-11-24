@@ -230,12 +230,12 @@ dependencies = [
 
 [[package]]
 name = "chia-puzzles"
-version = "0.20.3"
+version = "0.20.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "553363ce9550cfde0ae1306a0a79bf9afd36ea09e0222b874b6287b44ad9d178"
+checksum = "b99b67d578c252423b6d8de60c5feb1c97edcd05e7eec780d9e1b671a7092d79"
 dependencies = [
  "hex",
- "hex-literal 0.4.1",
+ "hex-literal 1.1.0",
 ]
 
 [[package]]
@@ -1188,9 +1188,9 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
-version = "0.10.3"
+version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
+checksum = "8f6fa277c67e6ea590466f04c3fe82cb509f0864fe470643e5570de9514a9b11"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
