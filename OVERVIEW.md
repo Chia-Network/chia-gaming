@@ -1,8 +1,9 @@
 # Overview: Chia Gaming State Channels
 
-Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
-`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
-their syntax and assumptions.
+The puzzles are written in Rue, whose docs are at
+<https://github.com/xch-dev/rue-docs>. See [Puzzles](#puzzles) for where they
+live, and `puzzles/games/types.rue` for the types that game factories and
+handlers share.
 
 This document provides the conceptual foundation for the `chia_gaming`
 codebase — a system for playing two-player games over Chia state channels.
@@ -227,7 +228,7 @@ Funding coins (one per player)
     └──────────────────────────────▶ Channel Coin ── 2-of-2 multisig
              │
              ▼  (spend to unroll)
-         Unroll Coin ── unroll_puzzle.clsp (sequence number, default conditions)
+         Unroll Coin ── puzzles/unroll.rue (sequence number, default conditions)
              │
              ▼  (timeout / preemption)
          ┌───┴───────────────────────┐
@@ -319,7 +320,7 @@ IndexedDB. Compact historical unroll records are therefore part of the durable
 minimum even though obsolete full signatures and preemption conditions are not.
 
 **Key code:** `src/channel_state/types/unroll_coin.rs`,
-`clsp/unroll/unroll_puzzle.clsp`
+`puzzles/unroll.rue`
 
 ### Game Coin (Referee)
 
@@ -337,7 +338,7 @@ The referee enforces game rules on-chain:
   take the funds
 
 **Key code:** `src/referee/mod.rs`, `src/referee/types.rs`,
-`clsp/referee/onchain/referee.clsp`
+`puzzles/referee/referee.rue`
 
 ---
 
@@ -727,7 +728,7 @@ generated member's first validation-program hash
 (`initial_validation_program_hash`) — never the factory's hash or the
 human-readable key. Registration discovers it by running the factory with
 representative valid parameters. Adding a game means creating that conventional
-package and appending the key to the registry; Chialisp compile, Rust/WASM
+package and appending the key to the registry; puzzle compile, Rust/WASM
 registration, frontend imports, and factory presets are generated from that
 file. Rust package modules and full-suite test aggregation are generated only
 when their optional Rust source files exist. See
@@ -1238,22 +1239,28 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | **Game Session**             | `src/game_session.rs`                                                | `PeerLifecyclePhase` trait, `GameSession` struct                                          |
 | **Simulator**                | `src/simulator/`                                                     | Block-level simulation for integration tests                                              |
 
-### Chialisp puzzles
+### Puzzles
+
+The puzzles are written in Rue. The Rue project is configured by `Rue.toml`,
+and its sources are in `puzzles/`. `build.rs` compiles them to the paths under
+`clsp/` and `games/<key>/clsp/` that the runtime loads.
 
 | File                                                | Purpose                                                        |
 | --------------------------------------------------- | -------------------------------------------------------------- |
-| `clsp/unroll/unroll_puzzle.clsp`                    | Unroll coin: timeout vs challenge with sequence numbers        |
-| `clsp/referee/onchain/referee.clsp`                 | Game coin: move / timeout / slash enforcement                  |
-| `clsp/games/game_codes.clinc`                       | Shared game error codes                                        |
-| `games/calpoker/clsp/onchain/{a,b,c,d,e}.clsp`      | Calpoker validation programs (one per protocol step)           |
-| `games/calpoker/clsp/calpoker_generate.clinc`       | Off-chain calpoker handlers (Alice & Bob sides)                |
-| `games/spacepoker/clsp/onchain/*.clsp`              | Space Poker validation programs                                |
-| `games/spacepoker/clsp/spacepoker_generate.clinc`   | Off-chain Space Poker handlers                                 |
-| `games/krunk/clsp/onchain/{commit,guess,clue}.clsp` | Krunk validation programs                                      |
-| `games/krunk/clsp/krunk_generate.clinc`             | Off-chain Krunk handlers (Alice & Bob sides)                   |
+| `puzzles/unroll.rue`                                | Unroll coin: timeout vs challenge with sequence numbers        |
+| `puzzles/referee/referee.rue`                       | Game coin: move / timeout / slash enforcement                  |
+| `puzzles/referee/types.rue`                         | Layouts the referee shares with validators and Rust            |
+| `puzzles/games/types.rue`                           | Factory, handler, and validator types shared by the games      |
+| `puzzles/games/calpoker/onchain/{a,b,c,d,e}.rue`    | Calpoker validation programs (one per protocol step)           |
+| `puzzles/games/calpoker/handlers.rue`               | Off-chain calpoker handlers (Alice & Bob sides)                |
+| `puzzles/games/spacepoker/onchain/*.rue`            | Space Poker validation programs                                |
+| `puzzles/games/spacepoker/handlers.rue`             | Off-chain Space Poker handlers                                 |
+| `puzzles/games/krunk/onchain/*.rue`                 | Krunk validation programs (commit, guess, clue)                |
+| `puzzles/games/krunk/handlers.rue`                  | Off-chain Krunk handlers (Alice & Bob sides)                   |
+| `puzzles/games/krunk/factory.rue`                   | Krunk factory, which creates the two games of a hand           |
 | `games/krunk/clsp/factory_args.clvm.bin`            | Generated factory curry arguments: `(pubkey signed_dict_tree)` |
-| `games/debug/clsp/factory.clsp`                     | Debug game: validator, my-turn, their-turn, and factory        |
-| `clsp/handler_api.md`                               | Handler calling conventions (see also `HANDLER_GUIDE.md`)      |
+| `puzzles/games/debug/factory.rue`                   | Debug game: validator, my-turn, their-turn, and factory        |
+| `puzzles/games/handler_api.md`                      | Handler calling conventions (see also `HANDLER_GUIDE.md`)      |
 
 ### Test infrastructure
 
@@ -1318,7 +1325,7 @@ Shared utilities used by multiple handlers (e.g. `build_channel_to_unroll_bundle
 | [`INTERNALS.md`](INTERNALS.md)                         | Timeouts, peer disconnect, redo mechanism, cheat support, simulator strictness, `game_assert!`                     |
 | [`SIMULATOR_TESTING.md`](SIMULATOR_TESTING.md)         | Simulator test harness, `SimScriptAction` reference, trigger semantics, test-writing conventions                   |
 | [`HANDLER_GUIDE.md`](HANDLER_GUIDE.md)                 | Off-chain handler API, on-chain validator conventions                                                              |
-| [`clsp/handler_api.md`](clsp/handler_api.md)           | CLVM calling conventions for handler functions                                                                     |
+| [`handler_api.md`](puzzles/games/handler_api.md)       | CLVM calling conventions for handler functions                                                                     |
 | [`DEBUGGING_GUIDE.md`](DEBUGGING_GUIDE.md)             | Debugging, testing, `./cb.sh` / `./ct.sh` usage                                                                    |
 | [`WEBSOCKET_PROTOCOL.md`](WEBSOCKET_PROTOCOL.md)       | Player-to-hub game relay carrier, messages, routing, and reconnect semantics                                       |
 | [`PEER_PROTOCOL.md`](PEER_PROTOCOL.md)                 | Reliable peer framing and authoritative peer message semantics                                                     |

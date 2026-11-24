@@ -314,10 +314,7 @@ struct GameSetup {
 }
 
 fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
-    let factory = read_hex_puzzle(
-        allocator,
-        "games/calpoker/clsp/factory_calpoker_factory.hex",
-    )
+    let factory = read_hex_puzzle(allocator, "games/calpoker/clsp/factory.hex")
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
     let parameters = (BET_SIZE, (BET_SIZE, (BET_SIZE, ())))
@@ -862,10 +859,7 @@ fn bob_terminal_context_after_step_d(
 }
 
 fn calpoker_factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
-    let factory = read_hex_puzzle(
-        allocator,
-        "games/calpoker/clsp/factory_calpoker_factory.hex",
-    )
+    let factory = read_hex_puzzle(allocator, "games/calpoker/clsp/factory.hex")
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
     run_program(

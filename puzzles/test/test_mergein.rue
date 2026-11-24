@@ -1,0 +1,6 @@
+import project::games::calpoker::cards::mergein;
+
+// Runs calpoker's `mergein`, for `src/tests/chialisp.rs`.
+fn main(outer: List<Int>, inner: List<Int>, offset: Int) -> List<Int> {
+    mergein(outer, inner, offset)
+}

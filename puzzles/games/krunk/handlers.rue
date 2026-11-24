@@ -1,0 +1,193 @@
+// The handlers of the two players. Alice picks a word and gives a clue for each of Bob's guesses,
+// until he finds the word or runs out of guesses, and then she reveals the word.
+
+import dictionary::*;
+import project::games::types::*;
+import rules::*;
+import state::*;
+
+// Every handler sees the state as `KrunkStates`, and the local move is a word.
+export type KrunkMyTurn = MyTurnHandler<Bytes, KrunkStates, KrunkMyTurnMove | MoveRejection>;
+export type KrunkTheirTurn = TheirTurnHandler<KrunkStates, KrunkStates, KrunkTheirTurnMove>;
+type KrunkMyTurnMove = MyTurnMove<KrunkTheirTurn | nil, Never>;
+
+type KrunkTheirTurnMove = TheirTurnMove<
+    KrunkReadable,
+    SignedEvidence | Bytes,
+    TheirTurnNext<KrunkMyTurn>,
+>;
+
+// What a player sees of the opponent's move: a guess or the revealed word with its clue, or the
+// digits of a clue.
+export type KrunkReadable = ScoredWord | List<Int>;
+
+export struct ScoredWord {
+    word: Bytes,
+    clue: List<Int>,
+}
+
+// Evidence that a word isn't in the dictionary: the range of the gap that contains it, as
+// `left_bound + right_bound`, which needs the aggregate signature of the gap to slash.
+struct SignedEvidence {
+    tag = "s",
+    range: Bytes,
+    signature: Signature,
+}
+
+// Evidence that a revealed word doesn't match one of Alice's clues: the index of each clue,
+// counting from the latest, as a single byte.
+const CLUE_INDICES: List<Bytes> = [0x00, 0x01, 0x02, 0x03, 0x04];
+
+// The clue for a correct guess.
+const CORRECT_CLUE: Bytes = 0x72;
+
+fn signed_evidence(gap: DictGap) -> SignedEvidence {
+    SignedEvidence { range: gap.left_bound + gap.right_bound, signature: gap.signature }
+}
+
+fn not_in_dictionary(word: Bytes) -> MoveRejection {
+    MoveRejection { tag: "not_in_dictionary", message: word }
+}
+
+// Alice picks a word, and commits to it with a salt from the entropy.
+export fn alice_commit(dict_tree: DictTree) -> KrunkMyTurn {
+    fn(word, _amount, _state, _mover_share, entropy) => {
+        let salt = entropy[..16];
+        if lookup(word, dict_tree) is nil {
+            KrunkMyTurnMove {
+                label: "krunk_alice_handler_commit",
+                game_move: sha256(salt + word),
+                mover_share: 0,
+                their_turn_handler: alice_guess(salt, word, dict_tree),
+            }
+        } else {
+            not_in_dictionary(word)
+        }
+    }
+}
+
+// Alice reads Bob's guess, and slashes it if it isn't in the dictionary.
+fn alice_guess(salt: Bytes, word: Bytes, dict_tree: DictTree) -> KrunkTheirTurn {
+    fn(_amount, _pre_state, _state, guess, _validation_program_hash, _mover_share) => {
+        let gap = lookup(guess, dict_tree);
+        if gap is DictGap {
+            KrunkTheirTurnMove { readable: nil, evidence: [signed_evidence(gap)], next: [nil] }
+        } else {
+            let clue = make_clue(word, guess);
+            KrunkTheirTurnMove {
+                readable: ScoredWord { word: guess, clue: expand_clue(clue) },
+                evidence: nil,
+                next: [alice_clue(salt, word, clue, dict_tree)],
+            }
+        }
+    }
+}
+
+// Alice gives the clue for Bob's guess, or reveals her word if he found it or ran out of guesses.
+fn alice_clue(salt: Bytes, word: Bytes, clue: Bytes, dict_tree: DictTree) -> KrunkMyTurn {
+    fn(_local_move, _amount, state, _mover_share, _entropy) => {
+        // A clue follows a guess, so this is the state after Alice's commitment.
+        assert state is KrunkState;
+        let { base_unit, bob_guesses } = state.guesses;
+        let guess_count = length(bob_guesses);
+        if nth(bob_guesses, 0) == word || guess_count == 5 {
+            KrunkMyTurnMove {
+                label: "krunk_alice_handler_clue reveal",
+                game_move: salt + word,
+                mover_share: reveal_mover_share(base_unit, bob_guesses, word),
+                their_turn_handler: nil,
+            }
+        } else {
+            KrunkMyTurnMove {
+                label: "krunk_alice_handler_clue",
+                game_move: clue,
+                mover_share: 0,
+                their_turn_handler: alice_guess(salt, word, dict_tree),
+            }
+        }
+    }
+}
+
+// The share that Alice claims by revealing her word: nothing if Bob used all five guesses without
+// finding it, and otherwise his payout for the number of guesses he made.
+fn reveal_mover_share(base_unit: Int, bob_guesses: List<Bytes>, word: Bytes) -> Int {
+    if nth(bob_guesses, 0) == word {
+        payout_share(base_unit, length(bob_guesses))
+    } else if length(bob_guesses) == 5 {
+        0
+    } else {
+        raise "krunk_reveal_mover_share: not terminal";
+    }
+}
+
+// Bob waits for Alice's commitment.
+export fn bob_commit(dict_tree: DictTree) -> KrunkTheirTurn {
+    fn(
+        _amount,
+        _pre_state,
+        _state,
+        _move,
+        _validation_program_hash,
+        _mover_share,
+    ) => KrunkTheirTurnMove { readable: nil, evidence: nil, next: [bob_guess(dict_tree)] }
+}
+
+// Bob guesses a word.
+fn bob_guess(dict_tree: DictTree) -> KrunkMyTurn {
+    fn(guess, _amount, _state, _mover_share, _entropy) => {
+        if lookup(guess, dict_tree) is nil {
+            KrunkMyTurnMove {
+                label: "krunk_bob_handler_guess",
+                game_move: guess,
+                mover_share: 0,
+                their_turn_handler: bob_clue(dict_tree),
+            }
+        } else {
+            not_in_dictionary(guess)
+        }
+    }
+}
+
+// Bob reads Alice's clue, or her reveal. He slashes a revealed word that isn't in the dictionary,
+// or that doesn't match one of her clues.
+fn bob_clue(dict_tree: DictTree) -> KrunkTheirTurn {
+    fn(_amount, pre_state, _state, move, _validation_program_hash, mover_share) => {
+        if move.length == 1 {
+            KrunkTheirTurnMove {
+                readable: expand_clue(move),
+                evidence: nil,
+                next: [bob_guess(dict_tree)],
+            }
+        } else {
+            bob_reveal(dict_tree, pre_state, move, mover_share)
+        }
+    }
+}
+
+// Alice revealed `salt + word`, claiming `mover_share`, which is nonzero if Bob found the word.
+// The state after a reveal is nil, so the guesses come from the state before it.
+fn bob_reveal(
+    dict_tree: DictTree,
+    pre_state: KrunkStates,
+    reveal: Bytes,
+    mover_share: Int,
+) -> KrunkTheirTurnMove {
+    let word = reveal[16..21];
+    let clue = if mover_share != 0 {
+        expand_clue(CORRECT_CLUE)
+    } else {
+        // A reveal follows a guess, so this is the state after Alice's commitment.
+        assert pre_state is KrunkState;
+        expand_clue(make_clue(word, nth(pre_state.guesses.bob_guesses, 0)))
+    };
+    let gap = lookup(word, dict_tree);
+    KrunkTheirTurnMove {
+        readable: ScoredWord { word, clue },
+        evidence: if gap is DictGap {
+            [signed_evidence(gap)]
+        } else {
+            CLUE_INDICES
+        },
+        next: [nil, nil],
+    }
+}

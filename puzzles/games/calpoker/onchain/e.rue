@@ -1,0 +1,74 @@
+import project::referee::types::*;
+import super::arrange::{final_cards, pick_cards, pull_out_cards};
+import super::cards::popcount;
+import super::hand::{compare_hands, onehandcalc};
+import super::types::*;
+
+// Alice reveals her discards, and picks five of her final cards. The move is her 16 byte salt and
+// her discards (which hash to her commitment), followed by the byte of her picks. This is the last
+// move, and its mover share is what Alice claims.
+//
+// The evidence is the byte of Bob's picks, which slashes the move if Alice claims more than her
+// hand earns against Bob's. Nil evidence only checks the move.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<DiscardState, Bytes>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<nil> | nil {
+    let game_move = params.turn.last_move.game_move;
+    if game_move.length != 18
+        || popcount(game_move[16..17] as Int) != 4
+        || popcount(game_move[17..18] as Int) != 5
+    {
+        return nil;
+    }
+
+    let alice_salted_discards = game_move[..17];
+    let alice_discards = game_move[16..17];
+    let alice_picks = game_move[17..18];
+
+    let { left: { bob_discards, alice_cards }, right: { bob_cards, discard_commit } } = move.state;
+    // The state carries the dealt card IDs. Alice's five selection bits index her hand after the exchange.
+    let final = final_cards(alice_cards, alice_discards as Int, bob_cards, bob_discards as Int);
+    let alice_hand = onehandcalc(pick_cards(alice_picks as Int, final.alice_cards));
+
+    let bob_picks = move.evidence;
+    let valid = sha256(alice_salted_discards) == discard_commit
+        && (
+            bob_picks is nil
+                || alice_claims_small_enough(
+                    alice_hand,
+                    bob_picks,
+                    final.bob_cards,
+                    params.turn.mover_share,
+                    params.coin.amount,
+                )
+        );
+
+    if valid {
+        validator_transition(nil, nil, 0)
+    } else {
+        nil
+    }
+}
+
+// Whether Alice's share is no more than her hand earns against the hand that Bob picks: the whole
+// amount if hers is better, half if they tie, and nothing if his is better.
+fn alice_claims_small_enough(
+    alice_hand: List<Int>,
+    bob_picks: Bytes,
+    bob_cards: List<Int>,
+    mover_share: Int,
+    amount: Int,
+) -> Bool {
+    assert bob_picks.length == 1;
+    let bob_hand = onehandcalc(pull_out_cards(bob_picks as Int, bob_cards));
+    let result = compare_hands(alice_hand, bob_hand);
+    let earned = if result == 0 {
+        amount / 2
+    } else {
+        inline if result == 1 { 0 } else { amount }
+    };
+    mover_share >= earned
+}

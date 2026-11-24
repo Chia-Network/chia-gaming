@@ -1,0 +1,23 @@
+import project::games::spacepoker::states::CommitState;
+import project::referee::types::*;
+
+// Alice commits to the tip of her hash chain (her image 5), and puts half of the amount in.
+//
+// The state is the bet unit, and there's no evidence.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<Int, nil>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<CommitState> | nil {
+    let game_move = params.turn.last_move.game_move;
+    if !(game_move is Bytes32 && params.turn.mover_share == params.coin.amount / 2) {
+        return nil;
+    }
+
+    validator_transition(
+        const { tree_hash(commitB::main) },
+        CommitState { bet_unit: move.state, alice_image: game_move },
+        32,
+    )
+}

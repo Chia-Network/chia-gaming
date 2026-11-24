@@ -268,7 +268,7 @@ struct GameSetup {
 fn setup_game(allocator: &mut AllocEncoder) -> GameSetup {
     let factory = read_hex_puzzle(
         allocator,
-        "games/spacepoker/clsp/factory_spacepoker_factory.hex",
+        "games/spacepoker/clsp/factory.hex",
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
@@ -760,7 +760,7 @@ fn test_spacepoker_setup_game() {
 fn factory_succeeds(allocator: &mut AllocEncoder, args: NodePtr) -> bool {
     let factory = read_hex_puzzle(
         allocator,
-        "games/spacepoker/clsp/factory_spacepoker_factory.hex",
+        "games/spacepoker/clsp/factory.hex",
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(allocator).unwrap();
@@ -849,7 +849,7 @@ fn test_spacepoker_factory_fixed_and_no_limit_reserve_results() {
     let mut allocator = AllocEncoder::new();
     let factory = read_hex_puzzle(
         &mut allocator,
-        "games/spacepoker/clsp/factory_spacepoker_factory.hex",
+        "games/spacepoker/clsp/factory.hex",
     )
     .expect("load factory");
     let factory_clvm = factory.to_clvm(&mut allocator).unwrap();

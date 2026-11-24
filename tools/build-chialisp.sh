@@ -15,6 +15,7 @@ find_chialisp() {
     local dirs=()
     [ -d clsp ] && dirs+=(clsp)
     [ -d games ] && dirs+=(games)
+    [ -d puzzles ] && dirs+=(puzzles)
     if [ ${#dirs[@]} -eq 0 ]; then
         return 0
     fi
@@ -23,10 +24,10 @@ find_chialisp() {
 
 clsp_sources() {
     {
-        find_chialisp -type f \( -name '*.clsp' -o -name '*.clinc' \) -print
+        find_chialisp -type f -name '*.rue' -print
         find_chialisp -type f -name 'factory_args.clvm.bin' -print
         for file in \
-            build.rs Cargo.toml Cargo.lock chialisp.toml \
+            build.rs Cargo.toml Cargo.lock Rue.toml \
             games/registry.json \
             tools/build-chialisp.sh
         do

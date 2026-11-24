@@ -1,0 +1,4 @@
+// The arguments that the factory is probed with: reserves of 1, and a requested stake of 1.
+fn main() -> List<Int> {
+    [1, 1, 1]
+}

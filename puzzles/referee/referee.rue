@@ -1,0 +1,150 @@
+import types::*;
+
+// Adjudicates a two-player turn-based game.
+//
+// The last move, INFOHASH_B, and MOVER_SHARE are accepted optimistically from the previous move.
+//
+// INFOHASH_A and INFOHASH_B are commitments: `sha256(validation_program_hash, tree_hash(state))`.
+//
+// To slash, the referee runs the previous validation program with its hash, followed by the
+// referee's own arguments. The validator returns a `ValidatorResult`, or nil. Slashing succeeds in
+// three cases:
+//
+// 1. The result is nil, which slashes unconditionally.
+// 2. The result's next validator hash, new state, or maximum move size don't match this coin's
+//    commitments, which also slashes unconditionally.
+// 3. The result matches the commitments, but has extra conditions, which slashes conditionally.
+//    The extra conditions come before the payout (such as an `AGG_SIG_UNSAFE` for a signed
+//    dictionary range proof).
+//
+// If the result matches the commitments and has no extra conditions, the move was valid, and the
+// slash fails.
+//
+// MOVER_SHARE is how much the mover gets if they fold or the timeout is claimed.
+fn main(params: RefereeParameters, ...solution: RefereeSolution) -> List<Condition> {
+    // A pair on the right identifies a Move. Its fields are checked in make_move.
+    if solution is (Any, (Any, Any)) {
+        return make_move(params, solution);
+    }
+    match solution {
+        RefereeTimeout => timeout(params, solution),
+        RefereeSlash => slash(params, solution),
+    }
+}
+
+inline fn timeout(params: RefereeParameters, solution: RefereeTimeout) -> List<Condition> {
+    let { coin, turn } = params;
+    let { mover_payout_ph, waiter_payout_ph } = solution;
+    let waiter_share = coin.amount - turn.mover_share;
+
+    inline let waiter_payout = if waiter_share != 0 {
+        [
+            CreateCoin { puzzle_hash: waiter_payout_ph, amount: waiter_share },
+            AggSigUnsafe {
+                public_key: coin.players.waiter_pubkey,
+                message: "x" + waiter_payout_ph,
+            },
+        ]
+    } else {
+        assert (waiter_payout_ph as Bytes) is nil;
+        nil
+    };
+
+    let payouts = if turn.mover_share != 0 {
+        [
+            CreateCoin { puzzle_hash: mover_payout_ph, amount: turn.mover_share } as Condition,
+            AggSigUnsafe { public_key: coin.players.mover_pubkey, message: "x" + mover_payout_ph },
+            ...waiter_payout,
+        ]
+    } else {
+        assert (mover_payout_ph as Bytes) is nil;
+        [Remark {} as Condition, Remark {}, ...waiter_payout]
+    };
+    [AssertHeightRelative { height: coin.timeout }, ...payouts]
+}
+
+inline fn slash(params: RefereeParameters, solution: RefereeSlash) -> List<Condition> {
+    let { coin, turn } = params;
+    let { move, mover_payout_ph } = solution;
+    let validator = move.validation_program;
+    let validator_hash = tree_hash(validator);
+    let result = validator(validator_hash, params, move, ...mover_payout_ph);
+
+    let payout = [
+        CreateCoin { puzzle_hash: mover_payout_ph, amount: coin.amount },
+        AggSigUnsafe { public_key: coin.players.mover_pubkey, message: "x" + mover_payout_ph },
+    ];
+
+    assert turn.infohash_a as Bytes == sha256(validator_hash + tree_hash(move.state));
+
+    match result {
+        nil => payout,
+        ValidatorResult<Any> {
+            transition: { next_validator_hash, new_state },
+            max_move_size,
+            extra_conditions,
+        } => {
+            let committed_infohash = if next_validator_hash is nil {
+                nil
+            } else {
+                sha256(next_validator_hash as Bytes + tree_hash(new_state))
+            };
+
+            // Each check is evaluated, so a malformed result fails rather than slashing.
+            let aligned = (committed_infohash == turn.infohash_b as Bytes)
+                & (max_move_size == turn.last_move.max_move_size)
+                & (inline if next_validator_hash is nil { max_move_size == 0 } else { true });
+
+            if !aligned {
+                return payout;
+            }
+
+            assert !(extra_conditions is nil);
+            [...extra_conditions, ...payout]
+        }
+    }
+}
+
+inline fn make_move(params: RefereeParameters, solution: RefereeMove) -> List<Condition> {
+    let { coin, turn } = params;
+    let { proposal: { new_move, infohash_c }, new_mover_share, new_max_move_size } = solution;
+
+    // The next coin swaps the players, and commits to this move.
+    let new_params = RefereeParameters {
+        coin: RefereeCoin {
+            ...coin,
+            players: Players {
+                mover_pubkey: coin.players.waiter_pubkey,
+                waiter_pubkey: coin.players.mover_pubkey,
+            },
+        },
+        turn: RefereeTurn {
+            last_move: LastMove {
+                nonce: turn.last_move.nonce,
+                game_move: new_move,
+                max_move_size: new_max_move_size,
+            },
+            infohash_b: infohash_c,
+            mover_share: new_mover_share,
+            infohash_a: turn.infohash_b,
+        },
+    };
+    let new_puzzle_hash = curry_tree_hash(coin.mod_hash, [tree_hash(new_params)]);
+
+    assert !(turn.infohash_b is nil);
+    assert new_move.length <= turn.last_move.max_move_size;
+    assert new_max_move_size.length <= 2;
+    assert new_max_move_size >= 0;
+    assert new_max_move_size == new_max_move_size + 0;
+    assert new_mover_share <= coin.amount;
+    assert new_mover_share >= 0;
+    assert new_mover_share == new_mover_share + 0;
+    assert (infohash_c is nil) || ((infohash_c as Bytes).length == 32);
+    assert !(infohash_c is nil) || (new_max_move_size == 0);
+
+    [
+        AssertBeforeHeightRelative { height: coin.timeout },
+        CreateCoin { puzzle_hash: new_puzzle_hash, amount: coin.amount },
+        AggSigMe { public_key: coin.players.mover_pubkey, message: tree_hash(solution) },
+    ]
+}

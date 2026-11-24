@@ -1,0 +1,115 @@
+// The calling conventions of game factories and handlers, which `puzzles/games/handler_api.md`
+// describes.
+//
+// The framework passes each handler the state that the latest validator returned, so each handler
+// is typed by its own step: the types of the states it reads, and of the handler that comes next,
+// are type parameters of its function type. Calpoker names a type for each step. A game whose
+// handlers all see one state type can instead name one pair of recursive types, as Space Poker
+// does:
+//
+//     type MyTurn = MyTurnHandler<M, S, MyTurnMove<TheirTurn | nil, Never>>;
+//     type TheirTurn = TheirTurnHandler<S, S, TheirTurnMove<R, E, TheirTurnNext<MyTurn>>>;
+
+import project::referee::types::*;
+
+// The result of a game factory: the games that a proposal creates, or which of the players don't
+// have enough to contribute. The type parameters are those of `GameRecord`.
+export type FactoryResult<S, P, H, T> = FactorySuccess<S, P, H, T> | FactoryShort;
+
+export struct FactorySuccess<S, P, H, T> {
+    success = 1,
+    records: List<GameRecord<S, P, H, T>>,
+}
+
+export struct FactoryShort {
+    success = nil,
+    proposer_short: Bool,
+    accepter_short: Bool,
+}
+
+// A game that a factory creates, with the type of its initial state `S`, its readable parameters
+// `P`, and the first my-turn handler `H` and their-turn handler `T`.
+export struct GameRecord<S, P, H, T> {
+    proposer_contribution: Int,
+    accepter_contribution: Int,
+    proposer_goes_first: Bool,
+    initial_move: Bytes,
+    initial_max_move_size: Int,
+    initial_state: S,
+    initial_mover_share: Int,
+    my_turn_handler: H,
+    their_turn_handler: T,
+    // Every validator the game can select. The first is the initial validator.
+    validation_programs: List<Validator>,
+    readable_parameters: P,
+}
+
+// Makes a move from the local player's input `M`, given the state `S`. It returns `T`, which is a
+// `MyTurnMove`, or a `MoveRejection` if the handler can reject the input.
+export type MyTurnHandler<M, S, T> = fn(
+    local_move: M,
+    amount: Int,
+    state: S,
+    mover_share: Int,
+    entropy: Bytes32,
+) -> T;
+
+// The move to make, and the their-turn handler `H` for the opponent's reply, which is nil if the
+// move ends the game. A message parser `P`, if there is one, reads the message that the opponent
+// sends outside of moves.
+export struct MyTurnMove<H, P> {
+    label: String,
+    game_move: Bytes,
+    mover_share: Int,
+    their_turn_handler: H,
+    ...message_parser: [P] | nil = nil,
+}
+
+// Rejects the local player's input, which the host reports as a rejected move.
+export struct MoveRejection {
+    tag: Bytes,
+    message: Bytes,
+}
+
+// Reads a message from the opponent, given the current state `S` and the amount of the game, and
+// returns what the UI shows of it, `R`.
+export type MessageParser<S, R> = fn(message: Bytes, state: S, amount: Int) -> R;
+
+// Reads the opponent's move, given the states `P` and `S` before and after it. It returns `T`,
+// which is a `TheirTurnMove`.
+export type TheirTurnHandler<P, S, T> = fn(
+    amount: Int,
+    pre_state: P,
+    state: S,
+    move: Bytes,
+    validation_program_hash: Bytes32,
+    mover_share: Int,
+) -> T;
+
+// What the UI shows of the opponent's move, `R`, and the evidence `E` that might slash it. The rest,
+// `N`, is the my-turn handler for the next move (which is nil or left out when the game is over),
+// optionally followed by a message to send to the opponent.
+export struct TheirTurnMove<R, E, N> {
+    readable: R,
+    evidence: List<E>,
+    ...next: N,
+}
+
+// The rest of a `TheirTurnMove` for a game whose next my-turn handler is any `H`.
+export type TheirTurnNext<H> = nil | [H | nil] | [H | nil, Bytes];
+
+// A validator typed by the state `S` and evidence `E` that it reads, and the state `R` that it
+// returns.
+export type TypedValidator<S, E, R> = fn(
+    validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<S, E>,
+    ...payout: Bytes32 | nil,
+) -> ValidatorResult<R> | nil;
+
+// The referee only runs a validator with the state that the one before it committed to, so each
+// validator reads its own state and evidence. A function type that takes a narrower move isn't a
+// `Validator` to the type checker, so this is the one place that casts it.
+export inline fn as_validator<S, E, R>(program: TypedValidator<S, E, R>) -> Validator {
+    unchecked_cast::<Validator>(program)
+}

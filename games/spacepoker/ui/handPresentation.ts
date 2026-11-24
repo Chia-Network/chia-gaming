@@ -47,7 +47,7 @@ function kickerSuffix(kickers: bigint[]): string {
   return `. ${kickers.map(fullRank).join(', ')} kickers`;
 }
 
-// Eval format from space_hand_eval.clinc:
+// Eval format from puzzles/games/spacepoker/hand_eval.rue:
 //   5 of a kind:  (5 boost rank)
 //   4 of a kind:  (4 1 boost quad kicker)
 //   straight:     (3 3 boost high)

@@ -1,0 +1,41 @@
+import project::games::spacepoker::states::*;
+import project::referee::types::*;
+
+// Bob commits to his image 4, and puts in half of the amount, less the bet unit that Alice puts in
+// to start the first street.
+//
+// There's no evidence.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<CommitState, nil>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<OpenState> | nil {
+    let game_move = params.turn.last_move.game_move;
+    if !(
+        game_move is Bytes32
+            && params.turn.mover_share == params.coin.amount
+                    / 2
+                - move.state.bet_unit
+    ) {
+        return nil;
+    }
+
+    let bet_unit = move.state.bet_unit;
+    validator_transition(
+        const { tree_hash(begin_round::main) },
+        OpenState {
+            stakes: OpenStakes {
+                bet_unit,
+                half_pot: bet_unit,
+                mover_image: move.state.alice_image,
+            },
+            street: OpenStreet {
+                waiter_image: game_move,
+                round: 4,
+                mid_hash: const { tree_hash(mid_round::main) },
+            },
+        },
+        42,
+    )
+}

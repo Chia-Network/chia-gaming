@@ -117,15 +117,17 @@ parties agreed to. No freedom in the solution at all.
 sequence number with correct parity, and the spend requires
 `AGG_SIG_UNSAFE` with the shared unroll key. Again co-signed.
 
-**Referee (move path)** — The solution is destructured as
-`(new_move infohash_c new_mover_share new_max_move_size . tail)` with
-explicit checks: `(not tail)`, `(<= (strlen new_move) MAX_MOVE_SIZE)`,
-`(<= (strlen new_max_move_size) 2)`, bounds on `new_mover_share`, length
-check on `infohash_c`. The spend requires `AGG_SIG_ME` from the mover.
+**Referee (move path)** — The solution is the `RefereeMove` tree
+`((new_move . infohash_c) . (new_mover_share . new_max_move_size))` in
+`puzzles/referee/types.rue`, with explicit checks:
+`new_move.length <= max_move_size`, `new_max_move_size.length <= 2`, canonical
+and bounded `new_mover_share` and `new_max_move_size`, and a length check on
+`infohash_c`. The spend requires `AGG_SIG_ME` from the mover on the tree hash
+of the solution.
 
 **Referee (timeout path)** — The solution is just
-`(mover_payout_ph waiter_payout_ph)`, confirmed by `(not (r (r args)))`.
-Trivially cheap.
+`(mover_payout_ph . waiter_payout_ph)`, which the referee tells apart from the
+other solutions because both halves are atoms. Trivially cheap.
 
 **Referee (slash path)** — The solution includes `previous_validation_program`
 which is run by the puzzle. However, the **slasher is the honest/defending
@@ -233,7 +235,7 @@ Peer messages (off-chain potato protocol) are bounded at multiple levels:
 
 4. **Move length is checked:** `apply_received_move` rejects moves exceeding
    the game's current `max_move_size` (set by the game's validation programs,
-   capped at 65535 by the on-chain referee's 2-byte `strlen` check).
+   capped at 65535 by the on-chain referee's 2-byte length check).
 
 ---
 

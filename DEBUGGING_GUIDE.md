@@ -204,113 +204,92 @@ Common causes are using the wrong explicit `GameID`, waiting on a proposal that
 was never delivered, or expecting `AcceptProposal` to resolve before the player
 gets the potato.
 
-## Debugging Chialisp (CLVM)
+## Debugging Rue (CLVM)
 
-Application-owned CLVM execution recognizes the established Chialisp and Rue
-runtime print encodings. Messages are emitted as `[clvm-print] ...` entries in
-the session diagnostic log in execution order, including messages produced
-before a later CLVM error.
+The puzzles are written in Rue (see the
+[Rue debugging docs](https://github.com/xch-dev/rue-docs)). The build compiles
+them in release mode, which is what gets deployed, so:
 
-Chialisp's conventional helper uses a deliberately recognizable `all` form:
+- `raise` and `assert` keep no message or location. A failed `assert` or a
+  `raise "..."` surfaces in Rust as a bare `Raise(...)` with a nil payload.
+- `debug EXPRESSION;` statements are left out of the program entirely.
 
-```clsp
-(defun print (REPORT PASS_THROUGH)
-    (if (all "$print$" REPORT PASS_THROUGH) PASS_THROUGH PASS_THROUGH))
+### Stack traces from debug metadata
+
+`build.rs` writes a `.debug.clvm.bin` sidecar next to every compiled program
+(and next to each prepared factory), which maps the program back to its Rue
+source. When CLVM raises or hits a type error, the error includes a diagnostic
+token. The app lazily loads the matching sidecar only when that token is
+diagnosed, then renders a source-level stack trace: the Rue file and line of
+each frame, its function, and its parameter values. The sidecar doesn't change
+the program, so this works for the release build. Release builds inline more
+functions, so their traces have fewer frames than a debug build's. Runtime
+prints do not load metadata.
+
+For a puzzle run on its own, outside of the simulator, `rue debug` shows the
+same kind of trace:
+
+```bash
+rue debug "$(rue build puzzles/games/calpoker/onchain/e.rue)" "(...)" \
+    --debug-metadata games/calpoker/clsp/onchain/e.debug.clvm.bin
 ```
 
-Calls such as `(print (list "state" STATE) RESULT)` log both evaluated
-arguments while still returning `RESULT`. Rue's `debug EXPRESSION;` form is
-also recognized; its compiled `debug_print` operation logs Rue's source
-location and the evaluated value, then returns nil as specified by Rue.
+### Runtime prints
+
+Application-owned CLVM execution recognizes the Chialisp and Rue runtime print
+encodings. Messages are emitted as `[clvm-print] ...` entries in the session
+diagnostic log in execution order, including messages produced before a later
+CLVM error. Rue's `debug EXPRESSION;` compiles to a `debug_print` operation that
+logs the source location and the evaluated value, but only in a debug build
+(`rue build --debug`). A debug build has a different puzzle hash and uses an
+operator that isn't standard CLVM, so the build never produces one. Use `debug`
+statements with `rue debug "$(rue build --debug <file>)" "<solution>"` or in a
+`rue test`, which always compiles in debug mode. Enable the `debug_statement`
+lint in `Rue.toml` to catch any that are left behind.
 
 Ordinary consensus execution remains unchanged. Print detection is enabled
 only for application-owned runs, is bounded and session-local, and diagnostic
 stack-trace replay is print-silent so a failed run cannot duplicate output.
 
-When CLVM raises or hits a type error, the error includes a diagnostic token.
-The deployed app lazily loads the parallel `.debug.clvm.bin` metadata only when
-that token is diagnosed, then renders a source-level stack trace. Runtime
-prints do not load metadata and add no compiler annotations.
-
-### Diagnostic asserts via `(x ...)`
-
-When ordinary prints and the stack trace are insufficient, make the program
-fail at a known point using `(x "MARKER" values...)`. The `x` operator raises an
-exception whose payload appears in the Rust error message as
-`Raise(NodePtr(...))`.
-
-**Critical rule:** You must put the `(x ...)` **in the return path**, not
-in a side binding. The chialisp compiler optimizes away unused bindings,
-so this does nothing:
-
-```clsp
-; WRONG — compiler optimizes this away, never executes
-(assign
-    _dbg (x "HERE")
-    real_result (some_computation)
-    real_result
-)
-```
-
-Instead, replace the return expression itself:
-
-```clsp
-; RIGHT — this is the return value, so it must execute
-(assign
-    intermediate (some_computation)
-    (x "DBG_POINT" intermediate)
-)
-```
-
 ### Binary search technique
 
+When the stack trace isn't enough, make the program fail at a known point with
+an `assert` or a `raise`. The stack trace shows where it raised, so the message
+that a release build drops isn't needed.
+
 1. **Pick the midpoint** of the suspected code path.
-2. **Replace the return** at that point with `(x "MID" relevant_values)`.
+2. **Add a check** at that point that fails on the input you're debugging,
+   such as `assert value.length == 32;`, or `raise;` at the end of a branch.
 3. **Rebuild** (`./cb.sh`; it runs `tools/build-chialisp.sh` first).
 4. **Run the failing test** (`./ct.sh -o test_name`).
 5. **Interpret:**
-   - If the error changes to `Raise(...)` with your marker → execution
-     reached that point. The bug is downstream.
+   - If the stack trace now ends at your `raise` → execution reached that
+     point. The bug is downstream.
    - If the error stays the same (e.g. `PathIntoAtom`) → the crash is
      before your marker. The bug is upstream.
 6. **Repeat**, narrowing the range by half each time.
 
-### Checking specific values
+Code after a `raise` is unreachable, and an `assert` of a constant is always
+false, which the `unreachable_code` and `constant_condition` lints report. Any
+warning fails the build, so to stop partway through a block, check a condition
+that depends on the input.
 
-Once you've found the crashing expression, you can probe sub-expressions:
+### Rue rebuild cycle
 
-```clsp
-; What is this value? Is it an atom or a pair?
-(x "CHECK_VAL" (strlen some_value) some_value)
-```
-
-Or use conditional asserts to test specific properties:
-
-```clsp
-; Only crash if the value is wrong
-(if (= (strlen val) 32)
-    (real_computation val)
-    (x "BAD_LEN" (strlen val) val)
-)
-```
-
-### Chialisp rebuild cycle
-
-Each chialisp change requires:
-1. `./cb.sh` (runs the content-addressed Chialisp build, then rebuilds the
+Each Rue change requires:
+1. `./cb.sh` (runs the content-addressed puzzle build, then rebuilds the
    test binary)
 2. Run the test
 
 `tools/build-chialisp.sh` automatically rebuilds when source content changes or
-when any generated `.hex` file is missing or modified. Do not delete cache files
-or run `cargo clean`; ordinary Cargo commands intentionally do not compile
-Chialisp.
+when any generated `.hex` file is missing or modified. Any Rue error or warning
+fails the build. Do not delete cache files or run `cargo clean`; ordinary Cargo
+commands intentionally do not compile the puzzles.
 
 ### Cleanup
 
-Remove all diagnostic `(x ...)` calls after the bug is fixed. They are
-not documentation. Search for your marker prefix (e.g. `DBG_`) to find
-them all.
+Remove every diagnostic `raise`, `assert`, and `debug` statement after the bug
+is fixed. They are not documentation.
 
 ## Mistakes to Avoid
 

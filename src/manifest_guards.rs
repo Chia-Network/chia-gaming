@@ -3,8 +3,8 @@
 //! These tests fail the suite when a source file exists on disk but isn't
 //! wired into the hand-maintained manifest that makes it build or run. They
 //! exist to prevent the "orphaned file" class of bug -- e.g. a test module
-//! that was never added to `src/tests/mod.rs`, or a `.clsp` whose compiled
-//! artifact a test loads but that was never registered in `chialisp.toml`.
+//! that was never added to `src/tests/mod.rs`, or a Rue program whose compiled
+//! artifact a test loads but that was never registered in `build.rs`.
 //! Both of those are silent: nothing fails to compile, the file is simply
 //! ignored, so the coverage or behavior it was meant to add never happens.
 
@@ -126,9 +126,9 @@ fn every_test_module_is_registered_and_run() {
 }
 
 /// Every static compiled CLVM path referenced from Rust source must exist on
-/// disk. The chialisp build (`tools/build-chialisp.sh`) runs before the test
-/// suite, so a missing file means the source `.clsp` was never registered in
-/// `chialisp.toml`'s `[compile]` table (or was renamed/removed).
+/// disk. The puzzle build (`tools/build-chialisp.sh`) runs before the test
+/// suite, so a missing file means the source `.rue` was never registered in
+/// `RUE_PROGRAMS` in `build.rs` (or was renamed/removed).
 #[test]
 fn every_referenced_clvm_artifact_is_built() {
     let mut files = Vec::new();
@@ -166,8 +166,8 @@ fn every_referenced_clvm_artifact_is_built() {
 
     assert!(
         missing.is_empty(),
-        "referenced CLVM artifacts are missing after build -- is the source .clsp registered \
-         in chialisp.toml [compile]?\n  {}",
+        "referenced CLVM artifacts are missing after build -- is the source .rue registered \
+         in RUE_PROGRAMS in build.rs?\n  {}",
         missing.join("\n  ")
     );
 }
@@ -310,12 +310,17 @@ fn every_game_package_is_registered() {
     let mut missing_files = Vec::new();
     for key in &registered {
         let root = PathBuf::from("games").join(key);
-        if !root.join("clsp/factory.clsp").is_file() {
-            missing_files.push(format!("games/{key}/clsp/factory.clsp"));
+        // A package's puzzles are in Rue, in `puzzles/games/<key>/`.
+        let rue = PathBuf::from("puzzles/games").join(key);
+        let (factory, factory_probe) = (rue.join("factory.rue"), rue.join("factory_probe.rue"));
+        if !factory.is_file() {
+            missing_files.push(factory.display().to_string());
         }
         if production.iter().any(|k| k == key) {
+            if !factory_probe.is_file() {
+                missing_files.push(factory_probe.display().to_string());
+            }
             for rel in [
-                "clsp/factory_probe.clsp",
                 "ui/handProposal.ts",
                 "ui/handProposalForm.tsx",
                 "ui/play.tsx",
@@ -372,7 +377,7 @@ fn every_game_package_test_module_is_aggregated() {
     );
 }
 
-/// Prepared production factories must exist after the Chialisp build so the
+/// Prepared production factories must exist after the puzzle build so the
 /// frontend generator's preset list is not hollow.
 #[test]
 fn every_production_package_preset_exists() {
@@ -390,6 +395,6 @@ fn every_production_package_preset_exists() {
     }
     assert!(
         missing.is_empty(),
-        "production game presets missing after chialisp build: {missing:?}"
+        "production game presets missing after puzzle build: {missing:?}"
     );
 }

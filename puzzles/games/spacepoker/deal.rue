@@ -1,0 +1,112 @@
+// Dealing the cards from the players' hash chains, which the `end` validator and the handlers
+// must do the same way.
+//
+// Cards are ranks from 2 to 14 (an ace), without suits. Each card is drawn from a seed, which is
+// the hash of two images, one from each player.
+
+// A player's hole cards, and whether their hand is boosted, which breaks ties between hands with
+// the same ranks.
+export struct HoleCards {
+    first: Int,
+    second: Int,
+    boost: Bool,
+}
+
+// A player's hole cards, and the seven cards that they make their hand from.
+export struct PlayerCards {
+    hole_cards: HoleCards,
+    cards: List<Int>,
+}
+
+export struct Deal {
+    player: PlayerCards,
+    opponent: PlayerCards,
+}
+
+// Hashes two images, one from each player, into a seed to draw cards from.
+fn seed(image: Bytes, opponent_image: Bytes) -> Int {
+    sha256((image as Int ^ opponent_image as Int) as Bytes) as Int
+}
+
+// The last draw only needs the remainder.
+fn card_rank(seed: Int) -> Int {
+    seed % 13 + 2
+}
+
+inline fn flop(seed: Int) -> [Int, Int, Int] {
+    let (rest, first) = divmod(seed, 13);
+    let (last, second) = divmod(rest, 13);
+    [first + 2, second + 2, card_rank(last)]
+}
+
+// Deals a player's hole cards and boost, from their preimage and the opponent's image 4.
+export fn hole_cards(preimage: Bytes, opponent_image: Bytes) -> HoleCards {
+    let seed = seed(preimage, opponent_image);
+    let (rest, first) = divmod(seed, 13);
+    HoleCards { first: first + 2, second: card_rank(rest), boost: seed % 3 == 0 }
+}
+
+// Deals the community cards of a street from both players' images of the round before it: three
+// for the flop (from images 3), and one for the turn or the river (from images 2 or 1).
+export fn community_cards(image: Bytes, opponent_image: Bytes, round: Int) -> List<Int> {
+    let seed = seed(image, opponent_image);
+    if round == 3 {
+        flop(seed)
+    } else {
+        [card_rank(seed)]
+    }
+}
+
+// Deals every card from both players' preimages. Each player's cards are their hole cards, then
+// the flop, the turn and the river, which is the order that the showdown bitfields index.
+export fn deal(preimage: Bytes, opponent_preimage: Bytes) -> Deal {
+    let image_1 = sha256(preimage);
+    let image_2 = sha256(image_1);
+    let image_3 = sha256(image_2);
+    let opponent_image_1 = sha256(opponent_preimage);
+    let opponent_image_2 = sha256(opponent_image_1);
+    let opponent_image_3 = sha256(opponent_image_2);
+
+    let [first, second, third] = flop(seed(image_3, opponent_image_3));
+    let turn = card_rank(seed(image_2, opponent_image_2));
+    let river = card_rank(seed(image_1, opponent_image_1));
+    let board = [first, second, third, turn, river];
+    let player = hole_cards(preimage, sha256(opponent_image_3));
+    let opponent = hole_cards(opponent_preimage, sha256(image_3));
+
+    Deal {
+        player: PlayerCards { hole_cards: player, cards: [player.first, player.second, ...board] },
+        opponent: PlayerCards {
+            hole_cards: opponent,
+            cards: [opponent.first, opponent.second, ...board],
+        },
+    }
+}
+
+// The cards whose bits are set in a bitfield, where bit 0 is the first card.
+export fn select_cards(cards: List<Int>, bitfield: Int) -> List<Int> {
+    if cards is nil {
+        return nil;
+    }
+
+    let selected = select_cards(cards.rest, bitfield >>> 1);
+    inline if bitfield & 1 != 0 { [cards.first, ...selected] } else { selected }
+}
+
+// The number of bits that are set in a bitfield.
+export fn popcount(bitfield: Int) -> Int {
+    if bitfield != 0 {
+        (bitfield & 1) + popcount(bitfield >>> 1)
+    } else {
+        0
+    }
+}
+
+// Decides who opens the first street, once both players' images 4 are revealed. Comparing the
+// images gives the opposite answer when the players swap, and the last bit of their exclusive or
+// doesn't, so the answer is the opposite for the other player.
+export fn mover_opens(mover_image: Bytes, waiter_image: Bytes) -> Bool {
+    let mover = mover_image as Int;
+    let waiter = waiter_image as Int;
+    (mover > waiter) as Int == (mover ^ waiter) & 1
+}

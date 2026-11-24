@@ -1,0 +1,27 @@
+import guess;
+import project::referee::types::*;
+import super::state::*;
+
+// Bob challenging Alice's commitment, which is `sha256(salt + word)`.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<KrunkInitial, nil>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<KrunkState> | nil {
+    let { last_move, mover_share } = params.turn;
+    let alice_commit = last_move.game_move;
+    if !(alice_commit is Bytes32) || mover_share != 0 {
+        return nil;
+    }
+
+    let { dict_pubkey, base_unit, clue_hash } = move.state;
+    validator_transition(
+        const { tree_hash(guess::main) },
+        KrunkState {
+            guesses: GuessRecord { dict_pubkey, base_unit, bob_guesses: nil },
+            clues: ClueRecord { alice_clues: nil, alice_commit, clue_hash },
+        },
+        5,
+    )
+}

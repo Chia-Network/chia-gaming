@@ -1,3 +1,0 @@
-(defmac run (R E)
-    (qq (a (li "run" (c 1 (unquote R)) (c 1 (unquote E))) @))
-)

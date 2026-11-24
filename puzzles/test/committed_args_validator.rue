@@ -1,0 +1,18 @@
+import project::referee::types::*;
+
+// Inspecting the parameters of a move passes a nil INFOHASH_B. Once Rust has derived and committed
+// INFOHASH_B, this validator raises. The regression test checks that validation with the committed
+// arguments remains a separate execution.
+fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    _move: ValidatorMove<Any, Any>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<String> {
+    assert params.turn.infohash_b is nil, "committed validator execution";
+    validator_transition(
+        0x1111111111111111111111111111111111111111111111111111111111111111,
+        "derived state",
+        32,
+    )
+}

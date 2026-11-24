@@ -1,0 +1,69 @@
+import project::games::spacepoker::deal::{deal, popcount, select_cards};
+import project::games::spacepoker::hand_eval::{deep_compare, space_hand_eval};
+import project::games::spacepoker::states::EndState;
+import project::referee::types::*;
+
+// The mover reveals their 16 byte preimage, followed by a byte whose bits select the five of
+// their seven cards that they show. This ends the game, and the mover share that the move commits
+// to is the waiter's share of the pot.
+//
+// The evidence is the waiter's own selection, which slashes the move if the waiter's hand is
+// better than the share they were left implies. A bitfield must select exactly five cards, and has
+// only seven bits, since bit 7 would select a card that isn't there, and a shorter hand could make
+// the evaluator raise.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<EndState, Bytes>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<nil> | nil {
+    let game_move = params.turn.last_move.game_move;
+    // The move ends the game, so it must not commit to a next state. The commitment is checked as
+    // `Any`, so that a malformed one fails the check rather than raising.
+    let infohash_b: Any = params.turn.infohash_b;
+    if !(
+        game_move.length == 17
+            && infohash_b is nil
+            && move.state.mover_image == sha256(game_move[..16])
+    ) {
+        return nil;
+    }
+
+    let mover_bitfield = game_move[16..17] as Int;
+    if !(mover_bitfield & -128 == 0 && popcount(mover_bitfield) == 5) {
+        return nil;
+    }
+
+    // Nil evidence checks the move without trying to slash it.
+    let evidence = move.evidence;
+    if evidence == nil {
+        return validator_transition(nil, nil, 0);
+    }
+
+    let deal = deal(game_move[..16], move.state.waiter_preimage);
+    let mover_selected = select_cards(deal.player.cards, mover_bitfield);
+
+    // Evidence that isn't a valid selection fails the slash.
+    assert evidence.length == 1;
+    let waiter_bitfield = evidence as Int;
+    assert waiter_bitfield & -128 == 0;
+    assert popcount(waiter_bitfield) == 5;
+
+    let waiter_selected = select_cards(deal.opponent.cards, waiter_bitfield);
+    let result = deep_compare(
+        space_hand_eval(mover_selected, deal.player.hole_cards.boost),
+        space_hand_eval(waiter_selected, deal.opponent.hole_cards.boost),
+    );
+    let fair_share = waiter_share(params.coin.amount, move.state.half_pot, result);
+
+    if params.turn.mover_share < fair_share {
+        nil
+    } else {
+        validator_transition(nil, nil, 0)
+    }
+}
+
+// The final move sets the opponent's share. A winning mover leaves them half the pot less.
+export inline fn waiter_share(amount: Int, half_pot: Int, result: Int) -> Int {
+    amount / 2 - result * half_pot
+}

@@ -1,0 +1,39 @@
+// The states of calpoker's validators, and the records that its helpers share. The states are
+// balanced trees rather than lists, so each of these is a pair, with a spread last field for the
+// right side of each node.
+
+// The state after Bob's seed: Alice's commitment to her seed, and Bob's seed.
+export struct Seeds {
+    seed_commit: Bytes,
+    ...bob_seed: Bytes,
+}
+
+// The state after Alice reveals her seed: her commitment to her discards, and the dealt cards.
+export struct Deal {
+    discard_commit: Bytes,
+    ...hands: Hands,
+}
+
+// The state after Bob's discards, which is the tree
+// `((bob_discards . alice_cards) . (bob_cards . discard_commit))`.
+export struct DiscardState {
+    left: DiscardStateLeft,
+    ...right: DiscardStateRight,
+}
+
+export struct DiscardStateLeft {
+    bob_discards: Bytes,
+    ...alice_cards: List<Int>,
+}
+
+export struct DiscardStateRight {
+    bob_cards: List<Int>,
+    ...discard_commit: Bytes,
+}
+
+// Alice's and Bob's cards, each a list of card numbers from 0 to 51 (four times the rank above 2,
+// plus the suit above 1).
+export struct Hands {
+    alice_cards: List<Int>,
+    ...bob_cards: List<Int>,
+}

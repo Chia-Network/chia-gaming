@@ -1,10 +1,26 @@
 pub mod channel_state;
 pub mod chialisp;
 pub mod constants;
-pub mod pack;
 pub mod referee_conditions;
-pub mod shapes;
 pub mod standard_coin;
+
+/// The include path for the Chialisp programs that the runtime's debug metadata tests compile.
+/// The `*standard-cl-26*` dialect always includes `std/prelude.clinc`, which those programs don't
+/// use, so this is a directory with an empty prelude.
+pub(crate) fn chialisp_fixture_search_path() -> String {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!(
+            "chia-gaming-chialisp-fixtures-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(dir.join("std")).expect("create fixture include directory");
+        std::fs::write(dir.join("std/prelude.clinc"), "").expect("write empty prelude");
+        dir
+    })
+    .to_string_lossy()
+    .into_owned()
+}
 
 /// Construct/read the native # layout in fixtures without list terminators.
 pub(crate) fn shape_tree(

@@ -1,0 +1,101 @@
+import guess;
+import project::referee::types::*;
+import super::rules::*;
+import super::state::*;
+
+// Bob challenging Alice's move, which is either a one-byte clue for his latest guess or, once the
+// game is over, the reveal of her word as `salt + word`.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<KrunkState, Bytes>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<KrunkState | nil> | nil {
+    let { last_move, mover_share } = params.turn;
+    let game_move = last_move.game_move;
+    if game_move.length == 1 {
+        check_clue(game_move, mover_share, move.state)
+    } else if game_move.length != 21 {
+        nil
+    } else {
+        check_reveal(game_move, mover_share, move.state, move.evidence)
+    }
+}
+
+// Alice gave a clue for Bob's latest guess, so it's his turn to guess again. The clue is a signed
+// byte below the clue for a correct guess, which is a reveal instead.
+inline fn check_clue(
+    clue: Bytes,
+    mover_share: Int,
+    state: KrunkState,
+) -> ValidatorResult<KrunkState | nil> | nil {
+    let { guesses, clues } = state;
+    if mover_share != 0 || length(clues.alice_clues) >= 4 || clue as Int >= ALL_GREEN_CLUE {
+        return nil;
+    }
+
+    validator_transition(
+        const { tree_hash(guess::main) },
+        KrunkState {
+            guesses,
+            clues: ClueRecord { ...clues, alice_clues: [clue, ...clues.alice_clues] },
+        },
+        5,
+    )
+}
+
+// Alice revealed her word, which ends the game. The evidence of a wrong reveal is either the
+// one-byte index of a clue that doesn't match the word (counting from the latest), or a range
+// `left_bound + right_bound` that contains the word, which the players signed as a gap between the
+// words of the dictionary. The slash is conditional on that signature.
+inline fn check_reveal(
+    reveal: Bytes,
+    mover_share: Int,
+    state: KrunkState,
+    evidence: Bytes,
+) -> ValidatorResult<KrunkState | nil> | nil {
+    let { guesses, clues } = state;
+    let word = reveal[16..21];
+    let valid = mover_share == reveal_mover_share(guesses.base_unit, guesses.bob_guesses, word)
+        && clues.alice_commit == sha256(reveal)
+        && (
+            evidence.length != 1
+                || {
+                    // The byte 0x00 indexes the most recent clue, for the guess before the latest.
+                    let index = evidence as Int + 0;
+                    make_clue(word, nth(guesses.bob_guesses, index + 1)) == nth(
+                        clues.alice_clues,
+                        index,
+                    )
+                }
+        );
+    if !valid {
+        return nil;
+    }
+
+    if evidence.length != 10 {
+        return validator_transition(nil, nil, 0);
+    }
+
+    // The words are compared as signed integers, as the dictionary is sorted.
+    assert !(evidence[..5] as Int > word as Int);
+    assert !(word as Int > evidence[5..10] as Int);
+    ValidatorResult::<KrunkState | nil> {
+        transition: Transition::<KrunkState | nil> { next_validator_hash: nil, new_state: nil },
+        max_move_size: 0,
+        extra_conditions: [AggSigUnsafe { public_key: guesses.dict_pubkey, message: evidence }],
+    }
+}
+
+// The share that Alice claims by revealing her word: nothing if Bob used all five guesses without
+// finding it, and otherwise his payout for the number of guesses he made.
+inline fn reveal_mover_share(base_unit: Int, bob_guesses: List<Bytes>, word: Bytes) -> Int {
+    let guess_count = length(bob_guesses);
+    if guess_count != 5 {
+        payout_share(base_unit, guess_count)
+    } else if nth(bob_guesses, 0) == word {
+        payout_share(base_unit, 5)
+    } else {
+        0
+    }
+}

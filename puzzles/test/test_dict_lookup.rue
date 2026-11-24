@@ -1,0 +1,6 @@
+import project::games::krunk::dictionary::*;
+
+// Looks a word up in a Krunk dictionary, between the given bounds.
+fn main(tree: DictTree, word: Bytes, left_bound: Bytes, right_bound: Bytes) -> DictGap | nil {
+    find_gap(left_bound, right_bound, word, tree)
+}

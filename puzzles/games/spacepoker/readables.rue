@@ -1,0 +1,101 @@
+// What the handlers show the UI about the opponent's moves and messages. Each starts with a tag,
+// which `games/spacepoker/ui/serialize.ts` reads them by.
+
+// An opening at round 4 shows the hole cards that the opener's image 4 deals, and a later one
+// shows the community cards, which the UI tells apart by the round. Readables are never checked at
+// runtime.
+#[expect(indistinguishable_union_member)]
+export type Readable = nil
+    | DealReadable
+    | PongReadable
+    | OpenReadable
+    | HoleCardsOpenReadable
+    | RaiseReadable
+    | CallReadable
+    | ShowdownReadable
+    | EndReadable;
+
+// The hole cards, once the opponent's image 4 is known, and whether we open the first street.
+export struct DealReadable {
+    tag = "deal",
+    first_card: Int,
+    second_card: Int,
+    boost: Bool,
+    opens: Bool,
+}
+
+// The opponent gave us the turn to open the first street, which shows our hole cards.
+export struct PongReadable {
+    tag = "pong",
+    first_card: Int,
+    second_card: Int,
+    boost: Bool,
+}
+
+// The opponent opened a street, with the community cards it deals, if any.
+export struct OpenReadable {
+    tag = "open",
+    raise_amount: Int,
+    half_pot: Int,
+    ...cards: List<Int>,
+}
+
+// The opponent opened the first street, which shows our hole cards.
+export struct HoleCardsOpenReadable {
+    tag = "open",
+    raise_amount: Int,
+    half_pot: Int,
+    first_card: Int,
+    second_card: Int,
+    boost: Bool,
+}
+
+export struct RaiseReadable {
+    tag = "raise",
+    raise_amount: Int,
+    half_pot: Int,
+}
+
+// The opponent called, which deals the community cards of the next street.
+export struct CallReadable {
+    tag = "call",
+    half_pot: Int,
+    round: Int,
+    ...cards: List<Int>,
+}
+
+// The opponent called the river, which reveals their preimage, and every card with it. The result
+// compares our best hand to theirs.
+export struct ShowdownReadable {
+    tag = "call",
+    half_pot: Int,
+    round: Int,
+    cards: List<Int>,
+    boost: Bool,
+    opponent_cards: List<Int>,
+    opponent_boost: Bool,
+    selected: List<Int>,
+    ranking: List<Int>,
+    opponent_selected: List<Int>,
+    opponent_ranking: List<Int>,
+    result: Int,
+}
+
+// The opponent revealed their hand, which ends the game.
+export struct EndReadable {
+    tag = "end",
+    selected: List<Int>,
+    ranking: List<Int>,
+    opponent_selected: List<Int>,
+    opponent_ranking: List<Int>,
+    result: Int,
+    opponent_first_card: Int,
+    opponent_second_card: Int,
+    opponent_boost: Bool,
+}
+
+// The community cards that a message from the opponent shows before their move does.
+export struct CardsReadable {
+    tag = "cards",
+    ...cards: List<Int>,
+}

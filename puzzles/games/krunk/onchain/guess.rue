@@ -1,0 +1,41 @@
+import project::referee::types::*;
+import super::state::*;
+
+// Alice challenging Bob's guess, which is a five-letter word. The evidence that it isn't in the
+// dictionary is a range `left_bound + right_bound` that contains it, which the players signed as a
+// gap between the words of the dictionary. The slash is conditional on that signature.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<KrunkState, Bytes>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<KrunkState> | nil {
+    let { last_move, mover_share } = params.turn;
+    let guess = last_move.game_move;
+    if guess.length != 5 || mover_share != 0 {
+        return nil;
+    }
+
+    let { state, evidence } = move;
+    let { guesses, clues } = state;
+    let extra_conditions = if evidence is nil {
+        nil
+    } else {
+        // The words are compared as signed integers, as the dictionary is sorted.
+        assert !(evidence[..5] as Int > guess as Int);
+        assert !(guess as Int > evidence[5..10] as Int);
+        [AggSigUnsafe { public_key: guesses.dict_pubkey, message: evidence } as Condition]
+    };
+
+    ValidatorResult::<KrunkState> {
+        transition: Transition::<KrunkState> {
+            next_validator_hash: clues.clue_hash,
+            new_state: KrunkState {
+                guesses: GuessRecord { ...guesses, bob_guesses: [guess, ...guesses.bob_guesses] },
+                clues,
+            },
+        },
+        max_move_size: 21,
+        extra_conditions,
+    }
+}

@@ -13,7 +13,7 @@ const FE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const APP = join(FE, 'dist', 'app');
 
 // Where wasm-pack wrote chia_gaming_wasm.js / _bg.wasm, and where the compiled
-// binary Chialisp artifacts live. Defaults match tools/build-deploy.sh; overridable via env.
+// binary CLVM artifacts live. Defaults match tools/build-deploy.sh; overridable via env.
 const WASM_OUT_DIR = process.env.WASM_OUT_DIR || join(FE, 'dist');
 const CLSP_DIR = process.env.CLSP_DIR || resolve(FE, '..', 'clsp');
 const GAMES_DIR = process.env.GAMES_DIR || resolve(FE, '..', 'games');

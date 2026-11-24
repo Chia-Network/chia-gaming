@@ -1,0 +1,26 @@
+import project::referee::types::*;
+import super::cards::popcount;
+import super::types::*;
+
+// Bob discards four of his cards. The move is a byte with a bit set for each card he discards.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<Deal, nil>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<DiscardState> | nil {
+    let bob_discards = params.turn.last_move.game_move;
+    if bob_discards.length == 1 && popcount(bob_discards as Int) == 4 {
+        let { discard_commit, hands: { alice_cards, bob_cards } } = move.state;
+        validator_transition(
+            const { tree_hash(e::main) },
+            DiscardState {
+                left: DiscardStateLeft { bob_discards, alice_cards },
+                right: DiscardStateRight { bob_cards, discard_commit },
+            },
+            18,
+        )
+    } else {
+        nil
+    }
+}

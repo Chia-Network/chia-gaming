@@ -1,0 +1,35 @@
+// The states of the Krunk validators. They're balanced trees rather than lists: each node splits
+// its fields at half of their count, so these structs end with a spread field for the right side
+// of each node.
+
+// The state before Alice commits to her word.
+export struct KrunkInitial {
+    dict_pubkey: PublicKey,
+    base_unit: Int,
+    // The hash of the clue validator, which the guess validator transitions to.
+    ...clue_hash: Bytes32,
+}
+
+// The state after Alice commits to her word.
+export struct KrunkState {
+    guesses: GuessRecord,
+    ...clues: ClueRecord,
+}
+
+// The game's terms, and Bob's guesses, latest first.
+export struct GuessRecord {
+    dict_pubkey: PublicKey,
+    base_unit: Int,
+    ...bob_guesses: List<Bytes>,
+}
+
+// Alice's clues, latest first, and her commitment to her word.
+export struct ClueRecord {
+    alice_clues: List<Bytes>,
+    alice_commit: Bytes32,
+    ...clue_hash: Bytes32,
+}
+
+// The states that the handlers see: the initial state, the state after Alice commits, or nil as
+// the state after the reveal, which ends the game.
+export type KrunkStates = KrunkInitial | KrunkState | nil;

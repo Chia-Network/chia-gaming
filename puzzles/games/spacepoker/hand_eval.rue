@@ -1,0 +1,124 @@
+// Ranks a five-card Space Poker hand, so that comparing two rankings with `deep_compare` compares
+// the hands. There are no flushes, and an ace is only high.
+//
+// A ranking is the counts of each rank in the hand, highest first, then the boost, then the ranks
+// in the same order. A straight beats a full house, since straights are rarer without suits:
+//
+// | Hand            | Ranking                        |
+// | --------------- | ------------------------------ |
+// | Five of a kind  | `5 boost rank`                 |
+// | Four of a kind  | `4 1 boost quad kicker`        |
+// | Straight        | `3 3 boost high`               |
+// | Full house      | `3 2 boost set pair`           |
+// | Three of a kind | `3 1 1 boost set k1 k2`        |
+// | Two pair        | `2 2 1 boost high low kicker`  |
+// | Pair            | `2 1 1 1 boost pair k1 k2 k3`  |
+// | High card       | `1 1 1 1 1 boost h k1 k2 k3 k4` |
+export fn space_hand_eval(cards: List<Int>, boost: Bool) -> List<Int> {
+    let ranks = atomsort(cards);
+    // The hand selection supplies five ranks, and atomsort preserves their count.
+    let ranks = unchecked_cast::<[Int, Int, Int, Int, Int, ...List<Int>]>(ranks);
+    let [high, second, third, fourth, low, ..._] = ranks;
+    if high != second && second != third && third != fourth && fourth != low {
+        return if high - low == 4 {
+            [3, 3, boost as Int, high]
+        } else {
+            [1, 1, 1, 1, 1, boost as Int, ...ranks]
+        };
+    }
+
+    let groups = atomsort(group_runs(ranks.rest, high, 1));
+    [...for group in groups { group >>> 4 }, boost as Int, ...for group in groups { group & 15 }]
+}
+
+// Groups the runs of equal ranks in a sorted hand, as `16 * count + rank`.
+fn group_runs(ranks: List<Int>, rank: Int, count: Int) -> List<Int> {
+    if ranks is nil {
+        [(count << 4) | rank]
+    } else if ranks.first == rank {
+        group_runs(ranks.rest, rank, count + 1)
+    } else {
+        [(count << 4) | rank, ...group_runs(ranks.rest, ranks.first, 1)]
+    }
+}
+
+// Sorts integers in descending order, sorting three at a time and merging them, which is fast for
+// short lists.
+fn atomsort(values: List<Int>) -> List<Int> {
+    if values is nil {
+        return nil;
+    }
+
+    let rest = values.rest;
+    if rest is nil {
+        return values;
+    }
+
+    let first = values.first;
+    let second = rest.first;
+    if rest.rest is nil {
+        return if first > second {
+            values
+        } else {
+            [second, first]
+        };
+    }
+
+    let third = rest.rest.first;
+    let sorted = if first > second {
+        if second > third {
+            [first, second, third]
+        } else if first > third {
+            [first, third, second]
+        } else {
+            [third, first, second]
+        }
+    } else if first > third {
+        [second, first, third]
+    } else if second > third {
+        [second, third, first]
+    } else {
+        [third, second, first]
+    };
+    merge(sorted, atomsort(rest.rest.rest))
+}
+
+fn merge(left: List<Int>, right: List<Int>) -> List<Int> {
+    if left is nil {
+        return right;
+    }
+
+    if right is nil {
+        return left;
+    }
+
+    if left.first > right.first {
+        [left.first, ...merge(left.rest, right)]
+    } else {
+        [right.first, ...merge(left, right.rest)]
+    }
+}
+
+// Compares two values: 1 if the first is greater, -1 if it's less, and 0 if they're equal. Pairs
+// are greater than atoms, atoms are compared as integers, and pairs are compared by their first
+// values, then their rest.
+export fn deep_compare(left: Any, right: Any) -> Int {
+    if left is (Any, Any) {
+        if right is (Any, Any) {
+            let first = deep_compare(left.first, right.first);
+            if first != 0 {
+                first
+            } else {
+                deep_compare(left.rest, right.rest)
+            }
+        } else {
+            1
+        }
+    } else if right is (Any, Any) {
+        -1
+    } else if left as Int > right as Int {
+        1
+    } else {
+        -((right as Int > left as Int) as Int)
+    }
+}

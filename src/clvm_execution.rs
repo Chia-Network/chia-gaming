@@ -425,7 +425,7 @@ mod tests {
         source: &str,
     ) -> chialisp::compiler::debug_metadata::DebugCompileArtifact {
         let opts: Rc<dyn CompilerOpts> = DefaultCompilerOpts::new(filename)
-            .set_search_paths(&[concat!(env!("CARGO_MANIFEST_DIR"), "/clsp").to_string()]);
+            .set_search_paths(&[crate::tests::chialisp_fixture_search_path()]);
         compile_with_debug(opts, source)
             .expect("compile diagnostic fixture")
             .into_iter()
@@ -492,21 +492,15 @@ mod tests {
                     matches!(frame.matched, FrameMatch::Exact | FrameMatch::Curried),
                     "{key} {kind}"
                 );
-                if kind != "validator" {
-                    assert!(
-                        frame
-                            .function
-                            .as_ref()
-                            .is_some_and(|name| name
-                                .starts_with(&format!("games.{key}.clsp.{key}_generate."))),
-                        "{key} {kind}: {:?}",
-                        frame.function
-                    );
-                    let span = &metadata.spans[frame.source_span.expect("handler source span")];
-                    assert!(metadata.files[span.file]
+                // Rue's debug metadata doesn't name the function of a program value, so this only
+                // checks that the program comes from the package's sources.
+                let span = &metadata.spans[frame.source_span.expect("program source span")];
+                assert!(
+                    metadata.files[span.file]
                         .path
-                        .ends_with(&format!("{key}_generate.clinc")));
-                }
+                        .starts_with(&format!("puzzles/games/{key}/")),
+                    "{key} {kind}"
+                );
             }
         }
     }

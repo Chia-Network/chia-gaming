@@ -67,7 +67,7 @@ support. Keep both entries when updating TypeScript; this follows the
 ./cb.sh
 
 # Run full default test flow:
-# - rust + chialisp build
+# - rust + puzzle build
 # - rust sim tests
 # - JS/WASM integration tests
 ./ct.sh
@@ -262,19 +262,24 @@ canonical reference for the full build sequence.
 
 Run commands from the repo root unless noted.
 
-### 1. Chialisp
+### 1. Puzzles
 
 ```bash
 ./tools/build-chialisp.sh
 ```
 
-This is the sole entry point for compiling `.clsp` sources. The Chialisp
-compiler emits `.hex`; the build then decodes each output into a
-`.clvm.bin` artifact. For each game it also curries any factory arguments,
+This is the sole entry point for compiling the puzzles, which are a Rue
+project (`Rue.toml`, with its sources in `puzzles/`). Each program is listed
+in `RUE_PROGRAMS` in `build.rs`, or is a game package's factory, factory
+probe, or validator, and is written as `.clvm.bin`, `.hex`, and
+`.debug.clvm.bin` outputs. Those paths are under `clsp/` and `games/`, where
+the Chialisp programs they replaced were written, so the runtime and
+deployment scripts load them unchanged. Any Rue error or warning fails the
+build. For each game it also curries any factory arguments,
 runs the build-only probe, records the protocol ID, and emits one prepared
 runtime factory. It content-hashes the sources, compiler inputs, and generated
 outputs, rebuilding only when an input changes or an output is missing or
-modified. Ordinary Cargo commands do not compile Chialisp. Only prepared
+modified. Ordinary Cargo commands do not compile the puzzles. Only prepared
 factories and core runtime programs are loaded by the WASM module over HTTP.
 The gitignored `games/package_manifest.json` caches the generated protocol IDs
 for subsequent Rust builds; it is build output, not a hand-edited catalog.
@@ -473,7 +478,7 @@ Set `--self` to the hub's public URL. The same `--dir`, `--self`,
 - **Separate origins.** The player app and hub must be served from
 different origins. The hub loads inside an iframe from the hub's
 origin; same-origin would break the security boundary.
-- **Asset co-location.** WASM files and `.clvm.bin` Chialisp artifacts must be
+- **Asset co-location.** WASM files and `.clvm.bin` puzzle artifacts must be
 under the same `basePath` as `index.js`. The player app prefetches the
 WASM module and binary game/factory presets at page
 load — not when a session is accepted — via relative paths under

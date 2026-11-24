@@ -8,7 +8,7 @@ trap 'rm -rf "$TEST_ROOT"' EXIT
 REPO="$TEST_ROOT/repo"
 FAKE_BIN="$TEST_ROOT/bin"
 LOG="$TEST_ROOT/cargo.log"
-mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$FAKE_BIN"
+mkdir -p "$REPO/tools" "$REPO/clsp" "$REPO/games" "$REPO/puzzles" "$FAKE_BIN"
 cp "$SCRIPT_DIR/build-chialisp.sh" "$REPO/tools/build-chialisp.sh"
 printf '%s\n' '{}' > "$REPO/games/registry.json"
 # Reject GNU-only find early-exit usage (unsupported on macOS BSD find).
@@ -16,8 +16,8 @@ if grep -E '(^|[[:space:]])-quit([[:space:]]|$)' "$REPO/tools/build-chialisp.sh"
     echo "build-chialisp.sh must not use find's GNU-only early-exit primary" >&2
     exit 1
 fi
-printf '%s\n' '(mod ())' > "$REPO/clsp/example.clsp"
-printf '%s\n' '[compile]' > "$REPO/chialisp.toml"
+printf '%s\n' 'fn main() {}' > "$REPO/puzzles/example.rue"
+printf '%s\n' '[compiler]' > "$REPO/Rue.toml"
 printf '%s\n' 'fn main() {}' > "$REPO/build.rs"
 printf '%s\n' '[package]' > "$REPO/Cargo.toml"
 printf '%s\n' '# lock' > "$REPO/Cargo.lock"
@@ -28,9 +28,9 @@ cat > "$FAKE_BIN/cargo" <<'EOF'
 set -e
 : "${CHIALISP_COMPILE:?build-chialisp.sh must explicitly request compilation}"
 echo compile >> "$FAKE_CARGO_LOG"
-git hash-object clsp/example.clsp > clsp/example.hex
+git hash-object puzzles/example.rue > clsp/example.hex
 printf '\200' > clsp/example.clvm.bin
-printf 'debug:%s\n' "$(git hash-object clsp/example.clsp)" > clsp/example.debug.clvm.bin
+printf 'debug:%s\n' "$(git hash-object puzzles/example.rue)" > clsp/example.debug.clvm.bin
 EOF
 chmod +x "$FAKE_BIN/cargo"
 
@@ -77,7 +77,7 @@ assert_count 1
 run_github_actions_build
 assert_count 2
 
-printf '%s\n' '(mod (X) X)' > "$REPO/clsp/example.clsp"
+printf '%s\n' 'fn main(x: Int) -> Int { x }' > "$REPO/puzzles/example.rue"
 run_build
 assert_count 3
 
@@ -104,5 +104,17 @@ assert_count 8
 printf '%s\n' 'fn main() { println!("changed"); }' > "$REPO/build.rs"
 run_build
 assert_count 9
+
+printf '%s\n' 'fn main() -> Int { 1 }' > "$REPO/puzzles/example.rue"
+run_build
+assert_count 10
+
+printf '%s\n' 'fn helper() -> Int { 1 }' > "$REPO/puzzles/helper.rue"
+run_build
+assert_count 11
+
+printf '%s\n' '[compiler]' 'entrypoint = "puzzles"' > "$REPO/Rue.toml"
+run_build
+assert_count 12
 
 echo "build-chialisp regression tests passed"

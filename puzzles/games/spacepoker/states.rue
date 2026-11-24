@@ -1,0 +1,76 @@
+// The states that the Space Poker validators pass to each other, which the handlers read too.
+//
+// Each player commits to the tip of a chain of five hashes, and reveals the chain backwards, one
+// image per street. Image 4 of each chain deals the hole cards, images 3, 2 and 1 deal the flop,
+// the turn and the river, and the preimages decide the showdown. A round number counts the
+// streets down from 4 to 1.
+//
+// The layouts with more than two fields are balanced trees rather than lists, which split their
+// fields at half of their count, without nil terminators. The structs name the nodes of those
+// trees, with a spread last field for the right side of each node.
+//
+// Images are 32 bytes, but those that moves reveal are typed as `Bytes`, since the validators
+// check their lengths by comparison rather than with a type guard.
+
+// The state of every validator, which the handlers are given as is. The initial state, for
+// `commitA`, is the bet unit. The states can't all be told apart at runtime, but they don't need
+// to be, since each validator and handler knows which state it's given from where it is in the
+// game.
+#[expect(indistinguishable_union_member)]
+export type SpaceState = Int | CommitState | OpenState | RaiseState | EndState;
+
+// The state of `commitB`: the bet unit, and the tip of Alice's chain (her image 5).
+export struct CommitState {
+    bet_unit: Int,
+    ...alice_image: Bytes32,
+}
+
+// The state of `begin_round`, where the mover opens the street, or at round 4 might pong to give
+// the opening to the waiter.
+export struct OpenState {
+    stakes: OpenStakes,
+    ...street: OpenStreet,
+}
+
+// The mover's image is the one after the image of this round, which the mover's move reveals.
+export struct OpenStakes {
+    bet_unit: Int,
+    half_pot: Int,
+    ...mover_image: Bytes,
+}
+
+// The waiter's image is the one of this round, which is already revealed. The hash of `mid_round`
+// is here so that `begin_round` doesn't depend on the hash of `mid_round`, which depends on the
+// hash of `begin_round`.
+export struct OpenStreet {
+    waiter_image: Bytes,
+    round: Int,
+    ...mid_hash: Bytes32,
+}
+
+// The state of `mid_round`, where the mover raises, or calls by revealing the preimage of their
+// image of this round.
+export struct RaiseState {
+    stakes: RaiseStakes,
+    ...street: RaiseStreet,
+}
+
+export struct RaiseStakes {
+    bet_unit: Int,
+    half_pot: Int,
+    ...last_raise: Int,
+}
+
+export struct RaiseStreet {
+    mover_image: Bytes,
+    waiter_image: Bytes,
+    ...round: Int,
+}
+
+// The state of `end`, after the river is called. The mover reveals their preimage and the cards
+// that they show, and the waiter's preimage is already revealed.
+export struct EndState {
+    half_pot: Int,
+    mover_image: Bytes,
+    ...waiter_preimage: Bytes,
+}

@@ -1,0 +1,21 @@
+import project::referee::types::*;
+import super::types::Seeds;
+
+// Bob sends his seed, which is added to the state with Alice's commitment to hers.
+export fn main(
+    _validator_hash: Bytes32,
+    params: RefereeParameters,
+    move: ValidatorMove<Bytes, nil>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<Seeds> | nil {
+    let bob_seed = params.turn.last_move.game_move;
+    if bob_seed.length == 16 {
+        validator_transition(
+            const { tree_hash(c::main) },
+            Seeds { seed_commit: move.state, bob_seed },
+            48,
+        )
+    } else {
+        nil
+    }
+}

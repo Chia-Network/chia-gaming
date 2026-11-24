@@ -1,0 +1,12 @@
+import project::referee::types::*;
+
+// A validator for the referee tests, which returns the previous state as its result, so that the
+// test chooses the result by choosing the state.
+fn main(
+    _validator_hash: Bytes32,
+    _params: RefereeParameters,
+    move: ValidatorMove<ValidatorResult<Any> | nil, Any>,
+    ..._payout: Bytes32 | nil,
+) -> ValidatorResult<Any> | nil {
+    move.state
+}

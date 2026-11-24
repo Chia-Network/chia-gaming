@@ -1,5 +1,0 @@
-(include *standard-cl-26*)
-
-(import games.calpoker.clsp.calpoker_generate exposing calpoker_factory)
-
-(export calpoker_factory)

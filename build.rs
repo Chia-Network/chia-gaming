@@ -2,22 +2,16 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chialisp::compiler::debug_metadata::{
-    compile_with_debug, debug_output_path, DebugMetadata, FrameMatch,
-};
+use chialisp::compiler::debug_metadata::{debug_output_path, DebugMetadata, FrameMatch};
 use clvmr::allocator::Allocator;
 use clvmr::chia_dialect::ChiaDialect;
 use clvmr::serde::{node_from_bytes, node_to_bytes};
 use clvmr::{run_program, NodePtr, SExp};
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
-use toml::{Table, Value};
 
-use chialisp::classic::clvm_tools::clvmc::CompileError;
-use chialisp::classic::clvm_tools::comp_input::RunAndCompileInputData;
-use chialisp::classic::platform::argparse::ArgumentValue;
-use chialisp::compiler::comptypes::CompileErr;
-use chialisp::compiler::srcloc::Srcloc;
+use rue_compiler::{normalize_path, Compiler, FileTree};
+use rue_diagnostic::DiagnosticSeverity;
 
 #[path = "src/factory_abi.rs"]
 #[allow(dead_code)]
@@ -31,94 +25,50 @@ struct GameRegistry {
     test: Vec<String>,
 }
 
-const CHIALISP_COMPILER_STACK_SIZE: usize = 128 * 1024 * 1024;
+const PUZZLE_COMPILER_STACK_SIZE: usize = 128 * 1024 * 1024;
 
-fn do_compile(title: &str, filename: &str) -> Result<(), CompileError> {
-    // The compiler may use a different clvmr version than the game runtime.
-    let mut allocator = chialisp::clvmr::Allocator::new();
-    let mut arguments: HashMap<String, ArgumentValue> = HashMap::new();
-    arguments.insert(
-        "include".to_string(),
-        ArgumentValue::ArgArray(vec![
-            ArgumentValue::ArgString(None, "clsp".to_string()),
-            ArgumentValue::ArgString(None, ".".to_string()),
-        ]),
-    );
-
-    let file_content = fs::read_to_string(filename).map_err(|e| {
-        CompileErr(
-            Srcloc::start(filename),
-            format!("failed to read {filename}: {e:?}"),
-        )
-    })?;
-
-    arguments.insert(
-        "path_or_code".to_string(),
-        ArgumentValue::ArgString(Some(filename.to_string()), file_content.clone()),
-    );
-
-    let parsed = RunAndCompileInputData::new(&mut allocator, &arguments).map_err(|e| {
-        CompileError::Modern(
-            Srcloc::start("*error*"),
-            format!("error building chialisp {title}: {e}"),
-        )
-    })?;
-    let artifacts = compile_with_debug(parsed.opts, &file_content)
-        .map_err(|CompileErr(loc, message)| CompileError::Modern(loc, message))?;
-    let is_module = artifacts.len() > 1;
-    for artifact in artifacts {
-        let Some(output_path) =
-            compile_output_path(filename, is_module, artifact.export_name.as_deref())
-        else {
-            continue;
-        };
-        let metadata = DebugMetadata::decode(&artifact.metadata).map_err(|e| {
-            CompileError::Modern(
-                Srcloc::start(filename),
-                format!("invalid debug metadata for {title}: {e}"),
-            )
-        })?;
-        metadata.verify_program(&artifact.program).map_err(|e| {
-            CompileError::Modern(
-                Srcloc::start(filename),
-                format!("mismatched debug metadata for {title}: {e}"),
-            )
-        })?;
-        fs::write(&output_path, &artifact.program).map_err(|e| {
-            CompileError::Modern(
-                Srcloc::start(filename),
-                format!("writing {}: {e}", output_path.display()),
-            )
-        })?;
-        let debug_path = debug_output_path(&output_path.to_string_lossy());
-        fs::write(&debug_path, &artifact.metadata).map_err(|e| {
-            CompileError::Modern(
-                Srcloc::start(filename),
-                format!("writing {debug_path}: {e}"),
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
-fn compile_output_path(
-    filename: &str,
-    is_module: bool,
-    export_name: Option<&str>,
-) -> Option<PathBuf> {
-    let source = Path::new(filename);
-    match (is_module, export_name) {
-        (true, None) => None,
-        (true, Some("program")) => Some(source.with_extension("clvm.bin")),
-        (true, Some(export)) => {
-            let stem = source.file_stem()?.to_str()?;
-            Some(source.with_file_name(format!("{stem}_{export}.clvm.bin")))
-        }
-        (false, None) => Some(source.with_extension("clvm.bin")),
-        (false, Some(_)) => unreachable!("ordinary compilation cannot have a named export"),
-    }
-}
+/// The Rue programs, each a file whose `main` function is the program, and where its outputs are
+/// written, without their extensions. The outputs keep the paths under `clsp/` of the Chialisp
+/// programs they replaced, which the runtime and the deployment scripts load them from.
+const RUE_PROGRAMS: &[(&str, &str)] = &[
+    (
+        "puzzles/unroll.rue",
+        "clsp/unroll/unroll_puzzle_state_channel_unrolling",
+    ),
+    (
+        "puzzles/referee/referee.rue",
+        "clsp/referee/onchain/referee",
+    ),
+    (
+        "puzzles/test/mock_validator.rue",
+        "clsp/test/mock_validator",
+    ),
+    (
+        "puzzles/test/committed_args_validator.rue",
+        "clsp/test/committed_args_validator",
+    ),
+    (
+        "puzzles/test/test_make_cards.rue",
+        "clsp/test/test_make_cards",
+    ),
+    ("puzzles/test/test_mergein.rue", "clsp/test/test_mergein"),
+    (
+        "puzzles/test/test_handcalc_micro.rue",
+        "clsp/test/test_handcalc_micro",
+    ),
+    (
+        "puzzles/test/space_hand_eval.rue",
+        "clsp/test/test_space_hand_eval_space_hand_eval",
+    ),
+    (
+        "puzzles/test/space_hand_calc.rue",
+        "clsp/test/test_space_hand_eval_space_hand_calc",
+    ),
+    (
+        "puzzles/test/test_dict_lookup.rue",
+        "clsp/test/test_dict_lookup",
+    ),
+];
 
 fn string_list(value: Option<&JsonValue>, field: &str) -> Vec<String> {
     match value {
@@ -153,14 +103,16 @@ fn validate_package(key: &str, production: bool) {
     let root = PathBuf::from("games").join(key);
     let rust_mod = root.join("rust/mod.rs");
     let rust_tests = root.join("rust/tests/mod.rs");
-    let factory = root.join("clsp/factory.clsp");
-    let factory_probe = root.join("clsp/factory_probe.clsp");
-    if !factory.is_file() {
-        panic!("game package {key} missing clsp/factory.clsp");
-    }
+    let Some(dir) = rue_package_dir(key) else {
+        panic!("game package {key} missing puzzles/games/{key}/factory.rue");
+    };
+    let factory_probe = dir.join("factory_probe.rue");
     if production {
         if !factory_probe.is_file() {
-            panic!("production game package {key} missing clsp/factory_probe.clsp");
+            panic!(
+                "production game package {key} missing {}",
+                factory_probe.display()
+            );
         }
         for rel in [
             "ui/handProposal.ts",
@@ -184,68 +136,128 @@ fn validate_package(key: &str, production: bool) {
     }
 }
 
-fn package_clsp_entrypoints(key: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let factory = format!("games/{key}/clsp/factory.clsp");
-    out.push((format!("{key}-factory"), factory));
-    let factory_probe = format!("games/{key}/clsp/factory_probe.clsp");
-    if Path::new(&factory_probe).is_file() {
-        out.push((format!("{key}-factory-probe"), factory_probe));
-    }
-    let onchain = PathBuf::from(format!("games/{key}/clsp/onchain"));
-    if onchain.is_dir() {
-        let mut files: Vec<PathBuf> = fs::read_dir(&onchain)
-            .unwrap_or_else(|e| panic!("read {onchain:?}: {e}"))
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("clsp"))
-            .filter(|p| {
-                p.file_stem()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|stem| !stem.starts_with("test_"))
-            })
-            .collect();
-        files.sort();
-        for file in files {
-            let name = file
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("onchain");
-            out.push((format!("{key}-{name}"), file.to_string_lossy().into_owned()));
-        }
-    }
-    out
+/// The directory of a game package's Rue sources, if it has a factory.
+fn rue_package_dir(key: &str) -> Option<PathBuf> {
+    let dir = PathBuf::from("puzzles/games").join(key);
+    dir.join("factory.rue").is_file().then_some(dir)
 }
 
-fn compile_chialisp(registry: &GameRegistry) -> Result<(), CompileError> {
-    let srcloc = Srcloc::start("chialisp.toml");
-    let chialisp_toml_text = fs::read_to_string("chialisp.toml").map_err(|e| {
-        CompileError::Modern(
-            srcloc.clone(),
-            format!("Error reading chialisp.toml: {e:?}"),
-        )
-    })?;
-
-    let chialisp_toml = chialisp_toml_text
-        .parse::<Table>()
-        .map_err(|e| CompileError::Modern(srcloc, format!("Error parsing chialisp.toml: {e:?}")))?;
-
-    if let Some(Value::Table(t)) = chialisp_toml.get("compile") {
-        for (k, v) in t.iter() {
-            if let Value::String(s) = v {
-                do_compile(k, s)?;
+/// The programs of the game packages, with where their outputs are written. A package has a `factory.rue`, an optional `factory_probe.rue`, and its validators in `onchain/`
+/// (except for `test_` files). Their outputs are written to the package's `clsp/` directory.
+fn rue_package_programs(registry: &GameRegistry) -> Vec<(String, String)> {
+    let mut programs = Vec::new();
+    for key in registry.production.iter().chain(registry.test.iter()) {
+        let Some(dir) = rue_package_dir(key) else {
+            continue;
+        };
+        let output = PathBuf::from("games").join(key).join("clsp");
+        for name in ["factory", "factory_probe"] {
+            let source = dir.join(format!("{name}.rue"));
+            if source.is_file() {
+                programs.push((
+                    source.to_string_lossy().into_owned(),
+                    output.join(name).to_string_lossy().into_owned(),
+                ));
+            }
+        }
+        let onchain = dir.join("onchain");
+        if onchain.is_dir() {
+            let mut files: Vec<PathBuf> = fs::read_dir(&onchain)
+                .unwrap_or_else(|e| panic!("read {onchain:?}: {e}"))
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("rue"))
+                .filter(|p| {
+                    p.file_stem()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|stem| !stem.starts_with("test_"))
+                })
+                .collect();
+            files.sort();
+            for file in files {
+                let stem = file
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .expect("validator file name");
+                programs.push((
+                    file.to_string_lossy().into_owned(),
+                    output
+                        .join("onchain")
+                        .join(stem)
+                        .to_string_lossy()
+                        .into_owned(),
+                ));
             }
         }
     }
+    programs
+}
 
-    let mut seen = std::collections::BTreeSet::new();
-    for key in registry.production.iter().chain(registry.test.iter()) {
-        if !seen.insert(key) {
-            panic!("duplicate game package key {key}");
+/// Compiles the Rue project in `Rue.toml`, and writes each program in [`RUE_PROGRAMS`] and in the
+/// Rue game packages as binary CLVM, hex, and a debug metadata sidecar. Any diagnostic fails the
+/// build, including warnings.
+fn compile_rue(registry: &GameRegistry) -> Result<(), String> {
+    let root = std::env::current_dir().map_err(|e| format!("finding the project root: {e}"))?;
+    let project = rue_options::find_project(&root.join("Rue.toml"), false)
+        .map_err(|e| format!("loading Rue.toml: {e}"))?
+        .ok_or_else(|| "Rue.toml not found".to_string())?;
+    if !project.unknown_lints.is_empty() || !project.forbidden_lints.is_empty() {
+        return Err("Rue.toml has unknown or forbidden lints".to_string());
+    }
+
+    let mut ctx = Compiler::new(project.options);
+    let tree = FileTree::compile_path(&mut ctx, &project.entrypoint, &mut HashMap::new())
+        .map_err(|e| format!("compiling Rue: {e}"))?;
+    let diagnostics = ctx.take_diagnostics();
+    if !diagnostics.is_empty() {
+        let messages = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                let severity = match diagnostic.severity {
+                    DiagnosticSeverity::Error => "error",
+                    DiagnosticSeverity::Warning => "warning",
+                };
+                let lint = diagnostic
+                    .lint()
+                    .map(|lint| format!("[{lint}]"))
+                    .unwrap_or_default();
+                format!("{severity}{lint}: {}", diagnostic.full_message(&root))
+            })
+            .collect::<Vec<_>>();
+        return Err(format!("Rue diagnostics:\n{}", messages.join("\n")));
+    }
+
+    let programs = RUE_PROGRAMS
+        .iter()
+        .map(|(source, output)| (source.to_string(), output.to_string()))
+        .chain(rue_package_programs(registry));
+
+    let mut allocator = Allocator::new();
+    for (source, output) in programs {
+        let kind =
+            normalize_path(&root.join(&source)).map_err(|e| format!("resolving {source}: {e}"))?;
+        if let Some(dir) = Path::new(&output).parent() {
+            fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
         }
-        validate_package(key, registry.production.iter().any(|k| k == key));
-        for (title, path) in package_clsp_entrypoints(key) {
-            do_compile(&title, &path)?;
+        let (program, metadata) = tree
+            .main_with_debug_metadata(&mut ctx, &mut allocator, &kind, root.clone())
+            .map_err(|e| format!("compiling {source}: {e}"))?
+            .ok_or_else(|| format!("{source} has no main function"))?;
+        let program = node_to_bytes(&allocator, program)
+            .map_err(|e| format!("serializing {source}: {e:?}"))?;
+
+        // The runtime reads these sidecars with Chialisp's decoder, so check that it accepts them.
+        DebugMetadata::decode(&metadata)
+            .and_then(|decoded| decoded.verify_program(&program))
+            .map_err(|e| format!("debug metadata of {source}: {e}"))?;
+
+        for (extension, bytes) in [
+            ("clvm.bin", program.clone()),
+            ("hex", hex::encode(&program).into_bytes()),
+            ("debug.clvm.bin", metadata),
+        ] {
+            let path = format!("{output}.{extension}");
+            fs::write(&path, bytes).map_err(|e| format!("writing {path}: {e}"))?;
         }
     }
 
@@ -303,9 +315,9 @@ fn curry_program(
 
 fn read_binary_node(allocator: &mut Allocator, path: &Path) -> Result<NodePtr, String> {
     let bytes =
-        fs::read(path).map_err(|e| format!("reading compiled Chialisp {}: {e}", path.display()))?;
+        fs::read(path).map_err(|e| format!("reading compiled CLVM {}: {e}", path.display()))?;
     node_from_bytes(allocator, &bytes)
-        .map_err(|e| format!("parsing compiled Chialisp {}: {e:?}", path.display()))
+        .map_err(|e| format!("parsing compiled CLVM {}: {e:?}", path.display()))
 }
 
 fn rebind_debug_metadata_identity(
@@ -334,7 +346,7 @@ fn prepare_game_packages(registry: &GameRegistry) -> Result<HashMap<String, [u8;
 
     for key in &registry.production {
         let root = PathBuf::from("games").join(key).join("clsp");
-        let raw_factory_path = root.join(format!("factory_{key}_factory.clvm.bin"));
+        let raw_factory_path = root.join("factory.clvm.bin");
         let raw_metadata_path =
             PathBuf::from(debug_output_path(&raw_factory_path.to_string_lossy()));
         let mut allocator = Allocator::new();
@@ -525,20 +537,25 @@ fn load_package_ids(registry: &GameRegistry) -> HashMap<String, [u8; 32]> {
     ids
 }
 
-fn compile_chialisp_with_large_stack(registry: GameRegistry) {
+/// Compiles the puzzles and prepares the game packages on a thread with a large stack, since the
+/// compilers and the debug metadata decoder recurse deeply (and the main thread's stack is only
+/// 1 MiB on Windows).
+fn compile_puzzles_with_large_stack(registry: GameRegistry) -> HashMap<String, [u8; 32]> {
     let compiler = std::thread::Builder::new()
-        .name("chialisp-compiler".to_string())
-        .stack_size(CHIALISP_COMPILER_STACK_SIZE)
+        .name("puzzle-compiler".to_string())
+        .stack_size(PUZZLE_COMPILER_STACK_SIZE)
         .spawn(move || {
-            if let Err(e) = compile_chialisp(&registry) {
-                panic!("error compiling chialisp: {e:?}");
+            if let Err(e) = compile_rue(&registry) {
+                panic!("error compiling Rue: {e}");
             }
+            prepare_game_packages(&registry)
+                .unwrap_or_else(|e| panic!("error preparing game packages: {e}"))
         })
-        .expect("failed to start Chialisp compiler thread");
+        .expect("failed to start puzzle compiler thread");
 
-    if let Err(payload) = compiler.join() {
-        std::panic::resume_unwind(payload);
-    }
+    compiler
+        .join()
+        .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
 }
 
 fn emit_rerun_directives(dir: &Path) {
@@ -548,7 +565,7 @@ fn emit_rerun_directives(dir: &Path) {
             if path.is_dir() {
                 emit_rerun_directives(&path);
             } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if (ext == "clsp" || ext == "clinc" || ext == "json" || ext == "rs")
+                if (ext == "rue" || ext == "json" || ext == "rs")
                     && path != Path::new("games/package_manifest.json")
                 {
                     println!("cargo:rerun-if-changed={}", path.display());
@@ -698,9 +715,9 @@ fn main() {
         validate_package(key, registry.production.iter().any(|k| k == key));
     }
 
-    emit_rerun_directives(Path::new("clsp"));
     emit_rerun_directives(Path::new("games"));
-    println!("cargo:rerun-if-changed=chialisp.toml");
+    emit_rerun_directives(Path::new("puzzles"));
+    println!("cargo:rerun-if-changed=Rue.toml");
     println!("cargo:rerun-if-changed=games/registry.json");
     println!("cargo:rerun-if-changed=shared/protocol-constants/constants.json");
     println!("cargo:rerun-if-changed=src/factory_abi.rs");
@@ -709,13 +726,11 @@ fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     generate_protocol_timeout_bounds(&out_dir);
     let package_ids = if std::env::var("CHIALISP_COMPILE").is_ok() {
-        compile_chialisp_with_large_stack(registry.clone());
-        prepare_game_packages(&registry)
-            .unwrap_or_else(|e| panic!("error preparing game packages: {e}"))
+        compile_puzzles_with_large_stack(registry.clone())
     } else {
         // Ordinary native/WASM builds consume the manifest generated by the
-        // Chialisp build. Track it here, but not in the producer branch above:
-        // recompiling Chialisp must invalidate cached package identities.
+        // puzzle build. Track it here, but not in the producer branch above:
+        // recompiling the puzzles must invalidate cached package identities.
         println!("cargo:rerun-if-changed=games/package_manifest.json");
         load_package_ids(&registry)
     };

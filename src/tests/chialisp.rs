@@ -1,8 +1,11 @@
 use crate::common::load_clvm::read_hex_puzzle;
 use crate::common::types::{chia_dialect, AllocEncoder, Node, Sha256Input};
 
-use clvm_traits::ToClvm;
-use clvmr::{run_program, ChiaDialect};
+use std::cmp::Ordering;
+
+use clvm_traits::{clvm_list, FromClvm, ToClvm};
+use clvmr::allocator::{NodePtr, SExp};
+use clvmr::{run_program, Allocator, ChiaDialect};
 
 use crate::utils::first;
 
@@ -61,6 +64,40 @@ fn test_mergein() {
         let result_hex = Node(result).to_hex(&mut allocator).expect("cvt");
         assert_eq!(result_hex, t.1);
     }
+}
+
+#[test]
+fn test_calpoker_selection_indexes_exchanged_cards_in_ascending_order() {
+    let mut allocator = AllocEncoder::new();
+    let puzzle = read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").unwrap();
+    let program = puzzle.to_clvm(&mut allocator).unwrap();
+    let exchange = clvm_list!(
+        "get_final_cards_in_canonical_order",
+        [0, 2, 4, 6, 8, 10, 12, 14],
+        0x55,
+        [1, 3, 5, 7, 9, 11, 13, 15],
+        0x0f,
+    )
+    .to_clvm(&mut allocator)
+    .unwrap();
+    let run = |a: &mut AllocEncoder, args| {
+        run_program(a.allocator(), &chia_dialect(), program, args, 0)
+            .unwrap()
+            .1
+    };
+    let hands = run(&mut allocator, exchange);
+    let (alice, bob) = <(Vec<i32>, Vec<i32>)>::from_clvm(allocator.allocator(), hands).unwrap();
+    assert_eq!(alice, [1, 2, 3, 5, 6, 7, 10, 14]);
+    assert_eq!(bob, [0, 4, 8, 9, 11, 12, 13, 15]);
+
+    let picks = clvm_list!("pull_out_cards", 0x57, alice)
+        .to_clvm(&mut allocator)
+        .unwrap();
+    let selected = run(&mut allocator, picks);
+    assert_eq!(
+        Vec::<i32>::from_clvm(allocator.allocator(), selected).unwrap(),
+        [1, 2, 3, 6, 10]
+    );
 }
 
 #[test]
@@ -693,8 +730,6 @@ fn test_handcalc() {
 
     let program =
         read_hex_puzzle(&mut allocator, "clsp/test/test_handcalc_micro.hex").expect("should read");
-    let deep_compare =
-        read_hex_puzzle(&mut allocator, "clsp/test/deep_compare.hex").expect("should read");
 
     let to_mod52 = |cards: Vec<(i32, i32)>| -> Vec<i32> {
         cards
@@ -735,23 +770,14 @@ fn test_handcalc() {
             )
             .expect("should run")
             .1;
-            let deep_compare_args = [
-                Node(first(allocator.allocator(), result_1).expect("ok")),
-                Node(first(allocator.allocator(), result_2).expect("ok")),
-            ]
-            .to_clvm(&mut allocator)
-            .expect("should build");
-            let deep_compare_program = deep_compare.to_clvm(&mut allocator).expect("should work");
-            let compare_result = run_program(
-                allocator.allocator(),
-                &chia_dialect(),
-                deep_compare_program,
-                deep_compare_args,
-                0,
-            )
-            .expect("should run")
-            .1;
-            let compare_res_hex = Node(compare_result).to_hex(&mut allocator).expect("cvt");
+            let hand_1 = first(allocator.allocator(), result_1).expect("ok");
+            let hand_2 = first(allocator.allocator(), result_2).expect("ok");
+            let ordering = deep_compare(allocator.allocator(), hand_1, hand_2);
+            let compare_res_hex = match ordering {
+                Ordering::Greater => "01",
+                Ordering::Equal => "80",
+                Ordering::Less => "ff",
+            };
             assert_eq!(compare_res_hex, expected_relationship);
         };
 
@@ -760,10 +786,28 @@ fn test_handcalc() {
     }
 }
 
+/// Compares two values the way calpoker compares hands: atoms as integers, and less than pairs,
+/// which compare by their first and then their rest.
+fn deep_compare(allocator: &Allocator, a: NodePtr, b: NodePtr) -> Ordering {
+    match (allocator.sexp(a), allocator.sexp(b)) {
+        (SExp::Pair(a_first, a_rest), SExp::Pair(b_first, b_rest)) => {
+            deep_compare(allocator, a_first, b_first)
+                .then_with(|| deep_compare(allocator, a_rest, b_rest))
+        }
+        (SExp::Pair(..), SExp::Atom) => Ordering::Greater,
+        (SExp::Atom, SExp::Pair(..)) => Ordering::Less,
+        (SExp::Atom, SExp::Atom) => allocator.number(a).cmp(&allocator.number(b)),
+    }
+}
+
 pub fn test_funs() -> Vec<(&'static str, &'static (dyn Fn() + Send + Sync))> {
     vec![
         ("test_make_cards", &test_make_cards),
         ("test_mergein", &test_mergein),
+        (
+            "test_calpoker_selection_indexes_exchanged_cards_in_ascending_order",
+            &test_calpoker_selection_indexes_exchanged_cards_in_ascending_order,
+        ),
         ("test_handcalc", &test_handcalc),
     ]
 }

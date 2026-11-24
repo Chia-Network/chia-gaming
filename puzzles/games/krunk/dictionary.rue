@@ -1,0 +1,45 @@
+// The dictionary, which `games/krunk/rust/dict_tree.rs` builds as a balanced binary search tree of
+// the words. Each gap in the dictionary (before the first word, between two words, and after the
+// last word) is a leaf, which holds the players' aggregate signature of the range of that gap.
+export type DictTree = DictNode | Signature;
+
+export struct DictNode {
+    left: DictTree,
+    right: DictTree,
+    word: Bytes,
+}
+
+// A gap in the dictionary, from `left_bound` to `right_bound` inclusive.
+export struct DictGap {
+    left_bound: Bytes,
+    right_bound: Bytes,
+    signature: Signature,
+}
+
+// The bounds of the whole dictionary. Words are compared as signed integers.
+const MIN_WORD: Bytes = 0x8000000000;
+const MAX_WORD: Bytes = 0x7fffffffff;
+
+// The gap that contains the word, or nil if the word is in the dictionary.
+export fn lookup(word: Bytes, tree: DictTree) -> DictGap | nil {
+    find_gap(MIN_WORD, MAX_WORD, word, tree)
+}
+
+// The gap that contains the word, in a part of the dictionary that covers the range from
+// `left_bound` to `right_bound`, or nil if the word is in the dictionary.
+export fn find_gap(left_bound: Bytes, right_bound: Bytes, word: Bytes, node: DictTree) -> DictGap
+    | nil
+{
+    match node {
+        Signature => DictGap { left_bound, right_bound, signature: node },
+        DictNode { left, right, word: here } => {
+            if word == here {
+                nil
+            } else if word as Int > here as Int {
+                find_gap((here as Int + 1) as Bytes, right_bound, word, right)
+            } else {
+                find_gap(left_bound, (here as Int - 1) as Bytes, word, left)
+            }
+        }
+    }
+}

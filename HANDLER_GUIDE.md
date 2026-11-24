@@ -1,8 +1,8 @@
 # Game Handler and Validation System
 
-Before reading the Chialisp code, read [Shapes and pack](clsp/std/shapes.md) for
-`defun-shape`, `make`, `pack`, `invoke`, `if-shape`, and `get-field`, including
-their syntax and assumptions.
+The handlers and validators are written in Rue, whose docs are at
+<https://github.com/xch-dev/rue-docs>. Their shared types are in
+`puzzles/games/types.rue`.
 
 This document explains the off-chain handler and on-chain validation system
 used by the game framework. It covers how game logic is structured, how
@@ -12,7 +12,7 @@ connect through the referee puzzle.
 For adding a game (package layout, registry, host APIs), see
 `GAME_WRITING_GUIDE.md`. For the broader architecture (state channels, potato
 protocol, dispute resolution), see `OVERVIEW.md`. For the raw calling
-conventions, see `clsp/handler_api.md`. For DoS considerations (move size
+conventions, see `puzzles/games/handler_api.md`. For DoS considerations (move size
 bounds, validation program cost, argument checking), see `CLVM_DOS.md`.
 
 ## Table of Contents
@@ -40,10 +40,11 @@ Games are driven by two cooperating systems:
 
 - **Handlers** run off-chain on each player's machine. They produce moves,
   interpret the opponent's moves, and decide what to display in the UI. They
-  are chialisp programs, curried with game-specific state.
+  are CLVM programs (written in Rue), curried with game-specific state, as
+  Rue's closures are.
 
-- **Validators** enforce the rules of each move. They are chialisp programs,
-  one per protocol step (e.g. `a.clsp` through `e.clsp` for calpoker). They
+- **Validators** enforce the rules of each move. They are CLVM programs, one
+  per protocol step (e.g. `a.rue` through `e.rue` for calpoker). They
   run both off-chain (to check a move before sending it) and on-chain (inside
   the referee puzzle, for slash enforcement during disputes). Package layout
   and registration are in `GAME_WRITING_GUIDE.md`.
@@ -386,16 +387,16 @@ state, and maximum move size.
 On-chain, validator hashes describe the protocol sequence:
 
 ```
-a.clsp -> b.clsp -> c.clsp -> d.clsp -> e.clsp -> (terminal)
+a -> b -> c -> d -> e -> (terminal)
 ```
 
 Off-chain, there are two parallel handler progressions (one per player):
 
 ```
 alice: alice_handler_0 -> move 0
-bob:   move 0 -> a.clsp with initial_state
+bob:   move 0 -> a with initial_state
 bob:   bob_handler_0 -> move 1
-alice: move 1 -> b.clsp
+alice: move 1 -> b
 ...
 ```
 
@@ -408,10 +409,10 @@ not carry validator programs between turns.
 
 ## Validators
 
-Validators are chialisp programs that enforce the rules for a single step of
-the game protocol. They run both **on-chain** (inside the referee puzzle
-during disputes) and **off-chain** (called by the Rust code during normal
-play).
+Validators are CLVM programs, written in Rue, that enforce the rules for a
+single step of the game protocol. They run both **on-chain** (inside the
+referee puzzle during disputes) and **off-chain** (called by the Rust code
+during normal play).
 
 A validator takes the move, current state, and optional evidence and returns an
 untagged result:
@@ -498,7 +499,7 @@ intended proof — then the cheat is unslashable.
 
 ### Krunk Reveal and Evidence Semantics
 
-Krunk's `clue.clsp` reveal validator treats an early reveal as a concession.
+Krunk's reveal validator (`puzzles/games/krunk/onchain/clue.rue`) treats an early reveal as a concession.
 The scheduled guesser shares, in `base_unit` multiples, are
 `100, 100, 20, 5, 1` for correct guesses one through five. A fifth incorrect
 guess pays zero. If Alice reveals after an incorrect guess one through four,
@@ -546,10 +547,11 @@ can raise and make the illegal terminal move unslashable.
 The terminal validator therefore rejects a mover mask when bit 7 is set before
 selecting or evaluating cards, then separately requires exactly five set bits.
 The waiter's evidence mask follows the same range and popcount rules. Nil
-evidence returns `(validator-transition 0 0 0)` without comparing hands. Invalid non-nil evidence
-raises, rejecting that slash attempt. A well-formed waiter mask that does not
-prove overclaim also returns `(validator-transition 0 0 0)`. An invalid committed mover mask
-returns nil and is unconditionally slashable.
+evidence returns `validator_transition(nil, nil, 0)` without comparing hands.
+Invalid non-nil evidence raises, rejecting that slash attempt. A well-formed
+waiter mask that does not prove overclaim also returns
+`validator_transition(nil, nil, 0)`. An invalid committed mover mask returns nil
+and is unconditionally slashable.
 
 ### How the On-Chain Referee Uses Validators
 
@@ -766,7 +768,7 @@ these during the "Shuffling..." phase.
 its curried chain and computes the optimal 5-card selection via
 `space_hand_calc`. It concatenates `preimage || bitfield` and sends it.
 The package dispatches a nil `make-move` intent for member index 0; the handler
-fills in the actual 17-byte move. On-chain, this move is validated by `end.clsp` which
+fills in the actual 17-byte move. On-chain, this move is validated by `end.rue` which
 independently derives all cards and checks the hand evaluation.
 
 ### Frontend Pattern
@@ -867,7 +869,7 @@ Alice my-turn handler a  ──>  Bob their-turn handler a
 ### Validator Sequence
 
 ```
-a.clsp ──> b.clsp ──> c.clsp ──> d.clsp ──> e.clsp ──> (nil, game over)
+a.rue ──> b.rue ──> c.rue ──> d.rue ──> e.rue ──> (nil, game over)
 ```
 
 All five programs are present in the factory registry. The first is initially
@@ -877,24 +879,26 @@ current; each validator returns the tree hash selecting the next one.
 
 | Step | Mover | Handler | Validator | Move |
 |------|-------|---------|-----------|------|
-| a | Alice | `calpoker_alice_handler_a` | `a.clsp` | `sha256(preimage)` |
-| b | Bob | `calpoker_bob_handler_b` | `b.clsp` | `bob_seed` |
-| c | Alice | `calpoker_alice_handler_c` | `c.clsp` | `preimage \|\| sha256(salt\|\|discards)` |
-| d | Bob | `calpoker_bob_handler_d` | `d.clsp` | `bob_discards` |
-| e | Alice | `calpoker_alice_handler_e` | `e.clsp` | `salt\|\|discards\|\|selects` |
+| a | Alice | `alice_handler_a` | `a.rue` | `sha256(preimage)` |
+| b | Bob | `bob_handler_b` | `b.rue` | `bob_seed` |
+| c | Alice | `alice_handler_c` | `c.rue` | `preimage \|\| sha256(salt\|\|discards)` |
+| d | Bob | `bob_handler_d` | `d.rue` | `bob_discards` |
+| e | Alice | `alice_handler_e` | `e.rue` | `salt\|\|discards\|\|selects` |
 
 After step e, Alice's my-turn handler returns nil for
-`their_turn_handler`, and `e.clsp` returns a nil next validator hash. Their
+`their_turn_handler`, and `e.rue` returns a nil next validator hash. Their
 agreement signals that the game is over.
 
 ### Key Code
 
-- Handlers: `games/calpoker/clsp/calpoker_generate.clinc`
-- Validators: `games/calpoker/clsp/onchain/a.clsp` through `e.clsp`
+- Factory: `puzzles/games/calpoker/factory.rue`
+- Handlers: `puzzles/games/calpoker/handlers.rue`, with the card helpers in
+  the modules beside it
+- Validators: `puzzles/games/calpoker/onchain/a.rue` through `e.rue`
 - Rust-side handler invocation: `src/channel_state/game_handler.rs`
 - Rust-side referee state machine: `src/referee/my_turn.rs`,
   `src/referee/their_turn.rs`
-- Handler API reference: `clsp/handler_api.md`
+- Handler API reference: `puzzles/games/handler_api.md`
 
 ### Space Poker
 
@@ -912,6 +916,6 @@ changing the authoritative move flow.
 
 **Key code:**
 
-- Handlers: `games/spacepoker/clsp/spacepoker_generate.clinc`
-- Validators: `games/spacepoker/clsp/onchain/*.clsp`
+- Handlers: `puzzles/games/spacepoker/handlers.rue`
+- Validators: `puzzles/games/spacepoker/onchain/*.rue`
 - Rust tests: `games/spacepoker/rust/tests/`

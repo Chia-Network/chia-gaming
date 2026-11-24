@@ -1,6 +1,0 @@
-(include *standard-cl-26*)
-(import games.calpoker.clsp.onchain.make_cards exposing make_cards)
-
-(export (randomness)
-  (make_cards randomness)
-  )

@@ -30,7 +30,7 @@ function rget<T>(array: T[], start: number, end: number, def: T): T[] {
 export function handValueToDescription(handValue: bigint[], _myCards: bigint[]): OutcomeHandType {
   const handType = rget(handValue, 0, 3, 0n);
 
-  // Hand encoding from onehandcalc.clinc:
+  // Hand encoding from puzzles/games/calpoker/hand.rue:
   //   straight flush: (5 high_card)
   //   4 of a kind:    (4 1 quad_rank kicker)
   //   full house:     (3 2 set_rank pair_rank)

@@ -1,6 +1,0 @@
-(include *standard-cl-26*)
-(import games.calpoker.clsp.onchain.make_cards exposing mergein)
-
-(export (inner outer offset)
-  (mergein inner outer offset)
-  )

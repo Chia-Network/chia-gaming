@@ -1,0 +1,349 @@
+// The off-chain handlers of calpoker, which `puzzles/games/handler_api.md` describes. Alice moves
+// first:
+//
+// 1. Alice commits to a seed (validator `a`).
+// 2. Bob sends his seed (`b`).
+// 3. Alice reveals her seed, which deals the cards, and commits to her discards (`c`). She also
+//    sends her seed to Bob as a message, so that he can see the cards before her move arrives.
+// 4. Bob discards (`d`).
+// 5. Alice reveals her discards and picks her hand, which ends the game (`e`). Bob slashes her move
+//    if she claims more than her hand earns against his.
+//
+// Each handler's state, readable move, and next handler are typed by step.
+
+import arrange::{deep_compare, final_cards, pull_out_cards};
+import cards::{make_cards, popcount};
+import hand::{compare_hands, onehandcalc};
+import handcalc::handcalc;
+import project::games::types::*;
+import types::*;
+
+// The cards that each player is dealt.
+struct DealtCards {
+    alice_cards: List<Int>,
+    bob_cards: List<Int>,
+}
+
+// What Alice sees once Bob discards.
+struct AliceOutcome {
+    bob_discards: Bytes,
+    alice_picks: Bytes,
+    bob_picks: Bytes,
+    alice_hand: List<Int>,
+    bob_hand: List<Int>,
+    // 1 if Alice's hand is better, -1 if Bob's is, or 0 if they tie.
+    result: Int,
+}
+
+// What Bob sees once Alice ends the game.
+struct BobOutcome {
+    alice_discards: Bytes,
+    alice_picks: Bytes,
+    bob_picks: Bytes,
+    alice_hand: List<Int>,
+    bob_hand: List<Int>,
+    // How Alice's mover share compares to half of the amount: 1 if it's more, 0 if it's equal, and
+    // -1 if it's less.
+    alice_share: Int,
+}
+
+export type AliceA = MyTurnHandler<Any, nil, MyTurnMove<AliceB, Never>>;
+type AliceB = TheirTurnHandler<Bytes, Seeds, TheirTurnMove<DealtCards, Bytes, [AliceC, Bytes]>>;
+type AliceC = MyTurnHandler<List<Int>, Seeds, MyTurnMove<AliceD, Never>>;
+type AliceD = TheirTurnHandler<Deal, DiscardState, TheirTurnMove<AliceOutcome, Bytes, [AliceE]>>;
+type AliceE = MyTurnHandler<Any, DiscardState, MyTurnMove<nil, Never>>;
+
+export type BobA = TheirTurnHandler<nil, Bytes, TheirTurnMove<nil, Bytes, [BobB]>>;
+type BobB = MyTurnHandler<Any, Bytes, MyTurnMove<BobC, MessageParser<Seeds, DealtCards>>>;
+type BobC = TheirTurnHandler<Seeds, Deal, TheirTurnMove<DealtCards, Bytes, [BobD]>>;
+type BobD = MyTurnHandler<List<Int>, Deal, MyTurnMove<BobE, nil>>;
+type BobE = TheirTurnHandler<DiscardState, nil, TheirTurnMove<BobOutcome, Bytes, [nil]>>;
+
+// Commits to Alice's seed, which is the first half of the entropy.
+export fn alice_handler_a(
+    _local_move: Any,
+    _amount: Int,
+    _state: nil,
+    _mover_share: Int,
+    entropy: Bytes32,
+) -> MyTurnMove<AliceB, Never> {
+    let alice_seed = entropy[..16];
+    MyTurnMove::<AliceB, Never> {
+        label: "calpoker_alice_handler_a",
+        game_move: sha256(alice_seed),
+        mover_share: 0,
+        their_turn_handler: fn(
+            amount,
+            _pre_state,
+            _state,
+            move,
+            _program_hash,
+            _mover_share,
+        ) => alice_handler_b(alice_seed, amount, move),
+        message_parser: nil,
+    }
+}
+
+// Reads Bob's seed, which deals the cards, and sends Alice's seed to Bob.
+fn alice_handler_b(
+    alice_seed: Bytes,
+    amount: Int,
+    bob_seed: Bytes,
+) -> TheirTurnMove<DealtCards, Bytes, [AliceC, Bytes]> {
+    let { alice_cards, bob_cards } = make_cards(
+        sha256(alice_seed + bob_seed + amount as Bytes) as Int,
+    );
+    TheirTurnMove::<DealtCards, Bytes, [AliceC, Bytes]> {
+        readable: DealtCards { alice_cards, bob_cards },
+        evidence: nil,
+        next: [
+            fn(discards, amount, state, _mover_share, entropy) => alice_handler_c(
+                alice_seed,
+                discards,
+                amount,
+                state,
+                entropy,
+            ),
+            alice_seed,
+        ],
+    }
+}
+
+// Reveals Alice's seed, and commits to the four cards that she discards, salted with the first half
+// of the entropy.
+fn alice_handler_c(
+    alice_seed: Bytes,
+    discards: List<Int>,
+    amount: Int,
+    state: Seeds,
+    entropy: Bytes32,
+) -> MyTurnMove<AliceD, Never> {
+    let hands = make_cards(sha256(alice_seed + state.bob_seed + amount as Bytes) as Int);
+    let discards = cards_to_bitfield(discards, hands.alice_cards);
+    let salt = entropy[..16];
+    let discard_commit = sha256(salt + discards);
+
+    assert popcount(discards as Int) == 4,
+        [
+            "alice_handler_c bad discard selection",
+            "bitfield",
+            discards,
+            "popcount",
+            popcount(discards as Int),
+        ];
+
+    MyTurnMove::<AliceD, Never> {
+        label: "calpoker_alice_handler_c",
+        game_move: alice_seed + discard_commit,
+        mover_share: 0,
+        their_turn_handler: fn(
+            amount,
+            _pre_state,
+            state,
+            move,
+            _program_hash,
+            _mover_share,
+        ) => alice_handler_d(salt, discards, amount, state, move),
+        message_parser: nil,
+    }
+}
+
+// Reads Bob's discards, and picks Alice's best hand. Her mover share is what her hand earns against
+// Bob's best hand.
+fn alice_handler_d(
+    salt: Bytes,
+    discards: Bytes,
+    amount: Int,
+    state: DiscardState,
+    bob_discards: Bytes,
+) -> TheirTurnMove<AliceOutcome, Bytes, [AliceE]> {
+    let { left: { alice_cards }, right: { bob_cards } } = state;
+    let final = final_cards(alice_cards, discards as Int, bob_cards, bob_discards as Int);
+    let alice = handcalc(final.alice_cards);
+    let bob = handcalc(final.bob_cards);
+    let alice_picks = indices_to_bitfield(alice.indices);
+    let result = compare_hands(alice.hand, bob.hand);
+
+    // This is the share for Alice's own move, which ends the game.
+    let mover_share = (1 - result) * (amount / 2);
+
+    TheirTurnMove::<AliceOutcome, Bytes, [AliceE]> {
+        readable: AliceOutcome {
+            bob_discards,
+            alice_picks,
+            bob_picks: indices_to_bitfield(bob.indices),
+            alice_hand: alice.hand,
+            bob_hand: bob.hand,
+            result,
+        },
+        evidence: nil,
+        next: [
+            fn(_local_move, _amount, _state, _mover_share, _entropy) => alice_handler_e(
+                salt + discards + alice_picks,
+                mover_share,
+            ),
+        ],
+    }
+}
+
+// Reveals Alice's discards and picks, which ends the game.
+fn alice_handler_e(game_move: Bytes, mover_share: Int) -> MyTurnMove<nil, Never> {
+    MyTurnMove::<nil, Never> {
+        label: "calpoker_alice_handler_e",
+        game_move,
+        mover_share,
+        their_turn_handler: nil,
+        message_parser: nil,
+    }
+}
+
+// Reads Alice's commitment to her seed.
+export fn bob_handler_a(
+    _amount: Int,
+    _pre_state: nil,
+    _state: Bytes,
+    _move: Bytes,
+    _validation_program_hash: Bytes32,
+    _mover_share: Int,
+) -> TheirTurnMove<nil, Bytes, [BobB]> {
+    TheirTurnMove::<nil, Bytes, [BobB]> { readable: nil, evidence: nil, next: [bob_handler_b] }
+}
+
+// Sends Bob's seed, which is the first half of the entropy.
+fn bob_handler_b(
+    _local_move: Any,
+    _amount: Int,
+    _state: Bytes,
+    _mover_share: Int,
+    entropy: Bytes32,
+) -> MyTurnMove<BobC, MessageParser<Seeds, DealtCards>> {
+    MyTurnMove::<BobC, MessageParser<Seeds, DealtCards>> {
+        label: "calpoker_bob_handler_b",
+        game_move: entropy[..16],
+        mover_share: 0,
+        their_turn_handler: bob_handler_c,
+        message_parser: [parse_message],
+    }
+}
+
+// Reads Alice's seed from her message, which deals the cards.
+fn parse_message(alice_seed: Bytes, state: Seeds, amount: Int) -> DealtCards {
+    assert sha256(alice_seed) == state.seed_commit;
+    let { alice_cards, bob_cards } = make_cards(
+        sha256(alice_seed[..16] + state.bob_seed[..16] + amount as Bytes) as Int,
+    );
+    DealtCards { alice_cards, bob_cards }
+}
+
+// Reads Alice's reveal of her seed.
+fn bob_handler_c(
+    _amount: Int,
+    _pre_state: Seeds,
+    state: Deal,
+    _move: Bytes,
+    _validation_program_hash: Bytes32,
+    _mover_share: Int,
+) -> TheirTurnMove<DealtCards, Bytes, [BobD]> {
+    let { alice_cards, bob_cards } = state.hands;
+    TheirTurnMove::<DealtCards, Bytes, [BobD]> {
+        readable: DealtCards { alice_cards, bob_cards },
+        evidence: nil,
+        next: [bob_handler_d],
+    }
+}
+
+// Discards the four cards that Bob picks.
+fn bob_handler_d(
+    discards: List<Int>,
+    _amount: Int,
+    state: Deal,
+    _mover_share: Int,
+    _entropy: Bytes32,
+) -> MyTurnMove<BobE, nil> {
+    let discards = cards_to_bitfield(discards, state.hands.bob_cards);
+
+    assert popcount(discards as Int) == 4,
+        [
+            "bob_handler_d bad discard selection",
+            "bitfield",
+            discards,
+            "popcount",
+            popcount(discards as Int),
+        ];
+
+    MyTurnMove::<BobE, nil> {
+        label: "calpoker_bob_handler_d",
+        game_move: discards,
+        mover_share: 0,
+        their_turn_handler: bob_handler_e,
+        message_parser: [nil],
+    }
+}
+
+// Reads Alice's last move, which reveals her discards and picks, and offers Bob's best hand as
+// evidence. The validator slashes the move with it if Alice claims too much.
+fn bob_handler_e(
+    amount: Int,
+    pre_state: DiscardState,
+    _state: nil,
+    move: Bytes,
+    _validation_program_hash: Bytes32,
+    mover_share: Int,
+) -> TheirTurnMove<BobOutcome, Bytes, [nil]> {
+    let { left: { bob_discards, alice_cards }, right: { bob_cards } } = pre_state;
+    let alice_discards = move[16..17];
+    let alice_picks = move[17..move.length];
+    let final = final_cards(alice_cards, alice_discards as Int, bob_cards, bob_discards as Int);
+    let alice_hand = onehandcalc(pull_out_cards(alice_picks as Int, final.alice_cards));
+    let bob = handcalc(final.bob_cards);
+    let bob_picks = indices_to_bitfield(bob.indices);
+
+    TheirTurnMove::<BobOutcome, Bytes, [nil]> {
+        readable: BobOutcome {
+            alice_discards,
+            alice_picks,
+            bob_picks,
+            alice_hand,
+            bob_hand: bob.hand,
+            alice_share: deep_compare(mover_share, amount / 2),
+        },
+        evidence: [bob_picks],
+        next: [nil],
+    }
+}
+
+// The byte with a bit set for each of the cards that's selected, where the lowest bit is the first
+// card.
+fn cards_to_bitfield(selected: List<Int>, cards: List<Int>) -> Bytes {
+    indices_to_bitfield(selected_indices(cards, selected, 0))
+}
+
+fn selected_indices(cards: List<Int>, selected: List<Int>, index: Int) -> List<Int> {
+    if cards is nil {
+        return nil;
+    }
+
+    let rest = selected_indices(cards.rest, selected, index + 1);
+    let card = cards.first;
+    if for item in selected fold found = false { item == card || found } {
+        [index, ...rest]
+    } else {
+        rest
+    }
+}
+
+// The last byte of a bitfield of indices, which are in ascending order.
+fn indices_to_bitfield(indices: List<Int>) -> Bytes {
+    let bitfield = index_bits(indices, 0) as Bytes;
+    inline if bitfield != nil { bitfield[bitfield.length - 1..] } else { 0x00 }
+}
+
+fn index_bits(indices: List<Int>, index: Int) -> Int {
+    if indices is nil {
+        0
+    } else if indices.first == index {
+        1 | (index_bits(indices.rest, index + 1) << 1)
+    } else {
+        index_bits(indices, index + 1) << 1
+    }
+}

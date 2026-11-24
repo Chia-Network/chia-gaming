@@ -1483,18 +1483,18 @@ ordered from most stable to least:
    core of the system: state channel management, move validation, blockchain
    interaction. It should change rarely once solid. Rebuilding it is the most
    expensive operation.
-2. **Chialisp (.hex files)** — Compiled chialisp programs (referee, unroll,
+2. **Puzzles (.hex files)** — Compiled Rue programs (referee, unroll,
    game-specific validation). These are fetched over HTTP at runtime and injected
    into the WASM via `cache_file()` — they are not compiled into the WASM
-   binary. Changing a chialisp program means recompiling the `.clsp` to `.hex`
+   binary. Changing a puzzle means recompiling its `.rue` source to `.hex`
    and replacing the file on the static server. No Rust rebuild required.
 3. **Frontend (JS/TS/CSS)** — The UI layer: React components, hooks, styling.
    Changes here are the most frequent (UX tweaks, new game UIs, layout fixes).
-   Rebuilt with the JS bundler, no Rust or chialisp rebuild required.
+   Rebuilt with the JS bundler, no Rust or puzzle rebuild required.
 
 This layering means most day-to-day development only touches layer 3 (frontend),
-which has the fastest rebuild cycle. Chialisp changes (layer 2) require only a
-chialisp compile. The Rust/WASM layer (1) is rebuilt only when the engine itself
+which has the fastest rebuild cycle. Puzzle changes (layer 2) require only a
+puzzle compile. The Rust/WASM layer (1) is rebuilt only when the engine itself
 changes — which should be rare once the protocol is stable.
 
 ## Player App Internal Architecture

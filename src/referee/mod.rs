@@ -24,7 +24,7 @@ use crate::referee::types::{
 };
 
 /// Build move details from a validator transition, using the same next-infohash
-/// formula as `referee.clsp`: nil if the next validator hash is nil, otherwise
+/// formula as `puzzles/referee/referee.rue`: nil if the next validator hash is nil, otherwise
 /// `sha256(next_validator_hash, shatree(new_state))`.
 pub(crate) fn game_move_details_from_transition(
     allocator: &mut AllocEncoder,
