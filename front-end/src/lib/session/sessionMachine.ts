@@ -124,6 +124,7 @@ export function reduceSessionMachine(
     case 'remove-game-notifications':
     case 'dismiss-channel-notification':
     case 'dismiss-channel':
+    case 'retry-channel':
     case 'dismiss-game-notification':
     case 'controller-command-failed':
     case 'clean-shutdown-command-succeeded':

@@ -89,6 +89,24 @@ describe('notification overlay keyboard', () => {
     mocked.restore();
   });
 
+  it('confirms on Enter and dismisses only on Escape when a confirm action exists', () => {
+    const mocked = mockWindowKeyListeners();
+    const onDismiss = jest.fn();
+    const onConfirm = jest.fn();
+    const unbind = bindNotificationOverlayDismissKeys(onDismiss, onConfirm);
+
+    mocked.capture!(keyEvent('Enter'));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    mocked.capture!(keyEvent('Escape'));
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+
+    unbind();
+    mocked.restore();
+  });
+
   it('removes the capture listener on unbind', () => {
     const mocked = mockWindowKeyListeners();
     const onDismiss = jest.fn();

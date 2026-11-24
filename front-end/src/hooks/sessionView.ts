@@ -68,6 +68,7 @@ export interface UseGameSessionResult {
   channelQueue: QueuedNotificationModel[];
   gameQueue: QueuedNotificationModel[];
   dismissChannel: () => void;
+  retryChannel: () => void;
   dismissGame: () => void;
   gameSpecificView: ReturnType<typeof selectGameSpecificView>;
 }
@@ -171,6 +172,7 @@ export function projectTerminalSessionResult(
     channelQueue: view.channelQueue,
     gameQueue: view.gameQueue,
     dismissChannel: dismissals?.dismissChannel ?? NOOP,
+    retryChannel: NOOP,
     dismissGame: dismissals?.dismissGame ?? NOOP,
     gameSpecificView: selectTerminalGameSpecificView(model),
   };

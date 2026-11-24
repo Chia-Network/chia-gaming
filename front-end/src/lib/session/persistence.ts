@@ -8,6 +8,7 @@ import type {
   SessionIdentitySave,
   SessionPairingSave,
   SessionPreferencesSave,
+  SessionFundingRefusalSave,
   SessionPresentationSave,
   SessionTransportSave,
   TerminalSessionSave,
@@ -16,6 +17,7 @@ import {
   DURABLE_APPLICATION_STATE_SCHEMA,
   DURABLE_APPLICATION_STATE_VERSION,
   MAX_DURABLE_REJECTION_TRANSPORTS,
+  MAX_FUNDING_REFUSAL_REASON_LENGTH,
 } from './saveEnvelope';
 import {
   decodePersistedGameState,
@@ -72,6 +74,7 @@ import {
   parseStringArray,
 } from './persistencePrimitives';
 import { decodeChannelFundingEntries } from './channelFundingValidation';
+import { decodeCanonicalFundingRequest } from './fundingRequest';
 import { decodeFeeAttachments } from './feeAttachmentValidation';
 import { decodeProviderScope } from './providerValidation';
 
@@ -169,7 +172,9 @@ const PRESENTATION_FIELDS = new Set([
   'pendingProposals',
   'waitingStateEnteredAt',
   'cleanShutdownGraceStartedAt',
+  'fundingRefusal',
 ]);
+const FUNDING_REFUSAL_FIELDS = new Set(['request', 'reason']);
 const GAME_INSTANCE_FIELDS = new Set(['id', 'amount', 'coinHex', 'presentation', 'terminal']);
 const GAME_TERMINAL_FIELDS = new Set(['type', 'outcome', 'label', 'myReward', 'rewardCoinHex']);
 const GAME_TERMINAL_TYPES: ReadonlySet<string> = new Set<GameTerminalType>([
@@ -489,6 +494,19 @@ function parseGameInstance(key: string, value: unknown): GameInstanceModel {
   };
 }
 
+function parseFundingRefusal(value: unknown): SessionFundingRefusalSave {
+  const fields = requireRecord(value, 'fundingRefusal');
+  requireExactKeys(fields, FUNDING_REFUSAL_FIELDS, 'fundingRefusal');
+  const reason = requireString(fields.reason, 'fundingRefusal.reason');
+  if (reason.length > MAX_FUNDING_REFUSAL_REASON_LENGTH) {
+    throw new Error('Garbled save: invalid fundingRefusal.reason');
+  }
+  return {
+    request: decodeCanonicalFundingRequest(fields.request, 'fundingRefusal.request'),
+    reason,
+  };
+}
+
 function parsePresentation(value: unknown): SessionPresentationSave {
   const fields = requireRecord(value, 'presentation');
   requireExactKeys(fields, PRESENTATION_FIELDS, 'presentation');
@@ -583,6 +601,9 @@ function parsePresentation(value: unknown): SessionPresentationSave {
     pendingProposals,
     waitingStateEnteredAt,
     cleanShutdownGraceStartedAt,
+    ...(fields.fundingRefusal === undefined
+      ? {}
+      : { fundingRefusal: parseFundingRefusal(fields.fundingRefusal) }),
   };
 }
 
@@ -592,6 +613,9 @@ function validatePresentationInvariants(
 ): void {
   if (phase === 'terminal' && !isTerminalChannelSnapshot(save.channelStatus)) {
     throw new Error('Garbled save: terminal phase requires a terminal channelStatus');
+  }
+  if (phase === 'terminal' && save.fundingRefusal !== undefined) {
+    throw new Error('Garbled save: terminal phase cannot hold a funding refusal');
   }
   const activeIds = save.activeGameIds;
   const currentHandIds = save.currentHandGameIds;

@@ -15,6 +15,7 @@ import type {
 import type { ComposeDraftState } from './composeDraft';
 import type { ChannelFundingEntry } from './channelFundingStore';
 import type { FeeAttachment } from './feeAttachmentStore';
+import type { CanonicalFundingRequest } from './fundingRequest';
 
 export const DURABLE_APPLICATION_STATE_SCHEMA = 'chia-gaming-application-state' as const;
 export const DURABLE_APPLICATION_STATE_VERSION = 5n;
@@ -108,7 +109,20 @@ export interface SessionPresentationSave {
   pendingProposals: PendingProposalModel[];
   waitingStateEnteredAt: bigint | null;
   cleanShutdownGraceStartedAt: bigint | null;
+  /** Present only while a refused channel funding request awaits Retry or Dismiss. */
+  fundingRefusal?: SessionFundingRefusalSave;
 }
+
+/**
+ * The wallet refused the channel funding request. Rust does not reissue the
+ * request after a restore, so this keeps the user's Retry / Dismiss decision.
+ */
+export interface SessionFundingRefusalSave {
+  request: CanonicalFundingRequest;
+  reason: string;
+}
+
+export const MAX_FUNDING_REFUSAL_REASON_LENGTH = 1024;
 
 export interface PreHandshakeSessionSave {
   phase: 'pre-handshake';

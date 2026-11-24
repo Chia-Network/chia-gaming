@@ -388,6 +388,37 @@ describe('durable game envelope round trips', () => {
     }
   });
 
+  it('round-trips an open funding refusal and keeps older saves without one', () => {
+    const save = liveSave({});
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    expect(decodeDurableApplicationState(save).save.session).not.toHaveProperty(
+      'presentation.fundingRefusal',
+    );
+    const refused = structuredClone(save);
+    if (refused.session?.phase !== 'live') throw new Error('expected live save');
+    refused.session.presentation.fundingRefusal = {
+      request: { amount: '100', fee: '0', conditions: [] },
+      reason: 'Operation cancelled by user',
+    };
+    expect(decodeDurableApplicationState(refused).save).toEqual(refused);
+  });
+
+  it('rejects a malformed funding refusal', () => {
+    const save = liveSave({});
+    if (save.session?.phase !== 'live') throw new Error('expected live save');
+    save.session.presentation.fundingRefusal = {
+      request: { amount: '100', fee: '0', conditions: [] },
+      reason: 'x'.repeat(1025),
+    };
+    expect(() => decodeDurableApplicationState(save)).toThrow(/fundingRefusal\.reason/);
+    (save.session.presentation as { fundingRefusal: unknown }).fundingRefusal = {
+      request: { amount: '100', fee: '0', conditions: [] },
+      reason: 'refused',
+      extra: true,
+    };
+    expect(() => decodeDurableApplicationState(save)).toThrow(/fundingRefusal field extra/);
+  });
+
   it('rejects a hash activeGameType instead of dual-reading it', () => {
     setProtocolIds(TEST_PROTOCOL_IDS);
     try {

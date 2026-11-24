@@ -19,6 +19,7 @@ export type ChannelEvent = Extract<
   | { type: 'remove-game-notifications' }
   | { type: 'dismiss-channel-notification' }
   | { type: 'dismiss-channel' }
+  | { type: 'retry-channel' }
   | { type: 'dismiss-game-notification' }
   | { type: 'controller-command-failed' }
   | { type: 'clean-shutdown-command-succeeded' }
@@ -165,7 +166,25 @@ export function reduceChannelEvent(
           },
         },
       };
+      // Dismissing a retryable failure gives the operation up.
+      if (dismissed?.retry === 'channel-funding') {
+        return { state: next, effects: [{ type: 'controller-abandon-funding' }] };
+      }
       break;
+    }
+    case 'retry-channel': {
+      const failed = state.model.channel.queue[0];
+      if (failed?.retry !== 'channel-funding') return { state, effects: [] };
+      return {
+        state: {
+          ...state,
+          model: {
+            ...state.model,
+            channel: { ...state.model.channel, queue: state.model.channel.queue.slice(1) },
+          },
+        },
+        effects: [{ type: 'controller-retry-funding' }],
+      };
     }
     case 'dismiss-game-notification':
       next = {
@@ -253,6 +272,7 @@ export function reduceChannelEvent(
               ? 'Internal Error'
               : 'Error',
         message: event.message,
+        ...(event.retry ? { retry: event.retry } : {}),
       };
       return {
         state: {

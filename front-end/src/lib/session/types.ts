@@ -146,7 +146,12 @@ export interface QueuedNotificationModel {
   title: string;
   message: string;
   payload?: ChannelStatusModel;
+  /** The failed operation can be retried from the notification. */
+  retry?: NotificationRetry;
 }
+
+/** Retryable operation; dismissing its notification gives the operation up. */
+export type NotificationRetry = 'channel-funding';
 
 export type PendingProposalLifecycle =
   | 'local-outgoing'

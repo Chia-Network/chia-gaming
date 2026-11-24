@@ -115,6 +115,7 @@ export async function restoreSession(
     throw new Error('restoreSession: missing rewardPuzzleHash in persisted session');
   }
   sc.rewardPuzzleHash = session.live.rewardPuzzleHash;
+  sc.restoreFundingRefusal(session.presentation.fundingRefusal);
   sc.setGameSession(cradle);
 
   log('[restore] session restored');
