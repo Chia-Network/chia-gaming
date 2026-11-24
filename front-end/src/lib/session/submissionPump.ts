@@ -132,7 +132,12 @@ export class SubmissionPump {
       entry.retired = true;
       if (entry.state.kind !== 'launched') this.entries.delete(id);
     }
-    this.feeAttachments.retireSubmission(id);
+    this.feeAttachments.stopSubmission(id);
+  }
+
+  retireFee(id: string, feeSpent: boolean): void {
+    if (feeSpent) this.feeAttachments.forgetSpentSubmission(id);
+    else this.feeAttachments.retireSubmission(id);
   }
 
   retireAll(): void {
@@ -354,6 +359,7 @@ export class SubmissionPump {
         if (feeOfferCreated && feeOwner) {
           if (finalized.fee_source_disposition === 'attached') {
             this.feeAttachments.retain(feeOwner, submission.id);
+            this.ports.requestFreshSync();
           } else {
             this.feeAttachments.cancel(
               feeOwner,

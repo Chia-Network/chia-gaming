@@ -392,7 +392,7 @@ it('keeps terminal root authoritative when fee cancellation completes during its
   await runtime.flush();
 
   (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
-    submissionDrain([], ['terminal-race-fee']),
+    submissionDrain([], ['terminal-race-fee'], [], [{ id: 'terminal-race-fee', fee_spent: false }]),
   );
   controller.processResult(wasmResult());
   for (let pass = 0; pass < 30 && cancel.mock.calls.length === 0; pass += 1) {
