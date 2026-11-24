@@ -1165,10 +1165,6 @@ impl ChannelState {
         signatures: &StateUpdateSignatures,
         inputs: &UnrollCoinConditionInputs,
     ) -> Result<BrokenOutCoinSpendInfo, Error> {
-        // The potato just arrived, so any prior pending accepts are now
-        // confirmed by the round-trip.
-        self.pending_settlements.clear();
-
         // Unroll coin section.
         let mut test_unroll = self.latest_sent_unroll.coin.clone();
         test_unroll.state_number = self.state_number + 1;
@@ -1196,6 +1192,9 @@ impl ChannelState {
             &signatures.channel_half_sig,
             channel_coin_spend.conditions.p(),
         )?;
+
+        // The potato is verified, so prior pending accepts are confirmed.
+        self.pending_settlements.clear();
 
         self.state_number += 1;
         let received_info = ChannelUnrollSpendInfo {
