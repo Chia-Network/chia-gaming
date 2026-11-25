@@ -92,6 +92,8 @@ export function krunkTurn(
   if (!aliceDone && alice.secretWord === null) {
     return { kind: 'yours', text: 'Your go: pick a secret word' };
   }
+  // The word half can time out before a word is picked. Guessing stays locked then.
+  if (alice.secretWord === null) return { kind: 'waiting', text: 'Waiting for the hand to end…' };
   const queued = bob.queuedGuesses.length;
   if (bob.handler === KrunkHandler.BobGuess && queued === 0) {
     return {

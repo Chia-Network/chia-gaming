@@ -111,6 +111,13 @@ describe('krunkTurn', () => {
       'Your go: guess 1 of 5',
     ],
     [
+      'a locked board after timing out before picking a word',
+      { ...initialKrunkGameState('alice'), handler: KrunkHandler.Terminal },
+      { ...bob, handler: KrunkHandler.BobGuess },
+      'waiting',
+      'Waiting for the hand to end…',
+    ],
+    [
       'a finished hand',
       { ...picked, handler: KrunkHandler.Terminal },
       { ...bob, handler: KrunkHandler.Terminal },
