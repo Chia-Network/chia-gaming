@@ -6,6 +6,7 @@ import {
   krunkBoardNotice,
   krunkGuessesWithQueued,
   KrunkHandler,
+  KrunkGameState,
   KrunkGuess,
   KrunkRole,
 } from './useKrunkHand';
@@ -68,6 +69,53 @@ export function newlyResolvedKrunkIndex(
   previousResolvedCount: number,
 ): number | undefined {
   return resolvedCount > previousResolvedCount ? resolvedCount - 1 : undefined;
+}
+
+export interface KrunkTurn {
+  /** Null once both boards are finished. */
+  kind: 'yours' | 'waiting' | null;
+  text: string;
+}
+
+/**
+ * What the player should do next. Clues are scored automatically and a queued
+ * guess sends itself, so only picking a word and guessing are the player's go.
+ */
+export function krunkTurn(
+  alice: Pick<KrunkGameState, 'handler' | 'secretWord'>,
+  bob: Pick<KrunkGameState, 'handler' | 'guesses' | 'queuedGuesses'>,
+  opponentLabel: string,
+): KrunkTurn {
+  const aliceDone = alice.handler === KrunkHandler.Terminal;
+  const bobDone = bob.handler === KrunkHandler.Terminal;
+  if (aliceDone && bobDone) return { kind: null, text: '' };
+  if (!aliceDone && alice.secretWord === null) {
+    return { kind: 'yours', text: 'Your go: pick a secret word' };
+  }
+  // The word half can time out before a word is picked. Guessing stays locked then.
+  if (alice.secretWord === null) return { kind: 'waiting', text: 'Waiting for the hand to end…' };
+  const queued = bob.queuedGuesses.length;
+  if (bob.handler === KrunkHandler.BobGuess && queued === 0) {
+    return {
+      kind: 'yours',
+      text: `Your go: guess ${bob.guesses.length + 1} of ${MAX_GUESSES}`,
+    };
+  }
+  if (!bobDone && queued > 0) {
+    return {
+      kind: 'waiting',
+      text: `${queued} ${queued === 1 ? 'guess' : 'guesses'} queued, waiting for ${opponentLabel}…`,
+    };
+  }
+  if (alice.handler === KrunkHandler.AliceClue) return { kind: 'waiting', text: 'Scoring…' };
+  if (bobDone) return { kind: 'waiting', text: `Waiting for ${opponentLabel} to guess…` };
+  return {
+    kind: 'waiting',
+    text:
+      bob.guesses.length === 0
+        ? `Waiting for ${opponentLabel} to pick a word…`
+        : `Waiting for ${opponentLabel} to score your guess…`,
+  };
 }
 
 const MAX_GUESSES = 5;
@@ -407,6 +455,13 @@ function OnScreenKeyboard({
   );
 }
 
+/** The ring marks the board the player should act on. */
+function boardClass(active: boolean): string {
+  return `flex flex-col items-center gap-2 rounded-lg p-2 ring-2 ${
+    active ? 'ring-primary-solid' : 'ring-transparent'
+  }`;
+}
+
 const Krunk: React.FC<KrunkProps> = ({
   view,
   onGameLog,
@@ -625,34 +680,11 @@ const Krunk: React.FC<KrunkProps> = ({
     [aliceHand.gameState, aliceHand.rejection, themLabel, handState.perPlayerStake],
   );
 
-  const sharedStatusNotice = useMemo(() => {
-    if (handComplete) return { text: '', kind: 'info' };
-    if (!wordCommitted) return { text: 'Pick your secret word', kind: 'info' };
-    if (displayQueue.length > 0) {
-      return {
-        text:
-          displayQueue.length === 1 ? '1 guess queued…' : `${displayQueue.length} guesses queued…`,
-        kind: 'info',
-      };
-    }
-    if (bobHand.gameState.handler === KrunkHandler.BobGuess) {
-      return {
-        text: `Guess ${bobHand.gameState.guesses.length + 1} of ${MAX_GUESSES}`,
-        kind: 'info',
-      };
-    }
-    if (aliceHand.gameState.handler === KrunkHandler.AliceClue) {
-      return { text: 'Scoring…', kind: 'info' };
-    }
-    return { text: `Waiting for ${themLabel}…`, kind: 'info' };
-  }, [
-    aliceHand.gameState.handler,
-    bobHand.gameState,
-    handComplete,
-    wordCommitted,
-    displayQueue.length,
-    themLabel,
-  ]);
+  const turn = interactive
+    ? krunkTurn(aliceHand.gameState, bobHand.gameState, themLabel)
+    : { kind: null, text: '' };
+  const guessBoardActive = turn.kind === 'yours' && wordCommitted;
+  const wordBoardActive = turn.kind === 'yours' && !wordCommitted;
 
   const letterStatuses = useMemo(
     () => krunkLetterStatuses(bobHand.gameState.guesses),
@@ -717,9 +749,22 @@ const Krunk: React.FC<KrunkProps> = ({
       : keyboardMode === 'guess' && guessDraft.length === 5 && (isBobGuessPhase || canQueueGuess);
   return (
     <div className="flex flex-col gap-4 items-center py-4">
+      <p
+        role="status"
+        data-turn={turn.kind ?? undefined}
+        className={`min-h-9 rounded-full px-4 py-1.5 text-center text-sm font-semibold ${
+          turn.kind === 'yours'
+            ? 'bg-primary-solid text-primary-on-primary'
+            : turn.kind === 'waiting'
+              ? 'bg-canvas-bg text-canvas-text'
+              : ''
+        }`}
+      >
+        {turn.text}
+      </p>
       <div className="flex gap-6 items-start justify-center">
         {/* Left: Bob's guessing board (my guesses) */}
-        <div className="flex flex-col items-center gap-2">
+        <div className={boardClass(guessBoardActive)}>
           <p className="text-sm font-semibold text-canvas-text-contrast">Your guesses</p>
           <Grid
             guesses={displayedBobGuesses}
@@ -750,7 +795,7 @@ const Krunk: React.FC<KrunkProps> = ({
         </div>
 
         {/* Right: Alice's board (opponent guessing my word) */}
-        <div className="flex flex-col items-center gap-2">
+        <div className={boardClass(wordBoardActive)}>
           <p className="text-sm font-semibold text-canvas-text-contrast">
             {themLabel}&apos;s guesses
           </p>
@@ -795,9 +840,6 @@ const Krunk: React.FC<KrunkProps> = ({
           {actionLabel}
         </button>
       </div>
-      {sharedStatusNotice.text && (
-        <p className="text-center text-sm text-canvas-text-contrast">{sharedStatusNotice.text}</p>
-      )}
     </div>
   );
 };
