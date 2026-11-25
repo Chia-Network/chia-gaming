@@ -6,6 +6,9 @@ const WORD_LEN = 5;
 const MAX_GUESSES = 5;
 /** The hub allows 1000 frames per 10 seconds on a connection; this sends at most 100. */
 const SEND_INTERVAL_MS = 100;
+const RETRY_INTERVAL_MS = 1000;
+/** Repeats letters that are showing, in case the opponent has reloaded. */
+const REPEAT_INTERVAL_MS = 5000;
 
 /** Guess letters that have not been played yet, starting at board row `row`. */
 export interface KrunkLiveDraft {
@@ -65,17 +68,19 @@ export function useKrunkLiveDraft(
   useEffect(() => {
     if (!port?.sendEphemeral) return;
     const text = `${row}:${letters}`;
-    if (text === lastSent.current.text) return;
+    if (text === lastSent.current.text && letters === '') return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const send = () => {
+      if (!port.sendEphemeral!(encodeKrunkLiveDraft({ row, letters }))) {
+        timer = setTimeout(send, RETRY_INTERVAL_MS);
+        return;
+      }
       lastSent.current = { text, at: Date.now() };
-      port.sendEphemeral!(encodeKrunkLiveDraft({ row, letters }));
+      if (letters !== '') timer = setTimeout(send, REPEAT_INTERVAL_MS);
     };
     const wait = lastSent.current.at + SEND_INTERVAL_MS - Date.now();
-    if (wait <= 0) {
-      send();
-      return;
-    }
-    const timer = setTimeout(send, wait);
+    if (wait <= 0) send();
+    else timer = setTimeout(send, wait);
     return () => clearTimeout(timer);
   }, [port, row, letters]);
 

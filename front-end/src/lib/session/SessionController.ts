@@ -257,7 +257,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   wc: WasmConnection | undefined;
   private peerSendKeepalive: (() => void) | null = null;
   private readonly peerEphemeral: {
-    send: (body: Uint8Array) => void;
+    send: (body: Uint8Array) => boolean;
     subscribe: (listener: (body: Uint8Array) => void) => () => void;
   } | null;
   private transactionPublishNerfed = false;
@@ -340,10 +340,9 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     game: {
       isChannelReady: () => this.published.channelReady,
       dispatch: (intent) => this.dispatchGameIntent(intent),
-      sendEphemeral: (body) => {
-        // Nothing is shared once play has left the channel or is closing.
-        if (this.published.channelReady) this.peerEphemeral?.send(body);
-      },
+      // Nothing is shared once play has left the channel or is closing.
+      sendEphemeral: (body) =>
+        this.published.channelReady && (this.peerEphemeral?.send(body) ?? false),
       onEphemeral: (listener) => this.peerEphemeral?.subscribe(listener) ?? (() => {}),
     },
   };

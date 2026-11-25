@@ -84,6 +84,8 @@ describe('Krunk live drafts', () => {
       value: { addEventListener: jest.fn(), removeEventListener: jest.fn() },
     });
     const sent: string[] = [];
+    const attempts: string[] = [];
+    let online = true;
     let receive!: (body: Uint8Array) => void;
     const mount = (secretWord: string | null) =>
       create(
@@ -102,7 +104,11 @@ describe('Krunk live drafts', () => {
             {
               isChannelReady: () => true,
               dispatch: jest.fn(),
-              sendEphemeral: (body) => sent.push(new TextDecoder().decode(body)),
+              sendEphemeral: (body) => {
+                attempts.push(new TextDecoder().decode(body));
+                if (online) sent.push(attempts.at(-1)!);
+                return online;
+              },
               onEphemeral: (listener) => {
                 receive = listener;
                 return () => {};
@@ -126,7 +132,7 @@ describe('Krunk live drafts', () => {
       renderer = mount(null);
     });
     type(renderer, 'CRANE');
-    expect(sent).toEqual([]);
+    expect(attempts).toEqual([]);
     act(() => renderer.unmount());
 
     act(() => {
@@ -136,6 +142,17 @@ describe('Krunk live drafts', () => {
     expect(sent.at(-1)).toBe('0:SLAT');
     // Throttled: one frame right away, then one for the rest.
     expect(sent.length).toBeLessThanOrEqual(2);
+
+    // Unsent letters go out once the peer is reachable, and repeat after that.
+    online = false;
+    type(renderer, 'E');
+    expect(sent.at(-1)).toBe('0:SLAT');
+    online = true;
+    act(() => jest.advanceTimersByTime(1000));
+    expect(sent.at(-1)).toBe('0:SLATE');
+    const before = sent.length;
+    act(() => jest.advanceTimersByTime(5000));
+    expect(sent.slice(before)).toEqual(['0:SLATE']);
 
     act(() => receive(encodeKrunkLiveDraft({ row: 0, letters: 'QZ' })));
     const cells = renderer.root

@@ -134,7 +134,8 @@ export interface LiveGamePort {
    * signed, saved or retried, so it must never affect play. The opponent and
    * the hub can read it: never send anything secret.
    */
-  sendEphemeral?(body: Uint8Array): void;
+  /** Returns false when the frame could not be sent. */
+  sendEphemeral?(body: Uint8Array): boolean;
   onEphemeral?(listener: (body: Uint8Array) => void): () => void;
 }
 
