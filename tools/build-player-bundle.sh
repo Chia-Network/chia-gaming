@@ -52,6 +52,9 @@ echo "=== Building Rue puzzles (.hex files) ==="
 # ── 2. WASM (release, browser target) ────────────────────────────────
 
 echo "=== Building WASM (web target, release) ==="
+# shellcheck source=tools/wasm-toolchain.sh
+. "$SCRIPT_DIR/wasm-toolchain.sh"
+configure_wasm_toolchain
 (
     cd "$WASM_DIR"
     # wasm-pack runs Cargo metadata before building; validate the lockfile first.

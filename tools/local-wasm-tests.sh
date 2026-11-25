@@ -60,6 +60,9 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     fi
 
     echo "=== Building WASM (nodejs target for tests, profile $WASM_PROFILE) ==="
+    # shellcheck source=tools/wasm-toolchain.sh
+    . "$SCRIPT_DIR/wasm-toolchain.sh"
+    configure_wasm_toolchain
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/node-pkg" "$WASM_PROFILE" --target=nodejs)
 
     echo "=== Installing JavaScript workspace deps ==="

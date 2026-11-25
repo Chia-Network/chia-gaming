@@ -104,6 +104,9 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Building simulator ==="
     cargo build --bin chia-gaming-sim --features sim-server
     echo "=== Building WASM (web target) ==="
+    # shellcheck source=tools/wasm-toolchain.sh
+    . "$SCRIPT_DIR/tools/wasm-toolchain.sh"
+    configure_wasm_toolchain
     (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
     echo "=== Installing JavaScript workspace deps ==="
     pnpm --dir "$SCRIPT_DIR" install --frozen-lockfile

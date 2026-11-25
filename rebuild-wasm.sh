@@ -7,6 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WASM_DIR="$SCRIPT_DIR/wasm"
 FE_DIR="$SCRIPT_DIR/front-end"
 
+# shellcheck source=tools/wasm-toolchain.sh
+. "$SCRIPT_DIR/tools/wasm-toolchain.sh"
+configure_wasm_toolchain
+
 echo "=== Building WASM (web target) ==="
 (cd "$WASM_DIR" && wasm-pack build --out-dir="$FE_DIR/dist" --dev --target=web)
 touch "$FE_DIR/dist/.wasm-stamp"
