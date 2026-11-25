@@ -160,6 +160,7 @@ export function submissionDrain(
   retired_submission_ids: string[] = [],
   failures: SubmissionDrainFailure[] = [],
   fee_retirements: Array<{ id: string; fee_spent: boolean }> = [],
+  expired_fee_ids: string[] = [],
 ) {
   return {
     submissions: submissions.map((submission) => ({
@@ -170,6 +171,7 @@ export function submissionDrain(
     })),
     retired_submission_ids,
     fee_retirements,
+    expired_fee_ids,
     failures,
   };
 }
@@ -443,7 +445,7 @@ export async function transactionSubmitQueue(blob: SessionController): Promise<v
 export function submitTransaction(
   blob: SessionController,
   bundle: SpendBundle,
-  fee_request: { target: string; amount: string } | null = null,
+  fee_request: TransactionSubmission['fee_request'] = null,
 ): void {
   if (!blob.rewardPuzzleHash) {
     blob.rewardPuzzleHash = '11'.repeat(32);

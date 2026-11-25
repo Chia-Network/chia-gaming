@@ -142,6 +142,10 @@ export class SubmissionPump {
     else this.feeAttachments.retireSubmission(id);
   }
 
+  expireFee(id: string): void {
+    this.feeAttachments.expireAttachedFee(id);
+  }
+
   retireAll(): void {
     if (this.retired) return;
     this.retired = true;
@@ -307,6 +311,7 @@ export class SubmissionPump {
             uniqueId: this.ports.getInstallationPlayerId(),
             fee: BigInt(submission.fee_request.amount),
             concurrentSpendCoinId: submission.fee_request.target,
+            maxHeight: BigInt(submission.fee_request.max_height),
           } as const;
           if (!/^[0-9a-f]{64}$/.test(request.concurrentSpendCoinId)) {
             throw new Error('Fee target coin id must be lowercase 64-hex');

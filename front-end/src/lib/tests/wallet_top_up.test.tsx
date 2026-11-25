@@ -6,6 +6,7 @@ import {
   WalletTopUp,
 } from '../../components/WalletTopUp';
 
+import { openingFeeMojos } from '../../constants/fees';
 import { fundingShortfall } from '../wallet/fundingShortfall';
 
 describe('fundingShortfall', () => {
@@ -16,6 +17,15 @@ describe('fundingShortfall', () => {
 
   it('never blocks on a balance that has not loaded', () => {
     expect(fundingShortfall(undefined, '900', 200n)).toBe(0n);
+  });
+});
+
+describe('openingFeeMojos', () => {
+  it('matches the minimum Rust applies to each player and keeps zero as an opt-out', () => {
+    expect(openingFeeMojos(0n)).toBe(0n);
+    expect(openingFeeMojos(1n)).toBe(300_000_000n);
+    expect(openingFeeMojos(100_000_000n)).toBe(300_000_000n);
+    expect(openingFeeMojos(400_000_000n)).toBe(400_000_000n);
   });
 });
 

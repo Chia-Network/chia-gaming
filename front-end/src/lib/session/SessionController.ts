@@ -1285,7 +1285,11 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     for (const retirement of drained.fee_retirements) {
       this.submissionPump.retireFee(retirement.id, retirement.fee_spent);
     }
-    if (drained.fee_retirements.length) this.blockchain?.updateCoinInterest(this);
+    // Runs before the replacement submissions above can reserve a new fee,
+    // because their launch waits for persistence.
+    for (const id of drained.expired_fee_ids) this.submissionPump.expireFee(id);
+    if (drained.fee_retirements.length || drained.expired_fee_ids.length)
+      this.blockchain?.updateCoinInterest(this);
     this.handleSubmissionDrainFailures(drained.failures);
   }
 

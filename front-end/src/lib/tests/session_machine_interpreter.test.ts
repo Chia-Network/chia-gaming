@@ -770,6 +770,7 @@ describe('session machine controller command failures', () => {
         submissions: [],
         retired_submission_ids: [],
         fee_retirements: [],
+        expired_fee_ids: [],
         failures: [],
       }),
       configure_submission_fee: () => {},

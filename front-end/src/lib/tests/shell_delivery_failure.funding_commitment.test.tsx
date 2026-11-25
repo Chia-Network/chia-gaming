@@ -1,3 +1,4 @@
+import { openingFeeMojos } from '../../constants/fees';
 import * as wasmInit from '../session/wasmLoader';
 import { mockWasmConnection } from './message_protocol.harness';
 import { configureSessionExecution } from './session_execution.harness';
@@ -612,7 +613,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await waitForText(renderer!, shortfall);
     expect(spendShortfall).toHaveBeenCalledWith(
       BigInt(storageRepository.loadState().session!.pairing.myContribution) +
-        storageRepository.query('defaultFee'),
+        openingFeeMojos(storageRepository.query('defaultFee')),
     );
     expect(mockSendToPeer).not.toHaveBeenCalled();
     expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');

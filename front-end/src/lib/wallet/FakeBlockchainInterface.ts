@@ -537,7 +537,7 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
   private async beginFeeOffer(
     request: Extract<WalletOfferRequest, { kind: 'fee' }>,
   ): Promise<WalletOfferCompletion> {
-    const { fee, concurrentSpendCoinId } = request;
+    const { fee, concurrentSpendCoinId, maxHeight } = request;
     if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
     try {
       const bundle = await this.sendRequest('create_offer_for_ids', {
@@ -547,6 +547,9 @@ export class FakeBlockchainInterface implements InternalBlockchainInterface {
         extraConditions: [
           { opcode: 64n, args: [concurrentSpendCoinId] },
           { opcode: 52n, args: [encodeU64AsClvmHex(fee)] },
+          ...(maxHeight === undefined
+            ? []
+            : [{ opcode: 87n, args: [encodeU64AsClvmHex(maxHeight)] }]),
         ],
       });
       if (!bundle) return { kind: 'failure', reason: 'simulator could not build a fee offer' };

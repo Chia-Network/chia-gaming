@@ -116,6 +116,7 @@ mod gaming_wasm {
         submissions: Vec<JsTransactionSubmission>,
         retired_submission_ids: Vec<String>,
         fee_retirements: Vec<JsFeeRetirement>,
+        expired_fee_ids: Vec<String>,
         failures: Vec<JsSubmissionDrainFailure>,
     }
 
@@ -140,6 +141,7 @@ mod gaming_wasm {
     struct JsFeeRequest {
         target: String,
         amount: String,
+        max_height: String,
     }
 
     #[derive(Serialize)]
@@ -1410,6 +1412,7 @@ mod gaming_wasm {
         Fee {
             fee: String,
             target_coin_id: String,
+            max_height: Option<String>,
         },
     }
 
@@ -1499,9 +1502,13 @@ mod gaming_wasm {
             JsWalletSpendPurpose::Fee {
                 fee,
                 target_coin_id,
+                max_height,
             } => WalletSpendPurpose::Fee {
                 fee: parse_decimal_u64(&fee, "fee")?,
                 target: CoinID::new(parse_hash32(&target_coin_id)?),
+                max_height: max_height
+                    .map(|height| parse_decimal_u64(&height, "max height"))
+                    .transpose()?,
             },
         };
         let change_puzzle_hash = PuzzleHash::from_hash(parse_hash32(&request.change_puzzle_hash)?);
@@ -1665,6 +1672,7 @@ mod gaming_wasm {
                                         Some(JsFeeRequest {
                                             target: hex::encode(target.bytes()),
                                             amount: amount.to_u64().to_string(),
+                                            max_height: working.fee_offer_max_height().to_string(),
                                         })
                                     }
                                     SubmissionFeeIntent::AlreadyPaid
@@ -1674,6 +1682,11 @@ mod gaming_wasm {
                             .collect::<Vec<_>>();
                         let retired_submission_ids = working
                             .drain_retired_submission_ids()
+                            .into_iter()
+                            .map(|id| id.to_string())
+                            .collect();
+                        let expired_fee_ids = working
+                            .drain_expired_fee_ids()
                             .into_iter()
                             .map(|id| id.to_string())
                             .collect();
@@ -1715,6 +1728,7 @@ mod gaming_wasm {
                             submissions,
                             retired_submission_ids,
                             fee_retirements,
+                            expired_fee_ids,
                             failures,
                         })
                         .map_err(|error| {

@@ -18,6 +18,96 @@ import { createReloadableSessionLane, injectSessionReload } from './reload_injec
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
+// 5 mojos per cost over the 45M allowance for the wallet's fee spend alone.
+const MINIMUM_ATTACHED_FEE = 225_000_000n;
+
+it(
+  'replaces an expired fee offer under the same submission and lands with the new fee',
+  async () => {
+    const poller = await startSimulator(['cafe00019', 'dead00019']);
+    if (!poller) return;
+    poller.pauseChainPolling();
+    await pollOnce(poller);
+    const adapters = await createActivePair(poller, 19);
+    const controller = adapters[0].blob!;
+    controller.getFee = () => 10n;
+    const provider = fakeBlockchainInfo.getWalletOfferProvider();
+    if (provider) channelFundingRuntime.attachProvider(provider);
+    const errors: string[] = [];
+    const subscription = observeWasmEvents(controller).subscribe((event) => {
+      if (event.type === 'error') errors.push(event.error);
+    });
+    const maxHeights: bigint[] = [];
+    const submittedFees: Array<bigint | undefined> = [];
+    const originalSpend = fakeBlockchainInfo.spend;
+    const originalBegin = fakeBlockchainInfo.beginWalletOffer;
+    const originalCancel = fakeBlockchainInfo.beginWalletOfferCancellation;
+    const cancelled: string[] = [];
+    fakeBlockchainInfo.beginWalletOffer = async (...args) => {
+      if (args[1].kind === 'fee') maxHeights.push(args[1].maxHeight!);
+      return originalBegin.apply(fakeBlockchainInfo, args);
+    };
+    fakeBlockchainInfo.beginWalletOfferCancellation = async (...args) => {
+      cancelled.push(args[0]);
+      return originalCancel.apply(fakeBlockchainInfo, args);
+    };
+    // The first broadcast is accepted but never mined, as under congestion.
+    fakeBlockchainInfo.spend = async (...args) => {
+      submittedFees.push(args[4]);
+      if (submittedFees.length === 1) return { status: 'acknowledged' as const };
+      return originalSpend.apply(fakeBlockchainInfo, args);
+    };
+    try {
+      const startHeight = await fakeBlockchainInfo.getHeightInfo();
+      assert.equal(controller.goOnChain(), true);
+      await flushWrapperDrain(adapters);
+      assert.equal(submittedFees.length, 1);
+      assert.ok(maxHeights[0]! >= startHeight + 31n && maxHeights[0]! <= startHeight + 33n);
+      const [first] = storageRepository.feeAttachments();
+      assert.equal(first?.stage, 'retained-for-replay');
+      for (const adapter of adapters) poller.attachGameSession(adapter.blob!);
+
+      for (let block = 0; block < 40 && submittedFees.length < 2; block += 1) {
+        await fakeBlockchainInfo.farmBlock();
+        await pollOnce(poller);
+        await flushWrapperDrain(adapters);
+        await flushWrapperDrain(adapters);
+      }
+      assert.equal(submittedFees.length, 2, 'expiry must rebroadcast with a new fee');
+      assert.equal(maxHeights.length, 2);
+      assert.ok(maxHeights[1]! > maxHeights[0]!);
+      assert.ok(submittedFees[1]! >= MINIMUM_ATTACHED_FEE);
+      assert.equal(cancelled.length, 1, 'only the expired reservation is cancelled');
+      const [second] = storageRepository.feeAttachments();
+      assert.equal(second?.stage, 'retained-for-replay');
+      assert.equal(second?.submissionId, first?.submissionId);
+
+      for (
+        let block = 0;
+        block < 10 && controller.lastChannelStatus?.state === 'GoingOnChain';
+        block += 1
+      ) {
+        await fakeBlockchainInfo.farmBlock();
+        await pollOnce(poller);
+        await flushWrapperDrain(adapters);
+      }
+      assert.equal(controller.lastChannelStatus?.state, 'Unrolling');
+      assert.deepEqual(errors, []);
+    } finally {
+      subscription.unsubscribe();
+      for (const adapter of adapters) {
+        if (adapter.blob) poller.detachGameSession(adapter.blob);
+      }
+      poller.pauseChainPolling();
+      for (const adapter of adapters) adapter.blob?.cleanup();
+      fakeBlockchainInfo.spend = originalSpend;
+      fakeBlockchainInfo.beginWalletOffer = originalBegin;
+      fakeBlockchainInfo.beginWalletOfferCancellation = originalCancel;
+    }
+  },
+  LONG_WASM_TEST_TIMEOUT,
+);
+
 it(
   'resumes the same pending fee after provider loss at its checkpoint and Rust base fallback',
   async () => {
@@ -94,11 +184,9 @@ it(
       await flushWrapperDrain(adapters);
       await lane.runtime.flush();
 
-      assert.deepEqual(
-        fees,
-        [undefined, 10n],
-        'wallet readiness must upgrade the same Rust intent',
-      );
+      assert.equal(fees.length, 2, 'wallet readiness must upgrade the same Rust intent');
+      assert.equal(fees[0], undefined);
+      assert.ok(fees[1]! >= MINIMUM_ATTACHED_FEE, `configured fee was not raised: ${fees[1]}`);
       expect(provider.beginCreation).toHaveBeenCalledTimes(1);
       expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
       expect(provider.reconcileCreation).toHaveBeenCalledWith(
@@ -216,7 +304,10 @@ it(
       await flushWrapperDrain(adapters);
       await flushWrapperDrain(adapters);
       assert.equal(submittedBlobs.length, 2, 'provider attachment must publish one fee upgrade');
-      assert.equal(submittedFees[1], 10n);
+      assert.ok(
+        submittedFees[1]! >= MINIMUM_ATTACHED_FEE,
+        `fee was not raised: ${submittedFees[1]}`,
+      );
       assert.equal(feeOfferCreations, 2);
       assert.notEqual(
         submittedBlobs[1],
@@ -270,7 +361,7 @@ it(
       }
       assert.equal(submittedBlobs.length, 3, 'fresh synchronization must replay once');
       assert.equal(submittedBlobs[2], finalizedBlob, 'replay must preserve exact upgraded bytes');
-      assert.equal(submittedFees[2], 10n, 'exact replay must retain the upgraded fee');
+      assert.equal(submittedFees[2], submittedFees[1], 'exact replay must retain the upgraded fee');
       assert.equal(feeOfferCreations, 2, 'replay must not request a third fee offer');
       assert.deepEqual(submissionOutcomes[2], { status: 'acknowledged' });
       assert.equal(

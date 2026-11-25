@@ -104,7 +104,7 @@ export interface TransactionSubmission {
   /** Immutable relationship to the predecessor. */
   relationship: 'initial' | 'exact' | 'newer-fee-bearing' | 'other';
   bundle: SpendBundle;
-  fee_request?: { target: string; amount: string } | null;
+  fee_request?: { target: string; amount: string; max_height: string } | null;
 }
 
 export type SubmissionDrainFailureStage =
@@ -127,6 +127,8 @@ export interface SubmissionDrain {
   submissions: TransactionSubmission[];
   retired_submission_ids: string[];
   fee_retirements: Array<{ id: string; fee_spent: boolean }>;
+  /** Live submissions whose attached fee offer expired; Rust seeks a new fee. */
+  expired_fee_ids: string[];
   failures: SubmissionDrainFailure[];
 }
 

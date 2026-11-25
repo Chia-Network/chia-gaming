@@ -336,7 +336,7 @@ describe('submission controller handoff and quiescence', () => {
     commitRuntime(controller, runtime);
     submit({
       ...submission('late-fee-recovery'),
-      fee_request: { target: '22'.repeat(32), amount: '10' },
+      fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
     });
     await runtime.launch('submission:late-fee-recovery');
     await waitForCall(beginWalletOffer);

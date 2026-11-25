@@ -253,6 +253,7 @@ export type WalletOfferRequest =
       uniqueId: string;
       fee: bigint;
       concurrentSpendCoinId: string;
+      maxHeight?: bigint;
     };
 
 export type WalletOfferMaterial =

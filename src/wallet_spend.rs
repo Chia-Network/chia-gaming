@@ -14,7 +14,8 @@ use clvm_utils::{tree_hash, CurriedProgram};
 use clvmr::NodePtr;
 
 use crate::common::constants::{
-    ASSERT_CONCURRENT_SPEND_ATOM, CREATE_COIN, DEFAULT_PUZZLE_HASH, RESERVE_FEE_ATOM,
+    ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM, ASSERT_CONCURRENT_SPEND_ATOM, CREATE_COIN,
+    DEFAULT_PUZZLE_HASH, RESERVE_FEE_ATOM,
 };
 use crate::common::standard_coin::solution_for_conditions;
 use crate::common::types::{
@@ -42,7 +43,11 @@ pub enum WalletSpendPurpose {
     },
     /// Fee attachment: burn exactly `fee`, reserve it, and require the
     /// protocol coin to be spent in the same block.
-    Fee { fee: u64, target: CoinID },
+    Fee {
+        fee: u64,
+        target: CoinID,
+        max_height: Option<u64>,
+    },
 }
 
 /// Rejects a reveal that does not hash to its coin's puzzle hash; otherwise
@@ -224,7 +229,11 @@ pub fn build_unsigned_wallet_spends(
                 *max_height,
             )?);
         }
-        WalletSpendPurpose::Fee { fee, target } => {
+        WalletSpendPurpose::Fee {
+            fee,
+            target,
+            max_height,
+        } => {
             primary_conditions.push(atom_condition(
                 allocator,
                 &RESERVE_FEE_ATOM,
@@ -235,6 +244,13 @@ pub fn build_unsigned_wallet_spends(
                 &ASSERT_CONCURRENT_SPEND_ATOM,
                 target.clone(),
             )?);
+            if let Some(max_height) = max_height {
+                primary_conditions.push(atom_condition(
+                    allocator,
+                    &ASSERT_BEFORE_HEIGHT_ABSOLUTE_ATOM,
+                    Amount::new(*max_height),
+                )?);
+            }
         }
     }
     if change > 0 {
@@ -417,6 +433,7 @@ mod tests {
             &WalletSpendPurpose::Fee {
                 fee: 100,
                 target: target.clone(),
+                max_height: Some(1000),
             },
             &wallet.puzzle_hash,
         )
@@ -431,6 +448,9 @@ mod tests {
         assert!(primary
             .iter()
             .any(|c| matches!(c, CoinCondition::AssertConcurrentSpend(id) if *id == target)));
+        assert!(primary
+            .iter()
+            .any(|c| matches!(c, CoinCondition::AssertBeforeHeightAbsolute(1000))));
         assert!(primary.iter().any(|c| matches!(
             c,
             CoinCondition::CreateCoin(ph, amount) if *ph == wallet.puzzle_hash && amount.to_u64() == 10
@@ -460,7 +480,8 @@ mod tests {
                 },
             }],
         };
-        aggregate_wallet_fee_bundle(
+        let base_cost = protocol_bundle.consensus_cost(0).expect("base cost");
+        let combined = aggregate_wallet_fee_bundle(
             protocol_bundle,
             fee_bundle,
             100,
@@ -469,6 +490,12 @@ mod tests {
             0,
         )
         .expect("signed wallet fee spend aggregates");
+        // Even a fee paid with two coins stays within the priced allowance.
+        let fee_spend_cost = combined.consensus_cost(0).expect("combined cost") - base_cost;
+        assert!(
+            fee_spend_cost < crate::minimum_fee::FEE_SPEND_COST_ALLOWANCE,
+            "{fee_spend_cost}"
+        );
     }
 
     #[test]
@@ -512,6 +539,7 @@ mod tests {
             &WalletSpendPurpose::Fee {
                 fee: 100,
                 target: CoinID::new(Hash::from_bytes([9; 32])),
+                max_height: None,
             },
             &wallet.puzzle_hash,
         )
@@ -535,6 +563,7 @@ mod tests {
             &WalletSpendPurpose::Fee {
                 fee: 100,
                 target: CoinID::new(Hash::from_bytes([9; 32])),
+                max_height: None,
             },
             &wallet.puzzle_hash,
         )

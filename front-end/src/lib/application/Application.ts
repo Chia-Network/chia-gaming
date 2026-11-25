@@ -112,6 +112,7 @@ import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { ensurePeerProtocolLoaded, ensureWasmLoaded } from '../session/wasmLoader';
 import { isErrorSettlementOutcome } from '../settlement';
 import { fundingShortfall } from '../wallet/fundingShortfall';
+import { openingFeeMojos } from '../../constants/fees';
 import type { SessionWallet } from '../wallet/sessionWallet';
 import { WalletConnection, type WalletEvent, type WalletView } from '../wallet/WalletConnection';
 import { createAcceptLifecycle, createShellSessionState } from './applicationSession';
@@ -997,7 +998,9 @@ export function createApplication() {
     let shortfall: string | null = null;
     update('checkingFunds', true);
     try {
-      shortfall = await walletOwner.spendShortfall(parseSessionAmount(myAmount) + state.defaultFee);
+      shortfall = await walletOwner.spendShortfall(
+        parseSessionAmount(myAmount) + openingFeeMojos(state.defaultFee),
+      );
     } catch (error) {
       // The check is advisory: the handshake reports a funding failure itself.
       log(
@@ -2589,7 +2592,7 @@ export function createApplication() {
       sessions.state.pendingAdvisory?.my_amount ?? sessions.state.pendingProposal?.responder_amount;
     return buyIn === undefined
       ? 0n
-      : fundingShortfall(state.walletView.balance, buyIn, state.defaultFee);
+      : fundingShortfall(state.walletView.balance, buyIn, openingFeeMojos(state.defaultFee));
   }
   function snapshot() {
     const { peerConn: _peer, ...sessionState } = sessions.state;

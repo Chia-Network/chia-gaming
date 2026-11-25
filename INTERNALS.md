@@ -188,7 +188,13 @@ There are exactly two replay paths:
   drained but unavailable before another reload remains recoverable.
 
 Every rollback replay reuses the current exact Rust-owned variant; an upgraded
-fee-bearing variant is never rebuilt. `rollback_replayed_ids` survives drain and acknowledgement for the current
+fee-bearing variant is never rebuilt while its fee offer is valid. Fee offers
+expire, and an expired one makes those bytes permanently invalid. Once a
+reconciled coin snapshot reaches the offer's height without the transaction
+landing, Rust returns to the base variant under the same stable ID, reports the ID in
+`expired_fee_ids`, and seeks a new fee. The browser cancels the expired
+reservation without holding up its replacement. A past-deadline rejection caused
+by the fee offer takes the same path instead of abandoning the submission. `rollback_replayed_ids` survives drain and acknowledgement for the current
 epoch, preventing the height report and its following same-tip snapshot from
 duplicating a replay. Re-observing the expected output closes that transaction's
 epoch so a later independent rollback can replay it once again.

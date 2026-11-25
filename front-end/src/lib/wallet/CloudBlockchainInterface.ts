@@ -937,7 +937,10 @@ export class CloudBlockchainInterface implements InternalBlockchainInterface {
           offered: [],
           requested: [],
           fee: request.fee,
-          extraConditions: conditionsForGraphql([{ opcode: 64n, args: [targetCoinId] }], undefined),
+          extraConditions: conditionsForGraphql(
+            [{ opcode: 64n, args: [targetCoinId] }],
+            request.maxHeight,
+          ),
         },
         'fee',
       );

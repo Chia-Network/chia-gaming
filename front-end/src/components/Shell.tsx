@@ -502,6 +502,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     [feeUnit],
   );
   const parsedFeeInput = parseFeeInput(feeInput);
+  const feeHelpText =
+    defaultFee === 0n
+      ? 'Fees are off. Most farmers leave transactions without a fee out of blocks.'
+      : 'Raised automatically when a transaction needs more to meet the network minimum.';
   const feeInputError = parsedFeeInput === null ? 'Enter a valid amount.' : null;
   const feeInputValid = feeInputError === null;
   const startEditingFee = useCallback(() => {
@@ -1185,6 +1189,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                       {feeDisplayText()} {feeUnit === 'xch' ? currency.xch : currency.mojos}
                     </button>
                   )}
+                  <p className="text-xs mt-1">{feeHelpText}</p>
                 </div>
                 <Button onClick={() => dispatch({ type: 'wallet-disconnect' })}>Disconnect</Button>
               </div>
@@ -1308,6 +1313,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                       {feeDisplayText()} {feeUnit === 'xch' ? currency.xch : currency.mojos}
                     </button>
                   )}
+                  <p className="text-xs mt-1">{feeHelpText}</p>
                 </div>
                 <p className="text-sm text-canvas-text animate-pulse">
                   Waiting for approval in your wallet…

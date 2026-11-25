@@ -314,6 +314,7 @@ export class SageBlockchainInterface implements InternalBlockchainInterface {
         kind: 'fee',
         fee: request.fee.toString(),
         target_coin_id: request.concurrentSpendCoinId,
+        max_height: request.maxHeight?.toString() ?? null,
       };
     }
     return {

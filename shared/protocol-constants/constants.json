@@ -6,5 +6,9 @@
   "sessionTimeoutBlocks": {
     "min": 3,
     "max": 30
+  },
+  "fees": {
+    "minMojosPerCost": 5,
+    "openingCostShare": 60000000
   }
 }

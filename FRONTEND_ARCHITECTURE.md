@@ -1768,7 +1768,16 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   per cost unit with `INVALID_FEE_TOO_CLOSE_TO_ZERO`, including zero fees.
   `INVALID_FEE_LOW_FEE` means the rate does not beat the current competing
   transactions. Neither error specifies a fixed total-fee minimum: the required
-  amount depends on the complete bundle's cost and congestion. The frontend's
+  amount depends on the complete bundle's cost and congestion. Separately,
+  farmers running chia-blockchain 2.7.6 or later by default leave transactions
+  below 4 mojos per cost out of blocks until 2027-11-03. The mempool still accepts
+  those transactions, so they wait without any error. Rust prices at 5 mojos per
+  cost, as the wallet SDK does, which passes both checks (`src/minimum_fee.rs`).
+  A nonzero fee is raised to the minimum for the protocol bundle's cost plus an
+  allowance for the wallet's fee spend; a completed bundle that still falls short
+  is sent with a warning. Each player's opening fee is raised to the minimum for
+  a fixed share of the opening transaction. Balance checks use the same share from
+  `shared/protocol-constants`. Zero opts out of fees and is never raised. The frontend's
   `DEFAULT_TRANSACTION_FEE_MOJOS` (100M mojos) is only an initial preference;
   fee editors accept any nonnegative amount without promising admission. Error
   messages distinguish the rate floor from the competitive threshold and do not
@@ -1777,7 +1786,10 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   Rust-specified target coin is spent concurrently and reserves the fee. Cloud
   Wallet returns its native-fee offer instead. JavaScript passes
   either tagged provider result opaquely to one Rust/WASM attachment operation.
-  Rust captures the configured amount, target, and explicit
+  Every fee offer expires after `FEE_OFFER_EXPIRY_BLOCKS` (32 blocks, about 10
+  minutes) through `ASSERT_BEFORE_HEIGHT_ABSOLUTE`. Rust supplies that height with
+  each request. Funding offers keep their own deadline of `channel_timeout` blocks.
+  Rust captures the priced amount, target, and explicit
   `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,
   so retries cannot silently change fee policy. Rust completes WalletConnect's
   OFFER_MOD output into a spent nil-puzzle coin; validates the exact reserve,

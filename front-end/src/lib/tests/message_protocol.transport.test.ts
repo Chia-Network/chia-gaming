@@ -1507,7 +1507,11 @@ describe('wallet fee attachment on submission', () => {
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     await transactionSubmitQueue(blob);
 
     expect(beginWalletOffer).toHaveBeenCalledWith(
@@ -1517,6 +1521,7 @@ describe('wallet fee attachment on submission', () => {
         uniqueId: 'test',
         fee: 10n,
         concurrentSpendCoinId: feeTarget,
+        maxHeight: 100n,
       },
     );
     expect(finalize).toHaveBeenCalledWith(expect.any(String), {
@@ -1563,7 +1568,11 @@ describe('wallet fee attachment on submission', () => {
       }),
     );
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     await transactionSubmitQueue(blob);
     await blob.flushPendingWork();
 
@@ -1612,7 +1621,11 @@ describe('wallet fee attachment on submission', () => {
       if (writes <= 2) throw new Error(`disk full ${writes}`);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     expect(beginWalletOffer).not.toHaveBeenCalled();
     await expect(blob.flushPendingSave()).rejects.toThrow('disk full 1');
     await waitForCall(finalize, 1);
@@ -1775,7 +1788,11 @@ describe('wallet fee attachment on submission', () => {
     blob.getFee = () => 10n;
     setFinalizer(blob, finalize);
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     await transactionSubmitQueue(blob);
 
     expect(finalize).toHaveBeenCalledWith(expect.any(String), { kind: 'bundle', bundle: feeSpend });
@@ -1792,7 +1809,7 @@ describe('wallet fee attachment on submission', () => {
     const submission = {
       id: 'fee-retry',
       bundle: testSpendBundle('coin'),
-      fee_request: { target: feeTarget, amount: '10' },
+      fee_request: { target: feeTarget, amount: '10', max_height: '100' },
     };
     const beginWalletOffer = jest
       .fn()
@@ -1904,7 +1921,7 @@ describe('wallet fee attachment on submission', () => {
     const initial = {
       id: 'attached-replay',
       bundle: testSpendBundle('coin'),
-      fee_request: { target: feeTarget, amount: '10' },
+      fee_request: { target: feeTarget, amount: '10', max_height: '100' },
     };
     const exactReplay = {
       ...initial,
@@ -2123,7 +2140,11 @@ describe('wallet fee attachment on submission', () => {
       if (event.type === 'error') errors.push(event.error);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
@@ -2172,7 +2193,11 @@ describe('wallet fee attachment on submission', () => {
       if (event.type === 'error') errors.push(event.error);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 
@@ -2222,7 +2247,7 @@ describe('wallet fee attachment on submission', () => {
       predecessor_attempt_token: null,
       relationship: 'initial',
       bundle: testSpendBundle('coin'),
-      fee_request: { target: feeTarget, amount: '10' },
+      fee_request: { target: feeTarget, amount: '10', max_height: '100' },
     };
     (cradle.drain_submissions as jest.Mock).mockReturnValueOnce(
       submissionDrain([], [submission.id]),
@@ -2267,7 +2292,11 @@ describe('wallet fee attachment on submission', () => {
       if (event.type === 'error') errors.push(event.error);
     });
 
-    submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
+    submitTransaction(blob, testSpendBundle('coin'), {
+      target: feeTarget,
+      amount: '10',
+      max_height: '100',
+    });
     await transactionSubmitQueue(blob);
     subscription.unsubscribe();
 

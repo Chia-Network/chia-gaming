@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::{aggregate_wallet_fee_bundle, CoinID, CoinString, Error, Hash};
+use crate::minimum_fee::minimum_fee;
 use crate::session_phases::effects::{
     AttachmentFailurePolicy, SubmissionFeeIntent, TransactionSubmission,
 };
@@ -15,6 +16,18 @@ use super::{
     SubmissionDrainFailure, SubmissionDrainResult, SubmissionFeeSource, SubmittedTx,
     SUBMISSION_DRAIN_MESSAGE_LIMIT, SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT,
 };
+
+/// How far the wallet's node may be ahead of the last reported height.
+const FEE_EXPIRY_HEIGHT_SLACK: u64 = 3;
+
+fn low_fee_warning(fee: u64, cost: u64) -> Option<String> {
+    let minimum = minimum_fee(cost);
+    (fee < minimum).then(|| {
+        format!(
+            "The fee of {fee} mojos is below the {minimum} mojo minimum for this transaction, because the wallet's fee spend was larger than expected. Farmers may leave it out of blocks."
+        )
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PendingSubmissionIntent {
@@ -95,6 +108,9 @@ pub(super) struct SubmissionBook {
     submitted: Vec<SubmittedTx>,
     retired_submission_ids: Vec<u64>,
     fee_retirements: Vec<FeeRetirement>,
+    /// Retained submissions whose attached fee offer expired before landing.
+    #[serde(default)]
+    expired_fee_ids: Vec<u64>,
     next_submission_id: u64,
 }
 
@@ -106,6 +122,9 @@ struct UncheckedSubmissionBook {
     submitted: Vec<SubmittedTx>,
     retired_submission_ids: Vec<u64>,
     fee_retirements: Vec<FeeRetirement>,
+    /// Retained submissions whose attached fee offer expired before landing.
+    #[serde(default)]
+    expired_fee_ids: Vec<u64>,
     next_submission_id: u64,
 }
 
@@ -120,6 +139,7 @@ impl TryFrom<UncheckedSubmissionBook> for SubmissionBook {
             submitted: value.submitted,
             retired_submission_ids: value.retired_submission_ids,
             fee_retirements: value.fee_retirements,
+            expired_fee_ids: value.expired_fee_ids,
             next_submission_id: value.next_submission_id,
         };
         book.validate_restored_state()?;
@@ -541,6 +561,47 @@ impl SubmissionBook {
         std::mem::take(&mut self.fee_retirements)
     }
 
+    pub(super) fn drain_expired_fee_ids(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.expired_fee_ids)
+    }
+
+    /// An expired fee offer makes the fee-bearing bytes permanently invalid, so
+    /// replaying them would strand the transaction. Call only after chain
+    /// evidence at `height` has been reconciled.
+    pub(super) fn drop_expired_fees(&mut self, height: u64) -> Result<(), Error> {
+        let expired = self
+            .submitted
+            .iter()
+            .filter(|tx| {
+                tx.chain_terminality == SubmissionChainTerminality::Active
+                    && !matches!(tx.expiry, Some(expiry) if height >= expiry)
+                    && matches!(tx.fee_expiry(), Some(expiry) if height >= expiry)
+            })
+            .map(|tx| tx.id)
+            .collect::<Vec<_>>();
+        for id in expired {
+            self.drop_fee(id)?;
+        }
+        Ok(())
+    }
+
+    fn drop_fee(&mut self, id: u64) -> Result<(), Error> {
+        self.submitted
+            .iter_mut()
+            .find(|tx| tx.id == id)
+            .expect("fee owner must be retained")
+            .drop_attached_fee()?;
+        if !self.expired_fee_ids.contains(&id) {
+            self.expired_fee_ids.push(id);
+        }
+        self.queue_retained_delivery(
+            id,
+            DeliveryTrigger::FreshChain,
+            SubmissionDeliveryGoal::EnsureBroadcast,
+        );
+        Ok(())
+    }
+
     pub(super) fn reconciliation_input_coins(&self) -> BTreeSet<CoinString> {
         self.submitted
             .iter()
@@ -665,6 +726,7 @@ impl SubmissionBook {
                 };
                 match attached {
                     Ok(bundle) => {
+                        let cost = bundle.consensus_cost(height)?;
                         let variant_fingerprint = submission_variant_fingerprint(&bundle)?;
                         submission.current_variant = SubmissionBroadcastVariant::FeeBearing {
                             bundle: bundle.clone(),
@@ -681,7 +743,7 @@ impl SubmissionBook {
                         FinalizedSubmission {
                             bundle,
                             applied_fee: amount.to_u64(),
-                            warning: None,
+                            warning: low_fee_warning(amount.to_u64(), cost),
                             fee_source_disposition: FeeSourceDisposition::Attached,
                             variant_fingerprint,
                             should_broadcast: true,
@@ -692,7 +754,7 @@ impl SubmissionBook {
                             bundle: submission.base_bundle.clone(),
                             applied_fee: 0,
                             warning: Some(format!(
-                                "Configured fee was not applied: {reason}. The transaction will be attempted without a fee."
+                                "Configured fee was not applied: {reason}. The transaction will be attempted without a fee, and most farmers leave transactions without a fee out of blocks."
                             )),
                             fee_source_disposition: FeeSourceDisposition::Unused,
                             variant_fingerprint: current_fingerprint.clone(),
@@ -780,20 +842,18 @@ impl SubmissionBook {
         Ok(SubmissionAttemptStatus::Applied)
     }
 
+    /// Retire a submission whose deadline has passed. If the deadline belongs
+    /// to an attached fee offer, only that fee is dropped.
     pub(super) fn abandon_attempt(
         &mut self,
         attempt_token: u64,
+        height: u64,
     ) -> Result<SubmissionAttemptStatus, Error> {
-        let Some(id) = self
-            .submitted
-            .iter()
-            .find(|tx| {
-                tx.active_attempt
-                    .as_ref()
-                    .is_some_and(|attempt| attempt.token == attempt_token)
-            })
-            .map(|tx| tx.id)
-        else {
+        let Some(submission) = self.submitted.iter().find(|tx| {
+            tx.active_attempt
+                .as_ref()
+                .is_some_and(|attempt| attempt.token == attempt_token)
+        }) else {
             return if self.issued_token_is_inactive(attempt_token) {
                 Ok(SubmissionAttemptStatus::Stale)
             } else {
@@ -802,7 +862,21 @@ impl SubmissionBook {
                 )))
             };
         };
-        self.retain_submitted(|tx| tx.id != id);
+        let id = submission.id;
+        // The wallet's node may be slightly ahead of our last report.
+        let fee_deadline_passed = match submission.fee_expiry() {
+            Some(expiry) => {
+                expiry <= height.saturating_add(FEE_EXPIRY_HEIGHT_SLACK)
+                    || (submission.expiry.is_none()
+                        && !submission.base_bundle.has_height_deadline(height)?)
+            }
+            None => false,
+        };
+        if fee_deadline_passed {
+            self.drop_fee(id)?;
+        } else {
+            self.retain_submitted(|tx| tx.id != id);
+        }
         Ok(SubmissionAttemptStatus::Applied)
     }
 
