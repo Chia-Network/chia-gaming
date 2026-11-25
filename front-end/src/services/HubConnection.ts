@@ -220,7 +220,7 @@ export class HubConnection {
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   // Monotonic backoff: stay out of Firefox's failure queue during cutovers.
   private static readonly RECONNECT_DELAYS = [5000, 10000, 20000, 30000, 60000];
-  // See FakeBlockchainInterface: Firefox can delay WS opens for many seconds
+  // Firefox can delay WebSocket opens for many seconds
   // after failures; aborting early makes the next attempt slower.
   private static readonly CONNECT_TIMEOUT_MS = 30_000;
   static readonly MAX_RECONNECT_ATTEMPTS = 18;

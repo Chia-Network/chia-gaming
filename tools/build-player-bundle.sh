@@ -12,11 +12,14 @@
 #                            which lays it out flat with the desktop entry point.
 #
 # Usage:
-#   tools/build-player-bundle.sh [--debug]
+#   tools/build-player-bundle.sh [--dev] [--debug]
 set -e
 
+FRONTEND_ARGS=()
+BUNDLE_DIR=app
 for arg in "$@"; do
     case "$arg" in
+        --dev) FRONTEND_ARGS+=(--dev); BUNDLE_DIR=app-dev ;;
         --debug) set -x ;;
         *) echo "Unknown argument: $arg"; exit 1 ;;
     esac
@@ -68,6 +71,6 @@ echo "=== Installing JavaScript workspace deps ==="
 pnpm --dir "$ROOT_DIR" install --frozen-lockfile
 
 echo "=== Building player app ==="
-CLSP_DIR="$CLSP_DIR" WASM_OUT_DIR="$FE_DIR/dist" pnpm --dir "$ROOT_DIR" --filter chia-gaming-fe run bundle
+CLSP_DIR="$CLSP_DIR" WASM_OUT_DIR="$FE_DIR/dist" pnpm --dir "$ROOT_DIR" --filter chia-gaming-fe run bundle "${FRONTEND_ARGS[@]}"
 
-echo "=== Player app bundle ready in $FE_DIR/dist/app ==="
+echo "=== Player app bundle ready in $FE_DIR/dist/$BUNDLE_DIR ==="

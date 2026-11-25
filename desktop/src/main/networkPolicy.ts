@@ -99,6 +99,7 @@ export function buildNetworkPolicy(config: DesktopConfig): NetworkPolicy {
     ...hubRequestOrigins,
     ...WALLET_CONNECT_REQUEST_ORIGINS,
     ...COINSET_REQUEST_ORIGINS,
+    ...(process.env.CHIA_GAMING_DESKTOP_DEV === '1' ? ['ws://127.0.0.1:5800'] : []),
     ...config.cloudWalletOrigins,
   ];
   const frameOrigins = [...config.hubOrigins, ...WALLET_CONNECT_FRAME_ORIGINS];

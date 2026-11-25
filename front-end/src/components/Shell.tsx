@@ -23,7 +23,6 @@ import { parseOptionalBigInt } from '../lib/session/peerSessionParams';
 import { installHubIframeAuthentication } from '../services/hubIframeAuthentication';
 import { CoinOfInterestEntry, HubLiveness, WalletIdentity } from '../types/ChiaGaming';
 import { formatMojos } from '../util';
-import { isElectronDistribution } from '../util/distribution';
 import { Button } from './ui/button';
 import CloudWalletApprovalNotice from './CloudWalletApprovalNotice';
 import CloudWalletCancellationNotice from './CloudWalletCancellationNotice';
@@ -1414,7 +1413,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                         </p>
                       )}
                     </div>
-                    {!isElectronDistribution() && (
+                    {__DEV_BUILD__ && (
                       <Button
                         className="w-full"
                         variant="outline"

@@ -1,4 +1,7 @@
-const _raw = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+const _raw =
+  typeof window !== 'undefined' && window.location.protocol !== 'chiagaming:'
+    ? window.location.hostname
+    : 'localhost';
 const _host = _raw === 'localhost' ? '127.0.0.1' : _raw;
 const _win = typeof window !== 'undefined' ? (window as any) : {};
 const _env = typeof process !== 'undefined' ? process.env : {};

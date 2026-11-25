@@ -16,7 +16,6 @@ import {
   PeerLiveness,
   SessionPhase,
 } from '../../types/ChiaGaming';
-import { isElectronDistribution } from '../../util/distribution';
 import { hubTrustError, requestHubTrust } from '../../util/hubTrust';
 import {
   acceptedHandNeedsGameTabAttention,
@@ -539,6 +538,13 @@ export function createApplication() {
         const hasLiveSession =
           save.session?.phase === 'live' || save.session?.phase === 'pre-handshake';
         if (hasLiveSession) {
+          if (
+            !__DEV_BUILD__ &&
+            (save.preferences.blockchainType === 'simulator' ||
+              save.walletContext?.provider === 'simulator')
+          ) {
+            throw new Error('This saved session requires a development build.');
+          }
           const generation = storageRepository.lifecycleGeneration;
           await ensurePeerProtocolLoaded();
           if (!storageRepository.isGenerationCurrent(generation)) return { deferReady: true };
@@ -1896,7 +1902,7 @@ export function createApplication() {
       setActiveTab('game');
     }
     const bcType =
-      save.preferences.blockchainType ?? (isElectronDistribution() ? 'walletconnect' : 'simulator');
+      save.preferences.blockchainType ?? (__DEV_BUILD__ ? 'simulator' : 'walletconnect');
     setRestoreStatus('restoring');
     setRestoreError(null);
     setSessionPhase('none');

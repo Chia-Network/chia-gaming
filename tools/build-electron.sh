@@ -16,7 +16,7 @@
 # Usage:
 #   tools/build-electron.sh [--platform=mac|win|linux]
 #                           [--arch=x64|arm64|universal]
-#                           [--release-version=X.Y.Z[-PRERELEASE]] [--debug]
+#                           [--release-version=X.Y.Z[-PRERELEASE]] [--dev] [--debug]
 set -e
 
 SELF="$(basename "$0")"
@@ -34,9 +34,11 @@ trap on_exit EXIT
 PLATFORM=""
 ARCH=""
 RELEASE_VERSION=""
+DESKTOP_DEV=0
 BUNDLE_ARGS=()
 for arg in "$@"; do
     case "$arg" in
+        --dev) DESKTOP_DEV=1; BUNDLE_ARGS+=(--dev) ;;
         --debug) set -x; BUNDLE_ARGS+=(--debug) ;;
         --platform=*) PLATFORM="${arg#--platform=}" ;;
         --arch=*) ARCH="${arg#--arch=}" ;;
@@ -85,6 +87,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # ELECTRON_RUN_AS_NODE makes the Electron binary behave as plain Node, which
 # breaks both electron-builder and any launch of the app itself.
 echo "=== Packaging Electron app ${PACKAGE_ARGS[*]} ==="
-env -u ELECTRON_RUN_AS_NODE pnpm --dir "$ROOT_DIR" --filter chia-gaming-desktop run package "${PACKAGE_ARGS[@]}"
+env -u ELECTRON_RUN_AS_NODE -u PLAYER_APP_DIR CHIA_GAMING_DESKTOP_DEV="$DESKTOP_DEV" \
+    pnpm --dir "$ROOT_DIR" --filter chia-gaming-desktop run package "${PACKAGE_ARGS[@]}"
 
 ABORTED=0

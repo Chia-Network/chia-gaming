@@ -60,12 +60,14 @@ if (window === window.top) {
   // Dev-only Cloud Wallet endpoints for a local environment. The renderer reads
   // these globals as CLOUD_WALLET_OVERRIDE (front-end/src/constants/env.ts).
   // The origins must also be listed in config.json `cloudWalletOrigins`.
-  for (const [variable, global] of [
-    ['CHIA_GAMING_CLOUD_WALLET_API_URL', '__CLOUD_WALLET_API_URL__'],
-    ['CHIA_GAMING_CLOUD_WALLET_UI_URL', '__CLOUD_WALLET_UI_URL__'],
-    ['CHIA_GAMING_CLOUD_WALLET_CLIENT_ID', '__CLOUD_WALLET_CLIENT_ID__'],
-  ] as const) {
-    const value = process.env[variable];
-    if (value) contextBridge.exposeInMainWorld(global, value);
+  if (process.env.CHIA_GAMING_DESKTOP_DEV === '1') {
+    for (const [variable, global] of [
+      ['CHIA_GAMING_CLOUD_WALLET_API_URL', '__CLOUD_WALLET_API_URL__'],
+      ['CHIA_GAMING_CLOUD_WALLET_UI_URL', '__CLOUD_WALLET_UI_URL__'],
+      ['CHIA_GAMING_CLOUD_WALLET_CLIENT_ID', '__CLOUD_WALLET_CLIENT_ID__'],
+    ] as const) {
+      const value = process.env[variable];
+      if (value) contextBridge.exposeInMainWorld(global, value);
+    }
   }
 }

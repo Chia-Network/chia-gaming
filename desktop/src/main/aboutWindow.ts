@@ -38,7 +38,7 @@ export function showAboutWindow(): void {
       webviewTag: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      devTools: !app.isPackaged,
+      devTools: process.env.CHIA_GAMING_DESKTOP_DEV === '1',
     },
   });
 

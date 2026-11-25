@@ -33,13 +33,14 @@ the installer filename. Windows and Linux use `--arch=x64`.
 For iterating on the desktop shell without repackaging:
 
 ```bash
-tools/build-player-bundle.sh             # once, or after changing front-end/
-pnpm --filter chia-gaming-desktop start  # typecheck, bundle main/preload, stage, launch
+tools/build-player-bundle.sh --dev
+CHIA_GAMING_DESKTOP_DEV=1 pnpm --filter chia-gaming-desktop start
 ```
 
-`start` re-runs the whole desktop build each time. After changing only the
-player app, re-run `tools/build-player-bundle.sh` and then
-`pnpm --filter chia-gaming-desktop run stage`.
+`start` re-runs the desktop build and stages the matching player bundle. To
+build a development installer, pass `--dev` to `tools/build-electron.sh`.
+Installer and release builds default to production. `--debug` enables shell
+tracing.
 
 Finished installers land in `desktop/release/`. electron-builder itself runs against a
 directory under `$TMPDIR` rather than the repository, because a checkout under
@@ -52,16 +53,13 @@ browser at `:3002`.
 
 ## Connection modes
 
-The desktop build hides the local simulator. The preload sets
-`window.__chiaDistribution = 'electron'`, and `front-end/src/util/distribution.ts`
-uses it to hide the "Continue with Simulator" button and to resume a saved
-session with no recorded `blockchainType` as WalletConnect rather than
-simulator. WalletConnect, Sage, and Cloud Wallet remain available; Sage's chain
-reads go to `api.coinset.org` (or `testnet11.api.coinset.org`), which the
-network policy allows. The simulator stays in the web build.
+Development builds include the local hub shortcut, the simulator wallet, and
+developer tools. A development installer uses the same local hub and simulator
+as `run-local-demo.sh`. Production installers start with the public hub and
+include WalletConnect, Sage, and Cloud Wallet.
 
-The same flag suppresses the front end's multi-tab lease. That lease records its
-owner in `localStorage` but identifies itself from `sessionStorage`, so a quit
+The preload sets `window.__chiaDistribution = 'electron'` to suppress the
+front end's multi-tab lease. That lease records its owner in `localStorage` but identifies itself from `sessionStorage`, so a quit
 orphans it and the next launch would read a dead run as a live peer and open the
 "Another tab is active" dialog on every start. `requestSingleInstanceLock` plus a
 single window means a foreign owner here is always stale, so
@@ -82,9 +80,9 @@ Token requests go through the main process, since the token endpoint answers
 CORS only for http(s) client origins and the player runs on `chiagaming://app`.
 No Cloud Wallet page renders inside the app.
 
-For a local Cloud Wallet, set `CHIA_GAMING_CLOUD_WALLET_API_URL`,
-`CHIA_GAMING_CLOUD_WALLET_UI_URL` and `CHIA_GAMING_CLOUD_WALLET_CLIENT_ID` on an
-unpackaged run, and list both origins in `cloudWalletOrigins` (below).
+In a development desktop build, set `CHIA_GAMING_CLOUD_WALLET_API_URL`,
+`CHIA_GAMING_CLOUD_WALLET_UI_URL`, and `CHIA_GAMING_CLOUD_WALLET_CLIENT_ID`.
+List both origins in `cloudWalletOrigins` (below).
 
 ## Configuration
 
@@ -94,7 +92,7 @@ Optional JSON file at `<userData>/config.json`, where `<userData>` is
 
 | Key                  | Default                                                                                                | Meaning                                                                 |
 | -------------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `hubOrigins`         | `["http://localhost:3003", "http://127.0.0.1:3003"]`                                                   | Hub origins the app may load and connect to                             |
+| `hubOrigins`         | `["https://hub.nokitlan.com"] (development also includes loopback hubs)`                                                   | Hub origins the app may load and connect to                             |
 | `cloudWalletOrigins` | `["https://api.vault.chia.net", "https://vault.chia.net", "https://api.vault.chiatest.net", "https://vault.chiatest.net"]` | Cloud Wallet API and UI origins for GraphQL, browser sign-in and approval, and token requests |
 
 Anything invalid is reported in an error dialog and the app exits rather than

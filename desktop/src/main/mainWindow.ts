@@ -36,7 +36,7 @@ export function createMainWindow(): BrowserWindow {
       webviewTag: false,
       navigateOnDragDrop: false,
       spellcheck: false,
-      devTools: !app.isPackaged,
+      devTools: process.env.CHIA_GAMING_DESKTOP_DEV === '1',
       // State-channel timeouts and the hub relay socket must keep running while
       // the window is in the background, where Chromium throttles timers hard.
       backgroundThrottling: false,
