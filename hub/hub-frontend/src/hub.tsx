@@ -81,8 +81,6 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     cancelChallenge,
     setHubAlias,
     publicId,
-    hubError,
-    clearHubError,
   } = useHubSocket(new URL('../../', document.baseURI).href, sessionId);
 
   const autoJoinedRef = useRef(false);
@@ -106,7 +104,6 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     setAliasErrorText(error);
     if (error) return;
     const trimmed = myAlias.trim();
-    clearHubError();
     setAlias(trimmed);
     setMyAlias(trimmed);
     setCommittedAlias(trimmed);
@@ -121,7 +118,6 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     setAliasErrorText(error);
     if (error) return;
     const trimmed = value.trim();
-    clearHubError();
     setEditingAlias(false);
     setMyAlias(trimmed);
     setCommittedAlias(trimmed);
@@ -237,9 +233,9 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
             }}
             onKeyDown={(e) => e.key === 'Enter' && confirmAlias()}
           />
-          {(aliasErrorText ?? hubError) && (
+          {aliasErrorText && (
             <p role="alert" className="text-sm text-red-500 text-center">
-              {aliasErrorText ?? hubError}
+              {aliasErrorText}
             </p>
           )}
           <Button variant="solid" color="primary" size="default" onClick={confirmAlias} fullWidth>
@@ -306,9 +302,9 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
             </button>
           </div>
         )}
-        {(aliasErrorText ?? hubError) && (
+        {aliasErrorText && (
           <p role="alert" className="mt-2 text-sm text-red-500">
-            {aliasErrorText ?? hubError}
+            {aliasErrorText}
           </p>
         )}
       </div>
