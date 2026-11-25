@@ -18,6 +18,7 @@ import {
   formatKrunkHandLog,
   krunkGameSlots,
   krunkLetterStatuses,
+  krunkTurn,
   newlyResolvedKrunkIndex,
   type KrunkProps,
 } from './Krunk';
@@ -54,6 +55,72 @@ function frozenView(
 ): GameMountView<KrunkHand> {
   return { frozen: true, hand: testHand(persisted) };
 }
+
+describe('krunkTurn', () => {
+  const picked = {
+    ...initialKrunkGameState('alice'),
+    handler: KrunkHandler.AliceWaiting,
+    secretWord: 'CRANE',
+  };
+  const bob = initialKrunkGameState('bob');
+  const guess = { word: 'SLATE', clue: [0n, 0n, 2n, 0n, 2n] as KrunkGameState['guesses'][number]['clue'] };
+
+  it.each([
+    ['picking a word', initialKrunkGameState('alice'), bob, 'yours', 'Your go: pick a secret word'],
+    [
+      'guessing',
+      picked,
+      { ...bob, handler: KrunkHandler.BobGuess, guesses: [guess] },
+      'yours',
+      'Your go: guess 2 of 5',
+    ],
+    ['the opponent picking', picked, bob, 'waiting', 'Waiting for Peer to pick a word…'],
+    [
+      'the opponent scoring',
+      picked,
+      { ...bob, guesses: [guess] },
+      'waiting',
+      'Waiting for Peer to score your guess…',
+    ],
+    [
+      'queued guesses',
+      picked,
+      { ...bob, queuedGuesses: ['CRANE', 'SLATE'] },
+      'waiting',
+      '2 guesses queued, waiting for Peer…',
+    ],
+    [
+      'a queued guess about to send itself',
+      picked,
+      { ...bob, handler: KrunkHandler.BobGuess, queuedGuesses: ['CRANE'] },
+      'waiting',
+      '1 guess queued, waiting for Peer…',
+    ],
+    [
+      'the opponent still guessing',
+      picked,
+      { ...bob, handler: KrunkHandler.Terminal },
+      'waiting',
+      'Waiting for Peer to guess…',
+    ],
+    [
+      'my guesses when my word is already solved',
+      { ...picked, handler: KrunkHandler.Terminal },
+      { ...bob, handler: KrunkHandler.BobGuess },
+      'yours',
+      'Your go: guess 1 of 5',
+    ],
+    [
+      'a finished hand',
+      { ...picked, handler: KrunkHandler.Terminal },
+      { ...bob, handler: KrunkHandler.Terminal },
+      null,
+      '',
+    ],
+  ])('describes %s', (_label, alice, bobState, kind, text) => {
+    expect(krunkTurn(alice, bobState, 'Peer')).toEqual({ kind, text });
+  });
+});
 
 describe('Krunk hand restoration', () => {
   const savedState = {
