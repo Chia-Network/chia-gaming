@@ -4,7 +4,6 @@ import { ChevronDownIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 
-const DEV_HUB = 'http://localhost:3003';
 // Suggested hubs; the first one prefills the field.
 const KNOWN_HUBS = ['https://hub.nokitlan.com'];
 
@@ -149,13 +148,15 @@ export function HubPicker({ onConnect, connectionError, defaultHubUrl }: HubPick
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => onConnect(DEV_HUB)}
-          className="text-xs text-canvas-solid underline hover:text-canvas-text"
-        >
-          dev: connect to local hub (localhost:3003)
-        </button>
+        {__DEV_BUILD__ && (
+          <button
+            type="button"
+            onClick={() => onConnect('http://localhost:3003')}
+            className="text-xs text-canvas-solid underline hover:text-canvas-text"
+          >
+            dev: connect to local hub (localhost:3003)
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,8 @@
 import { WasmInitFn, WasmConnection } from './types/ChiaGaming';
 
 declare global {
+  const __DEV_BUILD__: boolean;
+
   interface Window {
     loadWasm?: (init: WasmInitFn, cg: WasmConnection) => void;
     __chiaDistribution?: string;

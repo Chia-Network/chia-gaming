@@ -111,7 +111,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
     echo "=== Installing JavaScript workspace deps ==="
     pnpm --dir "$SCRIPT_DIR" install --frozen-lockfile
     echo "=== Building gaming frontend ==="
-    pnpm --dir "$SCRIPT_DIR" --filter chia-gaming-fe run build
+    pnpm --dir "$SCRIPT_DIR" --filter chia-gaming-fe run build --dev
     echo "=== Building hub-frontend ==="
     pnpm --dir "$SCRIPT_DIR" --filter chia-gaming-hub-frontend run build
     echo "=== Building hub-service ==="
@@ -157,9 +157,9 @@ if [ -n "${CHIA_GAMING_CLOUD_WALLET_API_URL:-}${CHIA_GAMING_CLOUD_WALLET_UI_URL:
 fi
 GAME_NONCE_DIR="$GAME_SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/public/favicon.svg" "$GAME_NONCE_DIR/favicon.svg"
-cp "$FE_DIR/dist/js/index-rollup.js" "$GAME_NONCE_DIR/index.js"
-cp "$FE_DIR/dist/js/index-rollup.js.map" "$GAME_NONCE_DIR/index-rollup.js.map"
-cp "$FE_DIR/dist/css/index.css" "$GAME_NONCE_DIR/index.css"
+cp "$FE_DIR/dist/demo/index.js" "$GAME_NONCE_DIR/index.js"
+cp "$FE_DIR/dist/demo/index.js.map" "$GAME_NONCE_DIR/index.js.map"
+cp "$FE_DIR/dist/demo/index.css" "$GAME_NONCE_DIR/index.css"
 cp "$FE_DIR/dist/chia_gaming_wasm.js" "$GAME_NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm"
 echo '{"version":3,"sources":[],"mappings":""}' > "$GAME_NONCE_DIR/chia_gaming_wasm_bg.wasm.map"

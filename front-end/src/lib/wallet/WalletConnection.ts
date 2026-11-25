@@ -18,7 +18,6 @@ import {
   BlockchainPoller,
 } from './BlockchainPoller';
 import { cloudBlockchainInfo } from './CloudBlockchainInterface';
-import { fakeBlockchainInfo } from './FakeBlockchainInterface';
 import { realBlockchainInfo } from './RealBlockchainInterface';
 import { sageBlockchainInfo } from './SageBlockchainInterface';
 import { WalletConnectProposalExpiredError } from './WalletConnectClient';
@@ -52,13 +51,22 @@ export type WalletEvent =
   | { type: 'attention' | 'fee-changed' | 'detaching' };
 
 function providerFor(type: BlockchainType) {
-  return type === 'walletconnect'
-    ? { provider: realBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
-    : type === 'sage'
-      ? { provider: sageBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
-      : type === 'cloud'
-        ? { provider: cloudBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS }
-        : { provider: fakeBlockchainInfo, interval: 5000 };
+  if (__DEV_BUILD__ && type === 'simulator') {
+    // Keep provider selection synchronous and let esbuild drop the entire import.
+    const simulator =
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require('./FakeBlockchainInterface') as typeof import('./FakeBlockchainInterface');
+    return { provider: simulator.fakeBlockchainInfo, interval: 5000 };
+  }
+  switch (type) {
+    case 'walletconnect':
+      return { provider: realBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS };
+    case 'sage':
+      return { provider: sageBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS };
+    case 'cloud':
+      return { provider: cloudBlockchainInfo, interval: CHAIN_POLL_INTERVAL_MS };
+  }
+  return null;
 }
 
 /** Provider lifetime and normalization. Session and hub policy belongs to the host. */
@@ -264,9 +272,11 @@ export class WalletConnection {
   }
 
   async connect(type: BlockchainType, silent = false, fresh = false): Promise<boolean> {
+    const binding = providerFor(type);
+    if (!binding) return false;
+    const { provider, interval } = binding;
     const attempt = this.beginConnectionAttempt();
     if (!silent) this.update({ error: null });
-    const { provider, interval } = providerFor(type);
     try {
       this.select(type);
       this.update({ connecting: true, preparingConnection: true, expiredQrWallet: undefined });
@@ -308,7 +318,7 @@ export class WalletConnection {
         preparingConnection: false,
       });
       if (silent) {
-        if (type === 'simulator') this.complete(provider, type, interval);
+        if (__DEV_BUILD__ && type === 'simulator') this.complete(provider, type, interval);
         else this.update({ connecting: false });
       } else {
         if (!this.provider) {
@@ -324,7 +334,9 @@ export class WalletConnection {
   async finalize(values?: ConnectionFieldValues): Promise<boolean> {
     const type = this.view.walletType;
     if (!this.setup || !type) return false;
-    const { provider, interval } = providerFor(type);
+    const binding = providerFor(type);
+    if (!binding) return false;
+    const { provider, interval } = binding;
     const attempt = this.beginConnectionAttempt();
     this.update({ error: null, connecting: true });
     try {
@@ -347,8 +359,10 @@ export class WalletConnection {
   }
 
   async resume(type: BlockchainType): Promise<void> {
+    const binding = providerFor(type);
+    if (!binding) return;
+    const { provider, interval } = binding;
     const attempt = this.beginConnectionAttempt();
-    const { provider, interval } = providerFor(type);
     this.provider = provider;
     this.update({
       walletType: type,
@@ -376,14 +390,15 @@ export class WalletConnection {
     } catch (error) {
       if (attempt !== this.connectionAttempt) return;
       console.warn('[wallet] resume connect failed, falling back', error);
-      if (!this.poller && type === 'simulator') this.complete(provider, type, interval);
+      if (__DEV_BUILD__ && !this.poller && type === 'simulator')
+        this.complete(provider, type, interval);
       else this.update({ connecting: false });
     }
   }
 
   async cancel(): Promise<void> {
     const provider =
-      this.provider ?? (this.view.walletType ? providerFor(this.view.walletType).provider : null);
+      this.provider ?? (this.view.walletType ? providerFor(this.view.walletType)?.provider : null);
     // Retire local work before awaiting teardown, which may outlive a retry.
     this.stopLocalActivity();
     this.presentSetup(null);
@@ -452,6 +467,7 @@ export class WalletConnection {
     });
   }
   leavePage(): void {
-    if (this.view.walletType === 'simulator') void this.provider?.disconnect().catch(() => {});
+    if (__DEV_BUILD__ && this.view.walletType === 'simulator')
+      void this.provider?.disconnect().catch(() => {});
   }
 }

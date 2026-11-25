@@ -327,7 +327,11 @@ pnpm install --frozen-lockfile
 pnpm --filter chia-gaming-fe run build
 ```
 
-Outputs `dist/js/index-rollup.js` and `dist/css/index.css`.
+Outputs `dist/js/index-rollup.js` and `dist/css/index.css` for production.
+Pass `--dev` to include the local hub shortcut and simulator wallet. That
+build writes to `dist/demo/`, which is what `run-local-demo.sh` serves.
+`tools/stage-production.sh` and the release workflows use the production
+bundle.
 
 ### 4. Hub frontend
 
@@ -370,8 +374,8 @@ build-meta.json         ← {"basePath":"/app/NONCE/"}
 app/
   NONCE/
     favicon.svg         ← front-end/public/favicon.svg
-    index.js            ← front-end/dist/js/index-rollup.js
-    index.css           ← front-end/dist/css/index.css
+    index.js            ← front-end/dist/demo/index.js
+    index.css           ← front-end/dist/demo/index.css
     chia_gaming_wasm.js ← front-end/dist/chia_gaming_wasm.js
     chia_gaming_wasm_bg.wasm ← front-end/dist/chia_gaming_wasm_bg.wasm
     clsp/               ← clsp/ directory (compiled .hex files)

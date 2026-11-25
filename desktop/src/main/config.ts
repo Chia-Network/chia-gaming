@@ -22,7 +22,12 @@ export type DesktopConfig = {
   cloudWalletOrigins: string[];
 };
 
-const DEFAULT_HUB_ORIGINS = ['http://localhost:3003', 'http://127.0.0.1:3003'];
+const DEFAULT_HUB_ORIGINS = [
+  'https://hub.nokitlan.com',
+  ...(process.env.CHIA_GAMING_DESKTOP_DEV === '1'
+    ? ['http://localhost:3003', 'http://127.0.0.1:3003']
+    : []),
+];
 
 /** Matches `*_CLOUD_WALLET` defaults in `front-end/src/constants/env.ts`. */
 const DEFAULT_CLOUD_WALLET_ORIGINS = [

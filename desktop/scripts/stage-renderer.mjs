@@ -19,7 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 const DESKTOP = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPO = resolve(DESKTOP, '..');
-const PLAYER_BUNDLE = process.env.PLAYER_APP_DIR || join(REPO, 'front-end', 'dist', 'app');
+const appDir = process.env.CHIA_GAMING_DESKTOP_DEV === '1' ? 'app-dev' : 'app';
+const PLAYER_BUNDLE = process.env.PLAYER_APP_DIR || join(REPO, 'front-end', 'dist', appDir);
 const OUT = join(DESKTOP, 'dist', 'renderer');
 
 if (!existsSync(join(PLAYER_BUNDLE, 'index.js'))) {

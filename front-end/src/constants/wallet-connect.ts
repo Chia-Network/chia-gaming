@@ -73,7 +73,7 @@ function readBlockchainIsSimulator(): boolean {
  */
 export function getGenesisChallenge(): string {
   if (GENESIS_CHALLENGE_OVERRIDE) return GENESIS_CHALLENGE_OVERRIDE;
-  if (readBlockchainIsSimulator()) return MAINNET_GENESIS_CHALLENGE;
+  if (__DEV_BUILD__ && readBlockchainIsSimulator()) return MAINNET_GENESIS_CHALLENGE;
   return isTestnet() ? TESTNET_GENESIS_CHALLENGE : MAINNET_GENESIS_CHALLENGE;
 }
 

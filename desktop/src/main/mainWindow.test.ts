@@ -14,6 +14,7 @@ const source = buildSync({
   platform: 'node',
   format: 'cjs',
   packages: 'external',
+  define: { 'process.env.CHIA_GAMING_DESKTOP_DEV': '"0"' },
   write: false,
 }).outputFiles[0].text;
 

@@ -1,3 +1,5 @@
+Object.assign(globalThis, { __DEV_BUILD__: true });
+
 import { WebSocket } from 'ws';
 import { installPeerProtocol } from '../src/services/peerProtocol';
 

@@ -5,12 +5,21 @@
 // the open-ended images/ and binary CLVM sets), then floor-checks the result so
 // an incomplete bundle fails the build loudly instead of shipping silently.
 
-import { cpSync, mkdirSync, existsSync, readdirSync, statSync, copyFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  existsSync,
+  readdirSync,
+  statSync,
+  copyFileSync,
+  readFileSync,
+} from 'node:fs';
 import { join, resolve, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const FE = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const APP = join(FE, 'dist', 'app');
+const development = process.argv.includes('--dev');
+const APP = join(FE, 'dist', development ? 'app-dev' : 'app');
 
 // Where wasm-pack wrote chia_gaming_wasm.js / _bg.wasm, and where the compiled
 // binary CLVM artifacts live. Defaults match tools/build-deploy.sh; overridable via env.
@@ -67,8 +76,9 @@ function copyGameAssets(dir) {
     }
   }
 }
-if (existsSync(GAMES_DIR)) {
-  copyGameAssets(GAMES_DIR);
+const registry = JSON.parse(readFileSync(join(REPO_ROOT, 'games', 'registry.json'), 'utf8'));
+for (const game of development ? [...registry.production, ...registry.test] : registry.production) {
+  copyGameAssets(join(GAMES_DIR, game));
 }
 
 // Floor checks: fail loudly if the bundle is incomplete.

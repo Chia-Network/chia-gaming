@@ -28,7 +28,7 @@ echo "=== Building Rue puzzles (if needed) ==="
 "$REPO_ROOT/tools/build-rue.sh"
 
 echo "=== Building gaming-fe ==="
-(cd "$FE_DIR" && pnpm run build)
+(cd "$FE_DIR" && pnpm run build --dev)
 
 echo "=== Assembling serve/ with build nonce ==="
 SERVE="$FE_DIR/serve"
@@ -42,9 +42,9 @@ NONCE_DIR="$SERVE/app/$BUILD_NONCE"
 cp "$FE_DIR/public/index.html" "$SERVE/index.html"
 cp "$FE_DIR/public/favicon.svg" "$NONCE_DIR/favicon.svg"
 
-cp "$FE_DIR/dist/js/index-rollup.js" "$NONCE_DIR/index.js"
-[ -f "$FE_DIR/dist/js/index-rollup.js.map" ] && cp "$FE_DIR/dist/js/index-rollup.js.map" "$NONCE_DIR/index-rollup.js.map"
-cp "$FE_DIR/dist/css/index.css" "$NONCE_DIR/index.css"
+cp "$FE_DIR/dist/demo/index.js" "$NONCE_DIR/index.js"
+[ -f "$FE_DIR/dist/demo/index.js.map" ] && cp "$FE_DIR/dist/demo/index.js.map" "$NONCE_DIR/index.js.map"
+cp "$FE_DIR/dist/demo/index.css" "$NONCE_DIR/index.css"
 cp "$FE_DIR/dist/chia_gaming_wasm.js" "$NONCE_DIR/chia_gaming_wasm.js"
 cp "$FE_DIR/dist/chia_gaming_wasm_bg.wasm" "$NONCE_DIR/chia_gaming_wasm_bg.wasm"
 # Match run-local-demo / assemble-bundle: binary CLVM runtime artifacts.

@@ -84,8 +84,10 @@ jobs:
       - name: Test WASM bindings natively
         run: cargo test --locked --manifest-path wasm/Cargo.toml --lib
 
-      - name: Build gaming-fe
-        run: pnpm --filter chia-gaming-fe run build
+      - name: Build production and development player apps
+        run: |
+          pnpm --filter chia-gaming-fe run build
+          pnpm --filter chia-gaming-fe run build --dev
 
       - name: Build hub-frontend
         run: pnpm --filter chia-gaming-hub-frontend run build
