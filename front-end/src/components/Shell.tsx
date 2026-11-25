@@ -358,6 +358,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
   const {
     alias,
     theme,
+    cardDecks,
     keepSession,
     sessionPresentation,
     sessionFrontend,
@@ -529,6 +530,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
       }
     },
     [feeEditing, feeInput, parseFeeInput, dispatch],
+  );
+  const chooseCardDeck = useCallback(
+    (gameType: string, deck: string) => dispatch({ type: 'card-deck', gameType, deck }),
+    [dispatch],
   );
   const currency = getCurrencyLabels();
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -1571,6 +1576,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                                 )}
                                 terminalPresentation={terminalPresentation}
                                 showTransitionSurface={pane.showTransitionSurface}
+                                cardDecks={cardDecks}
+                                onChooseCardDeck={chooseCardDeck}
                               />
                             )}
                           </GameSessionErrorBoundary>
@@ -1584,6 +1591,8 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                             model={sessionModelForReactProps(dashboardSessionModel!)}
                             myName={finishedSessionIdentity?.myName ?? alias}
                             opponentName={finishedSessionIdentity?.opponentName}
+                            cardDecks={cardDecks}
+                            onChooseCardDeck={chooseCardDeck}
                           />
                           {sessionConsentOverlay}
                         </div>

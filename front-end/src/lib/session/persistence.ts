@@ -101,6 +101,7 @@ const IDENTITY_FIELDS = new Set(['playerId', 'sessionId', 'myHubPlayerId']);
 const PREFERENCE_FIELDS = new Set([
   'alias',
   'theme',
+  'cardDecks',
   'defaultFee',
   'feeUnit',
   'hubUrl',
@@ -209,6 +210,22 @@ function parseIdentity(value: unknown): SessionIdentitySave {
   };
 }
 
+const MAX_CARD_DECK_ID_LENGTH = 64;
+
+function optionalCardDecks(value: unknown): Record<string, string> | undefined {
+  if (value === undefined) return undefined;
+  const fields = requireRecord(value, 'preferences.cardDecks');
+  const decks: Record<string, string> = {};
+  for (const [gameType, deck] of Object.entries(fields)) {
+    const id = requireString(deck, `preferences.cardDecks.${gameType}`);
+    if (gameType.length > MAX_CARD_DECK_ID_LENGTH || id.length > MAX_CARD_DECK_ID_LENGTH) {
+      throw new Error('Garbled save: invalid preferences.cardDecks');
+    }
+    decks[gameType] = id;
+  }
+  return decks;
+}
+
 function parsePreferences(value: unknown): SessionPreferencesSave {
   const fields = requireRecord(value, 'preferences');
   requireExactKeys(fields, PREFERENCE_FIELDS, 'preferences');
@@ -247,6 +264,7 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
   return {
     alias: optionalString(fields.alias, 'preferences.alias', true),
     theme,
+    cardDecks: optionalCardDecks(fields.cardDecks),
     defaultFee:
       fields.defaultFee === undefined
         ? undefined

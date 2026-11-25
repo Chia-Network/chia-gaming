@@ -540,6 +540,8 @@ export interface GameSessionProps {
   suppressPhaseReporting?: boolean;
   terminalPresentation?: TerminalSessionPresentation | null;
   showTransitionSurface?: boolean;
+  cardDecks: Readonly<Record<string, string>>;
+  onChooseCardDeck: (gameType: string, deck: string) => void;
 }
 const GameSession: React.FC<GameSessionProps> = ({
   params,
@@ -549,6 +551,8 @@ const GameSession: React.FC<GameSessionProps> = ({
   suppressPhaseReporting,
   terminalPresentation,
   showTransitionSurface = false,
+  cardDecks,
+  onChooseCardDeck,
 }) => {
   const session = useGameSession(
     params,
@@ -557,7 +561,11 @@ const GameSession: React.FC<GameSessionProps> = ({
     terminalPresentation,
     presentation,
   );
-  const cardDeck = useCardDeckPreference(session.gameSpecificView.gameType);
+  const cardDeck = useCardDeckPreference(
+    cardDecks,
+    session.gameSpecificView.gameType,
+    onChooseCardDeck,
+  );
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const restoreGameAreaFocus = useCallback(() => gameAreaRef.current?.focus(), []);

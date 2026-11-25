@@ -12,6 +12,8 @@ export interface FinishedSessionGameViewProps {
   model: SessionModel;
   myName?: string;
   opponentName?: string;
+  cardDecks: Readonly<Record<string, string>>;
+  onChooseCardDeck: (gameType: string, deck: string) => void;
 }
 
 function FinishedSessionFallback({
@@ -111,10 +113,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   model,
   myName,
   opponentName,
+  cardDecks,
+  onChooseCardDeck,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
-  const cardDeck = useCardDeckPreference(handState?.gameType ?? '');
+  const cardDeck = useCardDeckPreference(cardDecks, handState?.gameType ?? '', onChooseCardDeck);
 
   if (!display.hasSavedHand || !handState) {
     return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;

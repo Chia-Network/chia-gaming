@@ -537,9 +537,8 @@ The architectural invariants are smaller than the field list:
 
 The version behavior follows the canonical
 [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
-`localStorage` contains coordination, resume/reset hints, and the card deck, which
-only changes how games look; it is not authority for any other preference or
-application state.
+`localStorage` contains only coordination and resume/reset hints; it is not
+preference or application-state authority.
 
 #### Save architecture
 

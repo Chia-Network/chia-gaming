@@ -34,6 +34,8 @@ export interface SessionIdentitySave {
 export interface SessionPreferencesSave {
   alias?: string;
   theme?: 'dark' | 'light';
+  /** The chosen card deck id for each game that offers decks. */
+  cardDecks?: Record<string, string>;
   defaultFee?: bigint;
   feeUnit?: 'mojo' | 'xch';
   hubUrl?: string;

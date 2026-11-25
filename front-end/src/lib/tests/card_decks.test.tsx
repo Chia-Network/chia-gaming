@@ -4,7 +4,6 @@ import { readdirSync, readFileSync } from 'fs';
 import CardContent from '@games/calpoker/ui/components/components/CardContent';
 import { CARD_DECKS, cardArtUrl, cardDeck, CardDeckProvider } from '@games/calpoker/ui/decks';
 import { CardDeckFooter, DeckCredit } from '../../components/CardDeckFooter';
-import { useCardDeckPreference } from '../../hooks/useCardDeckPreference';
 
 // @ts-expect-error Node.js globals are not included in the frontend configuration.
 const CARDS = `${__dirname}/../../../public/images/cards`;
@@ -112,92 +111,5 @@ describe('card decks', () => {
     expect(renderer.root.findAllByType('img')).toEqual([]);
     expect(JSON.stringify(renderer.toJSON())).toContain('K');
     act(() => renderer.unmount());
-  });
-});
-
-describe('useCardDeckPreference', () => {
-  const originals = ['window', 'localStorage'].map(
-    (name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const,
-  );
-  const stored = new Map<string, string>();
-  let storageListeners: Set<(event: { key: string | null }) => void>;
-  let blocked: boolean;
-
-  beforeEach(() => {
-    stored.clear();
-    blocked = false;
-    storageListeners = new Set();
-    Object.defineProperty(globalThis, 'localStorage', {
-      configurable: true,
-      value: {
-        getItem: (key: string) => stored.get(key) ?? null,
-        setItem: (key: string, value: string) => {
-          if (blocked) throw new Error('storage is blocked');
-          stored.set(key, value);
-        },
-      },
-    });
-    Object.defineProperty(globalThis, 'window', {
-      configurable: true,
-      value: {
-        addEventListener: (_: string, listener: never) => storageListeners.add(listener),
-        removeEventListener: (_: string, listener: never) => storageListeners.delete(listener),
-      },
-    });
-  });
-  afterEach(() => {
-    for (const [name, descriptor] of originals) {
-      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-      else Reflect.deleteProperty(globalThis, name);
-    }
-  });
-
-  function mount(gameType = 'calpoker') {
-    const seen: { current: ReturnType<typeof useCardDeckPreference> | null } = { current: null };
-    function Harness() {
-      seen.current = useCardDeckPreference(gameType);
-      return null;
-    }
-    let renderer!: ReactTestRenderer;
-    act(() => {
-      renderer = create(<Harness />);
-    });
-    return { seen, unmount: () => act(() => renderer.unmount()) };
-  }
-
-  it('saves the deck in localStorage and shares it between mounted games', () => {
-    const first = mount();
-    const second = mount();
-    expect(first.seen.current!.value).toBeUndefined();
-    act(() => first.seen.current!.set('pixel'));
-    expect(stored).toEqual(new Map([['chia-gaming:card-deck:calpoker', 'pixel']]));
-    expect(second.seen.current!.value).toBe('pixel');
-    first.unmount();
-    second.unmount();
-    expect(storageListeners.size).toBe(0);
-
-    const reopened = mount();
-    expect(reopened.seen.current!.value).toBe('pixel');
-    stored.set('chia-gaming:card-deck:calpoker', 'icons');
-    act(() =>
-      storageListeners.forEach((notify) => notify({ key: 'chia-gaming:card-deck:calpoker' })),
-    );
-    expect(reopened.seen.current!.value).toBe('icons');
-    const otherGame = mount('spacepoker');
-    expect(otherGame.seen.current!.value).toBeUndefined();
-    otherGame.unmount();
-    reopened.unmount();
-  });
-
-  it('keeps the choice for this page when storage is blocked', () => {
-    const game = mount();
-    blocked = true;
-    act(() => game.seen.current!.set('pixel'));
-    expect(game.seen.current!.value).toBe('pixel');
-    expect(stored.size).toBe(0);
-    blocked = false;
-    act(() => game.seen.current!.set('icons'));
-    expect(game.seen.current!.value).toBe('icons');
-    game.unmount();
   });
 });

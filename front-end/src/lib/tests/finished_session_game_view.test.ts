@@ -76,7 +76,13 @@ describe('finished session shell display', () => {
       },
     });
 
-    const markup = renderToStaticMarkup(React.createElement(FinishedSessionGameView, { model }));
+    const markup = renderToStaticMarkup(
+      React.createElement(FinishedSessionGameView, {
+        model,
+        cardDecks: {},
+        onChooseCardDeck: jest.fn(),
+      }),
+    );
 
     expect(markup).toContain('data-testid="finished-session-game-view"');
     expect(markup).not.toContain('pointer-events-none');
@@ -140,7 +146,13 @@ describe('finished session shell display', () => {
       },
     });
 
-    const markup = renderToStaticMarkup(React.createElement(FinishedSessionGameView, { model }));
+    const markup = renderToStaticMarkup(
+      React.createElement(FinishedSessionGameView, {
+        model,
+        cardDecks: {},
+        onChooseCardDeck: jest.fn(),
+      }),
+    );
 
     expect(markup).toContain('Opponent timed out');
     expect(markup).toContain('Game details unavailable');
