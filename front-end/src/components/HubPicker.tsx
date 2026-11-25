@@ -3,6 +3,7 @@ import { Autocomplete } from '@base-ui/react/autocomplete';
 import { ChevronDownIcon } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { isElectronDistribution } from '../util/distribution';
 
 const DEV_HUB = 'http://localhost:3003';
 // Suggested hubs; the first one prefills the field.
@@ -26,6 +27,15 @@ export function parseHubUrl(raw: string): string | null {
   }
 }
 
+function isLoopbackHub(raw: string): boolean {
+  try {
+    const { hostname } = new URL(raw.trim());
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Plain http to a remote host is the one thing about a hub the user cannot read
  * off the URL they typed, so it is called out before they connect. Loopback is
@@ -41,9 +51,7 @@ function insecureHubWarning(raw: string): string | null {
     return null;
   }
   if (url.protocol !== 'http:') return null;
-  if (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]') {
-    return null;
-  }
+  if (isLoopbackHub(trimmed)) return null;
   return 'This hub uses plain http. The connection is not encrypted, so anyone on the network path can read it.';
 }
 
@@ -55,12 +63,15 @@ interface HubPickerProps {
 }
 
 export function HubPicker({ onConnect, connectionError, defaultHubUrl }: HubPickerProps) {
-  const [hubUrl, setHubUrl] = useState(defaultHubUrl ?? KNOWN_HUBS[0]);
+  // The packaged desktop app is never a development build: no local-hub
+  // shortcut, and a previously used loopback hub is not offered again.
+  const devOptions = !isElectronDistribution();
+  const lastHubUrl =
+    defaultHubUrl && (devOptions || !isLoopbackHub(defaultHubUrl)) ? defaultHubUrl : undefined;
+  const [hubUrl, setHubUrl] = useState(lastHubUrl ?? KNOWN_HUBS[0]);
   // Show a custom last-used hub first, above the known hubs.
   const suggestions =
-    defaultHubUrl && !KNOWN_HUBS.includes(defaultHubUrl)
-      ? [defaultHubUrl, ...KNOWN_HUBS]
-      : KNOWN_HUBS;
+    lastHubUrl && !KNOWN_HUBS.includes(lastHubUrl) ? [lastHubUrl, ...KNOWN_HUBS] : KNOWN_HUBS;
   const [error, setError] = useState('');
   const insecureWarning = insecureHubWarning(hubUrl);
 
@@ -149,13 +160,15 @@ export function HubPicker({ onConnect, connectionError, defaultHubUrl }: HubPick
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={() => onConnect(DEV_HUB)}
-          className="text-xs text-canvas-solid underline hover:text-canvas-text"
-        >
-          dev: connect to local hub (localhost:3003)
-        </button>
+        {devOptions && (
+          <button
+            type="button"
+            onClick={() => onConnect(DEV_HUB)}
+            className="text-xs text-canvas-solid underline hover:text-canvas-text"
+          >
+            dev: connect to local hub (localhost:3003)
+          </button>
+        )}
       </div>
     </div>
   );
