@@ -111,6 +111,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     joinHub(trimmed);
   }
 
+  // The player app's sandboxed hub iframe cannot submit HTML forms.
   function commitEdit() {
     // An invalid name keeps the editor open with the reason, instead of
     // showing a name the hub would reject.
@@ -257,12 +258,8 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
 
       <div className="mb-4">
         {editingAlias ? (
-          <form
+          <div
             className="flex flex-row gap-2 items-center"
-            onSubmit={(event) => {
-              event.preventDefault();
-              commitEdit();
-            }}
             onKeyDown={(event) => {
               if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
                 event.preventDefault();
@@ -280,10 +277,17 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
                 setMyAlias(e.target.value);
                 setAliasErrorText(null);
               }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  commitEdit();
+                }
+              }}
             />
             <button
-              type="submit"
+              type="button"
               aria-label="save-alias"
+              onClick={commitEdit}
               className="px-4 py-2 rounded bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover font-medium"
             >
               Save
@@ -296,7 +300,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
             >
               <Cross className="w-5 h-5" />
             </button>
-          </form>
+          </div>
         ) : (
           <div className="flex flex-row items-center gap-2">
             <p className="text-canvas-text">
