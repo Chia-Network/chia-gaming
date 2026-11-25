@@ -3,6 +3,7 @@ import { useHubSocket, ChallengeReceived } from './useHubSocket';
 import { Edit, Cross, User, Crown, Swords } from 'lucide-react';
 import timeoutBounds from 'chia-gaming-protocol-constants';
 import { Button } from './button';
+import { aliasError } from './alias';
 
 const MIN_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.min;
 const MAX_TIMEOUT_BLOCKS = timeoutBounds.sessionTimeoutBlocks.max;
@@ -54,9 +55,12 @@ function busyLabel(reasons: string[] | undefined): string {
 }
 
 const HubScreen = ({ sessionId }: { sessionId: string }) => {
+  // Text in the name field; `committedAlias` is the last name sent to the hub.
   const [myAlias, setMyAlias] = useState('');
+  const [committedAlias, setCommittedAlias] = useState('');
   const [aliasConfirmed, setAliasConfirmed] = useState(false);
   const [editingAlias, setEditingAlias] = useState(false);
+  const [aliasErrorText, setAliasErrorText] = useState<string | null>(null);
 
   const {
     players,
@@ -77,6 +81,8 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     cancelChallenge,
     setHubAlias,
     publicId,
+    hubError,
+    clearHubError,
   } = useHubSocket(new URL('../../', document.baseURI).href, sessionId);
 
   const autoJoinedRef = useRef(false);
@@ -85,26 +91,53 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     autoJoinedRef.current = true;
     if (savedAlias) {
       setMyAlias(savedAlias);
+      setCommittedAlias(savedAlias);
       setAliasConfirmed(true);
       joinHub(savedAlias);
     }
   }, [aliasLoaded, savedAlias, joinHub]);
 
+  // The name the hub has for this player, once it reports one.
+  const hubAlias = players.find((p) => p.id === publicId)?.alias;
+  const displayedAlias = hubAlias ?? committedAlias;
+
   function confirmAlias() {
+    const error = aliasError(myAlias);
+    setAliasErrorText(error);
+    if (error) return;
     const trimmed = myAlias.trim();
-    if (!trimmed) return;
+    clearHubError();
     setAlias(trimmed);
     setMyAlias(trimmed);
+    setCommittedAlias(trimmed);
     setAliasConfirmed(true);
     joinHub(trimmed);
   }
 
   function commitEdit(value: string) {
+    // An invalid name keeps the editor open with the reason, instead of
+    // showing a name the hub would reject.
+    const error = aliasError(value);
+    setAliasErrorText(error);
+    if (error) return;
     const trimmed = value.trim();
-    if (!trimmed) return;
+    clearHubError();
     setEditingAlias(false);
     setMyAlias(trimmed);
+    setCommittedAlias(trimmed);
     setHubAlias(publicId ?? '', trimmed);
+  }
+
+  function startEdit() {
+    setMyAlias(displayedAlias);
+    setAliasErrorText(null);
+    setEditingAlias(true);
+  }
+
+  function cancelEdit() {
+    setMyAlias(displayedAlias);
+    setAliasErrorText(null);
+    setEditingAlias(false);
   }
 
   useEffect(() => {
@@ -198,9 +231,17 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
             className="w-full px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none text-center text-lg"
             placeholder="Your name"
             value={myAlias}
-            onChange={(e) => setMyAlias(e.target.value)}
+            onChange={(e) => {
+              setMyAlias(e.target.value);
+              setAliasErrorText(null);
+            }}
             onKeyDown={(e) => e.key === 'Enter' && confirmAlias()}
           />
+          {(aliasErrorText ?? hubError) && (
+            <p role="alert" className="text-sm text-red-500 text-center">
+              {aliasErrorText ?? hubError}
+            </p>
+          )}
           <Button variant="solid" color="primary" size="default" onClick={confirmAlias} fullWidth>
             Join Hub
           </Button>
@@ -226,7 +267,10 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
               className="px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none"
               placeholder="Enter new alias"
               value={myAlias}
-              onChange={(e) => setMyAlias(e.target.value)}
+              onChange={(e) => {
+                setMyAlias(e.target.value);
+                setAliasErrorText(null);
+              }}
               onKeyDown={(e) => e.key === 'Enter' && commitEdit(e.currentTarget.value)}
               onBlur={(e) => commitEdit(e.currentTarget.value)}
             />
@@ -238,7 +282,10 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
               Save
             </button>
             <button
-              onClick={() => setEditingAlias(false)}
+              aria-label="cancel-alias-edit"
+              // Keep the input's blur from saving the draft before cancelling.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={cancelEdit}
               className="w-8 h-8 flex items-center justify-center text-primary-solid hover:text-primary-solid-hover"
             >
               <Cross className="w-5 h-5" />
@@ -248,16 +295,21 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
           <div className="flex flex-row items-center gap-2">
             <p className="text-canvas-text">
               Your name:&nbsp;
-              <strong className="text-canvas-text-contrast font-bold">{myAlias}</strong>
+              <strong className="text-canvas-text-contrast font-bold">{displayedAlias}</strong>
             </p>
             <button
               aria-label="edit-alias"
-              onClick={() => setEditingAlias(true)}
+              onClick={startEdit}
               className="text-canvas-solid w-6 h-6 flex items-center justify-center"
             >
               <Edit className="w-4 h-4" />
             </button>
           </div>
+        )}
+        {(aliasErrorText ?? hubError) && (
+          <p role="alert" className="mt-2 text-sm text-red-500">
+            {aliasErrorText ?? hubError}
+          </p>
         )}
       </div>
 

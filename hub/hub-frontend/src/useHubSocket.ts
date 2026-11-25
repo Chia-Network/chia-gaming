@@ -62,6 +62,8 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
   const [savedAlias, setSavedAlias] = useState<string | null>(null);
   const [aliasLoaded, setAliasLoaded] = useState(false);
   const [publicId, setPublicId] = useState<string | null>(null);
+  // The hub's reply to a rejected request, shown to the user.
+  const [hubError, setHubError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingWsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -196,7 +198,10 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
             setAliasLoaded(true);
             break;
           case 'error':
-            if (msg.error) console.warn('[hub] hub error:', msg.error);
+            if (msg.error) {
+              console.warn('[hub] hub error:', msg.error);
+              setHubError(msg.error);
+            }
             break;
           case 'keepalive':
             break;
@@ -375,6 +380,8 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
     [send, publicId],
   );
 
+  const clearHubError = useCallback(() => setHubError(null), []);
+
   const isReconnecting = hasConnected && !isConnected;
 
   return {
@@ -396,5 +403,7 @@ export function useHubSocket(hubUrl: string, sessionId: string) {
     declineChallenge,
     cancelChallenge,
     setHubAlias,
+    hubError,
+    clearHubError,
   };
 }
