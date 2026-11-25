@@ -5,6 +5,7 @@ import {
   type SpacepokerHand,
   type SpacepokerHandState,
 } from './serialize';
+import { spacepokerRules } from './rules';
 import { formatSpacepokerMojos } from './formatting';
 import {
   spacepokerProposalParameters,
@@ -22,6 +23,7 @@ const registration: GamePackageRegistration<
   SpacepokerFactoryParameters
 > = {
   displayName: 'Space Poker',
+  rules: spacepokerRules,
   createHand: createSpacepokerHand,
   restoreHand: restoreSpacepokerHand,
   proposalParameters: spacepokerProposalParameters,

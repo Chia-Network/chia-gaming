@@ -13,6 +13,7 @@ import type { TerminalSessionPresentation } from '../hooks/sessionView';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { QueuedNotification, useGameSession } from '../hooks/useGameSession';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
+import { isCatalogGameType } from '../lib/gameRegistry';
 import { channelSetupCoverCopy, showChannelSetupChallenge } from '../lib/session/acceptLifecycle';
 import {
   PRE_ACTIVE_CHANNEL_STATES,
@@ -25,6 +26,7 @@ import { COPY_FAILED_TITLE, CopyIcon } from './CopyIcon';
 import { SessionTransitionSurface } from './SessionTransitionSurface';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
+import { GameRules } from './GameRules';
 import { Button } from './ui/button';
 import {
   browserErrorReport,
@@ -617,6 +619,11 @@ const GameSession: React.FC<GameSessionProps> = ({
       )}
       {/* Main content area */}
       <div className="flex flex-col gap-2 px-4 pb-2 sm:px-6 md:px-8">
+        {showGameInterface && isCatalogGameType(gameSpecificView.gameType) && (
+          <div className="flex justify-end">
+            <GameRules gameType={gameSpecificView.gameType} />
+          </div>
+        )}
         {/* Game area — z-0 creates a stacking context so card zIndexes (up to 100) can't escape */}
         <div
           ref={gameAreaRef}

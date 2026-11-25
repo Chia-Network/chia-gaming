@@ -649,6 +649,7 @@ registration contract is:
 ```ts
 interface GamePackageRegistration<TState, THand extends GameHand<TState>, TParams> {
   readonly displayName: string;
+  readonly rules: readonly GameRulesSection[];
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
@@ -656,7 +657,9 @@ interface GamePackageRegistration<TState, THand extends GameHand<TState>, TParam
 }
 ```
 
-`displayName` is player-facing catalog text. `proposalParameters` is the one
+`displayName` is player-facing catalog text. `rules` is the player-facing rules,
+which the host shows in the **Rules?** popover; keep it in step with the
+validators. `proposalParameters` is the one
 typed parameter codec. `describeHandProposal` decodes
 `handProposal.parameters` through that codec and must fail if the player app
 cannot project the Rust-approved value. `handProposal.ts` must default-export
@@ -678,6 +681,7 @@ const registration: GamePackageRegistration<
   CalpokerFactoryParameters
 > = {
   displayName: 'California Poker',
+  rules: calpokerRules,
   createHand: createCalpokerHand,
   restoreHand: restoreCalpokerHand,
   proposalParameters,

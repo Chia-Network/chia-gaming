@@ -161,12 +161,21 @@ export interface GameMountRegistration<THand extends GameHandState<unknown>> {
   render(view: GameMountView<THand>): ReactElement;
 }
 
+export interface GameRulesSection {
+  readonly heading: string;
+  readonly items: readonly string[];
+  /** Number the items, for steps and rankings. */
+  readonly ordered?: boolean;
+}
+
 export interface GamePackageRegistration<
   TState,
   THand extends GameHand<TState>,
   TParams = unknown,
 > {
   readonly displayName: string;
+  /** Player-facing rules, which the host shows on request. */
+  readonly rules: readonly GameRulesSection[];
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;

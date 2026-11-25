@@ -8,6 +8,7 @@ import {
   type CalpokerHand,
   type CalpokerHandState,
 } from './serialize';
+import { calpokerRules } from './rules';
 import { formatCalpokerMojos } from './formatting';
 
 export { reduceCalpokerFeatureState } from './serialize';
@@ -25,6 +26,7 @@ const registration: GamePackageRegistration<
   CalpokerFactoryParameters
 > = {
   displayName: 'California Poker',
+  rules: calpokerRules,
   createHand: createCalpokerHand,
   restoreHand: restoreCalpokerHand,
   proposalParameters: calpokerProposalParameters,
