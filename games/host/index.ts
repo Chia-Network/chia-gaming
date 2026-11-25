@@ -138,7 +138,7 @@ export interface GameMountNames {
 
 interface GameMountViewBase<THand extends GameHandState<unknown>> extends GameMountNames {
   hand: THand;
-  /** The player's card deck, for packages with `usesCardDeck`. See `cards/decks.ts`. */
+  /** The id of the player's card deck, for packages that declare `cardDecks`. */
   cardDeck?: string;
 }
 
@@ -163,14 +163,32 @@ export interface GameMountRegistration<THand extends GameHandState<unknown>> {
   render(view: GameMountView<THand>): ReactElement;
 }
 
+export interface CardDeckCredit {
+  readonly artist: string;
+  readonly url: string;
+  readonly license: string;
+  readonly licenseUrl: string;
+  readonly changes?: string;
+}
+
+export interface CardDeck {
+  readonly id: string;
+  readonly name: string;
+  /** Absent for a deck the game draws itself. Shown in the host's credits. */
+  readonly credit?: CardDeckCredit;
+}
+
 export interface GamePackageRegistration<
   TState,
   THand extends GameHand<TState>,
   TParams = unknown,
 > {
   readonly displayName: string;
-  /** Shows the host's card deck picker below this game. */
-  readonly usesCardDeck?: boolean;
+  /**
+   * Card decks the player can choose between, the default first. The host shows
+   * a picker below the game and remembers the choice for this game only.
+   */
+  readonly cardDecks?: readonly [CardDeck, ...CardDeck[]];
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;

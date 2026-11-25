@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameMountView } from '../../host';
-import { cardDeck, CardDeckProvider } from '../../host/cards/decks';
 import { describeSpacePokerHand, formatSpacepokerHandLog } from './handPresentation';
 import { formatSpacepokerAmount } from './formatting';
 import { SpacePokerActionControls } from './SpacePokerActionControls';
@@ -51,7 +50,10 @@ function useSpacepokerCheatKeys(handleCheat: () => void, enabled: boolean): void
   }, [enabled, handleCheat]);
 }
 
-export default function SpacePoker({ view, onGameLog }: SpacePokerProps) {
+export default function SpacePoker({
+  view,
+  onGameLog,
+}: SpacePokerProps) {
   const interactive = !view.frozen;
   const state = view.hand.getState();
   const betSizeValue = state.perPlayerStake * 2n;
@@ -141,66 +143,64 @@ export default function SpacePoker({ view, onGameLog }: SpacePokerProps) {
     terminalCommentary || spacePokerFooterStatus(handler, turnLine) || 'Updating hand…';
 
   return (
-    <CardDeckProvider value={cardDeck(view.cardDeck)}>
-      <div className="relative flex flex-col items-center gap-1.5 py-0 w-full max-w-lg mx-auto text-canvas-text">
-        <div className="absolute right-0 top-0 flex items-center gap-1 text-xs text-canvas-text">
-          {(['xch', 'mojos', 'units'] as SpacepokerDisplayMode[]).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`rounded px-2 py-0.5 ${sp.displayMode === mode ? 'bg-canvas-solid text-canvas-bg' : 'border border-canvas-line text-canvas-text-contrast'}`}
-              onClick={() => sp.setDisplayMode(mode)}
-            >
-              {mode === 'xch' ? 'XCH' : mode}
-            </button>
-          ))}
-        </div>
-
-        <SpacePokerTable
-          opponentName={view.opponentName ?? 'Opponent'}
-          playerName={view.myName ?? 'You'}
-          opponentIndicator={indicators.opponent}
-          playerIndicator={indicators.player}
-          opponentStack={sp.opponentStack}
-          playerStack={sp.playerStack}
-          pot={sp.pot}
-          opponentHoleCards={sp.opponentHoleCards}
-          playerHoleCards={sp.playerHoleCards}
-          opponentBoost={sp.opponentBoost}
-          playerBoost={sp.playerBoost}
-          communityCards={sp.communityCards}
-          opponentHandDescription={opponentHandDescription}
-          playerHandDescription={playerHandDescription}
-          opponentBanner={banners.opponent}
-          playerBanner={banners.player}
-          outcome={showdownOutcome}
-          showPrivateShowdown={showPrivateShowdown}
-          formatBet={sp.formatBet}
-        />
-
-        <div className="flex min-h-[4.5rem] flex-col justify-center gap-2">
-          <SpacePokerActionControls
-            interactive={interactive}
-            handler={handler}
-            myTurn={myTurn}
-            round={String(N)}
-            coinTossIOpen={sp.coinTossIOpen}
-            lastRaiseUnits={String(sp.lastRaise)}
-            maxRaiseUnits={String(maxRaise)}
-            forcedAuto={forcedAuto}
-            formatBet={sp.formatBet}
-            handleCheck={sp.handleCheck}
-            handleRaise={sp.handleRaise}
-            handleCall={sp.handleCall}
-            handleFold={sp.handleFold}
-          />
-          <p className="text-sm text-canvas-text-contrast font-medium text-center min-h-5">
-            {footerStatus}
-          </p>
-        </div>
-
-        <SpacePokerHandHistory history={sp.handHistory} formatBet={sp.formatBet} />
+    <div className="relative flex flex-col items-center gap-1.5 py-0 w-full max-w-lg mx-auto text-canvas-text">
+      <div className="absolute right-0 top-0 flex items-center gap-1 text-xs text-canvas-text">
+        {(['xch', 'mojos', 'units'] as SpacepokerDisplayMode[]).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            className={`rounded px-2 py-0.5 ${sp.displayMode === mode ? 'bg-canvas-solid text-canvas-bg' : 'border border-canvas-line text-canvas-text-contrast'}`}
+            onClick={() => sp.setDisplayMode(mode)}
+          >
+            {mode === 'xch' ? 'XCH' : mode}
+          </button>
+        ))}
       </div>
-    </CardDeckProvider>
+
+      <SpacePokerTable
+        opponentName={view.opponentName ?? 'Opponent'}
+        playerName={view.myName ?? 'You'}
+        opponentIndicator={indicators.opponent}
+        playerIndicator={indicators.player}
+        opponentStack={sp.opponentStack}
+        playerStack={sp.playerStack}
+        pot={sp.pot}
+        opponentHoleCards={sp.opponentHoleCards}
+        playerHoleCards={sp.playerHoleCards}
+        opponentBoost={sp.opponentBoost}
+        playerBoost={sp.playerBoost}
+        communityCards={sp.communityCards}
+        opponentHandDescription={opponentHandDescription}
+        playerHandDescription={playerHandDescription}
+        opponentBanner={banners.opponent}
+        playerBanner={banners.player}
+        outcome={showdownOutcome}
+        showPrivateShowdown={showPrivateShowdown}
+        formatBet={sp.formatBet}
+      />
+
+      <div className="flex min-h-[4.5rem] flex-col justify-center gap-2">
+        <SpacePokerActionControls
+          interactive={interactive}
+          handler={handler}
+          myTurn={myTurn}
+          round={String(N)}
+          coinTossIOpen={sp.coinTossIOpen}
+          lastRaiseUnits={String(sp.lastRaise)}
+          maxRaiseUnits={String(maxRaise)}
+          forcedAuto={forcedAuto}
+          formatBet={sp.formatBet}
+          handleCheck={sp.handleCheck}
+          handleRaise={sp.handleRaise}
+          handleCall={sp.handleCall}
+          handleFold={sp.handleFold}
+        />
+        <p className="text-sm text-canvas-text-contrast font-medium text-center min-h-5">
+          {footerStatus}
+        </p>
+      </div>
+
+      <SpacePokerHandHistory history={sp.handHistory} formatBet={sp.formatBet} />
+    </div>
   );
 }

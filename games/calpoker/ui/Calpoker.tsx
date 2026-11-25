@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { CaliforniaPoker } from './components';
-import { cardDeck, CardDeckProvider } from '../../host/cards/decks';
+import { cardDeck, CardDeckProvider } from './decks';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
 import type { SettlementOutcome } from '../../host';
 import type { CalpokerError } from './serialize';

@@ -2,14 +2,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import { readdirSync, readFileSync } from 'fs';
 import CardContent from '@games/calpoker/ui/components/components/CardContent';
-import {
-  CARD_DECKS,
-  cardArtUrl,
-  cardDeck,
-  CardDeckProvider,
-  rankArtUrl,
-} from '@games/host/cards/decks';
-import { SpacePokerTable } from '@games/spacepoker/ui/SpacePokerTable';
+import { CARD_DECKS, cardArtUrl, cardDeck, CardDeckProvider } from '@games/calpoker/ui/decks';
 import { CardDeckFooter, DeckCredit } from '../../components/CardDeckFooter';
 import { useCardDeckPreference } from '../../hooks/useCardDeckPreference';
 
@@ -20,16 +13,12 @@ const RANKS = Array.from({ length: 13 }, (_, index) => index + 2);
 const kingOfHearts = { rank: 13, suit: '♥' as const };
 
 describe('card decks', () => {
-  it.each(CARD_DECKS.filter(({ art }) => art))(
-    '$name has art for exactly 52 cards and 13 ranks',
-    (deck) => {
-      const files = (urls: string[]) => urls.map((url) => url.split('/').at(-1));
-      const cards = SUITS.flatMap((suit) => RANKS.map((rank) => cardArtUrl(deck, { rank, suit })!));
-      expect([...files(cards), 'ranks'].sort()).toEqual(readdirSync(`${CARDS}/${deck.id}`).sort());
-      const ranks = RANKS.map((rank) => rankArtUrl(deck, rank)!);
-      expect(files(ranks).sort()).toEqual(readdirSync(`${CARDS}/${deck.id}/ranks`).sort());
-    },
-  );
+  it.each(CARD_DECKS.filter(({ art }) => art))('$name has art for exactly 52 cards', (deck) => {
+    const urls = SUITS.flatMap((suit) => RANKS.map((rank) => cardArtUrl(deck, { rank, suit })!));
+    expect(urls.map((url) => url.split('/').at(-1)).sort()).toEqual(
+      readdirSync(`${CARDS}/${deck.id}`).sort(),
+    );
+  });
 
   it('credits every deck that has art, behind the info button and in CREDITS.md', () => {
     const credits = readFileSync(`${CARDS}/CREDITS.md`, 'utf8');
@@ -44,15 +33,15 @@ describe('card decks', () => {
         (node) =>
           node.type === 'button' && node.props['aria-label'] === `About the ${deck.name} cards`,
       );
-      if (deck.art) {
+      if (deck.credit) {
         expect(info).toHaveLength(1);
         let credit!: ReactTestRenderer;
         act(() => {
-          credit = create(<DeckCredit credit={deck.art!.credit} />);
+          credit = create(<DeckCredit credit={deck.credit!} />);
         });
         const links = credit.root.findAllByType('a').map((link) => link.props.href);
         act(() => credit.unmount());
-        const { artist, url, licenseUrl } = deck.art.credit;
+        const { artist, url, licenseUrl } = deck.credit;
         expect(links).toEqual([url, licenseUrl]);
         expect(credits).toContain(`| \`${deck.id}\` | ${artist} | <${url}> |`);
         expect(credits).toContain(licenseUrl);
@@ -65,7 +54,7 @@ describe('card decks', () => {
 
   it.each([
     ['calpoker', true],
-    ['spacepoker', true],
+    ['spacepoker', false],
     ['krunk', false],
   ])('offers the picker in %s: %s', (gameType, offered) => {
     const set = jest.fn();
@@ -124,56 +113,6 @@ describe('card decks', () => {
     expect(JSON.stringify(renderer.toJSON())).toContain('K');
     act(() => renderer.unmount());
   });
-
-  it('draws Space Poker cards without suits in the chosen deck', () => {
-    const render = (id: string) => {
-      let renderer!: ReactTestRenderer;
-      act(() => {
-        renderer = create(
-          <CardDeckProvider value={cardDeck(id)}>
-            <SpacePokerTable
-              opponentName="Robin"
-              playerName="Alex"
-              opponentIndicator=""
-              playerIndicator=""
-              opponentStack={1n}
-              playerStack={1n}
-              pot={1n}
-              opponentHoleCards={null}
-              playerHoleCards={[13n, 10n]}
-              opponentBoost={null}
-              playerBoost={false}
-              communityCards={[14n, null, null, null, null]}
-              opponentHandDescription=""
-              playerHandDescription=""
-              opponentBanner={null}
-              playerBanner={null}
-              outcome={null}
-              showPrivateShowdown={false}
-              formatBet={String}
-            />
-          </CardDeckProvider>,
-        );
-      });
-      return renderer;
-    };
-    const art = render('pixel');
-    const images = art.root.findAllByType('img');
-    expect(images.map(({ props }) => props.src)).toEqual([
-      'images/cards/pixel/ranks/A.png',
-      'images/cards/pixel/ranks/K.png',
-      'images/cards/pixel/ranks/T.png',
-    ]);
-    expect(images.map(({ props }) => props.alt)).toEqual(['A', 'K', 'T']);
-    act(() => images[0]!.props.onError());
-    expect(art.root.findAllByType('img')).toHaveLength(2);
-    act(() => art.unmount());
-
-    const classic = render('classic');
-    expect(classic.root.findAllByType('img')).toEqual([]);
-    expect(classic.root.findAllByType('text')).toHaveLength(3);
-    act(() => classic.unmount());
-  });
 });
 
 describe('useCardDeckPreference', () => {
@@ -213,10 +152,10 @@ describe('useCardDeckPreference', () => {
     }
   });
 
-  function mount() {
+  function mount(gameType = 'calpoker') {
     const seen: { current: ReturnType<typeof useCardDeckPreference> | null } = { current: null };
     function Harness() {
-      seen.current = useCardDeckPreference();
+      seen.current = useCardDeckPreference(gameType);
       return null;
     }
     let renderer!: ReactTestRenderer;
@@ -231,7 +170,7 @@ describe('useCardDeckPreference', () => {
     const second = mount();
     expect(first.seen.current!.value).toBeUndefined();
     act(() => first.seen.current!.set('pixel'));
-    expect(stored).toEqual(new Map([['chia-gaming:card-deck', 'pixel']]));
+    expect(stored).toEqual(new Map([['chia-gaming:card-deck:calpoker', 'pixel']]));
     expect(second.seen.current!.value).toBe('pixel');
     first.unmount();
     second.unmount();
@@ -239,9 +178,14 @@ describe('useCardDeckPreference', () => {
 
     const reopened = mount();
     expect(reopened.seen.current!.value).toBe('pixel');
-    stored.set('chia-gaming:card-deck', 'icons');
-    act(() => storageListeners.forEach((notify) => notify({ key: 'chia-gaming:card-deck' })));
+    stored.set('chia-gaming:card-deck:calpoker', 'icons');
+    act(() =>
+      storageListeners.forEach((notify) => notify({ key: 'chia-gaming:card-deck:calpoker' })),
+    );
     expect(reopened.seen.current!.value).toBe('icons');
+    const otherGame = mount('spacepoker');
+    expect(otherGame.seen.current!.value).toBeUndefined();
+    otherGame.unmount();
     reopened.unmount();
   });
 

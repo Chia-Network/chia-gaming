@@ -557,7 +557,7 @@ const GameSession: React.FC<GameSessionProps> = ({
     terminalPresentation,
     presentation,
   );
-  const cardDeck = useCardDeckPreference();
+  const cardDeck = useCardDeckPreference(session.gameSpecificView.gameType);
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const restoreGameAreaFocus = useCallback(() => gameAreaRef.current?.focus(), []);

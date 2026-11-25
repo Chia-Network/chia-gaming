@@ -112,9 +112,9 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   myName,
   opponentName,
 }) => {
-  const cardDeck = useCardDeckPreference();
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
+  const cardDeck = useCardDeckPreference(handState?.gameType ?? '');
 
   if (!display.hasSavedHand || !handState) {
     return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;

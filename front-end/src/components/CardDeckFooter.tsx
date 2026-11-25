@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { InfoIcon } from 'lucide-react';
-import { CARD_DECKS, cardDeck, type CardDeck } from '@games/host/cards/decks';
+import type { CardDeckCredit } from '@games/host';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import type { CardDeckPreference } from '../hooks/useCardDeckPreference';
 import { isCatalogGameType, packageFor } from '../lib/gameRegistry';
@@ -16,9 +16,10 @@ export function CardDeckFooter({
   /** Set while a dialog owns the page, like the game area above it. */
   inert?: boolean;
 }) {
-  if (!isCatalogGameType(gameType) || !packageFor(gameType).usesCardDeck) return null;
-  const deck = cardDeck(preference.value);
-  const credit = deck.art?.credit;
+  const decks = isCatalogGameType(gameType) ? packageFor(gameType).cardDecks : undefined;
+  if (!decks) return null;
+  const deck = decks.find(({ id }) => id === preference.value) ?? decks[0];
+  const credit = deck.credit;
   return (
     <footer
       inert={inert}
@@ -32,7 +33,7 @@ export function CardDeckFooter({
           value={deck.id}
           onChange={(event) => preference.set(event.target.value)}
         >
-          {CARD_DECKS.map(({ id, name }) => (
+          {decks.map(({ id, name }) => (
             <option key={id} value={id}>
               {name}
             </option>
@@ -44,26 +45,43 @@ export function CardDeckFooter({
   );
 }
 
-type Credit = NonNullable<CardDeck['art']>['credit'];
+type Credit = CardDeckCredit;
 
-/** Opens on hover with a pointer, and on tap or keyboard otherwise. */
+/**
+ * Opens on hover with a mouse, and stays open once clicked. Taps and the
+ * keyboard toggle it. Hovering never moves focus out of the game.
+ */
 function CreditInfo({ deckName, credit }: { deckName: string; credit: Credit }) {
   const [open, setOpen] = useState(false);
+  const pinned = useRef(false);
   const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const hover = (next: boolean) => (event: React.PointerEvent) => {
     if (event.pointerType !== 'mouse') return;
     clearTimeout(closing.current);
     if (next) setOpen(true);
     // A short delay lets the pointer cross into the card to follow a link.
-    else closing.current = setTimeout(() => setOpen(false), 150);
+    else if (!pinned.current) closing.current = setTimeout(() => setOpen(false), 150);
+  };
+  const changeOpen = (next: boolean) => {
+    if (!next) pinned.current = false;
+    setOpen(next);
   };
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={changeOpen}>
       <PopoverTrigger
         aria-label={`About the ${deckName} cards`}
         className="rounded-full p-0.5 text-canvas-text hover:text-canvas-text-contrast"
         onPointerEnter={hover(true)}
         onPointerLeave={hover(false)}
+        onClick={(event) => {
+          // A click on a card that hover opened keeps it open rather than closing it.
+          if (open && !pinned.current) {
+            event.preventDefault();
+            pinned.current = true;
+          } else if (!open) {
+            pinned.current = true;
+          }
+        }}
       >
         <InfoIcon className="size-4" />
       </PopoverTrigger>
@@ -71,6 +89,9 @@ function CreditInfo({ deckName, credit }: { deckName: string; credit: Credit }) 
         align="end"
         side="top"
         className="w-64 text-xs"
+        onOpenAutoFocus={(event) => {
+          if (!pinned.current) event.preventDefault();
+        }}
         onPointerEnter={hover(true)}
         onPointerLeave={hover(false)}
       >
