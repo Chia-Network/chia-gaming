@@ -1786,9 +1786,6 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   Rust-specified target coin is spent concurrently and reserves the fee. Cloud
   Wallet returns its native-fee offer instead. JavaScript passes
   either tagged provider result opaquely to one Rust/WASM attachment operation.
-  Every fee offer expires after `FEE_OFFER_EXPIRY_BLOCKS` (32 blocks, about 10
-  minutes) through `ASSERT_BEFORE_HEIGHT_ABSOLUTE`. Rust supplies that height with
-  each request. Funding offers keep their own deadline of `channel_timeout` blocks.
   Rust captures the priced amount, target, and explicit
   `SubmitWithoutFee` attachment-failure policy when the intent is first emitted,
   so retries cannot silently change fee policy. Rust completes WalletConnect's

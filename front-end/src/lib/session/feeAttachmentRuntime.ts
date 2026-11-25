@@ -42,11 +42,6 @@ export interface FeeAttachmentRuntimePorts {
   reportWarning(message: string): void;
 }
 
-/** Cleanup of these offers may overlap a replacement for the same submission. */
-function isSupersededFeeAttachment(entry: FeeAttachment): boolean {
-  return entry.reason === 'fee-wallet-replaced' || entry.reason === 'fee-offer-expired';
-}
-
 const processKnownUncertainty = new WeakMap<WalletProviderRegistry, Set<string>>();
 
 export class FeeAttachmentRuntime {
@@ -144,7 +139,7 @@ export class FeeAttachmentRuntime {
     if (
       !current &&
       cleanup.length &&
-      (!cleanup.some(isSupersededFeeAttachment) ||
+      (!cleanup.some((entry) => entry.reason === 'fee-wallet-replaced') ||
         cleanup.some((entry) => entry.reason === 'fee-consumer-retired'))
     ) {
       return { kind: 'unavailable', reason: 'An earlier fee offer is still being retired' };
@@ -162,7 +157,7 @@ export class FeeAttachmentRuntime {
     }
     if (current?.stage === 'best-effort-uncertain') {
       return (
-        (await this.replaceUncertain(current, request, consumerDead)) ?? {
+        (await this.replaceUncertain(current, consumerDead)) ?? {
           kind: 'unavailable',
           reason: 'Fee replacement waits for wallet readiness',
         }
@@ -193,7 +188,7 @@ export class FeeAttachmentRuntime {
       for (const entry of this.entries()) {
         if (
           feeAttachmentOperationKey(entry.owner, entry.submissionId) === operationKey &&
-          isSupersededFeeAttachment(entry)
+          entry.reason === 'fee-wallet-replaced'
         ) {
           this.replace(entry, { ...entry, reason: 'fee-consumer-retired' });
         }
@@ -208,7 +203,7 @@ export class FeeAttachmentRuntime {
   }
 
   private cancelEntry(current: FeeAttachment, explicitRetirement = false): void {
-    if (explicitRetirement && isSupersededFeeAttachment(current)) {
+    if (explicitRetirement && current.reason === 'fee-wallet-replaced') {
       const retired = { ...current, reason: 'fee-consumer-retired' };
       this.replace(current, retired);
       current = retired;
@@ -245,20 +240,6 @@ export class FeeAttachmentRuntime {
     for (const entry of this.entries()) {
       if (entry.submissionId === submissionId && entry.stage !== 'retained-for-replay') {
         this.cancelEntry(entry, true);
-      }
-    }
-  }
-
-  /**
-   * Cancel an attached offer whose expiry height has passed. The wallet can no
-   * longer spend through it, so its cleanup does not hold up a replacement.
-   */
-  expireAttachedFee(submissionId: string): void {
-    if (this.authorityRetired) return;
-    this.notifySubmissionChange();
-    for (const entry of this.entries()) {
-      if (entry.submissionId === submissionId && entry.stage === 'retained-for-replay') {
-        this.cancelEntry({ ...entry, reason: 'fee-offer-expired' });
       }
     }
   }
@@ -700,7 +681,7 @@ export class FeeAttachmentRuntime {
         submissionId,
         stage: 'cancel-required',
         providerReservationId: tradeId,
-        reason: latest && isSupersededFeeAttachment(latest) ? latest.reason : 'fee-offer-created',
+        reason: latest?.reason === 'fee-wallet-replaced' ? latest.reason : 'fee-offer-created',
         ...(latest?.orphanRisk ? { orphanRisk: latest.orphanRisk } : {}),
       });
     }
@@ -834,7 +815,6 @@ export class FeeAttachmentRuntime {
 
   private replaceUncertain(
     entry: FeeAttachmentUncertain,
-    request: FeeAttachmentRequest,
     isInactive: () => boolean,
   ): Promise<WalletOfferCompletion> | null {
     if (this.authorityRetired) return null;
@@ -851,7 +831,7 @@ export class FeeAttachmentRuntime {
         provider,
         entry.owner,
         entry.submissionId,
-        request,
+        entry.request,
         () => isInactive() || this.recoveredConsumerDead(entry.owner, entry.submissionId),
         true,
       ),
@@ -949,9 +929,10 @@ export class FeeAttachmentRuntime {
               ...current,
               stage: 'best-effort-cancellation-uncertain',
               lastAttemptEpoch: consumedEpoch,
-              reason: isSupersededFeeAttachment(current)
-                ? current.reason
-                : 'fee-cancellation-response-unavailable',
+              reason:
+                current.reason === 'fee-wallet-replaced'
+                  ? current.reason
+                  : 'fee-cancellation-response-unavailable',
             } as const;
             this.knownUncertain.add(feeAttachmentEntryKey(uncertain));
             this.replace(current, uncertain);

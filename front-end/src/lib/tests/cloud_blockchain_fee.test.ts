@@ -188,7 +188,6 @@ describe('CloudBlockchainInterface fee support', () => {
           uniqueId: 'uid',
           fee: 500n,
           concurrentSpendCoinId: protocolCoinId,
-          maxHeight: 100n,
         },
       ),
     ).resolves.toEqual({ kind: 'pending', recoveryId: 'SR_1' });
@@ -196,7 +195,7 @@ describe('CloudBlockchainInterface fee support', () => {
     expect(input.offered).toEqual([]);
     expect(input.requested).toEqual([]);
     expect(input.fee).toBe('500');
-    expect(input.extraConditions).toEqual([`ff40ffa0${protocolCoinId}80`, 'ff57ff6480']);
+    expect(input.extraConditions).toEqual([`ff40ffa0${protocolCoinId}80`]);
   });
 
   it.each([
@@ -780,7 +779,7 @@ describe('CloudBlockchainInterface fee support', () => {
           predecessor_attempt_token: null,
           relationship: 'initial',
           bundle: { spends: [] },
-          fee_request: { amount: '10', target: 'ab'.repeat(32), max_height: '100' },
+          fee_request: { amount: '10', target: 'ab'.repeat(32) },
         };
         const settle = async (done: () => boolean) => {
           for (let turn = 0; turn < 100 && !done(); turn += 1) {
@@ -986,7 +985,7 @@ describe('CloudBlockchainInterface fee support', () => {
           predecessor_attempt_token: null,
           relationship: 'initial',
           bundle: { spends: [] },
-          fee_request: { amount: '10', target: 'ab'.repeat(32), max_height: '100' },
+          fee_request: { amount: '10', target: 'ab'.repeat(32) },
         });
         await settle(() => oldIface.getBlockedApprovals().length === 1);
         pump.retire('reconnecting-fee');

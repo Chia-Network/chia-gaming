@@ -246,21 +246,7 @@ impl SpendBundle {
     /// The cost the mempool charges for this bundle. The aggregate signature
     /// is not checked.
     pub fn consensus_cost(&self, height: u64) -> Result<u64, Error> {
-        Ok(self.unsigned_consensus_conditions(height)?.cost)
-    }
-
-    /// Whether any spend stops being valid at some height.
-    pub fn has_height_deadline(&self, height: u64) -> Result<bool, Error> {
-        let conditions = self.unsigned_consensus_conditions(height)?;
-        Ok(conditions.before_height_absolute.is_some()
-            || conditions
-                .spends
-                .iter()
-                .any(|spend| spend.before_height_relative.is_some()))
-    }
-
-    fn unsigned_consensus_conditions(&self, height: u64) -> Result<SpendBundleConditions, Error> {
-        // Signing data does not affect cost or time locks.
+        // Signing data does not affect cost.
         let constants = validation_consensus_constants(&Hash::default());
         let mut allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
         let (conditions, _) = run_spendbundle(
@@ -277,7 +263,7 @@ impl SpendBundle {
                 err.error_code()
             ))
         })?;
-        Ok(conditions)
+        Ok(conditions.cost)
     }
 
     fn to_protocol_bundle(&self) -> Result<chia_protocol::SpendBundle, Error> {

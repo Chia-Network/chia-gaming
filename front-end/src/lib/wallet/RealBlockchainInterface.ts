@@ -625,7 +625,7 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
     if (request.kind === 'funding') {
       return this.createFundingOffer(request);
     }
-    const { fee, concurrentSpendCoinId, maxHeight } = request;
+    const { fee, concurrentSpendCoinId } = request;
     if (fee <= 0n) return { kind: 'failure', reason: 'fee must be positive' };
     const protocolCoinId = concurrentSpendCoinId.startsWith('0x')
       ? concurrentSpendCoinId
@@ -643,9 +643,6 @@ export class RealBlockchainInterface implements InternalBlockchainInterface {
           extraConditions: [
             { opcode: ASSERT_CONCURRENT_SPEND, args: { coin_id: protocolCoinId } },
             { opcode: 52n, args: { amount: fee } },
-            ...(maxHeight === undefined
-              ? []
-              : [{ opcode: ASSERT_BEFORE_HEIGHT_ABSOLUTE, args: { height: maxHeight } }]),
           ],
         },
         { releaseQueueOnContextChange: true },

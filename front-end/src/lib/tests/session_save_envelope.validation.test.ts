@@ -42,7 +42,6 @@ const creatingFee: FeeAttachment = {
     uniqueId: 'submission-1',
     fee: 10n,
     concurrentSpendCoinId: '01'.repeat(32),
-    maxHeight: 100n,
   },
   reason: '',
 };

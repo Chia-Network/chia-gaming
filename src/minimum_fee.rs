@@ -20,9 +20,6 @@ use crate::common::types::{Amount, SpendBundle};
 /// simple Cloud Wallet vault spend (about 39M in the wallet SDK's vault tests).
 pub const FEE_SPEND_COST_ALLOWANCE: u64 = 45_000_000;
 
-/// How long a fee offer stays valid: 10 minutes at 18.75 seconds per block.
-pub const FEE_OFFER_EXPIRY_BLOCKS: u64 = 32;
-
 pub fn minimum_fee(cost: u64) -> u64 {
     cost.saturating_mul(MIN_MOJOS_PER_COST)
 }

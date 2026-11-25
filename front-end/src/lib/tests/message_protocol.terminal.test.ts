@@ -533,7 +533,7 @@ describe('transaction submission', () => {
     const submission = {
       id: 'same-id',
       bundle: testSpendBundle('01'),
-      fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+      fee_request: { target: '22'.repeat(32), amount: '10' },
     };
     const finalizeSubmission = jest.fn(() => ({
       protocol_bundle: testSpendBundle('01'),

@@ -36,7 +36,7 @@ use crate::common::types::{
     SpendBundle, Timeout,
 };
 use crate::game_session::{CoinObservation, DrainResult, GameSession};
-use crate::minimum_fee::{attached_fee, FEE_OFFER_EXPIRY_BLOCKS};
+use crate::minimum_fee::attached_fee;
 #[cfg(test)]
 use crate::session_phases::effects::AttachmentFailurePolicy;
 use crate::session_phases::effects::{
@@ -311,51 +311,6 @@ impl SubmittedTx {
             SubmissionBroadcastVariant::Base => &self.base_bundle,
             SubmissionBroadcastVariant::FeeBearing { bundle, .. } => bundle,
         }
-    }
-
-    /// Height at which the attached fee offer invalidates the fee-bearing
-    /// variant. The base transaction is unaffected.
-    fn fee_expiry(&self) -> Option<u64> {
-        if matches!(self.current_variant, SubmissionBroadcastVariant::Base) {
-            return None;
-        }
-        let base_ids = self.spent_coin_ids().collect::<HashSet<_>>();
-        let mut allocator = AllocEncoder::new();
-        self.current_bundle()
-            .spends
-            .iter()
-            .filter(|spend| !base_ids.contains(&spend.coin.to_coin_id()))
-            .flat_map(|spend| {
-                CoinCondition::from_puzzle_and_solution(
-                    &mut allocator,
-                    spend.bundle.puzzle.to_program().as_ref(),
-                    spend.bundle.solution.pref(),
-                )
-                .expect("validated fee-bearing bundle must remain parseable")
-            })
-            .filter_map(|condition| match condition {
-                CoinCondition::AssertBeforeHeightAbsolute(height) => Some(height),
-                _ => None,
-            })
-            .min()
-    }
-
-    /// Return to the base transaction and seek a new fee, keeping the delivery
-    /// lineage so the next attempt names its predecessor.
-    fn drop_attached_fee(&mut self) -> Result<(), Error> {
-        let base_fingerprint = submission_variant_fingerprint(&self.base_bundle)?;
-        self.fee_intent = DurableFeeIntent::Unresolved(self.canonical_fee_intent().clone());
-        self.current_variant = SubmissionBroadcastVariant::Base;
-        self.wallet_acknowledged_variant = None;
-        self.completed_attempt = self
-            .active_attempt
-            .take()
-            .or_else(|| self.completed_attempt.take())
-            .map(|attempt| submission::DeliveryAttempt {
-                finalized_variant_fingerprint: Some(base_fingerprint),
-                ..attempt
-            });
-        self.validate()
     }
 
     fn current_applied_fee(&self) -> u64 {
@@ -1045,11 +1000,6 @@ impl<C> TransactionManager<C> {
         }
     }
 
-    /// The expiry height to put on a fee offer requested now.
-    pub fn fee_offer_max_height(&self) -> u64 {
-        self.last_height + FEE_OFFER_EXPIRY_BLOCKS
-    }
-
     fn reconciliation_input_coins(&self) -> std::collections::BTreeSet<CoinString> {
         self.submission_book.reconciliation_input_coins()
     }
@@ -1201,9 +1151,7 @@ impl<C> TransactionManager<C> {
         attempt_token: u64,
     ) -> Result<SubmissionAttemptStatus, Error> {
         let before = self.reconciliation_input_coins();
-        let result = self
-            .submission_book
-            .abandon_attempt(attempt_token, self.last_height)?;
+        let result = self.submission_book.abandon_attempt(attempt_token)?;
         self.unwatch_removed_reconciliation_inputs(&before);
         Ok(result)
     }
@@ -1248,10 +1196,6 @@ impl<C> TransactionManager<C> {
 
     pub fn drain_retired_submission_ids(&mut self) -> Vec<u64> {
         self.submission_book.drain_retirements()
-    }
-
-    pub fn drain_expired_fee_ids(&mut self) -> Vec<u64> {
-        self.submission_book.drain_expired_fee_ids()
     }
 
     pub fn drain_fee_retirements(&mut self) -> Vec<FeeRetirement> {
@@ -1874,7 +1818,6 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             reorg,
             &causally_rolled_back_ids,
         );
-        self.submission_book.drop_expired_fees(height)?;
         let current_height = height;
         // Reconciliation-only inputs have no WatchedCoin timestamps. Their
         // current records supply the same burial evidence used below to evict
@@ -2178,13 +2121,6 @@ mod tests {
     }
 
     fn test_protocol_and_fee_bundles(fee: u64) -> (SpendBundle, SpendBundle, CoinString, CoinID) {
-        test_protocol_and_expiring_fee_bundles(fee, None)
-    }
-
-    fn test_protocol_and_expiring_fee_bundles(
-        fee: u64,
-        max_height: Option<u64>,
-    ) -> (SpendBundle, SpendBundle, CoinString, CoinID) {
         let mut allocator = AllocEncoder::new();
         let output_ph = PuzzleHash::from_bytes([0x7b; 32]);
         let protocol_conditions = vec![(CREATE_COIN, (output_ph.clone(), (Amount::new(100), ())))
@@ -2203,7 +2139,7 @@ mod tests {
             &Amount::new(100),
         );
         let target = protocol_coin.to_coin_id();
-        let mut fee_conditions = vec![
+        let fee_conditions = vec![
             (
                 CREATE_COIN,
                 (output_ph, (Amount::new(100_u64.saturating_sub(fee)), ())),
@@ -2217,13 +2153,6 @@ mod tests {
                 .to_clvm(&mut allocator)
                 .expect("ASSERT_CONCURRENT_SPEND"),
         ];
-        if let Some(max_height) = max_height {
-            fee_conditions.push(
-                (87_u8, (max_height, ()))
-                    .to_clvm(&mut allocator)
-                    .expect("ASSERT_BEFORE_HEIGHT_ABSOLUTE"),
-            );
-        }
         let fee_condition_list = fee_conditions
             .to_clvm(&mut allocator)
             .expect("fee condition list");
@@ -2739,142 +2668,6 @@ mod tests {
             bencodex::to_vec(&mgr).expect("serialize retried upgrade"),
             expected_after
         );
-    }
-
-    /// A manager whose only submission carries a fee offer expiring at `max_height`.
-    fn manager_with_expiring_fee(
-        max_height: u64,
-    ) -> (
-        TransactionManager<PersistableMockGameSession>,
-        SpendBundle,
-        CoinString,
-        CoinString,
-        DrainedSubmission,
-    ) {
-        let (base, fee_source, protocol_coin, target) =
-            test_protocol_and_expiring_fee_bundles(15, Some(max_height));
-        let fee_coin = fee_source.spends[0].coin.clone();
-        let mut mgr = TransactionManager::new(PersistableMockGameSession);
-        mgr.pending_submissions.push(PendingSubmission {
-            id: None,
-            submission: TransactionSubmission::attach_to(base.clone(), None, &protocol_coin),
-            fee_intent: SubmissionFeeIntent::Attach {
-                target,
-                amount: Amount::new(15),
-                attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
-            },
-        });
-        let drained = mgr.drain_submissions().unwrap().submissions.remove(0);
-        let finalized = mgr
-            .finalize_submission_attempt(
-                drained.attempt_token,
-                SubmissionFeeSource::Available(fee_source),
-                &Hash::from_bytes(AGG_SIG_ME_ADDITIONAL_DATA),
-                1,
-            )
-            .unwrap()
-            .expect("current attempt");
-        assert_eq!(
-            finalized.fee_source_disposition,
-            FeeSourceDisposition::Attached
-        );
-        (mgr, base, protocol_coin, fee_coin, drained)
-    }
-
-    fn live_records(coins: &[&CoinString]) -> Vec<CoinStateRecord> {
-        coins
-            .iter()
-            .map(|coin| CoinStateRecord {
-                coin: (*coin).clone(),
-                created_height: Some(1),
-                spent_height: None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn expired_fee_offer_returns_to_the_base_transaction_and_seeks_a_new_fee() {
-        for acknowledged in [true, false] {
-            let (mut mgr, base, protocol_coin, fee_coin, first) = manager_with_expiring_fee(40);
-            if acknowledged {
-                mgr.acknowledge_submission_attempt(first.attempt_token)
-                    .unwrap();
-            }
-            let mut allocator = AllocEncoder::new();
-            let records = live_records(&[&protocol_coin, &fee_coin]);
-
-            mgr.report_coin_states(&mut allocator, 39, &records)
-                .unwrap();
-            assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
-            assert!(mgr.drain_expired_fee_ids().is_empty());
-
-            mgr.report_coin_states(&mut allocator, 40, &records)
-                .unwrap();
-            assert_eq!(mgr.drain_expired_fee_ids(), vec![first.id]);
-            assert!(!mgr.snapshot_watched_coins().contains(&fee_coin));
-            // The state must survive a save before the new attempt is issued.
-            mgr = bencodex::from_slice(&bencodex::to_vec(&mgr).unwrap()).unwrap();
-            let retried = mgr.drain_submissions().unwrap().submissions;
-            assert_eq!(retried.len(), 1);
-            assert_eq!(retried[0].id, first.id);
-            assert_eq!(retried[0].bundle, base);
-            assert_eq!(
-                retried[0].predecessor_attempt_token,
-                Some(first.attempt_token)
-            );
-            assert!(matches!(
-                retried[0].fee_intent,
-                SubmissionFeeIntent::Attach { .. }
-            ));
-            assert!(mgr.drain_retired_submission_ids().is_empty());
-            assert!(mgr.drain_fee_retirements().is_empty());
-
-            // The old attempt can no longer change the submission.
-            assert_eq!(
-                mgr.acknowledge_submission_attempt(first.attempt_token)
-                    .unwrap(),
-                SubmissionAttemptStatus::Stale
-            );
-            mgr.report_coin_states(&mut allocator, 41, &records)
-                .unwrap();
-            assert!(mgr.drain_expired_fee_ids().is_empty());
-        }
-    }
-
-    #[test]
-    fn expired_fee_offer_is_kept_when_the_transaction_landed() {
-        let (mut mgr, _base, protocol_coin, fee_coin, first) = manager_with_expiring_fee(40);
-        mgr.acknowledge_submission_attempt(first.attempt_token)
-            .unwrap();
-        let mut allocator = AllocEncoder::new();
-        let mut records = live_records(&[&protocol_coin, &fee_coin]);
-        for record in &mut records {
-            record.spent_height = Some(39);
-        }
-        mgr.report_coin_states(&mut allocator, 40, &records)
-            .unwrap();
-        assert!(mgr.drain_expired_fee_ids().is_empty());
-        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
-    }
-
-    #[test]
-    fn a_passed_fee_deadline_does_not_abandon_the_protocol_transaction() {
-        let (mut mgr, base, _protocol_coin, _fee_coin, first) = manager_with_expiring_fee(40);
-        assert_eq!(
-            mgr.abandon_submission_attempt(first.attempt_token).unwrap(),
-            SubmissionAttemptStatus::Applied
-        );
-        assert!(mgr.drain_retired_submission_ids().is_empty());
-        assert_eq!(mgr.drain_expired_fee_ids(), vec![first.id]);
-        let retried = mgr.drain_submissions().unwrap().submissions;
-        assert_eq!(retried.len(), 1);
-        assert_eq!(retried[0].bundle, base);
-
-        // Without a fee offer, the deadline belongs to the transaction itself.
-        mgr.abandon_submission_attempt(retried[0].attempt_token)
-            .unwrap();
-        assert_eq!(mgr.drain_retired_submission_ids(), vec![first.id]);
-        assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
     }
 
     #[test]

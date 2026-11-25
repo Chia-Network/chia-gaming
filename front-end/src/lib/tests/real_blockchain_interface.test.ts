@@ -1765,13 +1765,7 @@ describe('RealBlockchainInterface', () => {
     await expect(
       blockchain.beginWalletOffer(
         { ...offerOperation, purpose: { kind: 'fee', operationId: 'fee' } },
-        {
-          kind: 'fee',
-          uniqueId: 'test',
-          fee: 10n,
-          concurrentSpendCoinId: bindCoinId,
-          maxHeight: 100n,
-        },
+        { kind: 'fee', uniqueId: 'test', fee: 10n, concurrentSpendCoinId: bindCoinId },
       ),
     ).resolves.toEqual({
       kind: 'created-reserved',
@@ -1789,7 +1783,6 @@ describe('RealBlockchainInterface', () => {
         extraConditions: [
           { opcode: 64n, args: { coin_id: `0x${bindCoinId}` } },
           { opcode: 52n, args: { amount: 10n } },
-          { opcode: 87n, args: { height: 100n } },
         ],
       },
       { releaseQueueOnContextChange: true },

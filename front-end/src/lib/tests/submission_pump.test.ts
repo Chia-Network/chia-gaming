@@ -159,10 +159,7 @@ describe('submission pump delivery and lifecycle', () => {
         ['channel-spend', '22'],
         ['unroll-spend', '33'],
       ]) {
-        const tx = {
-          ...submission(id),
-          fee_request: { target: target.repeat(32), amount: '10', max_height: '100' },
-        };
+        const tx = { ...submission(id), fee_request: { target: target.repeat(32), amount: '10' } };
         submit(tx);
         submit(tx);
         await lease.launch(`submission:${id}`);
@@ -287,7 +284,7 @@ describe('submission pump delivery and lifecycle', () => {
       commitRuntime(controller, lease);
       submit({
         ...submission('pending-fee'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+        fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:pending-fee');
       await controller.flushPendingWork();
@@ -344,10 +341,7 @@ describe('submission pump delivery and lifecycle', () => {
     );
     try {
       commitRuntime(controller, lease);
-      submit({
-        ...submission('old-fee'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
-      });
+      submit({ ...submission('old-fee'), fee_request: { target: '22'.repeat(32), amount: '10' } });
       await lease.launch('submission:old-fee');
       await controller.flushPendingWork();
       expect(oldBegin).toHaveBeenCalledTimes(1);
@@ -360,10 +354,7 @@ describe('submission pump delivery and lifecycle', () => {
         submissionDrain([], ['old-fee'], [], [{ id: 'old-fee', fee_spent: false }]),
       );
       controller.processResult(wasmResult());
-      submit({
-        ...submission('new-fee'),
-        fee_request: { target: '33'.repeat(32), amount: '10', max_height: '100' },
-      });
+      submit({ ...submission('new-fee'), fee_request: { target: '33'.repeat(32), amount: '10' } });
       await lease.launch('submission:new-fee');
       await controller.flushPendingWork();
       expect(newBegin).toHaveBeenCalledTimes(1);
@@ -644,7 +635,7 @@ describe('submission pump delivery and lifecycle', () => {
   });
 
   describe('a displaced fee attempt whose offer the wallet will not cancel', () => {
-    const feeRequest = { target: '22'.repeat(32), amount: '10', max_height: '100' };
+    const feeRequest = { target: '22'.repeat(32), amount: '10' };
     const scope = { provider: 'simulator' as const, identity: 'submission-handoff' };
     const created = {
       kind: 'created-reserved' as const,
@@ -846,7 +837,7 @@ describe('submission pump delivery and lifecycle', () => {
       commitRuntime(controller, lease);
       submit({
         ...submission('retired-during-fee-create'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+        fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       const launch = lease.launch('submission:retired-during-fee-create');
       await waitFor(() => beginWalletOffer.mock.calls.length === 1);
@@ -897,7 +888,7 @@ describe('submission pump delivery and lifecycle', () => {
         commitRuntime(controller, lease);
         submit({
           ...submission(`retired-${landedVariant}`),
-          fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+          fee_request: { target: '22'.repeat(32), amount: '10' },
         });
         await lease.launch(`submission:retired-${landedVariant}`);
         await controller.flushPendingWork();
@@ -946,7 +937,7 @@ describe('submission pump delivery and lifecycle', () => {
       commitRuntime(controller, lease);
       submit({
         ...submission('reconnect-cancel'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+        fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:reconnect-cancel');
       await controller.flushPendingWork();
@@ -995,7 +986,7 @@ describe('submission pump delivery and lifecycle', () => {
       commitRuntime(controller, lease);
       submit({
         ...submission('terminal-nonblocking'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+        fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:terminal-nonblocking');
       await waitFor(() =>
@@ -1281,7 +1272,7 @@ describe('submission pump delivery and lifecycle', () => {
     const first = submission('fee-successor');
     const successor = {
       ...nextAttempt(first, 'fee-successor-attempt-2', 'newer-fee-bearing'),
-      fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+      fee_request: { target: '22'.repeat(32), amount: '10' },
     };
     try {
       commitRuntime(controller, lease);
@@ -1466,7 +1457,7 @@ describe('submission pump delivery and lifecycle', () => {
       );
       submit({
         ...submission('network-rejected-cleanup-fails'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+        fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:network-rejected-cleanup-fails');
       await controller.flushTransactionSubmissions();
@@ -1507,7 +1498,7 @@ describe('submission pump delivery and lifecycle', () => {
       commitRuntime(controller, lease);
       submit({
         ...submission('finalize-rejected'),
-        fee_request: { target: '22'.repeat(32), amount: '10', max_height: '100' },
+        fee_request: { target: '22'.repeat(32), amount: '10' },
       });
       await lease.launch('submission:finalize-rejected');
       await waitFor(() => beginWalletOfferCancellation.mock.calls.length === 1);

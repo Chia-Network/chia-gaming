@@ -21,17 +21,7 @@ function decodeRequest(
   label: string,
 ): Extract<WalletOfferRequest, { kind: 'fee' }> {
   const fields = strictRecord(value, label);
-  exactFields(
-    fields,
-    [
-      'kind',
-      'uniqueId',
-      'fee',
-      'concurrentSpendCoinId',
-      ...(fields.maxHeight === undefined ? [] : ['maxHeight']),
-    ],
-    label,
-  );
+  exactFields(fields, ['kind', 'uniqueId', 'fee', 'concurrentSpendCoinId'], label);
   if (
     fields.kind !== 'fee' ||
     typeof fields.concurrentSpendCoinId !== 'string' ||
@@ -44,9 +34,6 @@ function decodeRequest(
     uniqueId: boundedString(fields.uniqueId, `${label}.uniqueId`, MAX_ID),
     fee: strictU64(fields.fee, `${label}.fee`),
     concurrentSpendCoinId: fields.concurrentSpendCoinId,
-    ...(fields.maxHeight === undefined
-      ? {}
-      : { maxHeight: strictU64(fields.maxHeight, `${label}.maxHeight`) }),
   };
 }
 
