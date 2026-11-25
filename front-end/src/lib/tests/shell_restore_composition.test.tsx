@@ -388,6 +388,31 @@ describe('Shell production restore composition', () => {
     );
   });
 
+  it("keeps the saved theme after a reload, and saves only the player's choice", async () => {
+    await storageRepository.claimApplicationState();
+    await storageRepository.updatePreference({ key: 'theme', value: 'dark' });
+    releaseLeaseIfOwner();
+    storageRepository._resetForTests();
+
+    const application = createApplication();
+    act(() => {
+      renderer = create(React.createElement(Shell, { application }));
+      stop = application.start();
+    });
+    await waitForAutoResume(application);
+    await flushEffects();
+
+    expect(storageRepository.query('theme')).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+    const toggle = renderer!.root.find(
+      (node) => node.type === 'button' && node.props['aria-label'] === 'toggle theme',
+    );
+    act(() => toggle.props.onClick());
+    await flushEffects();
+    expect(storageRepository.query('theme')).toBe('light');
+    expect(document.documentElement.classList.contains('dark')).toBe(false);
+  });
+
   it('remembers an automatically connected hub after disconnect', async () => {
     requestTrust.mockResolvedValue('trusted');
     await storageRepository.claimApplicationState();

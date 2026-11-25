@@ -531,21 +531,14 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     [feeEditing, feeInput, parseFeeInput, dispatch],
   );
   const currency = getCurrencyLabels();
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    const stored = theme;
-    if (stored === 'dark') return true;
-    if (stored === 'light') return false;
-    return document.documentElement.classList.contains('dark');
-  });
+  // The saved theme loads after the first render. Follow it rather than writing
+  // the default over it, and save only the player's own choice.
+  const [initiallyDark] = useState(() => document.documentElement.classList.contains('dark'));
+  const isDark = theme === undefined ? initiallyDark : theme === 'dark';
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-      dispatch({ type: 'theme', theme: 'dark' });
-    } else {
-      document.documentElement.classList.remove('dark');
-      dispatch({ type: 'theme', theme: 'light' });
-    }
-  }, [isDark, dispatch]);
+    if (isDark) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [isDark]);
   useEffect(() => {
     if (!connectionSetup?.qrUri) {
       setQrDataUrl('');
@@ -1001,7 +994,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
               }}
             />
             <button
-              onClick={() => setIsDark((d) => !d)}
+              onClick={() => dispatch({ type: 'theme', theme: isDark ? 'light' : 'dark' })}
               className={`p-1 border border-canvas-border rounded ${isDark ? 'text-warning-solid' : 'text-canvas-text'} hover:bg-canvas-bg-hover`}
               aria-label="toggle theme"
               title="Toggle theme"
