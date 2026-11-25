@@ -465,6 +465,8 @@ export function createApplication() {
   const setRestoreError = (value: string | null) => {
     shellDispatch({ type: 'setRestoreError', value });
   };
+  // Outlives any one PeerSession, which a restore replaces after games mount.
+  const ephemeralListeners = new Set<(body: Uint8Array) => void>();
   const stablePeerConn: PeerConnectionResult = {
     get reliableState() {
       return peerSession?.reliableState;
@@ -492,6 +494,13 @@ export function createApplication() {
     sendMessage: (n, m) => (peerSession ?? IDLE_PEER_CONNECTION).sendMessage(n, m),
     sendAck: (n) => (peerSession ?? IDLE_PEER_CONNECTION).sendAck(n),
     sendKeepalive: () => (peerSession ?? IDLE_PEER_CONNECTION).sendKeepalive(),
+    sendEphemeral: (body) => peerSession?.sendEphemeral(body) ?? false,
+    onEphemeral: (listener) => {
+      ephemeralListeners.add(listener);
+      return () => {
+        ephemeralListeners.delete(listener);
+      };
+    },
   };
   let walletEvents: (event: WalletEvent) => void = () => {};
   const setWalletView = (view: WalletView) => {
@@ -1137,7 +1146,10 @@ export function createApplication() {
                 const frame = decodeReliableFrame(payload);
                 const selected = peerSession;
                 if (selected && selected.peerId === fromId) {
-                  selected.deliverRawPeerMessage(fromId, payload);
+                  const accepted = selected.deliverRawPeerMessage(fromId, payload);
+                  if (accepted && frame?.tag === 0x04) {
+                    for (const listener of ephemeralListeners) listener(frame.data);
+                  }
                   syncPeerLiveness();
                   return;
                 }

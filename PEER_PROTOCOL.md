@@ -15,7 +15,8 @@ addressed hub relay payload
     ├── data
     │   └── Bencodex semantic message
     ├── cumulative acknowledgement
-    └── keepalive
+    ├── keepalive
+    └── ephemeral presentation data
 ```
 
 The shared reliable frame supplies replay, deduplication, ordering, and
@@ -63,6 +64,7 @@ peer frame. Its first byte discriminates the frame type:
 0x01   reliable data frame
 0x02   reliable acknowledgement frame
 0x03   reliable keepalive frame
+0x04   ephemeral frame
 ```
 
 ### 2.1 Reliable frame encoding
@@ -82,6 +84,11 @@ Keepalive:
 +--------+------------------------+
 | 0x03   | session_id: Bytes(16) |
 +--------+------------------------+
+
+Ephemeral:
++--------+------------------------+---------------------------+
+| 0x04   | session_id: Bytes(16) | game-owned body (0-64 B) |
++--------+------------------------+---------------------------+
 ```
 
 `session_id` is an opaque random 16-byte value selected by the session initiator
@@ -473,10 +480,22 @@ The host ignores:
 - data frames shorter than 21 bytes;
 - acknowledgement frames whose length is not exactly 21 bytes;
 - keepalive frames whose length is not exactly 17 bytes;
-- acknowledgements and keepalives for an unknown session ID; and
+- ephemeral frames outside 17-81 bytes;
+- acknowledgements, keepalives, and ephemeral frames for an unknown session ID; and
 - unknown tags.
 
 They do not count as peer activity.
+
+### 5.7 Ephemeral frames
+
+An ephemeral frame carries at most 64 bytes for the opponent's screen, such as
+the letters a Krunk player is typing. It is unsigned and is never numbered,
+acknowledged, replayed, or saved, so it must not affect protocol or game state.
+The hub and the opponent can read the body. A game owns its meaning and ignores
+bodies it cannot decode. Senders throttle to stay under the hub's rate limit.
+
+Older clients ignore tag `0x04` as an unknown tag, so it needs no protocol
+version change.
 
 The reliable layer accepts ordinary frames only when both the peer ID attributed
 by the hub and the 16-byte session ID match the selected transport. An unknown

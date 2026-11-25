@@ -256,6 +256,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
   rewardPuzzleHash: string | null;
   wc: WasmConnection | undefined;
   private peerSendKeepalive: (() => void) | null = null;
+  private readonly peerEphemeral: {
+    send: (body: Uint8Array) => boolean;
+    subscribe: (listener: (body: Uint8Array) => void) => () => void;
+  } | null;
   private transactionPublishNerfed = false;
   private lastPeerMessageTime: number = Date.now();
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
@@ -336,6 +340,10 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     game: {
       isChannelReady: () => this.published.channelReady,
       dispatch: (intent) => this.dispatchGameIntent(intent),
+      // Nothing is shared once play has left the channel or is closing.
+      sendEphemeral: (body) =>
+        this.published.channelReady && (this.peerEphemeral?.send(body) ?? false),
+      onEphemeral: (listener) => this.peerEphemeral?.subscribe(listener) ?? (() => {}),
     },
   };
   private restoring = false;
@@ -396,7 +404,9 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     fundingRuntime: SessionFunding | null = blockchain?.channelFundingRuntime ?? null,
     walletProviderScope?: WalletProviderScope,
   ) {
-    const { sendMessage, sendAck } = peer_conn;
+    const { sendMessage, sendAck, sendEphemeral, onEphemeral } = peer_conn;
+    this.peerEphemeral =
+      sendEphemeral && onEphemeral ? { send: sendEphemeral, subscribe: onEphemeral } : null;
     this.receivePolicy = peer_conn.receivePolicy ?? DEFAULT_SESSION_RECEIVE_POLICY;
     const reliableState =
       peer_conn.reliableState ??
