@@ -10,7 +10,7 @@ import {
   rankArtUrl,
 } from '@games/host/cards/decks';
 import { SpacePokerTable } from '@games/spacepoker/ui/SpacePokerTable';
-import { CardDeckFooter } from '../../components/CardDeckFooter';
+import { CardDeckFooter, DeckCredit } from '../../components/CardDeckFooter';
 import { useCardDeckPreference } from '../../hooks/useCardDeckPreference';
 
 // @ts-expect-error Node.js globals are not included in the frontend configuration.
@@ -31,7 +31,7 @@ describe('card decks', () => {
     },
   );
 
-  it('credits every deck that has art, in the app and in CREDITS.md', () => {
+  it('credits every deck that has art, behind the info button and in CREDITS.md', () => {
     const credits = readFileSync(`${CARDS}/CREDITS.md`, 'utf8');
     for (const deck of CARD_DECKS) {
       let renderer!: ReactTestRenderer;
@@ -40,14 +40,24 @@ describe('card decks', () => {
           <CardDeckFooter gameType="calpoker" preference={{ value: deck.id, set: jest.fn() }} />,
         );
       });
-      const links = renderer.root.findAllByType('a').map((link) => link.props.href);
+      const info = renderer.root.findAll(
+        (node) =>
+          node.type === 'button' && node.props['aria-label'] === `About the ${deck.name} cards`,
+      );
       if (deck.art) {
+        expect(info).toHaveLength(1);
+        let credit!: ReactTestRenderer;
+        act(() => {
+          credit = create(<DeckCredit credit={deck.art!.credit} />);
+        });
+        const links = credit.root.findAllByType('a').map((link) => link.props.href);
+        act(() => credit.unmount());
         const { artist, url, licenseUrl } = deck.art.credit;
         expect(links).toEqual([url, licenseUrl]);
         expect(credits).toContain(`| \`${deck.id}\` | ${artist} | <${url}> |`);
         expect(credits).toContain(licenseUrl);
       } else {
-        expect(links).toEqual([]);
+        expect(info).toEqual([]);
       }
       act(() => renderer.unmount());
     }
@@ -72,6 +82,24 @@ describe('card decks', () => {
       act(() => pickers[0]!.props.onChange({ target: { value: 'icons' } }));
       expect(set).toHaveBeenCalledWith('icons');
     }
+    act(() => renderer.unmount());
+  });
+
+  it('leaves the picker out of reach while a dialog owns the page', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <CardDeckFooter
+          gameType="calpoker"
+          preference={{ value: 'pixel', set: jest.fn() }}
+          inert
+        />,
+      );
+    });
+    expect(renderer.root.findByType('footer').props).toMatchObject({
+      inert: true,
+      'aria-disabled': true,
+    });
     act(() => renderer.unmount());
   });
 

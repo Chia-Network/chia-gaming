@@ -693,7 +693,11 @@ const GameSession: React.FC<GameSessionProps> = ({
       </div>
 
       {showGameInterface && (
-        <CardDeckFooter gameType={gameSpecificView.gameType} preference={cardDeck} />
+        <CardDeckFooter
+          gameType={gameSpecificView.gameType}
+          preference={cardDeck}
+          inert={gameInterfaceIsInertForBetweenHandDialog}
+        />
       )}
 
       {/*

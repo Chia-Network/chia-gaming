@@ -1,4 +1,7 @@
-import { CARD_DECKS, cardDeck } from '@games/host/cards/decks';
+import { useRef, useState } from 'react';
+import { InfoIcon } from 'lucide-react';
+import { CARD_DECKS, cardDeck, type CardDeck } from '@games/host/cards/decks';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import type { CardDeckPreference } from '../hooks/useCardDeckPreference';
 import { isCatalogGameType, packageFor } from '../lib/gameRegistry';
 
@@ -6,33 +9,22 @@ import { isCatalogGameType, packageFor } from '../lib/gameRegistry';
 export function CardDeckFooter({
   gameType,
   preference,
+  inert = false,
 }: {
   gameType: unknown;
   preference: CardDeckPreference;
+  /** Set while a dialog owns the page, like the game area above it. */
+  inert?: boolean;
 }) {
   if (!isCatalogGameType(gameType) || !packageFor(gameType).usesCardDeck) return null;
   const deck = cardDeck(preference.value);
   const credit = deck.art?.credit;
   return (
-    <footer className="mt-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1 px-4 py-2 text-xs text-canvas-text sm:px-6 md:px-8">
-      {credit && (
-        <span>
-          Cards by{' '}
-          <a className="underline" href={credit.url} target="_blank" rel="noopener noreferrer">
-            {credit.artist}
-          </a>
-          ,{' '}
-          <a
-            className="underline"
-            href={credit.licenseUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {credit.license}
-          </a>
-          {credit.changes && ` (${credit.changes})`}
-        </span>
-      )}
+    <footer
+      inert={inert}
+      aria-disabled={inert || undefined}
+      className="mt-auto flex flex-wrap items-center justify-end gap-x-3 gap-y-1 px-4 py-2 text-xs text-canvas-text sm:px-6 md:px-8"
+    >
       <label className="flex items-center gap-1">
         Deck
         <select
@@ -47,6 +39,59 @@ export function CardDeckFooter({
           ))}
         </select>
       </label>
+      {credit && <CreditInfo deckName={deck.name} credit={credit} />}
     </footer>
+  );
+}
+
+type Credit = NonNullable<CardDeck['art']>['credit'];
+
+/** Opens on hover with a pointer, and on tap or keyboard otherwise. */
+function CreditInfo({ deckName, credit }: { deckName: string; credit: Credit }) {
+  const [open, setOpen] = useState(false);
+  const closing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const hover = (next: boolean) => (event: React.PointerEvent) => {
+    if (event.pointerType !== 'mouse') return;
+    clearTimeout(closing.current);
+    if (next) setOpen(true);
+    // A short delay lets the pointer cross into the card to follow a link.
+    else closing.current = setTimeout(() => setOpen(false), 150);
+  };
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        aria-label={`About the ${deckName} cards`}
+        className="rounded-full p-0.5 text-canvas-text hover:text-canvas-text-contrast"
+        onPointerEnter={hover(true)}
+        onPointerLeave={hover(false)}
+      >
+        <InfoIcon className="size-4" />
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        side="top"
+        className="w-64 text-xs"
+        onPointerEnter={hover(true)}
+        onPointerLeave={hover(false)}
+      >
+        <DeckCredit credit={credit} />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function DeckCredit({ credit }: { credit: Credit }) {
+  return (
+    <>
+      Cards by{' '}
+      <a className="underline" href={credit.url} target="_blank" rel="noopener noreferrer">
+        {credit.artist}
+      </a>
+      , licensed under{' '}
+      <a className="underline" href={credit.licenseUrl} target="_blank" rel="noopener noreferrer">
+        {credit.license}
+      </a>
+      .{credit.changes && ` Changes: ${credit.changes}.`}
+    </>
   );
 }
