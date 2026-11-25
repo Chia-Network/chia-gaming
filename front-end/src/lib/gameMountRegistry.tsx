@@ -1,5 +1,10 @@
 import { cloneElement, type ReactElement } from 'react';
-import { type GameHandState, type GameMountNames, type GameMountView } from '@games/host';
+import {
+  type GameHandState,
+  type GameMountNames,
+  type GameMountView,
+  type GamePreference,
+} from '@games/host';
 import { isCatalogGameType, packageFor, restoreRegisteredGameHand } from './gameRegistry';
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
@@ -9,6 +14,7 @@ export type FrozenGameMountOptions = GameMountNames;
 export function renderLiveGameMount(
   session: UseGameSessionResult,
   names: GameMountNames,
+  cardDeck?: GamePreference,
 ): ReactElement {
   const gameType = session.gameSpecificView.gameType;
   if (!isCatalogGameType(gameType)) throw new Error(`Unsupported game mount: ${gameType}`);
@@ -18,6 +24,7 @@ export function renderLiveGameMount(
   const common = {
     hand: session.handSource.hand,
     ...names,
+    cardDeck,
   };
   const view: GameMountView<GameHandState<unknown>> = session.handSource.frozen
     ? { ...common, frozen: true }

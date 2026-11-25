@@ -136,8 +136,15 @@ export interface GameMountNames {
   opponentName?: string;
 }
 
+/** A player's saved choice that only changes how a game looks. */
+export interface GamePreference {
+  readonly value: string | undefined;
+  set(value: string): void;
+}
+
 interface GameMountViewBase<THand extends GameHandState<unknown>> extends GameMountNames {
   hand: THand;
+  cardDeck?: GamePreference;
 }
 
 export type GameMountView<THand extends GameHandState<unknown>> =

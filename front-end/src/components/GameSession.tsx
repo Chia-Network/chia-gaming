@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from 'react';
 import type { TerminalSessionPresentation } from '../hooks/sessionView';
+import { useCardDeckPreference } from '../hooks/useCardDeckPreference';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { QueuedNotification, useGameSession } from '../hooks/useGameSession';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
@@ -555,6 +556,7 @@ const GameSession: React.FC<GameSessionProps> = ({
     terminalPresentation,
     presentation,
   );
+  const cardDeck = useCardDeckPreference();
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
   const restoreGameAreaFocus = useCallback(() => gameAreaRef.current?.focus(), []);
@@ -637,10 +639,14 @@ const GameSession: React.FC<GameSessionProps> = ({
                   </div>
                 }
               >
-                {renderLiveGameMount(session, {
-                  myName: terminalPresentation?.myName ?? params.myAlias,
-                  opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
-                })}
+                {renderLiveGameMount(
+                  session,
+                  {
+                    myName: terminalPresentation?.myName ?? params.myAlias,
+                    opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
+                  },
+                  cardDeck,
+                )}
               </Suspense>
             </GameAreaErrorBoundary>
           )}

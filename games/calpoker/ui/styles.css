@@ -24,6 +24,24 @@
   color: transparent;
 }
 
+.card-face > .card-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background-color: #fff;
+  pointer-events: none;
+}
+
+.card-face.card-dimmed > .card-art {
+  filter: grayscale(1) opacity(0.45);
+}
+
+.dark .card-face.card-dimmed > .card-art {
+  filter: grayscale(1) brightness(0.6);
+}
+
 .hand-reorder-group {
   display: flex !important;
   flex-wrap: wrap !important;

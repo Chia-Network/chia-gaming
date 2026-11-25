@@ -101,6 +101,7 @@ const IDENTITY_FIELDS = new Set(['playerId', 'sessionId', 'myHubPlayerId']);
 const PREFERENCE_FIELDS = new Set([
   'alias',
   'theme',
+  'cardDeck',
   'defaultFee',
   'feeUnit',
   'hubUrl',
@@ -247,6 +248,7 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
   return {
     alias: optionalString(fields.alias, 'preferences.alias', true),
     theme,
+    cardDeck: optionalString(fields.cardDeck, 'preferences.cardDeck'),
     defaultFee:
       fields.defaultFee === undefined
         ? undefined

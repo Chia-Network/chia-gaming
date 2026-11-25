@@ -34,6 +34,7 @@ export interface SessionIdentitySave {
 export interface SessionPreferencesSave {
   alias?: string;
   theme?: 'dark' | 'light';
+  cardDeck?: string;
   defaultFee?: bigint;
   feeUnit?: 'mojo' | 'xch';
   hubUrl?: string;

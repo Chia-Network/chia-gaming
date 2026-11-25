@@ -12,6 +12,7 @@ export interface SessionPreferenceQueries {
   network: ChiaNetwork;
   alias: string | undefined;
   theme: 'dark' | 'light' | undefined;
+  cardDeck: string | undefined;
   defaultFee: bigint;
   feeUnit: 'mojo' | 'xch';
   activeTab: string | undefined;
@@ -26,6 +27,7 @@ export type SessionPreferenceUpdate =
   | { key: 'network'; value: ChiaNetwork }
   | { key: 'alias'; value: string }
   | { key: 'theme'; value: 'dark' | 'light' }
+  | { key: 'cardDeck'; value: string }
   | { key: 'defaultFee'; value: bigint }
   | { key: 'feeUnit'; value: 'mojo' | 'xch' }
   | { key: 'activeTab'; value: string }
@@ -43,6 +45,7 @@ export function selectSessionPreference<K extends keyof SessionPreferenceQueries
     network: preferences.network ?? 'mainnet',
     alias: preferences.alias,
     theme: preferences.theme,
+    cardDeck: preferences.cardDeck,
     defaultFee: preferences.defaultFee ?? DEFAULT_TRANSACTION_FEE_MOJOS,
     feeUnit: preferences.feeUnit ?? 'mojo',
     activeTab: preferences.activeTab,

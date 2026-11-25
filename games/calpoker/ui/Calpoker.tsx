@@ -1,8 +1,10 @@
 import React from 'react';
 
 import { CaliforniaPoker } from './components';
+import { DeckPicker } from './components/DeckPicker';
+import { cardDeck, CardDeckProvider } from './components/decks';
 import { CalpokerDisplaySnapshotView, CalpokerOutcomeView } from './types/CaliforniapokerProps';
-import type { SettlementOutcome } from '../../host';
+import type { GamePreference, SettlementOutcome } from '../../host';
 import type { CalpokerError } from './serialize';
 
 export interface CalpokerProps {
@@ -23,6 +25,7 @@ export interface CalpokerProps {
   terminalOutcome?: SettlementOutcome | null;
   frozen?: boolean;
   error: CalpokerError | null;
+  deckPreference?: GamePreference;
 }
 
 const Calpoker: React.FC<CalpokerProps> = ({
@@ -43,32 +46,37 @@ const Calpoker: React.FC<CalpokerProps> = ({
   terminalOutcome,
   frozen = false,
   error,
+  deckPreference,
 }) => {
+  const deck = cardDeck(deckPreference?.value);
   return (
-    <div className="relative flex h-full w-full min-h-0 flex-col">
-      {/* Game area */}
-      <div className="flex-1 min-h-0 flex flex-col">
-        <CaliforniaPoker
-          playerNumber={playerNumber}
-          moveNumber={moveNumber}
-          playerHand={playerHand}
-          opponentHand={opponentHand}
-          cardSelections={cardSelections}
-          setCardSelections={setCardSelections}
-          setHandOrder={setHandOrder}
-          handleMakeMove={handleMakeMove}
-          outcome={outcome}
-          onGameLog={onGameLog}
-          onSnapshotChange={onSnapshotChange}
-          initialSnapshot={initialSnapshot}
-          myName={myName}
-          opponentName={opponentName}
-          terminalOutcome={terminalOutcome}
-          frozen={frozen}
-          error={error}
-        />
+    <CardDeckProvider value={deck}>
+      <div className="relative flex h-full w-full min-h-0 flex-col">
+        {/* Game area */}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <CaliforniaPoker
+            playerNumber={playerNumber}
+            moveNumber={moveNumber}
+            playerHand={playerHand}
+            opponentHand={opponentHand}
+            cardSelections={cardSelections}
+            setCardSelections={setCardSelections}
+            setHandOrder={setHandOrder}
+            handleMakeMove={handleMakeMove}
+            outcome={outcome}
+            onGameLog={onGameLog}
+            onSnapshotChange={onSnapshotChange}
+            initialSnapshot={initialSnapshot}
+            myName={myName}
+            opponentName={opponentName}
+            terminalOutcome={terminalOutcome}
+            frozen={frozen}
+            error={error}
+          />
+        </div>
+        {deckPreference && <DeckPicker deck={deck} onChoose={deckPreference.set} />}
       </div>
-    </div>
+    </CardDeckProvider>
   );
 };
 
