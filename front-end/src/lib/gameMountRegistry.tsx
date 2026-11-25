@@ -9,7 +9,7 @@ import { isCatalogGameType, packageFor, restoreRegisteredGameHand } from './game
 import type { UseGameSessionResult } from '../hooks/useGameSession';
 import type { SessionModel } from './session/model';
 
-export type FrozenGameMountOptions = GameMountNames;
+export type FrozenGameMountOptions = GameMountNames & { cardDeck?: GamePreference };
 
 export function renderLiveGameMount(
   session: UseGameSessionResult,
@@ -52,6 +52,7 @@ export function renderFrozenGameMount(
     hand,
     myName: options.myName,
     opponentName: options.opponentName,
+    cardDeck: options.cardDeck,
   };
   return cloneElement(packageFor(gameType).render(view), {
     key: model.game.handKey,

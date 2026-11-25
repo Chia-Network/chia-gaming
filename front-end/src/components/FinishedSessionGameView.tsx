@@ -1,6 +1,7 @@
 import React, { Component, Suspense } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
+import { useCardDeckPreference } from '../hooks/useCardDeckPreference';
 import type { FrozenGameMountOptions } from '../lib/gameMountRegistry';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
@@ -98,7 +99,8 @@ function FrozenGameMount({
   model: SessionModel;
   options: FrozenGameMountOptions;
 }) {
-  return renderFrozenGameMount(model, options);
+  const cardDeck = useCardDeckPreference();
+  return renderFrozenGameMount(model, { ...options, cardDeck });
 }
 
 /**
