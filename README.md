@@ -83,7 +83,7 @@ Desktop builds for macOS, Windows and Linux are on the [releases page](https://g
 
 ## Run it from source
 
-You'll need Rust (the pinned version installs itself through `rustup`), `wasm-pack` 0.15, Node 24, pnpm 10.33, and a `clang` that can target `wasm32`. [DEVELOPMENT.md](DEVELOPMENT.md) has the exact install commands.
+You'll need Rust (the pinned version installs itself through `rustup`), `wasm-pack` 0.15, Node 24, pnpm 10.33, and an LLVM toolchain (`clang` that can target `wasm32`, plus `llvm-ar`). [DEVELOPMENT.md](DEVELOPMENT.md) has the exact install commands.
 
 ```bash
 git clone https://github.com/Chia-Network/chia-gaming.git

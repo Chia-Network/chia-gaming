@@ -48,10 +48,21 @@ configured, with at least 1000 mojos in your wallet.
   brew install node@24        # or download from https://nodejs.org
   npm install -g pnpm@10.33.0
   ```
-- **A C compiler with WebAssembly support.** The ambient `clang` selected by
-  your environment must advertise the `wasm32` target:
+- **An LLVM toolchain for WebAssembly.** C dependencies such as `blst` are
+  compiled with a `clang` that targets `wasm32` and archived with `llvm-ar`.
+  macOS `ar` cannot index WebAssembly objects, so without `llvm-ar` the WASM
+  link fails with undefined `blst_*` symbols. On macOS:
   ```bash
-  clang --print-targets | grep wasm32
+  brew install llvm   # or: tools/check-build-deps.sh --install
+  ```
+  Homebrew's LLVM can stay keg-only: the build scripts source
+  `tools/wasm-toolchain.sh`, which finds it and sets
+  `AR_wasm32_unknown_unknown` (and `CC_wasm32_unknown_unknown` when the
+  ambient `clang` cannot target `wasm32`). Values you set yourself are kept.
+  If a build already failed with undefined `blst_*` symbols, clear the
+  cached library once:
+  ```bash
+  (cd wasm && cargo clean --release --target wasm32-unknown-unknown -p blst)
   ```
 
 The workspace uses TypeScript 7 for `tsc` builds through the

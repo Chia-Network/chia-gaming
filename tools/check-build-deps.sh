@@ -195,8 +195,23 @@ sys.exit(0 if sys.version_info >= (3, 9) else 1)
 PY
 }
 
+# shellcheck source=tools/wasm-toolchain.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/wasm-toolchain.sh"
+
+# The ambient clang, or the LLVM clang the build scripts select for wasm32.
 check_clang_wasm_target() {
-    clang --print-targets 2>/dev/null | grep -Eq '^[[:space:]]*wasm32[[:space:]]'
+    if wasm_toolchain_clang_targets_wasm32 clang; then
+        return 0
+    fi
+    local llvm_ar
+    llvm_ar="$(find_wasm_llvm_ar)"
+    [ -n "$llvm_ar" ] && [ -x "$(dirname "$llvm_ar")/clang" ] &&
+        wasm_toolchain_clang_targets_wasm32 "$(dirname "$llvm_ar")/clang"
+}
+
+# macOS ar cannot index WebAssembly objects; the wasm32 build needs llvm-ar.
+check_wasm_archiver() {
+    [ "$(uname -s)" != "Darwin" ] || [ -n "$(find_wasm_llvm_ar)" ]
 }
 
 check_deps() {
@@ -210,6 +225,7 @@ check_deps() {
     elif ! check_clang_wasm_target; then
         add_missing clang-wasm32
     fi
+    check_wasm_archiver || add_missing llvm-ar
     need_cmd pkg-config || add_missing pkg-config
     need_cmd make || add_missing make
     need_cmd python3 || add_missing python3
@@ -244,7 +260,9 @@ print_missing() {
     echo "Missing build dependencies:"
     for dep in "${MISSING[@]}"; do
         if [ "$dep" = "clang-wasm32" ]; then
-            echo "  - ambient clang with wasm32 target support"
+            echo "  - clang with wasm32 target support"
+        elif [ "$dep" = "llvm-ar" ]; then
+            echo "  - llvm-ar (LLVM archiver for the wasm32 build)"
         else
             echo "  - $dep"
         fi
@@ -257,21 +275,18 @@ print_missing() {
 install_dep() {
     dep="$1"
     case "$dep" in
-    git|curl|pkg-config|make|clang|clang-wasm32)
+    git|curl|pkg-config|make|clang|clang-wasm32|llvm-ar)
         case "$PM" in
         brew)
             if [ "$dep" = "pkg-config" ]; then
                 pm_install pkg-config
             elif [ "$dep" = "make" ]; then
                 pm_install make
-            elif [ "$dep" = "clang" ]; then
-                pm_install llvm
-            elif [ "$dep" = "clang-wasm32" ]; then
-                pm_install llvm
-                echo "Homebrew LLVM is keg-only; configure your shell so"
-                echo "  $(brew --prefix llvm)/bin"
-                echo "precedes the current clang on PATH, then start a new shell."
-                return 1
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ] || [ "$dep" = "llvm-ar" ]; then
+                # Keg-only is fine: tools/wasm-toolchain.sh finds Homebrew LLVM.
+                if ! brew list llvm >/dev/null 2>&1; then
+                    pm_install llvm
+                fi
             else
                 pm_install "$dep"
             fi
@@ -281,7 +296,7 @@ install_dep() {
                 pm_install pkg-config
             elif [ "$dep" = "make" ]; then
                 pm_install build-essential
-            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ] || [ "$dep" = "llvm-ar" ]; then
                 pm_install clang build-essential
             else
                 pm_install "$dep"
@@ -292,7 +307,7 @@ install_dep() {
                 pm_install pkgconf-pkg-config
             elif [ "$dep" = "make" ]; then
                 pm_install make gcc gcc-c++
-            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ] || [ "$dep" = "llvm-ar" ]; then
                 pm_install clang gcc gcc-c++
             else
                 pm_install "$dep"
@@ -303,7 +318,7 @@ install_dep() {
                 pm_install pkgconf
             elif [ "$dep" = "make" ]; then
                 pm_install base-devel
-            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ]; then
+            elif [ "$dep" = "clang" ] || [ "$dep" = "clang-wasm32" ] || [ "$dep" = "llvm-ar" ]; then
                 pm_install clang base-devel
             else
                 pm_install "$dep"
