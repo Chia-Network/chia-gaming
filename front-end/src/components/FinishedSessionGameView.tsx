@@ -1,6 +1,8 @@
 import React, { Component, Suspense } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
+import { CardDeckFooter } from './CardDeckFooter';
+import { useCardDeckPreference } from '../hooks/useCardDeckPreference';
 import type { FrozenGameMountOptions } from '../lib/gameMountRegistry';
 import type { SessionModel } from '../lib/session/model';
 import { selectFinishedSessionDisplay } from '../lib/session/finishedSessionDisplay';
@@ -10,6 +12,8 @@ export interface FinishedSessionGameViewProps {
   model: SessionModel;
   myName?: string;
   opponentName?: string;
+  cardDecks: Readonly<Record<string, string>>;
+  onChooseCardDeck: (gameType: string, deck: string) => void;
 }
 
 function FinishedSessionFallback({
@@ -109,9 +113,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   model,
   myName,
   opponentName,
+  cardDecks,
+  onChooseCardDeck,
 }) => {
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
+  const cardDeck = useCardDeckPreference(cardDecks, handState?.gameType ?? '', onChooseCardDeck);
 
   if (!display.hasSavedHand || !handState) {
     return <FinishedSessionFallback label={display.terminalLabel} reason="unavailable" />;
@@ -120,7 +127,10 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;
 
   return (
-    <div className="relative h-full w-full min-h-0" data-testid="finished-session-game-view">
+    <div
+      className="relative flex h-full w-full min-h-0 flex-col"
+      data-testid="finished-session-game-view"
+    >
       <FinishedSessionErrorBoundary fallbackLabel={display.terminalLabel} resetKey={resetKey}>
         <Suspense
           fallback={
@@ -137,10 +147,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
             options={{
               myName,
               opponentName,
+              cardDeck: cardDeck.value,
             }}
           />
         </Suspense>
       </FinishedSessionErrorBoundary>
+      <CardDeckFooter gameType={handState.gameType} preference={cardDeck} />
     </div>
   );
 };

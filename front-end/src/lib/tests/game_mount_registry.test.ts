@@ -144,4 +144,16 @@ describe('game mount registry', () => {
     expect(mount.props.view.frozen).toBe(true);
     expect(mount.props.view).not.toHaveProperty('port');
   });
+
+  it('keeps the chosen card deck in live and frozen mounts', () => {
+    const model = modelFor('calpoker');
+    const cardDeck = 'pixel';
+    expect(renderFrozenGameMount(model, { cardDeck }).props.view.cardDeck).toBe(cardDeck);
+    const session = {
+      handKey: 7,
+      handSource: { frozen: true, hand: renderFrozenGameMount(model, {}).props.view.hand },
+      gameSpecificView: { gameType: 'calpoker' },
+    } as unknown as UseGameSessionResult;
+    expect(renderLiveGameMount(session, {}, cardDeck).props.view.cardDeck).toBe(cardDeck);
+  });
 });

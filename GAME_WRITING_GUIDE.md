@@ -641,7 +641,10 @@ The game also owns its form controls, amount-unit choices, formatting, and
 validation copy. Amounts cross the package boundary as absolute mojo `bigint`
 values. There is deliberately no shared game UI component or currency-formatting
 service: reference games may duplicate small controls so their presentation
-implementations remain independent.
+implementations remain independent. A package can list `cardDecks` in its
+registration; the host then shows a deck picker, with each deck's credit, in the
+page footer, remembers the choice for that game, and passes it as
+`view.cardDeck`. Each game owns its decks and how it draws them.
 
 Implement the package registration in `handProposal.ts`. The complete
 registration contract is:
@@ -649,6 +652,7 @@ registration contract is:
 ```ts
 interface GamePackageRegistration<TState, THand extends GameHand<TState>, TParams> {
   readonly displayName: string;
+  readonly cardDecks?: readonly [CardDeck, ...CardDeck[]];
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;

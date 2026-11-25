@@ -1112,6 +1112,8 @@ it('freezes both role-aware Krunk timeout boards after queued terminal reduction
   expect(frozen.props).not.toHaveProperty('gameObject');
   const markup = renderToStaticMarkup(
     React.createElement(FinishedSessionGameView, {
+      cardDecks: {},
+      onChooseCardDeck: jest.fn(),
       model: terminal.model,
       myName: 'Alice',
       opponentName: 'Bob',

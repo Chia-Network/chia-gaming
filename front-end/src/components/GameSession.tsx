@@ -10,6 +10,7 @@ import {
   type RefObject,
 } from 'react';
 import type { TerminalSessionPresentation } from '../hooks/sessionView';
+import { useCardDeckPreference } from '../hooks/useCardDeckPreference';
 import { useCopyToClipboard } from '../hooks/useCopyToClipboard';
 import { QueuedNotification, useGameSession } from '../hooks/useGameSession';
 import { renderLiveGameMount } from '../lib/gameMountRegistry';
@@ -26,6 +27,7 @@ import { SessionTransitionSurface } from './SessionTransitionSurface';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Button } from './ui/button';
+import { CardDeckFooter } from './CardDeckFooter';
 import {
   browserErrorReport,
   markClientErrorReported,
@@ -538,6 +540,8 @@ export interface GameSessionProps {
   suppressPhaseReporting?: boolean;
   terminalPresentation?: TerminalSessionPresentation | null;
   showTransitionSurface?: boolean;
+  cardDecks: Readonly<Record<string, string>>;
+  onChooseCardDeck: (gameType: string, deck: string) => void;
 }
 const GameSession: React.FC<GameSessionProps> = ({
   params,
@@ -547,6 +551,8 @@ const GameSession: React.FC<GameSessionProps> = ({
   suppressPhaseReporting,
   terminalPresentation,
   showTransitionSurface = false,
+  cardDecks,
+  onChooseCardDeck,
 }) => {
   const session = useGameSession(
     params,
@@ -554,6 +560,11 @@ const GameSession: React.FC<GameSessionProps> = ({
     appendGameLog,
     terminalPresentation,
     presentation,
+  );
+  const cardDeck = useCardDeckPreference(
+    cardDecks,
+    session.gameSpecificView.gameType,
+    onChooseCardDeck,
   );
   const channelOverlayBoundsRef = useRef<HTMLDivElement | null>(null);
   const gameAreaRef = useRef<HTMLDivElement | null>(null);
@@ -637,10 +648,14 @@ const GameSession: React.FC<GameSessionProps> = ({
                   </div>
                 }
               >
-                {renderLiveGameMount(session, {
-                  myName: terminalPresentation?.myName ?? params.myAlias,
-                  opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
-                })}
+                {renderLiveGameMount(
+                  session,
+                  {
+                    myName: terminalPresentation?.myName ?? params.myAlias,
+                    opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
+                  },
+                  cardDeck.value,
+                )}
               </Suspense>
             </GameAreaErrorBoundary>
           )}
@@ -683,6 +698,14 @@ const GameSession: React.FC<GameSessionProps> = ({
             </>
           )}
       </div>
+
+      {showGameInterface && (
+        <CardDeckFooter
+          gameType={gameSpecificView.gameType}
+          preference={cardDeck}
+          inert={gameInterfaceIsInertForBetweenHandDialog}
+        />
+      )}
 
       {/*
         Keep the setup challenge through funding and confirmation. Its state

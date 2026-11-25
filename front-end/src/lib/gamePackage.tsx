@@ -1,5 +1,6 @@
 import { createElement, type ComponentType, type ReactElement, type Ref } from 'react';
 import type {
+  CardDeck,
   GameHand,
   GameHandInitialization,
   GameHandState,
@@ -17,6 +18,7 @@ export type RegisteredGameProposalFormHandle = GameProposalFormHandle<unknown>;
 
 export interface RegisteredGamePackage {
   readonly displayName: string;
+  readonly cardDecks?: readonly [CardDeck, ...CardDeck[]];
   createHand(init: GameHandInitialization): RegisteredGameHand;
   restoreHand(savedState: unknown): RegisteredGameHand;
   describeHandProposal(handProposal: HandProposal): string;

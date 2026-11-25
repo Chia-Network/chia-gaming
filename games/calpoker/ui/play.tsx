@@ -98,6 +98,7 @@ export function CalpokerLiveMount(props: CalpokerLiveMountProps) {
       terminalOutcome={hand.terminalOutcome}
       frozen={view.frozen}
       error={null}
+      deckId={view.cardDeck}
     />
   );
 }

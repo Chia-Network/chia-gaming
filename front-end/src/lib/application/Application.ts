@@ -215,6 +215,7 @@ export type ApplicationIntent =
   | { type: 'fee'; fee: bigint }
   | { type: 'fee-unit'; unit: 'mojo' | 'xch' }
   | { type: 'theme'; theme: 'light' | 'dark' }
+  | { type: 'card-deck'; gameType: string; deck: string }
   | { type: 'session-action'; action: GameDashboardActionKind }
   | { type: 'history'; line: string };
 export type Application = ReturnType<typeof createApplication>;
@@ -2602,6 +2603,7 @@ export function createApplication() {
       ...sessionState,
       alias: storageRepository.query('alias'),
       theme: storageRepository.query('theme'),
+      cardDecks: storageRepository.query('cardDecks'),
       lastHubUrl: storageRepository.query('lastHubUrl'),
       keepSession: shouldMountGameSession(
         !!sessions.state.sessionConfig && !!sessions.state.peerConn,
@@ -2713,6 +2715,13 @@ export function createApplication() {
         return;
       case 'theme':
         storageRepository.updatePreference({ key: 'theme', value: intent.theme });
+        publish();
+        return;
+      case 'card-deck':
+        storageRepository.updatePreference({
+          key: 'cardDecks',
+          value: { ...storageRepository.query('cardDecks'), [intent.gameType]: intent.deck },
+        });
         publish();
         return;
       case 'session-action':
