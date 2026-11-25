@@ -129,6 +129,13 @@ export interface HandProposalFormProps<TParams> {
 export interface LiveGamePort {
   isChannelReady(): boolean;
   dispatch(intent: GameIntent): GameActionRejection | void;
+  /**
+   * Best-effort data for the opponent's screen, at most 64 bytes. It is not
+   * signed, saved or retried, so it must never affect play. The opponent and
+   * the hub can read it: never send anything secret.
+   */
+  sendEphemeral?(body: Uint8Array): void;
+  onEphemeral?(listener: (body: Uint8Array) => void): () => void;
 }
 
 export interface GameMountNames {

@@ -22,6 +22,7 @@ import {
   type KrunkProps,
 } from './Krunk';
 import Krunk from './Krunk';
+import { decodeKrunkLiveDraft, encodeKrunkLiveDraft, krunkLiveRows } from './liveDraft';
 import {
   initialKrunkGameState,
   restoreKrunkHand,
@@ -54,6 +55,101 @@ function frozenView(
 ): GameMountView<KrunkHand> {
   return { frozen: true, hand: testHand(persisted) };
 }
+
+describe('Krunk live drafts', () => {
+  it('round-trips and rejects malformed peer bytes', () => {
+    const draft = { row: 2, letters: 'CRANESL' };
+    expect(decodeKrunkLiveDraft(encodeKrunkLiveDraft(draft))).toEqual(draft);
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    for (const text of ['', '1', '6:A', '0:a', '0:A1', '4:ABCDEF', `0:${'A'.repeat(26)}`, '<b>']) {
+      expect(decodeKrunkLiveDraft(bytes(text))).toBeNull();
+    }
+    expect(decodeKrunkLiveDraft(Uint8Array.of(0xff, 0xfe))).toBeNull();
+  });
+
+  it('lines the letters up with the board when drafts and moves arrive out of step', () => {
+    expect(krunkLiveRows(null, 0)).toEqual([]);
+    expect(krunkLiveRows({ row: 1, letters: 'CRANESL' }, 1)).toEqual(['CRANE', 'SL']);
+    // The move landed before the draft caught up.
+    expect(krunkLiveRows({ row: 1, letters: 'CRANESL' }, 2)).toEqual(['SL']);
+    // The draft is ahead of the move.
+    expect(krunkLiveRows({ row: 2, letters: 'SL' }, 1)).toEqual([]);
+  });
+
+  it('shares guesses but never the secret word, and shows what the opponent types', () => {
+    jest.useFakeTimers();
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { addEventListener: jest.fn(), removeEventListener: jest.fn() },
+    });
+    const sent: string[] = [];
+    let receive!: (body: Uint8Array) => void;
+    const mount = (secretWord: string | null) =>
+      create(
+        React.createElement(Krunk, {
+          view: liveView(
+            krunkStateCodec.encode({
+              perPlayerStake: 100n,
+              members: [
+                {
+                  ...initialKrunkGameState('alice'),
+                  ...(secretWord ? { secretWord, handler: KrunkHandler.AliceWaiting, myTurn: false } : {}),
+                },
+                initialKrunkGameState('bob'),
+              ],
+            }),
+            {
+              isChannelReady: () => true,
+              dispatch: jest.fn(),
+              sendEphemeral: (body) => sent.push(new TextDecoder().decode(body)),
+              onEphemeral: (listener) => {
+                receive = listener;
+                return () => {};
+              },
+            },
+          ),
+          onGameLog: () => {},
+        }),
+      );
+    const type = (renderer: ReactTestRenderer, word: string) => {
+      for (const letter of word) {
+        const key = renderer.root
+          .findAllByType('button')
+          .find((button) => button.props.children === letter);
+        act(() => key!.props.onClick());
+      }
+      act(() => jest.advanceTimersByTime(1000));
+    };
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = mount(null);
+    });
+    type(renderer, 'CRANE');
+    expect(sent).toEqual([]);
+    act(() => renderer.unmount());
+
+    act(() => {
+      renderer = mount('CRANE');
+    });
+    type(renderer, 'SLAT');
+    expect(sent.at(-1)).toBe('0:SLAT');
+    // Throttled: one frame right away, then one for the rest.
+    expect(sent.length).toBeLessThanOrEqual(2);
+
+    act(() => receive(encodeKrunkLiveDraft({ row: 0, letters: 'QZ' })));
+    const cells = renderer.root
+      .findAll((node) => typeof node.type === 'string' && typeof node.props.children === 'string')
+      .filter((node) => String(node.props.className).includes('border-dashed'))
+      .map((node) => node.props.children)
+      .filter((letter) => letter === 'Q' || letter === 'Z');
+    expect(cells).toEqual(['Q', 'Z']);
+    act(() => renderer.unmount());
+    jest.useRealTimers();
+    if (windowDescriptor) Object.defineProperty(globalThis, 'window', windowDescriptor);
+    else delete (globalThis as { window?: unknown }).window;
+  });
+});
 
 describe('Krunk hand restoration', () => {
   const savedState = {

@@ -32,6 +32,8 @@ export interface ReliableCommitCoordinator {
 export const RELIABLE_DATA_HEADER_BYTES = 21;
 export const RELIABLE_ACK_HEADER_BYTES = 21;
 export const RELIABLE_KEEPALIVE_BYTES = 17;
+export const EPHEMERAL_HEADER_BYTES = 17;
+export const MAX_EPHEMERAL_BODY_BYTES = 64;
 
 export type PeerAppMessage =
   | {
@@ -55,7 +57,8 @@ export interface ReliableTransportState {
 export type ReliableFrame =
   | { tag: 0x01; sessionId: string; msgno: number; data: Uint8Array }
   | { tag: 0x02; sessionId: string; msgno: number }
-  | { tag: 0x03; sessionId: string };
+  | { tag: 0x03; sessionId: string }
+  | { tag: 0x04; sessionId: string; data: Uint8Array };
 
 export interface ReliableMessageConsumer {
   isReady: () => boolean;
@@ -338,6 +341,15 @@ export function decodeReliableFrame(payload: Uint8Array): ReliableFrame | null {
     if (payload.byteLength !== RELIABLE_KEEPALIVE_BYTES) return null;
     return { tag, sessionId: sessionIdFromWire(payload.subarray(1, 17)) };
   }
+  if (tag === 0x04) {
+    const size = payload.byteLength - EPHEMERAL_HEADER_BYTES;
+    if (size < 0 || size > MAX_EPHEMERAL_BODY_BYTES) return null;
+    return {
+      tag,
+      sessionId: sessionIdFromWire(payload.subarray(1, 17)),
+      data: payload.slice(EPHEMERAL_HEADER_BYTES),
+    };
+  }
   return null;
 }
 
@@ -469,6 +481,16 @@ export class PeerSession implements PeerConnectionResult {
     return sent;
   }
 
+  /** Best-effort presentation data: unordered with moves, never retried or saved. */
+  sendEphemeral(body: Uint8Array): boolean {
+    if (this.destroyed || body.byteLength > MAX_EPHEMERAL_BODY_BYTES) return false;
+    const frame = new Uint8Array(EPHEMERAL_HEADER_BYTES + body.byteLength);
+    frame[0] = 0x04;
+    frame.set(sessionIdToWire(this.sessionId), 1);
+    frame.set(body, EPHEMERAL_HEADER_BYTES);
+    return this.hubConn.sendToPeer(this.peerId, frame);
+  }
+
   // --- Liveness ---
 
   get liveness(): PeerLiveness {
@@ -532,9 +554,9 @@ export class PeerSession implements PeerConnectionResult {
       return false;
     }
     if (frame.sessionId !== this.sessionId) {
-      if (frame.tag === 0x02 || frame.tag === 0x03) {
+      if (frame.tag !== 0x01) {
         log(
-          `[PeerSession] ignore ${frame.tag === 0x02 ? 'ack' : 'keepalive'} for unknown session=${frame.sessionId} from=${fromId}`,
+          `[PeerSession] ignore ${frame.tag === 0x02 ? 'ack' : frame.tag === 0x03 ? 'keepalive' : 'ephemeral frame'} for unknown session=${frame.sessionId} from=${fromId}`,
         );
         return false;
       }
@@ -543,7 +565,6 @@ export class PeerSession implements PeerConnectionResult {
       );
       return false;
     }
-    const tag = frame.tag;
     if (frame.tag === 0x01) {
       const { msgno, data: msg } = frame;
       if (msg.byteLength > this.receivePolicy.maxPeerBodyBytes) {
@@ -567,9 +588,10 @@ export class PeerSession implements PeerConnectionResult {
       this.reliableTransport.receiveKeepalive();
       return true;
     }
-    log(
-      `[PeerSession] reject peer frame tag=0x${tag.toString(16)} len=${payload.length} from=${fromId}`,
-    );
+    if (frame.tag === 0x04) {
+      this.notePeerActivity();
+      return true;
+    }
     return false;
   }
 

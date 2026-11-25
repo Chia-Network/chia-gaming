@@ -11,6 +11,7 @@ import {
 } from './useKrunkHand';
 import type { GameMountView } from '../../host';
 import { formatKrunkAmount } from './formatting';
+import { krunkLiveRows, useKrunkLiveDraft } from './liveDraft';
 import type { KrunkHand, KrunkHandState } from './serialize';
 
 export interface KrunkProps {
@@ -552,6 +553,14 @@ const Krunk: React.FC<KrunkProps> = ({
     submitNextQueuedBobGuess,
   ]);
 
+  const opponentDraft = useKrunkLiveDraft(view, {
+    row: bobHand.gameState.guesses.length,
+    letters: bobInHand ? displayQueue.join('') + guessDraft : '',
+  });
+  const opponentRows = aliceInHand
+    ? krunkLiveRows(opponentDraft, aliceHand.gameState.guesses.length)
+    : [];
+
   const pickingWord = aliceInteractive && !wordCommitted;
   const showWordDraft = aliceInHand && !wordCommitted;
   // Prefer pick while the secret word is still needed; otherwise guess
@@ -754,7 +763,14 @@ const Krunk: React.FC<KrunkProps> = ({
           <p className="text-sm font-semibold text-canvas-text-contrast">
             {themLabel}&apos;s guesses
           </p>
-          <Grid guesses={aliceHand.gameState.guesses} />
+          <Grid
+            guesses={krunkGuessesWithQueued(
+              aliceHand.gameState.guesses,
+              opponentRows.slice(0, -1),
+            )}
+            draft={opponentRows.at(-1)}
+            showDraftRow={opponentRows.length > 0}
+          />
 
           {showWordDraft ? (
             <div className="flex gap-1 mt-2">

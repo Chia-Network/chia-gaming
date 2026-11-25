@@ -337,6 +337,9 @@ export interface PeerConnectionResult {
   sendAck: (ackMsgno: number) => boolean;
   /** Returns false when the hub WS is not OPEN. */
   sendKeepalive: () => boolean;
+  /** Best-effort presentation frames; see PEER_PROTOCOL.md section 5.7. */
+  sendEphemeral?: (body: Uint8Array) => boolean;
+  onEphemeral?: (listener: (body: Uint8Array) => void) => () => void;
 
   receivePolicy?: import('../lib/session/receivePolicy').ReadonlySessionReceivePolicy;
 }

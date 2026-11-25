@@ -87,6 +87,35 @@ describe('PeerSession', () => {
     });
   });
 
+  describe('ephemeral frames', () => {
+    const frame = (body: number[], session = 0) =>
+      Uint8Array.from([
+        0x04,
+        ...Array.from({ length: 16 }, (_, index) => index + session),
+        ...body,
+      ]);
+
+    it('sends a session-bound frame and accepts one from the peer', () => {
+      const conn = mockHubConnection();
+      const ps = new PeerSession('peer1', 'sess1', conn);
+      expect(ps.sendEphemeral(Uint8Array.of(1, 2))).toBe(true);
+      expect(conn.sentPeerMessages).toEqual([{ targetId: 'peer1', payload: frame([1, 2]) }]);
+
+      expect(ps.deliverRawPeerMessage('peer1', frame([7]))).toBe(true);
+      expect(ps.liveness).toBe('connected');
+    });
+
+    it('ignores other peers, other sessions and oversized bodies without failing the peer', () => {
+      const ps = new PeerSession('peer1', 'sess1', mockHubConnection());
+      expect(ps.deliverRawPeerMessage('peer2', frame([1]))).toBe(false);
+      expect(ps.deliverRawPeerMessage('peer1', frame([1], 1))).toBe(false);
+      expect(ps.deliverRawPeerMessage('peer1', frame(new Array(65).fill(1)))).toBe(false);
+      expect(ps.deliverRawPeerMessage('peer1', Uint8Array.of(0x04, 1))).toBe(false);
+      expect(ps.liveness).toBeNull();
+      expect(ps.sendEphemeral(new Uint8Array(65))).toBe(false);
+    });
+  });
+
   describe('liveness', () => {
     it('notePeerActivity sets connected and records timestamp', () => {
       const conn = mockHubConnection();
