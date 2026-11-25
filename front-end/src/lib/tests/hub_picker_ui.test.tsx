@@ -14,6 +14,7 @@ function renderPicker(defaultHubUrl?: string) {
   const root = renderer!.root;
   const input = () => root.find((n) => n.type === 'input' && n.props.role === 'combobox');
   return {
+    root,
     onConnect,
     input,
     type: (value: string) => {
@@ -133,5 +134,50 @@ describe('hub picker', () => {
     });
 
     expect(picker.onConnect).toHaveBeenCalledWith('https://my-hub.test');
+  });
+
+  describe('development options', () => {
+    const devLink = (picker: ReturnType<typeof renderPicker>) =>
+      picker.root.findAll(
+        (n) =>
+          n.type === 'button' &&
+          n.findAll((c) => c.children.includes('dev: connect to local hub (localhost:3003)'))
+            .length > 0,
+      );
+
+    afterEach(() => {
+      Reflect.deleteProperty(globalThis, 'window');
+    });
+
+    it('offers the local hub and keeps a loopback last hub in the web build', () => {
+      const picker = renderPicker('http://localhost:3003');
+
+      expect(picker.input().props.value).toBe('http://localhost:3003');
+      expect(picker.suggestions()).toContain('http://localhost:3003');
+      expect(devLink(picker)).toHaveLength(1);
+    });
+
+    it('hides the local hub shortcut and a loopback last hub in the desktop app', () => {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: { __chiaDistribution: 'electron' },
+      });
+      const picker = renderPicker('http://localhost:3003');
+
+      expect(picker.input().props.value).toBe('https://hub.nokitlan.com');
+      expect(picker.suggestions()).toEqual(['https://hub.nokitlan.com']);
+      expect(devLink(picker)).toHaveLength(0);
+    });
+
+    it('still prefills a remote last hub in the desktop app', () => {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: { __chiaDistribution: 'electron' },
+      });
+      const picker = renderPicker('https://my-hub.test');
+
+      expect(picker.input().props.value).toBe('https://my-hub.test');
+      expect(picker.suggestions()).toEqual(['https://my-hub.test', 'https://hub.nokitlan.com']);
+    });
   });
 });
