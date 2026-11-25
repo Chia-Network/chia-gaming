@@ -676,8 +676,7 @@ const GameSession: React.FC<GameSessionProps> = ({
                     className="absolute right-2"
                     onClick={session.chooseDoNotUseCurrentProposal}
                   >
-                    <span className="text-base leading-none">&times;</span>
-                    Close
+                    Switch game
                   </Button>
                 </div>
               )}
