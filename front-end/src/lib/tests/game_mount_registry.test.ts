@@ -147,7 +147,7 @@ describe('game mount registry', () => {
 
   it('keeps the chosen card deck in live and frozen mounts', () => {
     const model = modelFor('calpoker');
-    const cardDeck = { value: 'pixel', set: jest.fn() };
+    const cardDeck = 'pixel';
     expect(renderFrozenGameMount(model, { cardDeck }).props.view.cardDeck).toBe(cardDeck);
     const session = {
       handKey: 7,

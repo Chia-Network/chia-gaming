@@ -25,6 +25,7 @@ const registration: GamePackageRegistration<
   CalpokerFactoryParameters
 > = {
   displayName: 'California Poker',
+  usesCardDeck: true,
   createHand: createCalpokerHand,
   restoreHand: restoreCalpokerHand,
   proposalParameters: calpokerProposalParameters,

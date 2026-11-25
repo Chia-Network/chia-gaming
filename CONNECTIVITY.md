@@ -511,8 +511,8 @@ The hub does not create a session. It can only advise and relay:
   connectivity restore for the whole root rather than selecting a predecessor
   path; see the canonical
   [unreleased app-owned format policy](OVERVIEW.md#unreleased-app-owned-formats).
-  Preferences are aggregate-owned; localStorage ownership/reset and resume
-  markers are only UX hints. Ordinary I/O failure retains the latest in-memory
+  Preferences are aggregate-owned, except the card deck, which is kept in
+  localStorage; localStorage ownership/reset and resume markers are only UX hints. Ordinary I/O failure retains the latest in-memory
   root and does not gate effects; typed authority loss retires it and
   suppresses pending effects. Diagnostic history
   retains newest complete entries within 256 KiB total UTF-8 text, with the

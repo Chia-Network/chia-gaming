@@ -22,6 +22,7 @@ const registration: GamePackageRegistration<
   SpacepokerFactoryParameters
 > = {
   displayName: 'Space Poker',
+  usesCardDeck: true,
   createHand: createSpacepokerHand,
   restoreHand: restoreSpacepokerHand,
   proposalParameters: spacepokerProposalParameters,

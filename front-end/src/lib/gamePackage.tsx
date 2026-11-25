@@ -17,6 +17,7 @@ export type RegisteredGameProposalFormHandle = GameProposalFormHandle<unknown>;
 
 export interface RegisteredGamePackage {
   readonly displayName: string;
+  readonly usesCardDeck?: boolean;
   createHand(init: GameHandInitialization): RegisteredGameHand;
   restoreHand(savedState: unknown): RegisteredGameHand;
   describeHandProposal(handProposal: HandProposal): string;

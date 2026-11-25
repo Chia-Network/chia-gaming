@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { rankArtUrl, useCardDeck } from '../../host/cards/decks';
 import { spacePokerRankLabel } from './handPresentation';
 import type { HoleCardsBannerKind } from './statusPresentation';
 import type { SpHandEntry, SpOutcome } from './useSpacepokerHand';
@@ -7,13 +8,11 @@ const SEL_BAR = 'w-full h-1 rounded-full';
 const SEL_VIS = `${SEL_BAR} bg-canvas-text-contrast`;
 const SEL_HIDDEN = `${SEL_BAR} bg-transparent`;
 
-function SpacePokerCard({
-  rankLabelText,
-  faceDown,
-}: {
-  rankLabelText?: string;
-  faceDown?: boolean;
-}) {
+function SpacePokerCard({ rank, faceDown }: { rank?: bigint; faceDown?: boolean }) {
+  const deck = useCardDeck();
+  const rankLabelText = rank === undefined ? '' : spacePokerRankLabel(rank);
+  const url = rank === undefined ? null : rankArtUrl(deck, Number(rank));
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const base = 'inline-flex items-center justify-center rounded border font-bold select-none';
   const size = 'w-10 h-14 sm:w-12 sm:h-16';
   if (faceDown) {
@@ -25,12 +24,24 @@ function SpacePokerCard({
       </div>
     );
   }
+  if (url !== null && url !== failedUrl) {
+    return (
+      <img
+        className={`${size} rounded bg-white border border-canvas-line select-none`}
+        src={url}
+        alt={rankLabelText}
+        draggable={false}
+        style={deck.art?.pixelated ? { imageRendering: 'pixelated' } : undefined}
+        onError={() => setFailedUrl(url)}
+      />
+    );
+  }
   return (
     <div
       className={`${base} ${size} bg-canvas-bg border-2 border-canvas-text-contrast text-canvas-text-contrast`}
     >
       <svg
-        aria-label={rankLabelText ?? ''}
+        aria-label={rankLabelText}
         className="h-[90%] w-[90%] overflow-visible"
         role="img"
         viewBox="0 0 100 100"
@@ -48,7 +59,7 @@ function SpacePokerCard({
           x="50"
           y="50"
         >
-          {rankLabelText ?? ''}
+          {rankLabelText}
         </text>
       </svg>
     </div>
@@ -243,7 +254,7 @@ export function SpacePokerTable({
                 key={index}
                 topSel={showPrivateShowdown && outcome?.opponentHandCards?.includes(card)}
               >
-                <SpacePokerCard rankLabelText={spacePokerRankLabel(card)} />
+                <SpacePokerCard rank={card} />
               </CardColumn>
             ))
           ) : (
@@ -277,7 +288,7 @@ export function SpacePokerTable({
                   topSel={showPrivateShowdown && outcome?.opponentHandCards?.includes(card)}
                   bottomSel={showPrivateShowdown && outcome?.playerHandCards?.includes(card)}
                 >
-                  <SpacePokerCard rankLabelText={spacePokerRankLabel(card)} />
+                  <SpacePokerCard rank={card} />
                 </CardColumn>
               );
             }
@@ -305,7 +316,7 @@ export function SpacePokerTable({
                 key={index}
                 bottomSel={showPrivateShowdown && outcome?.playerHandCards?.includes(card)}
               >
-                <SpacePokerCard rankLabelText={spacePokerRankLabel(card)} />
+                <SpacePokerCard rank={card} />
               </CardColumn>
             ))
           ) : (

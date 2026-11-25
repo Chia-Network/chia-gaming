@@ -1,6 +1,7 @@
 import React, { Component, Suspense } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
+import { CardDeckFooter } from './CardDeckFooter';
 import { useCardDeckPreference } from '../hooks/useCardDeckPreference';
 import type { FrozenGameMountOptions } from '../lib/gameMountRegistry';
 import type { SessionModel } from '../lib/session/model';
@@ -99,8 +100,7 @@ function FrozenGameMount({
   model: SessionModel;
   options: FrozenGameMountOptions;
 }) {
-  const cardDeck = useCardDeckPreference();
-  return renderFrozenGameMount(model, { ...options, cardDeck });
+  return renderFrozenGameMount(model, options);
 }
 
 /**
@@ -112,6 +112,7 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   myName,
   opponentName,
 }) => {
+  const cardDeck = useCardDeckPreference();
   const display = selectFinishedSessionDisplay(model);
   const handState = model.game.handState;
 
@@ -122,7 +123,10 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
   const resetKey = `${handState.gameType}:${model.game.lastDisplayedId ?? ''}`;
 
   return (
-    <div className="relative h-full w-full min-h-0" data-testid="finished-session-game-view">
+    <div
+      className="relative flex h-full w-full min-h-0 flex-col"
+      data-testid="finished-session-game-view"
+    >
       <FinishedSessionErrorBoundary fallbackLabel={display.terminalLabel} resetKey={resetKey}>
         <Suspense
           fallback={
@@ -139,10 +143,12 @@ const FinishedSessionGameView: React.FC<FinishedSessionGameViewProps> = ({
             options={{
               myName,
               opponentName,
+              cardDeck: cardDeck.value,
             }}
           />
         </Suspense>
       </FinishedSessionErrorBoundary>
+      <CardDeckFooter gameType={handState.gameType} preference={cardDeck} />
     </div>
   );
 };

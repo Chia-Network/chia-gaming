@@ -27,6 +27,7 @@ import { SessionTransitionSurface } from './SessionTransitionSurface';
 
 import { motion, useMotionValue, useDragControls } from 'framer-motion';
 import { Button } from './ui/button';
+import { CardDeckFooter } from './CardDeckFooter';
 import {
   browserErrorReport,
   markClientErrorReported,
@@ -645,7 +646,7 @@ const GameSession: React.FC<GameSessionProps> = ({
                     myName: terminalPresentation?.myName ?? params.myAlias,
                     opponentName: terminalPresentation?.opponentName ?? params.opponentAlias,
                   },
-                  cardDeck,
+                  cardDeck.value,
                 )}
               </Suspense>
             </GameAreaErrorBoundary>
@@ -690,6 +691,10 @@ const GameSession: React.FC<GameSessionProps> = ({
             </>
           )}
       </div>
+
+      {showGameInterface && (
+        <CardDeckFooter gameType={gameSpecificView.gameType} preference={cardDeck} />
+      )}
 
       {/*
         Keep the setup challenge through funding and confirmation. Its state

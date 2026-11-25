@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { CardContentProps } from '../../types';
 import { RANK_SYMBOLS } from '../constants/constants';
-import { cardArtUrl, useCardDeck } from '../decks';
+import { cardArtUrl, useCardDeck } from '../../../../host/cards/decks';
 
 const RANK_NAMES: Record<number, string> = { 11: 'Jack', 12: 'Queen', 13: 'King', 14: 'Ace' };
 const SUIT_NAMES: Record<string, string> = {

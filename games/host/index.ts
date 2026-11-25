@@ -136,15 +136,10 @@ export interface GameMountNames {
   opponentName?: string;
 }
 
-/** A player's saved choice that only changes how a game looks. */
-export interface GamePreference {
-  readonly value: string | undefined;
-  set(value: string): void;
-}
-
 interface GameMountViewBase<THand extends GameHandState<unknown>> extends GameMountNames {
   hand: THand;
-  cardDeck?: GamePreference;
+  /** The player's card deck, for packages with `usesCardDeck`. See `cards/decks.ts`. */
+  cardDeck?: string;
 }
 
 export type GameMountView<THand extends GameHandState<unknown>> =
@@ -174,6 +169,8 @@ export interface GamePackageRegistration<
   TParams = unknown,
 > {
   readonly displayName: string;
+  /** Shows the host's card deck picker below this game. */
+  readonly usesCardDeck?: boolean;
   createHand(init: GameHandInitialization): THand;
   restoreHand(savedState: unknown): THand;
   readonly proposalParameters: ProposalParameterCodec<TParams>;
