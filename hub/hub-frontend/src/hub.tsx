@@ -111,13 +111,13 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
     joinHub(trimmed);
   }
 
-  function commitEdit(value: string) {
+  function commitEdit() {
     // An invalid name keeps the editor open with the reason, instead of
     // showing a name the hub would reject.
-    const error = aliasError(value);
+    const error = aliasError(myAlias);
     setAliasErrorText(error);
     if (error) return;
-    const trimmed = value.trim();
+    const trimmed = myAlias.trim();
     setEditingAlias(false);
     setMyAlias(trimmed);
     setCommittedAlias(trimmed);
@@ -257,8 +257,21 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
 
       <div className="mb-4">
         {editingAlias ? (
-          <div className="flex flex-row gap-2 items-center">
+          <form
+            className="flex flex-row gap-2 items-center"
+            onSubmit={(event) => {
+              event.preventDefault();
+              commitEdit();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+                event.preventDefault();
+                cancelEdit();
+              }
+            }}
+          >
             <input
+              autoFocus
               aria-label="alias-input"
               className="px-3 py-2 rounded bg-canvas-bg text-canvas-text border border-canvas-border outline-none"
               placeholder="Enter new alias"
@@ -267,26 +280,23 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
                 setMyAlias(e.target.value);
                 setAliasErrorText(null);
               }}
-              onKeyDown={(e) => e.key === 'Enter' && commitEdit(e.currentTarget.value)}
-              onBlur={(e) => commitEdit(e.currentTarget.value)}
             />
             <button
-              onClick={() => commitEdit(myAlias)}
+              type="submit"
               aria-label="save-alias"
               className="px-4 py-2 rounded bg-primary-solid text-primary-on-primary hover:bg-primary-solid-hover font-medium"
             >
               Save
             </button>
             <button
+              type="button"
               aria-label="cancel-alias-edit"
-              // Keep the input's blur from saving the draft before cancelling.
-              onMouseDown={(e) => e.preventDefault()}
               onClick={cancelEdit}
               className="w-8 h-8 flex items-center justify-center text-primary-solid hover:text-primary-solid-hover"
             >
               <Cross className="w-5 h-5" />
             </button>
-          </div>
+          </form>
         ) : (
           <div className="flex flex-row items-center gap-2">
             <p className="text-canvas-text">
