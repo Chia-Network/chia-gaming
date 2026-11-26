@@ -1,5 +1,9 @@
 import type { GameRulesSection } from '../../host';
 
+/** The dictionary that `rust/mod.rs` compiles into the game. */
+const KRUNK_WORD_LIST_URL =
+  'https://github.com/Chia-Network/chia-gaming/blob/main/games/krunk/clsp/krunkwords.txt';
+
 export const krunkRules: readonly GameRulesSection[] = [
   {
     heading: 'Goal',
@@ -11,8 +15,11 @@ export const krunkRules: readonly GameRulesSection[] = [
     heading: 'How to play',
     ordered: true,
     items: [
-      'Each player picks a secret five-letter word from the dictionary.',
-      'Both players guess at the same time, with up to five guesses each. Guesses must be in the dictionary.',
+      {
+        text: 'Each player picks a secret five-letter word from the dictionary.',
+        link: { label: 'See the word list', url: KRUNK_WORD_LIST_URL },
+      },
+      'Both players guess at the same time, with up to five guesses each. Guesses must also be in the dictionary.',
       'After each guess, every letter is marked.',
     ],
   },

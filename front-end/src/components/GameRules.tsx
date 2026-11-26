@@ -23,9 +23,23 @@ export function GameRules({ gameType }: { gameType: CatalogGameType }) {
             <section key={heading} className="mt-3">
               <h3 className="font-semibold">{heading}</h3>
               <List className={`mt-1 space-y-1 pl-5 ${ordered ? 'list-decimal' : 'list-disc'}`}>
-                {items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
+                {items.map((item) =>
+                  typeof item === 'string' ? (
+                    <li key={item}>{item}</li>
+                  ) : (
+                    <li key={item.text}>
+                      {item.text}{' '}
+                      <a
+                        className="underline"
+                        href={item.link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {item.link.label}
+                      </a>
+                    </li>
+                  ),
+                )}
               </List>
             </section>
           );

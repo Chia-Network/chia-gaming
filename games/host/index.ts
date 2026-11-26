@@ -161,9 +161,14 @@ export interface GameMountRegistration<THand extends GameHandState<unknown>> {
   render(view: GameMountView<THand>): ReactElement;
 }
 
+/** A rule, optionally followed by a link, such as to a word list. */
+export type GameRulesItem =
+  | string
+  | { readonly text: string; readonly link: { readonly label: string; readonly url: string } };
+
 export interface GameRulesSection {
   readonly heading: string;
-  readonly items: readonly string[];
+  readonly items: readonly GameRulesItem[];
   /** Number the items, for steps and rankings. */
   readonly ordered?: boolean;
 }
