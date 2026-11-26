@@ -130,7 +130,7 @@ const SWEEP_INTERVAL_MS = 15_000;
 const HUB_UPDATE_INTERVAL_MS = 250;
 const PLAYER_ID_BYTES = 16;
 const SESSION_ID_BYTES = 16;
-const MAX_ALIAS_BYTES = 128;
+const MAX_ALIAS_BYTES = timeoutBounds.aliasBytes.max;
 const RECENT_CORRESPONDENT_TTL_MS = readPositiveIntegerEnv(
   'GAME_RECENT_CORRESPONDENT_TTL_MS',
   30 * 60_000,

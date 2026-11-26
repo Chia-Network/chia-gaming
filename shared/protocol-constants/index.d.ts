@@ -7,6 +7,10 @@ declare const bounds: {
     readonly min: number;
     readonly max: number;
   };
+  /** Display names are trimmed, then limited to this many UTF-8 bytes. */
+  readonly aliasBytes: {
+    readonly max: number;
+  };
 };
 
 export = bounds;

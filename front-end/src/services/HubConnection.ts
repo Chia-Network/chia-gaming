@@ -8,6 +8,7 @@ import {
   type BencodexKey,
   type BencodexValue,
 } from 'chia-gaming-bencodex';
+import protocolConstants from 'chia-gaming-protocol-constants';
 import type { BusyReason, HubPresence } from '../lib/hubPresence';
 import { log } from './log';
 
@@ -57,7 +58,7 @@ type HubOutboundEnvelope =
   | { type: 'keepalive' };
 
 const WIRE_ID_BYTES = 16;
-const MAX_ALIAS_BYTES = 128;
+const MAX_ALIAS_BYTES = protocolConstants.aliasBytes.max;
 
 function requireBytes(
   map: Map<BencodexKey, BencodexValue>,

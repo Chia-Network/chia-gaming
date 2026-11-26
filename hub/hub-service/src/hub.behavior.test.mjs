@@ -407,6 +407,36 @@ test('malformed hub messages are dropped and the hub still accepts a valid join'
   }
 });
 
+test('rejects a rename past the UTF-8 byte limit and keeps the previous alias', async () => {
+  const hub = await startHub();
+  try {
+    const sessionId = 'emoji-alias-limit';
+    const { ws } = await joinHub(hub.origin, sessionId, 'Alice');
+    // 33 four-byte emoji: 132 bytes, over the 128-byte limit.
+    const rejected = nextJson(ws, (msg) => msg.type === 'error');
+    sendJson(ws, { type: 'change_alias', newAlias: '😀'.repeat(33) });
+    assert.match((await rejected).error, /Alias must be 1-128 UTF-8 bytes/);
+
+    const aliasProbe = await openWs(hub.origin, '/ws/hub');
+    sendJson(aliasProbe, { type: 'get_alias', session_id: sessionKey(sessionId) });
+    const aliasResult = await nextJson(aliasProbe, (msg) => msg.type === 'alias_result');
+    assert.equal(aliasResult.alias, 'Alice');
+
+    // Exactly at the limit is accepted.
+    sendJson(ws, { type: 'change_alias', newAlias: '😀'.repeat(32) });
+    const update = await nextJson(
+      ws,
+      (msg) => msg.type === 'hub_update' && msg.players?.some((p) => p.alias === '😀'.repeat(32)),
+    );
+    assert.ok(update);
+
+    await closeWs(ws);
+    await closeWs(aliasProbe);
+  } finally {
+    await hub.stop();
+  }
+});
+
 test('hub-owned aliases update the game channel and cannot be set there', async () => {
   const hub = await startHub();
   try {
