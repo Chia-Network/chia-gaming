@@ -10,6 +10,7 @@ declare const bounds: {
   readonly fees: {
     readonly minMojosPerCost: number;
     readonly openingCostShare: number;
+    readonly feeSpendCostAllowance: number;
   };
 };
 

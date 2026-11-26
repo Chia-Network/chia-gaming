@@ -909,11 +909,8 @@ describe('transaction submission', () => {
   it('rewrites fee-rate rejections into an actionable message and passes others through', () => {
     const rewritten = rewriteFeeRateRejection('Err.INVALID_FEE_TOO_CLOSE_TO_ZERO');
     expect(rewritten).toMatch(/fee rate/i);
-    expect(rewritten).toContain('complete transaction');
-    expect(rewritten).toContain('100,000,000 mojos may not be enough');
+    expect(rewritten).toContain('Choose a higher fee rate');
     expect(rewritten).toContain('A zero fee does not bypass this check');
-    expect(rewritten).not.toMatch(/below 100,000,000|to at least/);
-    expect(rewritten).toMatch(/100,000,000/);
     // Original text is retained for diagnosis.
     expect(rewritten).toMatch(/INVALID_FEE_TOO_CLOSE_TO_ZERO/);
 

@@ -103,6 +103,7 @@ const PREFERENCE_FIELDS = new Set([
   'theme',
   'defaultFee',
   'feeUnit',
+  'feePerCost',
   'hubUrl',
   'lastHubUrl',
   'activeTab',
@@ -252,6 +253,10 @@ function parsePreferences(value: unknown): SessionPreferencesSave {
         ? undefined
         : requireBigint(fields.defaultFee, 'preferences.defaultFee'),
     feeUnit,
+    feePerCost:
+      fields.feePerCost === undefined
+        ? undefined
+        : requireBigint(fields.feePerCost, 'preferences.feePerCost'),
     hubUrl: optionalString(fields.hubUrl, 'preferences.hubUrl'),
     lastHubUrl: optionalString(fields.lastHubUrl, 'preferences.lastHubUrl'),
     activeTab: optionalString(fields.activeTab, 'preferences.activeTab'),

@@ -1727,13 +1727,15 @@ mod gaming_wasm {
             })
         }
 
-        pub fn configure_submission_fee(&self, amount: &str) -> Result<(), JsValue> {
-            let amount = amount
+        /// Sets the fee rate, in mojos per cost, for transactions emitted from
+        /// now on. Zero turns fees off.
+        pub fn configure_fee_per_cost(&self, fee_per_cost: &str) -> Result<(), JsValue> {
+            let fee_per_cost = fee_per_cost
                 .parse::<u64>()
-                .map_err(|e| JsValue::from_str(&format!("invalid submission fee: {e}")))?;
+                .map_err(|e| JsValue::from_str(&format!("invalid fee per cost: {e}")))?;
             self.with_game(move |cradle: &mut Channel| {
                 cradle.cradle.configure_fee(FeeConfiguration {
-                    amount: Amount::new(amount),
+                    fee_per_cost,
                     attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
                 });
                 Ok(())
@@ -1860,11 +1862,12 @@ mod gaming_wasm {
             self.with_game_drain(|_| Ok(()))
         }
 
-        pub fn start_handshake(&self, opening_fee: &str) -> Result<JsValue, JsValue> {
-            let fee = opening_fee
+        /// Starts the handshake, paying an opening fee at `fee_per_cost`.
+        pub fn start_handshake(&self, fee_per_cost: &str) -> Result<JsValue, JsValue> {
+            let fee = fee_per_cost
                 .parse::<u64>()
-                .map(Amount::new)
-                .map_err(|e| JsValue::from_str(&format!("invalid opening fee: {e}")))?;
+                .map(chia_gaming::minimum_fee::opening_fee)
+                .map_err(|e| JsValue::from_str(&format!("invalid fee per cost: {e}")))?;
             self.with_game_drain(move |cradle: &mut Channel| {
                 cradle.cradle.start_handshake(&mut cradle.allocator, fee)
             })

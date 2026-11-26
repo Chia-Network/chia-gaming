@@ -131,7 +131,7 @@ export function createSessionController(
   sessionBootstrap?: RehydratedDurableApplicationState,
   pairingToken?: string,
   perGameAmount?: bigint,
-  getFee?: () => bigint,
+  getFeePerCost?: () => bigint,
 ): SessionController {
   const sessionController = new SessionController(
     blockchain,
@@ -148,7 +148,7 @@ export function createSessionController(
   sessionController.iStarted = iStarted;
   sessionController.pairingToken = pairingToken ?? '';
   sessionController.perGameAmount = perGameAmount ?? 0n;
-  if (getFee) sessionController.getFee = getFee;
+  if (getFeePerCost) sessionController.getFeePerCost = getFeePerCost;
   sessionController.setPeerKeepalive(() => peerConn.sendKeepalive());
 
   sessionController.initializeExecution(

@@ -21,11 +21,11 @@ describe('fundingShortfall', () => {
 });
 
 describe('openingFeeMojos', () => {
-  it('matches the minimum Rust applies to each player and keeps zero as an opt-out', () => {
+  it("charges the rate for each player's share of the opening, at least the minimum", () => {
     expect(openingFeeMojos(0n)).toBe(0n);
     expect(openingFeeMojos(1n)).toBe(300_000_000n);
-    expect(openingFeeMojos(100_000_000n)).toBe(300_000_000n);
-    expect(openingFeeMojos(400_000_000n)).toBe(400_000_000n);
+    expect(openingFeeMojos(5n)).toBe(300_000_000n);
+    expect(openingFeeMojos(10n)).toBe(600_000_000n);
   });
 });
 

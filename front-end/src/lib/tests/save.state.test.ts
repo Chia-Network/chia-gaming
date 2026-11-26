@@ -31,7 +31,7 @@ function clearGameSession(): Promise<void> {
 
 describe('flat state', () => {
   it('defaults the transaction fee without treating it as a network minimum', () => {
-    expect(storageRepository.query('defaultFee')).toBe(100_000_000n);
+    expect(storageRepository.query('feePerCost')).toBe(5n);
   });
 
   it('getPlayerId generates and persists a player ID', () => {

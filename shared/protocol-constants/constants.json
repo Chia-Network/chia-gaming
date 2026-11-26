@@ -9,6 +9,7 @@
   },
   "fees": {
     "minMojosPerCost": 5,
-    "openingCostShare": 60000000
+    "openingCostShare": 60000000,
+    "feeSpendCostAllowance": 45000000
   }
 }

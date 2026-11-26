@@ -217,7 +217,7 @@ it(
         peer_conn1,
         wasm_init1,
       );
-      wasm_blob1.getFee = () => 10n;
+      wasm_blob1.getFeePerCost = () => 10n;
       cradle1.set_blob(wasm_blob1);
 
       const peer_conn2: PeerConnectionResult = {

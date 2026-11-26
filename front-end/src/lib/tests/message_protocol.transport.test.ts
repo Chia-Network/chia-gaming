@@ -909,7 +909,7 @@ describe('WASM wallet funding requests', () => {
     const startHandshake = jest.fn().mockReturnValue(wasmResult());
     (cradle as unknown as { start_handshake: jest.Mock }).start_handshake = startHandshake;
     setActiveBlob(blob);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setTestBlockchain(blob, new BlockchainPoller({ ...mockRpc, selectCoins }, 60000));
 
     blob.activateSpend();
@@ -1462,7 +1462,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
 
     submitTransaction(blob, { ...testSpendBundle('coin'), name: 'arbitrary-name' });
@@ -1504,7 +1504,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
 
     submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
@@ -1555,7 +1555,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(
       blob,
       jest.fn(() => {
@@ -1772,7 +1772,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
 
     submitTransaction(blob, testSpendBundle('coin'), { target: feeTarget, amount: '10' });
@@ -2115,7 +2115,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
@@ -2164,7 +2164,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];
@@ -2214,7 +2214,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob, cradle } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
     const submission: TransactionSubmission = {
       id: 'rejected-with-fee',
@@ -2259,7 +2259,7 @@ describe('wallet fee attachment on submission', () => {
     const { blob } = createReadyBlob();
     setActiveBlob(blob);
     setTestBlockchain(blob, blockchain);
-    blob.getFee = () => 10n;
+    blob.getFeePerCost = () => 10n;
     setFinalizer(blob, finalize);
 
     const errors: string[] = [];

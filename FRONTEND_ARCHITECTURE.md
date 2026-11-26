@@ -1611,8 +1611,8 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   chosen by the selected network at call time in `cloudWalletConfig.ts`
   (mainnet: `https://api.vault.chia.net`, `https://vault.chia.net`; testnet:
   `https://api.vault.chiatest.net`, `https://vault.chiatest.net`).
-  `CloudBlockchainInterface.getFee()` reads the global `defaultFee` preference,
-  the same value the Wallet tab edits.
+  The session controller's `getFeePerCost()` reads the global `feePerCost`
+  preference, the same rate the Wallet tab edits.
 
   Cloud Wallet funding uses persisted `createOffer` requests, matching the
   WalletConnect funding contract: `offered` contains the requested funding
@@ -1743,7 +1743,7 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   and the Cloud Wallet `/buy-xch?walletId=…` page, whose `walletId` preselects
   the vault the game funds from. The public testnet Cloud Wallet sells no XCH,
   so testnet offers the link only for an overridden (local) Cloud Wallet.
-  Application compares the balance against buy-in plus `defaultFee` for the
+  Application compares the balance against buy-in plus the opening fee for the
   New Session dialog and rejects Accept while funds are short. Shell displays
   the shortfall and Buy/Deposit actions; WalletConnection increases balance
   polling to every 5s until the shortfall clears.
@@ -1773,13 +1773,14 @@ defined in `ChiaGaming.ts`. Shell receives setup/status data and sends intents:
   below 4 mojos per cost out of blocks until 2027-11-03. The mempool still accepts
   those transactions, so they wait without any error. Rust prices at 5 mojos per
   cost, as the wallet SDK does, which passes both checks (`src/minimum_fee.rs`).
-  A nonzero fee is raised to the minimum for the protocol bundle's cost plus an
+  The player chooses a fee rate in mojos per cost (the `feePerCost` preference):
+  Minimum (5), Expedited (10), or a custom whole rate of at least 5. Zero turns
+  fees off. Each transaction pays the rate for the protocol bundle's cost plus an
   allowance for the wallet's fee spend; a completed bundle that still falls short
-  is sent with a warning. Each player's opening fee is raised to the minimum for
-  a fixed share of the opening transaction. Balance checks use the same share from
-  `shared/protocol-constants`. Zero opts out of fees and is never raised. The frontend's
-  `DEFAULT_TRANSACTION_FEE_MOJOS` (100M mojos) is only an initial preference;
-  fee editors accept any nonnegative amount without promising admission. Error
+  of 5 mojos per cost is sent with a warning. Each player's opening fee pays the
+  rate for a fixed share of the opening transaction. The Wallet tab estimates both
+  amounts, and balance checks use the same share from `shared/protocol-constants`.
+  A higher rate helps under congestion but never guarantees admission. Error
   messages distinguish the rate floor from the competitive threshold and do not
   recommend zero as a bypass. For ordinary WalletConnect submissions,
   `createFeeSpend` makes a persisted signed offer whose wallet spend asserts the

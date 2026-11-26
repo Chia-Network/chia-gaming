@@ -772,7 +772,7 @@ describe('session machine controller command failures', () => {
         fee_retirements: [],
         failures: [],
       }),
-      configure_submission_fee: () => {},
+      configure_fee_per_cost: () => {},
       accept_proposal: () =>
         wasmResult({
           actionSucceeded: false,

@@ -39,7 +39,7 @@ it(
     );
     // Both simulated peers share one repository; this lane owns its checkpoint.
     const detachPersistence = storageRepository.attachRuntime(controller);
-    controller.getFee = () => 10n;
+    controller.getFeePerCost = () => 10n;
     const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
     const originalSpend = fakeBlockchainInfo.spend;
     const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
@@ -155,7 +155,7 @@ it(
         channel: { status: channelStatusModelFromPayload(status) },
       }),
     );
-    lane.controller.getFee = () => 10n;
+    lane.controller.getFeePerCost = () => 10n;
     const controllerErrors: string[] = [];
     const errorSubscription = observeWasmEvents(lane.controller).subscribe((event) => {
       if (event.type === 'error') controllerErrors.push(event.error);
@@ -339,7 +339,7 @@ it(
     await pollOnce(poller);
     const adapters = await createActivePair(poller, 18);
     const controller = adapters[0].blob!;
-    controller.getFee = () => 10n;
+    controller.getFeePerCost = () => 10n;
     const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
     let material: WalletOfferCompletion | undefined;
     let target: string | undefined;
@@ -474,7 +474,7 @@ it.each(['channel spend', 'on-chain game move'])(
         subscriptions.forEach((subscription) => subscription.unsubscribe());
       }
     }
-    controller.getFee = () => 10n;
+    controller.getFeePerCost = () => 10n;
     const originalBegin = fakeBlockchainInfo.beginWalletOffer;
     const originalCancel = fakeBlockchainInfo.beginWalletOfferCancellation;
     let enteredApproval!: () => void;

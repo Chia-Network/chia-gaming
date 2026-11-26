@@ -1467,8 +1467,7 @@ impl GameSession {
         let start_effect = {
             let mut env =
                 ChannelEnv::new_with_genesis(allocator, &self.state.agg_sig_me_additional_data)?;
-            self.peer
-                .start_handshake(&mut env, crate::minimum_fee::opening_fee(&opening_fee))?
+            self.peer.start_handshake(&mut env, opening_fee)?
         };
         let mut effects = Vec::new();
         effects.extend(start_effect);

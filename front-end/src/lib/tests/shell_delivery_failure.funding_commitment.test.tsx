@@ -381,12 +381,13 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     const first: bigint[] = [],
       second: bigint[] = [];
     const stopFirst = application.subscribe((event) => {
-      first.push(event.view.defaultFee);
-      if (event.view.defaultFee === 11n) application.dispatch({ type: 'fee', fee: 12n });
+      first.push(event.view.feePerCost);
+      if (event.view.feePerCost === 11n)
+        application.dispatch({ type: 'fee-rate', feePerCost: 12n });
     });
-    const stopSecond = application.subscribe((event) => second.push(event.view.defaultFee));
+    const stopSecond = application.subscribe((event) => second.push(event.view.feePerCost));
     act(() => {
-      application.dispatch({ type: 'fee', fee: 11n });
+      application.dispatch({ type: 'fee-rate', feePerCost: 11n });
     });
     stopFirst();
     stopSecond();
@@ -613,7 +614,7 @@ describe('Shell delivery failure at the funding commitment boundary', () => {
     await waitForText(renderer!, shortfall);
     expect(spendShortfall).toHaveBeenCalledWith(
       BigInt(storageRepository.loadState().session!.pairing.myContribution) +
-        openingFeeMojos(storageRepository.query('defaultFee')),
+        openingFeeMojos(storageRepository.query('feePerCost')),
     );
     expect(mockSendToPeer).not.toHaveBeenCalled();
     expect(storageRepository.loadState().session?.phase).toBe('pre-handshake');

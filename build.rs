@@ -690,13 +690,15 @@ fn generate_protocol_timeout_bounds(out_dir: &Path) {
          pub const MIN_SESSION_TIMEOUT_BLOCKS: u64 = {};\n\
          pub const MAX_SESSION_TIMEOUT_BLOCKS: u64 = {};\n\
          pub const MIN_MOJOS_PER_COST: u64 = {};\n\
-         pub const OPENING_COST_SHARE: u64 = {};\n",
+         pub const OPENING_COST_SHARE: u64 = {};\n\
+         pub const FEE_SPEND_COST_ALLOWANCE: u64 = {};\n",
         bound("gameTimeoutBlocks", "min"),
         bound("gameTimeoutBlocks", "max"),
         bound("sessionTimeoutBlocks", "min"),
         bound("sessionTimeoutBlocks", "max"),
         bound("fees", "minMojosPerCost"),
         bound("fees", "openingCostShare"),
+        bound("fees", "feeSpendCostAllowance"),
     );
     fs::write(out_dir.join("protocol_timeout_bounds.rs"), generated)
         .expect("write generated protocol timeout bounds");

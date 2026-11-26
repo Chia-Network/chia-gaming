@@ -34,8 +34,12 @@ export interface SessionIdentitySave {
 export interface SessionPreferencesSave {
   alias?: string;
   theme?: 'dark' | 'light';
+  /** Retired: the fee is now a rate. Kept so that older saves still load. */
   defaultFee?: bigint;
+  /** Retired along with `defaultFee`. */
   feeUnit?: 'mojo' | 'xch';
+  /** Mojos per cost for each transaction; zero turns fees off. */
+  feePerCost?: bigint;
   hubUrl?: string;
   // Last hub the user connected to. Kept on disconnect so the hub picker can prefill it.
   lastHubUrl?: string;

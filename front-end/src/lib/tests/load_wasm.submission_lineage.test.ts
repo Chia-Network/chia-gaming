@@ -62,7 +62,7 @@ it(
       controller,
       createSessionModel({ channel: { status: channelStatusModelFromPayload(status) } }),
     );
-    lane.controller.getFee = () => 10n;
+    lane.controller.getFeePerCost = () => 10n;
 
     const rustSubmissions: TransactionSubmission[] = [];
     const acknowledged: string[] = [];
