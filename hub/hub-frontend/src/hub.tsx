@@ -54,6 +54,11 @@ function busyLabel(reasons: string[] | undefined): string {
   return labels.length > 0 ? labels.join(', ') : 'Busy';
 }
 
+function isImeKey(event: KeyboardEvent): boolean {
+  // Safari can end composition before dispatching its confirming keydown.
+  return event.isComposing || event.keyCode === 229;
+}
+
 const HubScreen = ({ sessionId }: { sessionId: string }) => {
   // Text in the name field; `committedAlias` is the last name sent to the hub.
   const [myAlias, setMyAlias] = useState('');
@@ -261,7 +266,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
           <div
             className="flex flex-row gap-2 items-center"
             onKeyDown={(event) => {
-              if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+              if (event.key === 'Escape' && !isImeKey(event.nativeEvent)) {
                 event.preventDefault();
                 cancelEdit();
               }
@@ -278,7 +283,7 @@ const HubScreen = ({ sessionId }: { sessionId: string }) => {
                 setAliasErrorText(null);
               }}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                if (event.key === 'Enter' && !isImeKey(event.nativeEvent)) {
                   event.preventDefault();
                   commitEdit();
                 }
