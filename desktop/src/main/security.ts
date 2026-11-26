@@ -1,7 +1,8 @@
-import { app } from 'electron';
+import { app, shell } from 'electron';
 import type { Session } from 'electron';
 
 import { isAppUrl } from './appProtocol';
+import { isOpenableExternalLink } from './externalLinks';
 import { log } from './log';
 import { isPlayerMainWebContents } from './mainWindow';
 import { isNavigationAllowed } from './navigationPolicy';
@@ -74,8 +75,15 @@ export function installWebContentsSecurity(policy: PolicyRef): void {
   app.on('web-contents-created', (_event, contents) => {
     installWebContentsTransportSecurity(contents);
 
-    // Nothing opens in-app windows: Cloud Wallet pages go to the system browser.
+    // Nothing opens in-app windows: Cloud Wallet pages go to the system browser,
+    // and so do the player's links to the project's own pages.
     contents.setWindowOpenHandler((details) => {
+      if (isPlayerMainWebContents(contents) && isOpenableExternalLink(details.url)) {
+        void shell.openExternal(details.url).catch((error: unknown) => {
+          log.error(`failed to open ${details.url}: ${String(error)}`);
+        });
+        return { action: 'deny' };
+      }
       log.warn(`blocked window.open for ${details.url}`);
       return { action: 'deny' };
     });
