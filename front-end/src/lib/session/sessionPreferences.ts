@@ -1,4 +1,4 @@
-import { DEFAULT_TRANSACTION_FEE_MOJOS } from '../../constants/fees';
+import { DEFAULT_FEE_PER_COST } from '../../constants/fees';
 import type {
   BlockchainType,
   ChiaNetwork,
@@ -12,8 +12,7 @@ export interface SessionPreferenceQueries {
   network: ChiaNetwork;
   alias: string | undefined;
   theme: 'dark' | 'light' | undefined;
-  defaultFee: bigint;
-  feeUnit: 'mojo' | 'xch';
+  feePerCost: bigint;
   activeTab: string | undefined;
   unreadGame: boolean;
   walletAlert: boolean;
@@ -26,8 +25,7 @@ export type SessionPreferenceUpdate =
   | { key: 'network'; value: ChiaNetwork }
   | { key: 'alias'; value: string }
   | { key: 'theme'; value: 'dark' | 'light' }
-  | { key: 'defaultFee'; value: bigint }
-  | { key: 'feeUnit'; value: 'mojo' | 'xch' }
+  | { key: 'feePerCost'; value: bigint }
   | { key: 'activeTab'; value: string }
   | { key: 'unreadGame' | 'walletAlert' | 'hubAlert'; value: boolean }
   | { key: 'hubUrl' | 'lastHubUrl'; value: string | undefined };
@@ -43,8 +41,7 @@ export function selectSessionPreference<K extends keyof SessionPreferenceQueries
     network: preferences.network ?? 'mainnet',
     alias: preferences.alias,
     theme: preferences.theme,
-    defaultFee: preferences.defaultFee ?? DEFAULT_TRANSACTION_FEE_MOJOS,
-    feeUnit: preferences.feeUnit ?? 'mojo',
+    feePerCost: preferences.feePerCost ?? DEFAULT_FEE_PER_COST,
     activeTab: preferences.activeTab,
     unreadGame: preferences.unreadGame ?? false,
     walletAlert: preferences.walletAlert ?? false,

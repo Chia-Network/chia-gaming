@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::common::types::{aggregate_wallet_fee_bundle, CoinID, CoinString, Error, Hash};
+use crate::minimum_fee::minimum_fee;
 use crate::session_phases::effects::{
     AttachmentFailurePolicy, SubmissionFeeIntent, TransactionSubmission,
 };
@@ -15,6 +16,15 @@ use super::{
     SubmissionDrainFailure, SubmissionDrainResult, SubmissionFeeSource, SubmittedTx,
     SUBMISSION_DRAIN_MESSAGE_LIMIT, SUBMISSION_DRAIN_RUST_CONTEXT_LIMIT,
 };
+
+fn low_fee_warning(fee: u64, cost: u64) -> Option<String> {
+    let minimum = minimum_fee(cost);
+    (fee < minimum).then(|| {
+        format!(
+            "The fee of {fee} mojos is below the {minimum} mojo minimum for this transaction, because the wallet's fee spend was larger than expected. Farmers may leave it out of blocks."
+        )
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PendingSubmissionIntent {
@@ -665,6 +675,7 @@ impl SubmissionBook {
                 };
                 match attached {
                     Ok(bundle) => {
+                        let cost = bundle.consensus_cost(height)?;
                         let variant_fingerprint = submission_variant_fingerprint(&bundle)?;
                         submission.current_variant = SubmissionBroadcastVariant::FeeBearing {
                             bundle: bundle.clone(),
@@ -681,7 +692,7 @@ impl SubmissionBook {
                         FinalizedSubmission {
                             bundle,
                             applied_fee: amount.to_u64(),
-                            warning: None,
+                            warning: low_fee_warning(amount.to_u64(), cost),
                             fee_source_disposition: FeeSourceDisposition::Attached,
                             variant_fingerprint,
                             should_broadcast: true,
@@ -692,7 +703,7 @@ impl SubmissionBook {
                             bundle: submission.base_bundle.clone(),
                             applied_fee: 0,
                             warning: Some(format!(
-                                "Configured fee was not applied: {reason}. The transaction will be attempted without a fee."
+                                "Configured fee was not applied: {reason}. The transaction will be attempted without a fee, and most farmers leave transactions without a fee out of blocks."
                             )),
                             fee_source_disposition: FeeSourceDisposition::Unused,
                             variant_fingerprint: current_fingerprint.clone(),

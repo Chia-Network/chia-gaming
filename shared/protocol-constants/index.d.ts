@@ -7,6 +7,11 @@ declare const bounds: {
     readonly min: number;
     readonly max: number;
   };
+  readonly fees: {
+    readonly minMojosPerCost: number;
+    readonly openingCostShare: number;
+    readonly feeSpendCostAllowance: number;
+  };
 };
 
 export = bounds;

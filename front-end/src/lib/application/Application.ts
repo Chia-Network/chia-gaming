@@ -112,6 +112,7 @@ import { finalizeTerminalSession } from '../session/terminalFinalization';
 import { ensurePeerProtocolLoaded, ensureWasmLoaded } from '../session/wasmLoader';
 import { isErrorSettlementOutcome } from '../settlement';
 import { fundingShortfall } from '../wallet/fundingShortfall';
+import { openingFeeMojos } from '../../constants/fees';
 import type { SessionWallet } from '../wallet/sessionWallet';
 import { WalletConnection, type WalletEvent, type WalletView } from '../wallet/WalletConnection';
 import { createAcceptLifecycle, createShellSessionState } from './applicationSession';
@@ -212,8 +213,7 @@ export type ApplicationIntent =
   | { type: 'hub-connect'; origin: string }
   | { type: 'tab'; tab: TabId }
   | { type: 'network'; network: ChiaNetwork }
-  | { type: 'fee'; fee: bigint }
-  | { type: 'fee-unit'; unit: 'mojo' | 'xch' }
+  | { type: 'fee-rate'; feePerCost: bigint }
   | { type: 'theme'; theme: 'light' | 'dark' }
   | { type: 'session-action'; action: GameDashboardActionKind }
   | { type: 'history'; line: string };
@@ -256,8 +256,7 @@ export function createApplication() {
     walletAlert: boolean;
     hubAlert: boolean;
     iframeUrl: string;
-    defaultFee: bigint;
-    feeUnit: 'mojo' | 'xch';
+    feePerCost: bigint;
     network: ChiaNetwork;
     hubOrigin: string | null;
     hubConnectionError: string | null;
@@ -283,8 +282,7 @@ export function createApplication() {
     walletAlert: storageRepository.query('walletAlert'),
     hubAlert: storageRepository.query('hubAlert'),
     iframeUrl: 'about:blank',
-    defaultFee: storageRepository.query('defaultFee'),
-    feeUnit: storageRepository.query('feeUnit'),
+    feePerCost: storageRepository.query('feePerCost'),
     network: storageRepository.query('network'),
     hubOrigin: null,
     hubConnectionError: null,
@@ -997,7 +995,9 @@ export function createApplication() {
     let shortfall: string | null = null;
     update('checkingFunds', true);
     try {
-      shortfall = await walletOwner.spendShortfall(parseSessionAmount(myAmount) + state.defaultFee);
+      shortfall = await walletOwner.spendShortfall(
+        parseSessionAmount(myAmount) + openingFeeMojos(state.feePerCost),
+      );
     } catch (error) {
       // The check is advisory: the handshake reports a funding failure itself.
       log(
@@ -1597,7 +1597,7 @@ export function createApplication() {
         setWalletAlert(true);
         break;
       case 'fee-changed':
-        update('defaultFee', storageRepository.query('defaultFee'));
+        update('feePerCost', storageRepository.query('feePerCost'));
         break;
       case 'detaching': {
         sessionController?.setWallet(null);
@@ -2411,7 +2411,7 @@ export function createApplication() {
       sessionBootstrap,
       params.pairingToken,
       params.perGameAmount,
-      () => storageRepository.query('defaultFee'),
+      () => storageRepository.query('feePerCost'),
     ));
     if (params.myAlias) controller.myAlias = params.myAlias;
     if (params.opponentAlias) controller.opponentAlias = params.opponentAlias;
@@ -2589,7 +2589,7 @@ export function createApplication() {
       sessions.state.pendingAdvisory?.my_amount ?? sessions.state.pendingProposal?.responder_amount;
     return buyIn === undefined
       ? 0n
-      : fundingShortfall(state.walletView.balance, buyIn, state.defaultFee);
+      : fundingShortfall(state.walletView.balance, buyIn, openingFeeMojos(state.feePerCost));
   }
   function snapshot() {
     const { peerConn: _peer, ...sessionState } = sessions.state;
@@ -2703,13 +2703,9 @@ export function createApplication() {
         return handleTabChange(intent.tab);
       case 'network':
         return handleNetworkChange(intent.network);
-      case 'fee':
-        storageRepository.updatePreference({ key: 'defaultFee', value: intent.fee });
-        update('defaultFee', intent.fee);
-        return;
-      case 'fee-unit':
-        storageRepository.updatePreference({ key: 'feeUnit', value: intent.unit });
-        update('feeUnit', intent.unit);
+      case 'fee-rate':
+        storageRepository.updatePreference({ key: 'feePerCost', value: intent.feePerCost });
+        update('feePerCost', intent.feePerCost);
         return;
       case 'theme':
         storageRepository.updatePreference({ key: 'theme', value: intent.theme });

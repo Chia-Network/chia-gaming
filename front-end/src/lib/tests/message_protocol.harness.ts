@@ -196,7 +196,7 @@ export function makeMockCradle(): ChiaGame {
     snapshot_pending_coin_solution_requests: jest.fn(() => []),
     coins_of_interest: jest.fn(() => []),
     drain_submissions: jest.fn(() => submissionDrain()),
-    configure_submission_fee: jest.fn(),
+    configure_fee_per_cost: jest.fn(),
     finalize_submission_attempt: finalizeSubmissionAttempt,
     acknowledge_submission_attempt: acknowledgeSubmissionAttempt,
     reject_submission_attempt: rejectSubmissionAttempt,

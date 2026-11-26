@@ -460,7 +460,8 @@ mod tests {
                 },
             }],
         };
-        aggregate_wallet_fee_bundle(
+        let base_cost = protocol_bundle.consensus_cost(0).expect("base cost");
+        let combined = aggregate_wallet_fee_bundle(
             protocol_bundle,
             fee_bundle,
             100,
@@ -469,6 +470,12 @@ mod tests {
             0,
         )
         .expect("signed wallet fee spend aggregates");
+        // Even a fee paid with two coins stays within the priced allowance.
+        let fee_spend_cost = combined.consensus_cost(0).expect("combined cost") - base_cost;
+        assert!(
+            fee_spend_cost < crate::minimum_fee::FEE_SPEND_COST_ALLOWANCE,
+            "{fee_spend_cost}"
+        );
     }
 
     #[test]

@@ -845,7 +845,8 @@ intent. `SubmissionPump` owns one browser map and one ordered promise tail for
 persistence-gated launch, one-shot wallet delivery, and
 relinquishment. It is not a second durable retry journal.
 
-Rust captures the configured fee amount, target, and explicit
+Rust prices a nonzero configured fee to at least 5 mojos per cost and captures
+that amount, the target, and the explicit
 `SubmitWithoutFee` attachment-failure policy when an intent is emitted.
 Wallet adapters perform one attempt and return only a typed
 acknowledged/unavailable/rejected outcome. Structured success or a response

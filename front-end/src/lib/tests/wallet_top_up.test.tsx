@@ -6,6 +6,7 @@ import {
   WalletTopUp,
 } from '../../components/WalletTopUp';
 
+import { openingFeeMojos } from '../../constants/fees';
 import { fundingShortfall } from '../wallet/fundingShortfall';
 
 describe('fundingShortfall', () => {
@@ -16,6 +17,15 @@ describe('fundingShortfall', () => {
 
   it('never blocks on a balance that has not loaded', () => {
     expect(fundingShortfall(undefined, '900', 200n)).toBe(0n);
+  });
+});
+
+describe('openingFeeMojos', () => {
+  it("charges the rate for each player's share of the opening, at least the minimum", () => {
+    expect(openingFeeMojos(0n)).toBe(0n);
+    expect(openingFeeMojos(1n)).toBe(300_000_000n);
+    expect(openingFeeMojos(5n)).toBe(300_000_000n);
+    expect(openingFeeMojos(10n)).toBe(600_000_000n);
   });
 });
 

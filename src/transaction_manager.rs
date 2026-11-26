@@ -36,6 +36,7 @@ use crate::common::types::{
     SpendBundle, Timeout,
 };
 use crate::game_session::{CoinObservation, DrainResult, GameSession};
+use crate::minimum_fee::attached_fee;
 #[cfg(test)]
 use crate::session_phases::effects::AttachmentFailurePolicy;
 use crate::session_phases::effects::{
@@ -981,15 +982,19 @@ impl<C> TransactionManager<C> {
         self.submission_book.fee_intent_for_attempt(attempt_token)
     }
 
-    fn capture_fee_intent(&self, policy: &FeePolicy) -> SubmissionFeeIntent {
-        match policy {
+    fn capture_fee_intent(&self, submission: &TransactionSubmission) -> SubmissionFeeIntent {
+        match &submission.fee_policy {
             FeePolicy::AlreadyPaid => SubmissionFeeIntent::AlreadyPaid,
-            FeePolicy::AttachTo(_) if self.fee_configuration.amount.to_u64() == 0 => {
+            FeePolicy::AttachTo(_) if self.fee_configuration.fee_per_cost == 0 => {
                 SubmissionFeeIntent::NoFeeConfigured
             }
             FeePolicy::AttachTo(target) => SubmissionFeeIntent::Attach {
                 target: target.clone(),
-                amount: self.fee_configuration.amount.clone(),
+                amount: attached_fee(
+                    self.fee_configuration.fee_per_cost,
+                    &submission.bundle,
+                    self.last_height,
+                ),
                 attachment_failure_policy: self.fee_configuration.attachment_failure_policy.clone(),
             },
         }
@@ -1276,7 +1281,7 @@ impl<C> TransactionManager<C> {
         for event in events {
             match event {
                 GameSessionEvent::OutboundTransaction(submission) => {
-                    let fee_intent = self.capture_fee_intent(&submission.fee_policy);
+                    let fee_intent = self.capture_fee_intent(&submission);
                     self.submission_book.queue(
                         PendingSubmission {
                             id: None,
@@ -1498,7 +1503,7 @@ impl<C: ManagedGameSession> TransactionManager<C> {
             if let Some(semantic) = semantic {
                 self.cradle.session_timeout_claim_submitted(semantic)?;
             }
-            let fee_intent = self.capture_fee_intent(&spend.fee_policy);
+            let fee_intent = self.capture_fee_intent(&spend);
             self.submission_book.queue(
                 PendingSubmission {
                     id: None,
@@ -2666,6 +2671,38 @@ mod tests {
     }
 
     #[test]
+    fn captured_fee_covers_the_cost_of_the_transaction() {
+        let (base, fee_source, protocol_coin, _target) = test_protocol_and_fee_bundles(15);
+        let submission = TransactionSubmission::attach_to(base.clone(), None, &protocol_coin);
+        let mut mgr = TransactionManager::new(PersistableMockGameSession);
+        let captured = |mgr: &TransactionManager<PersistableMockGameSession>| {
+            mgr.capture_fee_intent(&submission)
+        };
+        assert_eq!(captured(&mgr), SubmissionFeeIntent::NoFeeConfigured);
+
+        let configure = |mgr: &mut TransactionManager<PersistableMockGameSession>, amount| {
+            mgr.configure_fee(FeeConfiguration {
+                fee_per_cost: amount,
+                attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
+            })
+        };
+        let cost = base.consensus_cost(0).unwrap();
+        let allowance = crate::minimum_fee::FEE_SPEND_COST_ALLOWANCE;
+        let minimum = 5 * (cost + allowance);
+        // A rate below the minimum is raised to it; a higher rate scales the fee.
+        for (configured, expected) in [(1, minimum), (5, minimum), (12, 12 * (cost + allowance))] {
+            configure(&mut mgr, configured);
+            assert!(matches!(
+                captured(&mgr),
+                SubmissionFeeIntent::Attach { amount, .. } if amount == Amount::new(expected)
+            ));
+        }
+        let mut combined = base;
+        combined.spends.extend(fee_source.spends);
+        assert!(minimum >= 5 * combined.consensus_cost(0).unwrap());
+    }
+
+    #[test]
     fn fee_inputs_are_watched_until_final_retirement_and_spent_fees_are_not_cancelled() {
         for (protocol_spent, fee_spent) in [(true, false), (true, true), (false, true)] {
             let (base, fee_source, protocol_coin, target) = test_protocol_and_fee_bundles(15);
@@ -3161,7 +3198,7 @@ mod tests {
         mock.queue_drain(vec![watch_event_with_spend(&coin, 5, claim.clone())]);
         let mut mgr = TransactionManager::new(mock);
         mgr.configure_fee(FeeConfiguration {
-            amount: Amount::new(10),
+            fee_per_cost: 10,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -3178,7 +3215,7 @@ mod tests {
         assert!(mgr.drain_submissions().unwrap().submissions.is_empty());
 
         mgr.configure_fee(FeeConfiguration {
-            amount: Amount::new(20),
+            fee_per_cost: 20,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         // Registration only stores a future spend. It first becomes outbound at
@@ -3188,9 +3225,10 @@ mod tests {
         let subs = mgr.drain_submissions().unwrap().submissions;
         assert_eq!(subs.len(), 1);
         assert_eq!(subs[0].bundle.name.as_deref(), Some("timeout-claim"));
+        let expected = crate::minimum_fee::attached_fee(20, &subs[0].bundle, 15);
         assert!(matches!(
             &subs[0].fee_intent,
-            SubmissionFeeIntent::Attach { amount, .. } if amount == &Amount::new(20)
+            SubmissionFeeIntent::Attach { amount, .. } if amount == &expected
         ));
 
         // Still mature next block, but already submitted for this birthday.
@@ -3227,7 +3265,7 @@ mod tests {
         ]);
         let mut mgr = TransactionManager::new(mock);
         mgr.configure_fee(FeeConfiguration {
-            amount: Amount::new(10),
+            fee_per_cost: 10,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         mgr.flush_and_collect(&mut allocator).expect("register");
@@ -3268,7 +3306,7 @@ mod tests {
         // Matching must use the fee intent captured at maturity, not the
         // manager's current configuration.
         mgr.configure_fee(FeeConfiguration {
-            amount: Amount::new(20),
+            fee_per_cost: 20,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         mgr.stop_submission_attempt(rejected.attempt_token).unwrap();
@@ -4957,7 +4995,7 @@ mod tests {
         let mut mgr = TransactionManager::new(mock);
         let mut allocator = AllocEncoder::new();
         mgr.configure_fee(FeeConfiguration {
-            amount: Amount::new(10),
+            fee_per_cost: 10,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         mgr.flush_and_collect(&mut allocator)
@@ -5758,7 +5796,7 @@ mod tests {
     fn restored_manager_requeues_retained_on_chain_submission() {
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager.configure_fee(FeeConfiguration {
-            amount: Amount::new(42),
+            fee_per_cost: 42,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         let fee_target = CoinID::new(Hash::from_bytes([0x55; 32]));
@@ -5820,7 +5858,7 @@ mod tests {
         let mut manager = TransactionManager::new(mock);
         let mut allocator = AllocEncoder::new();
         manager.configure_fee(FeeConfiguration {
-            amount: Amount::new(10),
+            fee_per_cost: 10,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         manager
@@ -5829,13 +5867,14 @@ mod tests {
 
         // Draining is intentionally later than absorption and must not observe B.
         manager.configure_fee(FeeConfiguration {
-            amount: Amount::new(20),
+            fee_per_cost: 20,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         let first = manager.drain_submissions().unwrap().submissions.remove(0);
+        let expected = crate::minimum_fee::attached_fee(10, &first.bundle, 0);
         assert!(matches!(
             &first.fee_intent,
-            SubmissionFeeIntent::Attach { amount, .. } if amount == &Amount::new(10)
+            SubmissionFeeIntent::Attach { amount, .. } if amount == &expected
         ));
 
         // Retry only after the in-flight provider attempt has actually ended.
@@ -5854,7 +5893,8 @@ mod tests {
         assert_ne!(reemitted.id, first.id);
         assert!(matches!(
             reemitted.fee_intent,
-            SubmissionFeeIntent::Attach { amount, .. } if amount == Amount::new(20)
+            SubmissionFeeIntent::Attach { amount, .. }
+                if amount == crate::minimum_fee::attached_fee(20, &reemitted.bundle, 0)
         ));
     }
 
@@ -5864,7 +5904,7 @@ mod tests {
         let protocol_bundle = test_bundle("fallback-protocol");
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager.configure_fee(FeeConfiguration {
-            amount: Amount::new(15),
+            fee_per_cost: 15,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         manager.pending_submissions.push(PendingSubmission {
@@ -5899,7 +5939,7 @@ mod tests {
         assert_eq!(
             finalized.warning.as_deref(),
             Some(
-                "Configured fee was not applied: malformed provider source. The transaction will be attempted without a fee."
+                "Configured fee was not applied: malformed provider source. The transaction will be attempted without a fee, and most farmers leave transactions without a fee out of blocks."
             )
         );
         manager.last_height = 2;
@@ -5950,7 +5990,7 @@ mod tests {
         let base = test_bundle_spending_creating("base-then-fee-upgrade", &input, &output);
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager.configure_fee(FeeConfiguration {
-            amount: Amount::new(15),
+            fee_per_cost: 15,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         let fee_intent = SubmissionFeeIntent::Attach {
@@ -6033,7 +6073,7 @@ mod tests {
         let input = test_coin(0x78);
         let mut manager = TransactionManager::new(PersistableMockGameSession);
         manager.configure_fee(FeeConfiguration {
-            amount: Amount::new(15),
+            fee_per_cost: 15,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         });
         manager.pending_submissions.push(PendingSubmission {

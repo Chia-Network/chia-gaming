@@ -41,6 +41,7 @@ import { ChevronDownIcon } from 'lucide-react';
 
 import { HubPicker } from './HubPicker';
 import { Input } from './ui/input';
+import { FeeRateSetting } from './FeeRateSetting';
 import { Tabs, TabsList, TabsTrigger } from './ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from './ui/toggle-group';
 
@@ -366,8 +367,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     peerLiveness,
     restoreStatus,
     restoreError,
-    feeUnit,
-    defaultFee,
+    feePerCost,
     hubOrigin,
     sessionId,
     iframeUrl,
@@ -461,75 +461,7 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [showTransactionPublishControl]);
   const [qrDataUrl, setQrDataUrl] = useState('');
-  const [feeEditing, setFeeEditing] = useState(false);
-  const [feeInput, setFeeInput] = useState('');
-  const feeInputRef = useRef<HTMLInputElement>(null);
   const { state: copyState, copy } = useCopyToClipboard();
-  const mojosToXchStr = (mojos: bigint): string => {
-    const s = mojos.toString().padStart(13, '0');
-    const whole = s.slice(0, -12).replace(/^0+/, '') || '0';
-    const frac = s.slice(-12).replace(/0+$/, '');
-    return frac ? `${whole}.${frac}` : whole;
-  };
-  const feeDisplayText = useCallback(() => {
-    if (feeUnit === 'xch') return mojosToXchStr(defaultFee);
-    return String(defaultFee);
-  }, [defaultFee, feeUnit]);
-  const parseFeeInput = useCallback(
-    (raw: string): bigint | null => {
-      if (/^\s*$/.test(raw)) return 0n;
-      const trimmed = raw.trim();
-      if (feeUnit === 'xch') {
-        if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
-        const [whole, frac = ''] = trimmed.split('.');
-        if (frac.length > 12) return null;
-        const mojoStr = whole + frac.padEnd(12, '0');
-        try {
-          const mojos = BigInt(mojoStr);
-          return mojos < 0n ? null : mojos;
-        } catch {
-          return null;
-        }
-      }
-      if (!/^\d+$/.test(trimmed)) return null;
-      try {
-        const n = BigInt(trimmed);
-        return n < 0n ? null : n;
-      } catch {
-        return null;
-      }
-    },
-    [feeUnit],
-  );
-  const parsedFeeInput = parseFeeInput(feeInput);
-  const feeInputError = parsedFeeInput === null ? 'Enter a valid amount.' : null;
-  const feeInputValid = feeInputError === null;
-  const startEditingFee = useCallback(() => {
-    setFeeInput(feeDisplayText());
-    setFeeEditing(true);
-    setTimeout(() => feeInputRef.current?.select(), 0);
-  }, [feeDisplayText]);
-  const commitFee = useCallback(() => {
-    const mojos = parseFeeInput(feeInput);
-    if (mojos === null) return;
-    dispatch({ type: 'fee', fee: mojos });
-    setFeeEditing(false);
-  }, [feeInput, parseFeeInput, dispatch]);
-  const cancelEditFee = useCallback(() => {
-    setFeeEditing(false);
-  }, []);
-  const handleFeeUnitChange = useCallback(
-    (unit: 'mojo' | 'xch') => {
-      dispatch({ type: 'fee-unit', unit });
-      if (feeEditing) {
-        const currentMojos = parseFeeInput(feeInput);
-        if (currentMojos !== null) {
-          setFeeInput(unit === 'xch' ? mojosToXchStr(currentMojos) : String(currentMojos));
-        }
-      }
-    },
-    [feeEditing, feeInput, parseFeeInput, dispatch],
-  );
   const currency = getCurrencyLabels();
   // The saved theme loads after the first render. Follow it rather than writing
   // the default over it, and save only the player's own choice.
@@ -1117,68 +1049,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                   </p>
                 )}
                 {topUpOptions && <WalletTopUp options={topUpOptions} shortfall={0n} />}
-                <div className="w-full max-w-xs text-sm text-canvas-text">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span>Transaction fee</span>
-                    <ToggleGroup
-                      type="single"
-                      variant="outline"
-                      size="sm"
-                      aria-label="Fee unit"
-                      value={feeUnit}
-                      onValueChange={(unit) => {
-                        if (unit === 'mojo' || unit === 'xch') handleFeeUnitChange(unit);
-                      }}
-                    >
-                      <ToggleGroupItem value="mojo" className="h-6 px-2 text-xs">
-                        {currency.mojo}
-                      </ToggleGroupItem>
-                      <ToggleGroupItem value="xch" className="h-6 px-2 text-xs">
-                        {currency.xch}
-                      </ToggleGroupItem>
-                    </ToggleGroup>
-                  </div>
-                  {feeEditing ? (
-                    <>
-                      <div className="flex gap-2">
-                        <Input
-                          ref={feeInputRef}
-                          inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                          value={feeInput}
-                          onChange={(e) => setFeeInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && feeInputValid) commitFee();
-                            if (e.key === 'Escape') cancelEditFee();
-                          }}
-                          className="flex-1"
-                        />
-                        <button
-                          onClick={commitFee}
-                          disabled={!feeInputValid}
-                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                        >
-                          Set
-                        </button>
-                        <button
-                          onClick={cancelEditFee}
-                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      {feeInputError && feeInput.trim() !== '' ? (
-                        <p className="text-xs text-alert-text mt-1 break-words">{feeInputError}</p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <button
-                      onClick={startEditingFee}
-                      className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
-                    >
-                      {feeDisplayText()} {feeUnit === 'xch' ? currency.xch : currency.mojos}
-                    </button>
-                  )}
-                </div>
+                <FeeRateSetting
+                  feePerCost={feePerCost}
+                  onChange={(rate) => dispatch({ type: 'fee-rate', feePerCost: rate })}
+                />
                 <Button onClick={() => dispatch({ type: 'wallet-disconnect' })}>Disconnect</Button>
               </div>
             ) : walletView.expiredQrWallet ? (
@@ -1240,68 +1114,10 @@ const Shell = ({ application }: { application: ApplicationFrontend }) => {
                     <CopyIcon state={copyState} className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="w-full max-w-sm text-sm text-canvas-text">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span>Transaction fee</span>
-                    <ToggleGroup
-                      type="single"
-                      variant="outline"
-                      size="sm"
-                      aria-label="Fee unit"
-                      value={feeUnit}
-                      onValueChange={(unit) => {
-                        if (unit === 'mojo' || unit === 'xch') handleFeeUnitChange(unit);
-                      }}
-                    >
-                      <ToggleGroupItem value="mojo" className="h-6 px-2 text-xs">
-                        {currency.mojo}
-                      </ToggleGroupItem>
-                      <ToggleGroupItem value="xch" className="h-6 px-2 text-xs">
-                        {currency.xch}
-                      </ToggleGroupItem>
-                    </ToggleGroup>
-                  </div>
-                  {feeEditing ? (
-                    <>
-                      <div className="flex gap-2">
-                        <Input
-                          ref={feeInputRef}
-                          inputMode={feeUnit === 'xch' ? 'decimal' : 'numeric'}
-                          value={feeInput}
-                          onChange={(e) => setFeeInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && feeInputValid) commitFee();
-                            if (e.key === 'Escape') cancelEditFee();
-                          }}
-                          className="flex-1"
-                        />
-                        <button
-                          onClick={commitFee}
-                          disabled={!feeInputValid}
-                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors disabled:opacity-40 disabled:cursor-default"
-                        >
-                          Set
-                        </button>
-                        <button
-                          onClick={cancelEditFee}
-                          className="px-3 py-2 text-sm font-medium rounded-md border border-canvas-border text-canvas-text hover:bg-canvas-bg-hover transition-colors"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      {feeInputError && feeInput.trim() !== '' ? (
-                        <p className="text-xs text-alert-text mt-1 break-words">{feeInputError}</p>
-                      ) : null}
-                    </>
-                  ) : (
-                    <button
-                      onClick={startEditingFee}
-                      className="w-full text-left px-3 py-2 rounded-md bg-canvas-bg-subtle text-canvas-text border border-canvas-border hover:bg-canvas-bg-hover transition-colors cursor-pointer"
-                    >
-                      {feeDisplayText()} {feeUnit === 'xch' ? currency.xch : currency.mojos}
-                    </button>
-                  )}
-                </div>
+                <FeeRateSetting
+                  feePerCost={feePerCost}
+                  onChange={(rate) => dispatch({ type: 'fee-rate', feePerCost: rate })}
+                />
                 <p className="text-sm text-canvas-text animate-pulse">
                   Waiting for approval in your wallet…
                 </p>

@@ -199,9 +199,8 @@ export function rewriteFeeRateRejection(message: string): string {
   if (/INVALID_FEE_TOO_CLOSE_TO_ZERO|fee.*too close to zero/i.test(message)) {
     return (
       `The network rejected this transaction because its fee rate is below the node's ` +
-      `5 mojos per cost unit minimum while its mempool is full. The required total fee ` +
-      `depends on the complete transaction's cost; 100,000,000 mojos may not be enough. ` +
-      `Use a higher fee for a new transaction attempt or wait for congestion to ease. ` +
+      `5 mojos per cost unit minimum while its mempool is full. ` +
+      `Choose a higher fee rate for a new transaction attempt or wait for congestion to ease. ` +
       `A zero fee does not bypass this check. (${message})`
     );
   }
@@ -209,7 +208,7 @@ export function rewriteFeeRateRejection(message: string): string {
     return (
       `The network rejected this transaction because its fee rate is too low to enter ` +
       `the full mempool. The required rate depends on competing transactions and may ` +
-      `exceed 5 mojos per cost unit. Use a higher fee for a new transaction attempt or ` +
+      `exceed 5 mojos per cost unit. Choose a higher fee rate for a new transaction attempt or ` +
       `wait for congestion to ease. (${message})`
     );
   }
@@ -378,11 +377,11 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     return this.reliableTransport.state;
   }
 
-  get getFee(): () => bigint {
+  get getFeePerCost(): () => bigint {
     return this.feeProvider;
   }
 
-  set getFee(provider: () => bigint) {
+  set getFeePerCost(provider: () => bigint) {
     this.feeProvider = provider;
     this.syncFeeConfiguration();
   }
@@ -1069,7 +1068,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
 
   private syncFeeConfiguration(): void {
     if (!this.cradle) return;
-    this.cradle.configure_submission_fee(this.feeProvider().toString());
+    this.cradle.configure_fee_per_cost(this.feeProvider().toString());
   }
 
   spillStoredMessages() {
@@ -1100,7 +1099,7 @@ export class SessionController implements PollingGameSession, ReliableCommitCoor
     if (!this.cradle) {
       throw new Error('activateSpend called without cradle');
     }
-    const result = this.cradle.start_handshake(this.getFee().toString());
+    const result = this.cradle.start_handshake(this.getFeePerCost().toString());
     this.processResult(result);
     this.flushPendingCoinStates();
     this.spillStoredMessages();

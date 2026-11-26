@@ -18,6 +18,9 @@ import { createReloadableSessionLane, injectSessionReload } from './reload_injec
 // @ts-expect-error Node.js types are not included in the frontend TypeScript configuration.
 import * as assert from 'assert';
 
+// 5 mojos per cost over the 45M allowance for the wallet's fee spend alone.
+const MINIMUM_ATTACHED_FEE = 225_000_000n;
+
 it(
   'resumes the same pending fee after provider loss at its checkpoint and Rust base fallback',
   async () => {
@@ -36,7 +39,7 @@ it(
     );
     // Both simulated peers share one repository; this lane owns its checkpoint.
     const detachPersistence = storageRepository.attachRuntime(controller);
-    controller.getFee = () => 10n;
+    controller.getFeePerCost = () => 10n;
     const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
     const originalSpend = fakeBlockchainInfo.spend;
     const realCheckpoint = storageRepository.checkpointDomainMutations.bind(storageRepository);
@@ -94,11 +97,9 @@ it(
       await flushWrapperDrain(adapters);
       await lane.runtime.flush();
 
-      assert.deepEqual(
-        fees,
-        [undefined, 10n],
-        'wallet readiness must upgrade the same Rust intent',
-      );
+      assert.equal(fees.length, 2, 'wallet readiness must upgrade the same Rust intent');
+      assert.equal(fees[0], undefined);
+      assert.ok(fees[1]! >= MINIMUM_ATTACHED_FEE, `configured fee was not raised: ${fees[1]}`);
       expect(provider.beginCreation).toHaveBeenCalledTimes(1);
       expect(provider.reconcileCreation).toHaveBeenCalledTimes(1);
       expect(provider.reconcileCreation).toHaveBeenCalledWith(
@@ -154,7 +155,7 @@ it(
         channel: { status: channelStatusModelFromPayload(status) },
       }),
     );
-    lane.controller.getFee = () => 10n;
+    lane.controller.getFeePerCost = () => 10n;
     const controllerErrors: string[] = [];
     const errorSubscription = observeWasmEvents(lane.controller).subscribe((event) => {
       if (event.type === 'error') controllerErrors.push(event.error);
@@ -216,7 +217,10 @@ it(
       await flushWrapperDrain(adapters);
       await flushWrapperDrain(adapters);
       assert.equal(submittedBlobs.length, 2, 'provider attachment must publish one fee upgrade');
-      assert.equal(submittedFees[1], 10n);
+      assert.ok(
+        submittedFees[1]! >= MINIMUM_ATTACHED_FEE,
+        `fee was not raised: ${submittedFees[1]}`,
+      );
       assert.equal(feeOfferCreations, 2);
       assert.notEqual(
         submittedBlobs[1],
@@ -270,7 +274,7 @@ it(
       }
       assert.equal(submittedBlobs.length, 3, 'fresh synchronization must replay once');
       assert.equal(submittedBlobs[2], finalizedBlob, 'replay must preserve exact upgraded bytes');
-      assert.equal(submittedFees[2], 10n, 'exact replay must retain the upgraded fee');
+      assert.equal(submittedFees[2], submittedFees[1], 'exact replay must retain the upgraded fee');
       assert.equal(feeOfferCreations, 2, 'replay must not request a third fee offer');
       assert.deepEqual(submissionOutcomes[2], { status: 'acknowledged' });
       assert.equal(
@@ -335,7 +339,7 @@ it(
     await pollOnce(poller);
     const adapters = await createActivePair(poller, 18);
     const controller = adapters[0].blob!;
-    controller.getFee = () => 10n;
+    controller.getFeePerCost = () => 10n;
     const originalProvider = fakeBlockchainInfo.getWalletOfferProvider;
     let material: WalletOfferCompletion | undefined;
     let target: string | undefined;
@@ -470,7 +474,7 @@ it.each(['channel spend', 'on-chain game move'])(
         subscriptions.forEach((subscription) => subscription.unsubscribe());
       }
     }
-    controller.getFee = () => 10n;
+    controller.getFeePerCost = () => 10n;
     const originalBegin = fakeBlockchainInfo.beginWalletOffer;
     const originalCancel = fakeBlockchainInfo.beginWalletOfferCancellation;
     let enteredApproval!: () => void;

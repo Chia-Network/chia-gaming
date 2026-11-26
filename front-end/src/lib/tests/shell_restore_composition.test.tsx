@@ -750,7 +750,7 @@ describe('Shell production restore composition', () => {
     });
     await act(async () => {
       await application.dispatch({ type: 'theme', theme: 'dark' });
-      await application.dispatch({ type: 'fee', fee: 7n });
+      await application.dispatch({ type: 'fee-rate', feePerCost: 7n });
       mockHub!.emit({ type: 'registered', playerId: 'p_' + '11'.repeat(16) });
       await application.dispatch({ type: 'wallet-cancel' });
       await storageRepository.checkpointDomainMutations();
@@ -1087,23 +1087,31 @@ describe('Shell production restore composition', () => {
     expect(walletTab()).toBeDefined();
     act(() => selectTab('wallet'));
     await waitForText(renderer!, 'Connected');
-    // Total fees are preferences, not a fixed network admission threshold.
-    // In particular, a nonzero amount below the default is still valid input.
-    for (const fee of [1n, 100_000_000n, 0n]) {
-      const currentFee = String(storageRepository.query('defaultFee'));
-      const editFee = renderer!.root.find(
-        (node) => node.type === 'button' && node.children[0] === currentFee,
-      );
-      act(() => editFee.props.onClick());
-      const input = renderer!.root.findByProps({ inputMode: 'numeric' });
-      act(() => input.props.onChange({ target: { value: '-1' } }));
-      expect(renderer!.root.findByProps({ children: 'Set' }).props.disabled).toBe(true);
-      act(() => input.props.onChange({ target: { value: fee.toString() } }));
-      const setFee = renderer!.root.findByProps({ children: 'Set' });
-      expect(setFee.props.disabled).toBe(false);
-      await act(async () => setFee.props.onClick());
-      expect(storageRepository.query('defaultFee')).toBe(fee);
+    // The fee is a rate: a preset, or a custom rate of at least the minimum, or zero.
+    expect(storageRepository.query('feePerCost')).toBe(5n);
+    const choose = (value: string) =>
+      renderer!.root
+        .find(
+          (node) =>
+            node.type === 'input' && node.props.type === 'radio' && node.props.value === value,
+        )
+        .props.onChange();
+    await act(async () => choose('expedited'));
+    expect(storageRepository.query('feePerCost')).toBe(10n);
+    await act(async () => choose('custom'));
+    const custom = () => renderer!.root.findByProps({ 'aria-label': 'Custom fee per cost' });
+    for (const [input, saved] of [
+      ['3', 10n],
+      ['-1', 10n],
+      ['25', 25n],
+      ['0', 0n],
+    ] as const) {
+      act(() => custom().props.onChange({ target: { value: input } }));
+      await act(async () => custom().props.onBlur());
+      expect(storageRepository.query('feePerCost')).toBe(saved);
     }
+    await act(async () => choose('minimum'));
+    expect(storageRepository.query('feePerCost')).toBe(5n);
     expect(renderer!.root.findAllByProps({ children: 'Reconnect' })).toHaveLength(0);
     act(() => connectionChanged(true, false));
     expect(walletTab()).toBeDefined();

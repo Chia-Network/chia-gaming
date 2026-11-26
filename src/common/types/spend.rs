@@ -198,43 +198,9 @@ impl SpendBundle {
         max_cost: u64,
         replay_failure: bool,
     ) -> Result<(), Error> {
-        if self.spends.is_empty() {
-            return Err(Error::StrErr("empty spend bundle".to_string()));
-        }
-
-        let mut coin_spends = Vec::with_capacity(self.spends.len());
-        let mut aggregated_signature = Aggsig::default();
-        for spend in &self.spends {
-            let (parent, puzzle_hash, amount) = spend.coin.get_coin_string_parts()?;
-            let parent: [u8; 32] = parent
-                .bytes()
-                .try_into()
-                .map_err(|_| Error::StrErr("invalid coin parent length".to_string()))?;
-            let puzzle_hash: [u8; 32] = puzzle_hash
-                .bytes()
-                .try_into()
-                .map_err(|_| Error::StrErr("invalid coin puzzle hash length".to_string()))?;
-            coin_spends.push(chia_protocol::CoinSpend {
-                coin: chia_protocol::Coin {
-                    parent_coin_info: Bytes32::from(parent),
-                    puzzle_hash: Bytes32::from(puzzle_hash),
-                    amount: amount.to_u64(),
-                },
-                puzzle_reveal: Bytes::from(spend.bundle.puzzle.to_program().bytes().to_vec())
-                    .into(),
-                solution: Bytes::from(spend.bundle.solution.pref().bytes().to_vec()).into(),
-            });
-            aggregated_signature += spend.bundle.signature.clone();
-        }
-
-        let protocol_bundle = chia_protocol::SpendBundle {
-            coin_spends,
-            aggregated_signature: aggregated_signature.to_bls(),
-        };
+        let protocol_bundle = self.to_protocol_bundle()?;
         let constants = validation_consensus_constants(agg_sig_me_additional_data);
-        let height = u32::try_from(height)
-            .map_err(|_| Error::StrErr(format!("validation height {height} exceeds u32")))?;
-        let flags = get_flags_for_height_and_constants(height, &constants) | MEMPOOL_MODE;
+        let flags = mempool_flags(height, &constants)?;
         let mut allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
         let consensus_result = run_spendbundle(
             &mut allocator,
@@ -276,6 +242,71 @@ impl SpendBundle {
         }
         Ok(())
     }
+
+    /// The cost the mempool charges for this bundle. The aggregate signature
+    /// is not checked.
+    pub fn consensus_cost(&self, height: u64) -> Result<u64, Error> {
+        // Signing data does not affect cost.
+        let constants = validation_consensus_constants(&Hash::default());
+        let mut allocator = make_allocator(ConsensusFlags::LIMIT_HEAP);
+        let (conditions, _) = run_spendbundle(
+            &mut allocator,
+            &self.to_protocol_bundle()?,
+            constants.max_block_cost_clvm,
+            mempool_flags(height, &constants)?,
+            &constants,
+            None,
+        )
+        .map_err(|err| {
+            Error::StrErr(format!(
+                "spend bundle consensus run failed: {:?}",
+                err.error_code()
+            ))
+        })?;
+        Ok(conditions.cost)
+    }
+
+    fn to_protocol_bundle(&self) -> Result<chia_protocol::SpendBundle, Error> {
+        if self.spends.is_empty() {
+            return Err(Error::StrErr("empty spend bundle".to_string()));
+        }
+
+        let mut coin_spends = Vec::with_capacity(self.spends.len());
+        let mut aggregated_signature = Aggsig::default();
+        for spend in &self.spends {
+            let (parent, puzzle_hash, amount) = spend.coin.get_coin_string_parts()?;
+            let parent: [u8; 32] = parent
+                .bytes()
+                .try_into()
+                .map_err(|_| Error::StrErr("invalid coin parent length".to_string()))?;
+            let puzzle_hash: [u8; 32] = puzzle_hash
+                .bytes()
+                .try_into()
+                .map_err(|_| Error::StrErr("invalid coin puzzle hash length".to_string()))?;
+            coin_spends.push(chia_protocol::CoinSpend {
+                coin: chia_protocol::Coin {
+                    parent_coin_info: Bytes32::from(parent),
+                    puzzle_hash: Bytes32::from(puzzle_hash),
+                    amount: amount.to_u64(),
+                },
+                puzzle_reveal: Bytes::from(spend.bundle.puzzle.to_program().bytes().to_vec())
+                    .into(),
+                solution: Bytes::from(spend.bundle.solution.pref().bytes().to_vec()).into(),
+            });
+            aggregated_signature += spend.bundle.signature.clone();
+        }
+
+        Ok(chia_protocol::SpendBundle {
+            coin_spends,
+            aggregated_signature: aggregated_signature.to_bls(),
+        })
+    }
+}
+
+fn mempool_flags(height: u64, constants: &ConsensusConstants) -> Result<ConsensusFlags, Error> {
+    let height = u32::try_from(height)
+        .map_err(|_| Error::StrErr(format!("validation height {height} exceeds u32")))?;
+    Ok(get_flags_for_height_and_constants(height, constants) | MEMPOOL_MODE)
 }
 
 /// Replay the per-spend portion of `run_spendbundle` after it has failed.

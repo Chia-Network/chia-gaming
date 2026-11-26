@@ -419,7 +419,7 @@ export interface GameSessionApi {
     new_entropy: string,
   ): WasmResult;
   cheat(game_id: string, mover_share: bigint): WasmResult;
-  start_handshake(opening_fee: string): WasmResult;
+  start_handshake(fee_per_cost: string): WasmResult;
   provide_coin_spend_bundle(bundle: unknown): WasmResult;
   provide_offer_bech32(offer_bech32: string): WasmResult;
   wallet_callback_failed(reason: string): WasmResult;
@@ -428,7 +428,7 @@ export interface GameSessionApi {
   report_height(height: bigint): WasmResult;
   snapshot_watched_coins(): Array<{ coin_name: string; coin_string: string }>;
   drain_submissions(): SubmissionDrain;
-  configure_submission_fee(amount: string): void;
+  configure_fee_per_cost(fee_per_cost: string): void;
   finalize_submission_attempt(
     attemptToken: string,
     feeSource?: WalletFeeSource,

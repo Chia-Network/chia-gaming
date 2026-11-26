@@ -371,14 +371,18 @@ pub enum AttachmentFailurePolicy {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq)]
 pub struct FeeConfiguration {
-    pub amount: Amount,
+    /// The player's fee rate in mojos per cost; zero turns fees off. Saved
+    /// managers from before rates were introduced load as zero until the host
+    /// configures a rate.
+    #[serde(default)]
+    pub fee_per_cost: u64,
     pub attachment_failure_policy: AttachmentFailurePolicy,
 }
 
 impl Default for FeeConfiguration {
     fn default() -> Self {
         Self {
-            amount: Amount::new(0),
+            fee_per_cost: 0,
             attachment_failure_policy: AttachmentFailurePolicy::SubmitWithoutFee,
         }
     }
