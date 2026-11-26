@@ -8,6 +8,7 @@ import {
   type KrunkHand,
   type KrunkHandState,
 } from './serialize';
+import { krunkRules } from './rules';
 import { formatKrunkMojos } from './formatting';
 
 export { krunkOutcomeFromPlay, reduceKrunkFeatureState } from './serialize';
@@ -29,6 +30,7 @@ const registration: GamePackageRegistration<
   KrunkFactoryParameters
 > = {
   displayName: 'Krunk',
+  rules: krunkRules,
   createHand: createKrunkHand,
   restoreHand: restoreKrunkHand,
   proposalParameters: krunkProposalParameters,

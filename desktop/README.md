@@ -257,8 +257,9 @@ is actually choosing.
 ### Navigation and permissions
 
 - `setWindowOpenHandler` denies every `window.open`; no page opens in an app
-  window. About-window links still use `shell.openExternal` for the project URL
-  only.
+  window. Links to pages in the project's GitHub repository, such as the Krunk
+  word list in the rules, open with `shell.openExternal` from the player window
+  and the About window; every other link is blocked.
 - `will-frame-navigate` keeps the player window's top frame on
   `chiagaming://app/index.html`, keeps other top-level windows on app documents,
   and restricts sub-frames to the frame allowlist. It is used in preference to

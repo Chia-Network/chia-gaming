@@ -1,9 +1,8 @@
 import { BrowserWindow, app, shell } from 'electron';
 
 import { APP_ORIGIN } from './appProtocol';
+import { PROJECT_URL } from './externalLinks';
 import { log } from './log';
-
-const PROJECT_URL = 'https://github.com/Chia-Network/chia-gaming';
 
 let aboutWindow: BrowserWindow | null = null;
 

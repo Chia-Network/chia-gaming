@@ -7,6 +7,7 @@ import type {
   GameMountView,
   GamePackageRegistration,
   GameProposalFormHandle,
+  GameRulesSection,
   HandProposal,
   HandProposalFormProps,
   ProposalParameterValue,
@@ -17,6 +18,7 @@ export type RegisteredGameProposalFormHandle = GameProposalFormHandle<unknown>;
 
 export interface RegisteredGamePackage {
   readonly displayName: string;
+  readonly rules: readonly GameRulesSection[];
   createHand(init: GameHandInitialization): RegisteredGameHand;
   restoreHand(savedState: unknown): RegisteredGameHand;
   describeHandProposal(handProposal: HandProposal): string;

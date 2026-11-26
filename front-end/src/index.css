@@ -328,6 +328,8 @@
   --color-border: var(--canvas-line);
   --color-card: var(--canvas-bg);
   --color-card-foreground: var(--canvas-text-contrast);
+  --color-popover: var(--canvas-bg);
+  --color-popover-foreground: var(--canvas-text-contrast);
   --color-muted: var(--canvas-bg-hover);
   --color-accent: var(--canvas-bg-active);
   --color-accent-foreground: var(--canvas-text-contrast);
